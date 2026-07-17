@@ -106,7 +106,7 @@ ID scheme: `SCRY-<AREA>-NNN`, abbreviated to `<AREA>-NNN` in the tables below. I
 
 | ID | Level | Requirement | Milestone | Verification (planned) |
 |---|---|---|---|---|
-| ERR-001 | MUST | One error type end-to-end: category enum (auth, rate-limit, network, protocol, tool, cancelled) + message + provider detail. | M1 | Unit tests; no other error types cross the boundary |
+| ERR-001 | MUST | One error type end-to-end: category enum (auth, rate-limit, network, protocol, tool, resource, busy, cancelled) + message + provider detail. `resource` is the category NET-008 bounds report; `busy` is the distinct category THR-014 requires. | M1 | Unit tests; no other error types cross the boundary |
 | ERR-002 | MUST | Exactly one failure channel: the error event/callback. No status-polling API. | M1 | API surface review |
 | ERR-003 | MUST | Every turn terminates in exactly one terminal event (complete, error, or cancelled) — never zero, never two. | M1 | Machine tests asserting terminal-event uniqueness across randomized event orders |
 | ERR-004 | MUST | API keys and auth headers never appear in error messages, logs, or diagnostics — redacted at the transport boundary. Prompt/tool content is never logged by default. | M1 | Unit tests grepping error/log output under failure injection |
@@ -116,11 +116,11 @@ ID scheme: `SCRY-<AREA>-NNN`, abbreviated to `<AREA>-NNN` in the tables below. I
 
 | ID | Level | Requirement | Milestone | Verification (planned) |
 |---|---|---|---|---|
-| PORT-001 | MUST | Core library (reflection OFF) targets C++23 and builds on stable GCC and Clang. | M0 | CI matrix leg |
-| PORT-002 | MUST | Reflection layer builds on GCC trunk and clang-p2996. | M0/M3 | CI matrix legs |
+| PORT-001 | MUST | Core library (reflection OFF) targets C++23 and builds on stable GCC and Clang. | M0 | **Live:** `ci.yml` `build-test` matrix (GCC 14, Clang 18, AppleClang) |
+| PORT-002 | MUST | Reflection layer builds on GCC trunk and clang-p2996. | M0/M3 | clang-p2996 probe live in `ci.yml` (non-gating until Spike A pins the toolchain — ADR 0004); GCC trunk leg lands with Spike A |
 | PORT-003 | MUST | Runtime dependencies are limited to libcurl + Glaze; any addition requires a written justification committed with the change. | M0 | Dependency manifest review gate |
 | PORT-004 | MUST | Glaze types do not appear in public headers; the tool-boundary JSON type is Scry-owned. | M2 | Include audit (API-002 machinery) |
-| PORT-005 | MUST | Supported platforms: Linux and macOS from M0 (both reflection-ON and OFF legs). Windows is deferred to the evolution register. | M0 | CI matrix |
+| PORT-005 | MUST | Supported platforms: Linux and macOS from M0. Reflection-OFF legs run on both platforms; reflection-ON legs run on Linux (macOS reflection-ON deferred to the evolution register alongside Windows, pending practical P2996 toolchain availability — amended 2026-07). | M0 | **Live:** `ci.yml` matrix (Linux + macOS reflection-OFF gating; Linux reflection probe per PORT-002) |
 | PORT-006 | MUST | libcurl ≥ 7.84.0; `CURL_VERSION_THREADSAFE` is verified at first initialization (host threads may exist before the first Harness). | M1 | Startup check + version-pinned CI |
 | PORT-007 | MUST | Pre-1.0: no API/ABI stability promises, breaking changes allowed with changelog notice. From 1.0: semver, inline-namespace ABI versioning. | M0 (documented) | Release checklist |
 
@@ -131,19 +131,21 @@ ID scheme: `SCRY-<AREA>-NNN`, abbreviated to `<AREA>-NNN` in the tables below. I
 | QA-001 | MUST | Diff branch coverage ≥ 90% on new/changed lines; coverage exclusions require an inline justification. | M0 | Per-commit CI gate |
 | QA-002 | MUST | Branch-coverage floor ≥ 95% on the sans-I/O machine, SSE parser, retry classifier, and schema generator. | M2+ | Per-component CI gate |
 | QA-003 | MUST | No function on main with CRAP score > 30. | M0 | Per-commit CI gate + top-10 report |
-| QA-004 | MUST | Cyclomatic complexity ≤ 15 per function (warn at 10); cognitive complexity ≤ 25. Named suppressions only. | M0 | lizard + clang-tidy gates |
-| QA-005 | MUST | ASan, UBSan, and TSan suites pass per commit; threaded tests always run under TSan. | M0 | CI legs |
-| QA-006 | MUST | Warnings-as-errors (`-Wall -Wextra -Wconversion -Wshadow`) across the full compiler matrix. | M0 | CI |
+| QA-004 | MUST | Cyclomatic complexity ≤ 15 per function (warn at 10); cognitive complexity ≤ 25. Named suppressions only. | M0 | Cognitive **live:** `.clang-tidy` threshold + `ci.yml` tidy job; cyclomatic (lizard) planned |
+| QA-005 | MUST | ASan, UBSan, and TSan suites pass per commit; threaded tests always run under TSan. | M0 | **Live:** `ci.yml` sanitizers job (`asan-ubsan`, `tsan` presets) |
+| QA-006 | MUST | Warnings-as-errors (`-Wall -Wextra -Wconversion -Wshadow`) across the full compiler matrix. | M0 | **Live:** `scry_warnings` target + `ci.yml` build matrix |
 | QA-007 | MUST | All quality metrics ratchet: compared against main, they may hold or improve, never regress. | M0 | Ratchet comparison in CI |
 | QA-008 | MUST | Unit/machine tests are deterministic: no real time, sleeps, or network. Flaky tests are fixed or deleted immediately. | M0 | Repeat-run CI check (e.g., 3× on suspicion) |
 | QA-009 | MUST | Every bug fix lands with a regression test (machine-level replay where applicable). | M1+ | PR checklist gate |
 | QA-010 | SHOULD | Nightly: mutation testing on machine/parsers, long fuzz runs, deep static analysis, e2e against a real local model. | M4+ | Nightly pipeline |
-| QA-011 | SHOULD | Everything CI enforces is runnable locally with one command. | M0 | `just ci-fast` (or equivalent) exists and is documented |
+| QA-011 | SHOULD | Everything CI enforces is runnable locally with one command. | M0 | **Live:** `justfile` `ci-fast` recipe, documented in README |
 | QA-012 | MUST | Definition of Done includes updating the four load-bearing docs — including this register — when behavior or a decision changes. | M0 | PR checklist gate |
 
 ## Unratified / Known Gaps
 
 **None currently.** The four gaps surfaced by the original extraction audit were ratified during the pre-M0 architecture review (2026-07): platform targets → PORT-005, versioning/ABI → PORT-007, resource ceilings → NET-008, security posture → ERR-004/NET-007. New gaps land here, not in prose.
+
+**2026-07 M0-scaffold amendments:** ERR-001's category enum was extended with `resource` and `busy` — the register previously demanded categories (NET-008, THR-014) its own enum didn't contain. PORT-005 was re-scoped: reflection-ON CI legs are Linux-only until practical P2996 toolchains exist for macOS (evolution register row; ADR 0004). Build system, dependency acquisition, and test framework were decided in ADRs 0001–0003.
 
 ## Deferred to M2/M3 Design (tracked, not yet normative)
 

@@ -198,7 +198,7 @@ Adapter differences (schema envelope, streaming event shapes, stop reasons) are 
 ## 10. Errors, Retries, Streaming
 
 - **Retries:** exponential backoff with jitter for 429/5xx/transport errors, honoring `Retry-After`, under configurable attempt and elapsed-time caps. Retry eligibility is strict: a request is retried only if **no semantic output has been consumed** (failure before the first content event). After partial output the turn fails with a retryable-flagged error and the app decides — automatic mid-stream resumption is later hardening, not M1. A dispatched tool call is **never re-dispatched** by retry machinery: tool execution is at-most-once per tool-call ID, and completed tool rounds live in history, so re-sending a request never re-runs a side effect.
-- **Errors** surface as a single `on_error(scry::Error)` callback with category (auth, rate limit, network, protocol, tool exception) — tool handler exceptions are caught and returned to the model as tool errors (the model can often recover), not thrown into the app.
+- **Errors** surface as a single `on_error(scry::Error)` callback with category (auth, rate limit, network, protocol, tool, resource, busy, cancelled — the ERR-001 enum) — tool handler exceptions are caught and returned to the model as tool errors (the model can often recover), not thrown into the app.
 - **Streaming:** SSE parsed on the worker; text deltas batched per `update()` tick rather than per-token, so a fast stream doesn't flood the queue.
 
 ## 11. Open Questions
@@ -213,7 +213,7 @@ Resolved and removed from this list: concurrency baseline (§7, ratified), JSON 
 
 | Milestone | Scope |
 |-----------|-------|
-| **M0 — Skeleton** | Compile-only public header sketch + canonical example; build/CI matrix (Linux + macOS; reflection ON/OFF legs); bounded feasibility spikes: P2996 schema generation on GCC trunk + clang-p2996 with Glaze, and a libcurl SSE streaming probe. No agentic loop. |
+| **M0 — Skeleton** | Compile-only public header sketch + canonical example; build/CI matrix (reflection-OFF on Linux + macOS; reflection-ON on Linux — PORT-005 as amended, ADR 0004); bounded feasibility spikes: P2996 schema generation on GCC trunk + clang-p2996 with Glaze, and a libcurl SSE streaming probe. No agentic loop. |
 | **M1 — Chat** | Client + Conversation + Harness + worker thread + update() pump; Anthropic adapter; blocking + streaming text. No tools. |
 | **M2 — Tools** | ToolRegistry with explicit-schema registration; agentic loop engine; main-thread tool execution. |
 | **M3 — Reflection** | P2996 schema generation + marshalling; the `add<Args>()` API; docs demo. |

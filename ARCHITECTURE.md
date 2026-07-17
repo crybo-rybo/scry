@@ -150,7 +150,7 @@ The second sanctioned interface, existing for one reason: **dependency injection
 
 ## 8. Errors as Values, Categorized Once
 
-- Internal fallible paths return `std::expected<T, Error>`; `Error` is one struct with a category enum (auth, rate-limit, network, protocol, tool, cancelled) + message + provider-specific detail. One error type end-to-end — no per-layer error hierarchies to translate between.
+- Internal fallible paths return `std::expected<T, Error>`; `Error` is one struct with a category enum (auth, rate-limit, network, protocol, tool, resource, busy, cancelled) + message + provider-specific detail. One error type end-to-end — no per-layer error hierarchies to translate between. (`resource`: a NET-008 bound was exceeded; `busy`: a `send()` raced an in-flight turn on the same Conversation, THR-014.)
 - The retry classifier (which categories are retryable) is a pure function owned by the loop state machine, tested as a table.
 - At the boundary, errors become the `on_error` event. `errno`-style status polling is deliberately absent; there is exactly one way to learn of failure.
 
@@ -164,7 +164,7 @@ The second sanctioned interface, existing for one reason: **dependency injection
 - **The test pyramid mirrors the architecture:** sans-I/O machine tests (majority, no network, no threads) → adapter golden-file tests → transport tests against a local mock HTTP/SSE server → a thin end-to-end smoke suite against a real local model (Ollama/llama.cpp in CI, nightly not per-commit).
 - Threaded code tested under **TSan and ASan in CI** from M0 — sanitizers are cheap the day the code is written and impossible to retrofit onto a flaky foundation. UBSan on the reflection layer especially.
 - CI matrix: GCC trunk and clang-p2996 (reflection ON), plus a stable GCC/Clang (reflection OFF) proving severability. clang-format + clang-tidy configs checked in at M0; formatting arguments end on day one.
-- **Warnings are errors** (`-Wall -Wextra -Wconversion`), from the first commit.
+- **Warnings are errors** (`-Wall -Wextra -Wconversion -Wshadow`, the QA-006 set), from the first commit.
 
 ## 11. Evolution Register: Deliberate Simplifications and Their End States
 
@@ -179,6 +179,8 @@ Every "boring first" choice is recorded here with the condition that triggers ev
 | Trait/customization-point parameter descriptions | Pinned toolchain gains P3394 annotations | Annotations in the args struct become the primary path; trait remains as override |
 | No connection pooling beyond curl defaults | Measured connect/TLS overhead in streaming-heavy use | curl share/multi connection reuse, invisible above the transport seam |
 | Linux + macOS only | Concrete Windows user demand | Windows reflection-OFF via clang; MSVC leg only if/when P2996 ships there |
+| Reflection-ON CI legs on Linux only (PORT-005 as amended 2026-07) | A prebuilt or cheaply-cached P2996 toolchain for macOS exists | Full reflection ON/OFF matrix on both platforms |
+| clang-p2996 CI leg is a non-gating probe on a community image (ADR 0004) | Spike A pins the reflection toolchain (owned/digest-pinned image or cached source build) | Both reflection legs (clang-p2996 + GCC trunk) gate per-commit |
 | Serialized transfers: queued turns wait while the active turn awaits a main-thread tool | Serialized M1 scheduling measurably limits a real app | Tool-await releases the transfer slot under curl-multi multiplexing (same trigger as row 2) |
 
 ## 12. Pattern Summary
