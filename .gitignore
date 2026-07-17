@@ -1,6 +1,9 @@
 # Build trees (all presets build under build/<preset>)
 /build/
 
+# Per-machine Claude Code settings (shared settings.json IS checked in)
+.claude/settings.local.json
+
 # Tooling caches and editor droppings
 .cache/
 compile_commands.json
