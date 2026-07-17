@@ -48,7 +48,8 @@ The app touches ~5 types:
 
 | Type | Responsibility |
 |------|---------------|
-| `scry::Client` | Server config: base URL, API key, model, sampling params, provider dialect. Cheap to construct, reusable. |
+| `scry::Config` | Plain value aggregate: base URL, API key, model, sampling params, provider dialect. Designated-initializer friendly. |
+| `scry::Client` | PImpl handle over connection/auth state, constructed from a `Config`. Reusable across Harnesses. |
 | `scry::Conversation` | Owns message history (system prompt, user/assistant turns, tool calls/results). Serializable for persistence. |
 | `scry::ToolRegistry` | Named tools: description + reflected schema + callable. Attached to a Conversation or Client. |
 | `scry::Turn` | Handle to one in-flight agentic exchange. Carries callbacks (`on_text_delta`, `on_tool_call`, `on_complete`, `on_error`) and `cancel()`. |
@@ -57,27 +58,30 @@ The app touches ~5 types:
 Intended feel:
 
 ```cpp
-scry::Harness harness{scry::Client{
+// Config is a plain aggregate; Client and Harness are PImpl handles built from it.
+// Fallible construction returns std::expected — no exceptions at the boundary.
+auto harness = scry::Harness::create(scry::Config{
     .base_url = "https://api.anthropic.com",
     .api_key  = env("API_KEY"),
     .model    = "claude-sonnet-5",
-}};
+});
+if (!harness) { /* harness.error(): config/auth problem, reported as a value */ }
 
 struct ForecastArgs {
     std::string city;   ///< City name
     int days = 3;       ///< Days ahead (optional — has default)
 };
 
-harness.tools().add<ForecastArgs>(
+harness->tools().add<ForecastArgs>(
     "get_forecast", "Weather forecast for a city",
     [&](const ForecastArgs& a) { return app.forecast(a.city, a.days); });
 
-auto turn = harness.send(convo, "Will it rain in Detroit this week?");
+auto turn = harness->send(convo, "Will it rain in Detroit this week?");
 turn.on_complete([&](std::string_view answer) { ui.show(answer); });
 
 // somewhere in the existing main loop:
 while (app.running()) {
-    harness.update();   // callbacks fire here, on this thread
+    harness->update();  // callbacks fire here, on this thread
     app.tick();
 }
 ```
@@ -159,11 +163,13 @@ graph TB
     AL --> EQ --> U --> CB
 ```
 
-**Tool execution policy.** Tools touch app state, so by default tool handlers also run on the main thread inside `update()` — the worker thread posts a `ToolCallPending` event and waits. Opt-in escape hatch: `add<Args>(..., scry::run_on_worker)` for handlers that are thread-safe and slow (disk, DB), so they don't stall the frame.
+**Tool execution policy.** Tools touch app state, so by default tool handlers also run on the main thread inside `update()` — the worker thread posts a `ToolCallPending` event and waits. Opt-in escape hatch (lands M4): `add<Args>(..., scry::run_on_worker)` for handlers that are thread-safe and slow (disk, DB), so they don't stall the frame.
 
 **Frame budget.** `update()` accepts an optional time budget; excess events roll to the next tick. A 60 Hz app never spends more than its budget on Scry.
 
-**Cancellation.** `Turn::cancel()` sets an atomic flag; the worker aborts the HTTP transfer at the next opportunity and posts a `Cancelled` event. `Turn` handles are safe to drop (detach semantics) or can be joined.
+**Cancellation.** `Turn::cancel()` sets an atomic flag; the worker aborts the HTTP transfer at the next opportunity and posts a `Cancelled` event. Cancelling a still-queued turn removes it before any I/O is issued. `Turn` handles are safe to drop (detach semantics) or can be joined.
+
+**M1 scheduling baseline (ratified — no longer an open question).** A Harness accepts any number of turns; they queue FIFO and exactly **one HTTP transfer is active at a time**. A second `send()` on a Conversation that already has a turn queued or in flight fails immediately with a distinct error. While the active turn awaits a main-thread tool result, it retains the transfer slot — queued turns wait (deliberate simplification; trigger and end state in the ARCHITECTURE.md evolution register, which moves to curl-multi multiplexing when serialized scheduling measurably limits a real app).
 
 ## 8. Tool Registration via C++26 Reflection
 
@@ -191,24 +197,23 @@ Adapter differences (schema envelope, streaming event shapes, stop reasons) are 
 
 ## 10. Errors, Retries, Streaming
 
-- **Retries:** exponential backoff with jitter for 429/5xx/transport errors, configurable cap; idempotent because the request is a pure function of conversation state.
+- **Retries:** exponential backoff with jitter for 429/5xx/transport errors, honoring `Retry-After`, under configurable attempt and elapsed-time caps. Retry eligibility is strict: a request is retried only if **no semantic output has been consumed** (failure before the first content event). After partial output the turn fails with a retryable-flagged error and the app decides — automatic mid-stream resumption is later hardening, not M1. A dispatched tool call is **never re-dispatched** by retry machinery: tool execution is at-most-once per tool-call ID, and completed tool rounds live in history, so re-sending a request never re-runs a side effect.
 - **Errors** surface as a single `on_error(scry::Error)` callback with category (auth, rate limit, network, protocol, tool exception) — tool handler exceptions are caught and returned to the model as tool errors (the model can often recover), not thrown into the app.
 - **Streaming:** SSE parsed on the worker; text deltas batched per `update()` tick rather than per-token, so a fast stream doesn't flood the queue.
 
 ## 11. Open Questions
 
-1. **Parameter descriptions** — P3394 annotations vs. customization point vs. convention. Decide once a toolchain is pinned.
-2. **Multiple concurrent turns** — one worker with multiplexed turns, or thread-per-turn? Start with one turn per Conversation, N conversations per Harness.
-3. **Structured output** — reflected structs also enable "answer as this type" (schema-constrained responses). Natural v2 feature; keep the door open in `Turn`.
-4. **Coroutine sugar** — `co_await harness.send(...)` for apps that have coroutine schedulers. Layer over the event queue later; don't build the core on it.
-5. **JSON library** — Glaze (fast, P2996-aligned) vs. nlohmann (ubiquitous). Leaning Glaze.
-6. **HTTP library** — libcurl (portable, battle-tested) vs. cpr wrapper. Leaning libcurl direct, for SSE control.
+Resolved and removed from this list: concurrency baseline (§7, ratified), JSON library (Glaze — ARCHITECTURE.md §9), HTTP library (libcurl direct — ARCHITECTURE.md §7). Remaining, none of which block M0/M1:
+
+1. **Parameter descriptions** — P3394 annotations vs. customization point vs. convention. Decide during M3, once the pinned toolchain's annotation support is known.
+2. **Structured output** — reflected structs also enable "answer as this type" (schema-constrained responses). Natural v2 feature; keep the door open in `Turn`.
+3. **Coroutine sugar** — `co_await harness.send(...)` for apps with coroutine schedulers. Tracked in the evolution register; layered over the event queue later.
 
 ## 12. Roadmap
 
 | Milestone | Scope |
 |-----------|-------|
-| **M0 — Skeleton** | Public header sketch (the ~5 types), build setup on GCC trunk/clang-p2996, CI matrix. |
+| **M0 — Skeleton** | Compile-only public header sketch + canonical example; build/CI matrix (Linux + macOS; reflection ON/OFF legs); bounded feasibility spikes: P2996 schema generation on GCC trunk + clang-p2996 with Glaze, and a libcurl SSE streaming probe. No agentic loop. |
 | **M1 — Chat** | Client + Conversation + Harness + worker thread + update() pump; Anthropic adapter; blocking + streaming text. No tools. |
 | **M2 — Tools** | ToolRegistry with explicit-schema registration; agentic loop engine; main-thread tool execution. |
 | **M3 — Reflection** | P2996 schema generation + marshalling; the `add<Args>()` API; docs demo. |

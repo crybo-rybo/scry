@@ -8,15 +8,15 @@ Companion to [DESIGN.md](DESIGN.md). That document says *what* the pieces are; t
 
 These apply everywhere and settle arguments before they start.
 
-**Value semantics at the boundary, ownership inside.** Public types are cheap-to-move value types or lightweight handles. Internally, every resource has exactly one owner (`std::unique_ptr`, RAII wrappers); `shared_ptr` appears only where lifetime is genuinely shared across threads (see §3, Turn handles). Raw pointers are non-owning observers only, never stored across a suspension point.
+**Value semantics at the boundary, ownership inside.** Public types are cheap-to-move value types or lightweight handles. Internally, every resource has exactly one owner (`std::unique_ptr`, RAII wrappers); `shared_ptr` appears only where lifetime is genuinely shared across threads — which after the §3 ownership split is exactly one node: the per-turn cancellation flag, jointly referenced by handle and worker. Raw pointers are non-owning observers only, never stored across a suspension point.
 
 **Rule of Zero.** Types define no special member functions unless they manage a resource directly; resource management is pushed into dedicated RAII wrappers (curl handles, threads, queues) so everything above them defaults.
 
-**PImpl on every public type.** All public types hold a single pointer to an implementation. Three payoffs: no third-party headers (curl, JSON) leak into the public include path; ABI stays stable across internal refactors; compile-time cost for consumers stays flat. The cost (one indirection, no inlining across the boundary) is irrelevant next to network latency — this library's hot path is measured in milliseconds, not nanoseconds.
+**PImpl on stateful handles; plain values for contracts.** The five stateful handle types (Client, Conversation, ToolRegistry, Turn, Harness) hold a single pointer to an implementation — ABI stays stable across internal refactors, and compile-time cost for consumers stays flat. Everything else the user touches is an ordinary value type: configuration aggregates (designated-initializer friendly), errors, options, enums, event payloads, and the Scry-owned JSON boundary type. The binding rule underneath both is: **no third-party types in public headers, ever** (enforced by include audit). Handles are constructed *from* config values (`Client` from a `Config` aggregate), which is how aggregate-style configuration and PImpl coexist. The indirection cost is irrelevant next to network latency — this library's hot path is measured in milliseconds, not nanoseconds.
 
 **No singletons, no globals, no static init order problems.** Everything hangs off a `Harness` instance. Two harnesses in one process (e.g., different providers) must just work. The one unavoidable global — libcurl's `curl_global_init` — is wrapped in a reference-counted RAII guard (Meyers-style function-local static, initialized on first Harness).
 
-**Exceptions stop at the membrane.** Internals may use whatever is idiomatic for the dependency at hand, but the public boundary is exception-free by contract: fallible operations report through `std::expected` or the `on_error` callback. Two hard rules: nothing ever throws *across* the worker/main thread boundary, and tool-handler exceptions are caught at the dispatch site and converted into tool-error results returned to the model (the model can often self-correct; the app should not crash because the LLM passed a bad argument).
+**Exceptions stop at the membrane.** Internals may use whatever is idiomatic for the dependency at hand, but the public boundary is exception-free by contract: fallible operations report through `std::expected` or the `on_error` callback. Precisely scoped: *semantic* failures (bad config, duplicate tool name, invalid state) never throw — fallible construction goes through factories returning `std::expected`, and registration returns `expected` too. Allocation and standard-library construction failure (`std::bad_alloc`) are **excluded from the contract** — we do not pretend to survive OOM, and smearing `noexcept`+expected over every allocating call would buy nothing. Two hard rules stand regardless: nothing ever throws *across* the worker/main thread boundary, and tool-handler exceptions are caught at the dispatch site and converted into tool-error results returned to the model. User callbacks should not throw; if one does, the exception propagates out of `update()` to the app with the harness left in a valid state and the event counted as delivered (see §3).
 
 **Concepts over inheritance in templates, interfaces only at seams.** Virtual dispatch appears in exactly two places (provider adapter, transport — §6, §7), both internal. The public API has no inheritable types; extension points are callables and config, not subclassing.
 
@@ -24,28 +24,84 @@ These apply everywhere and settle arguments before they start.
 
 ## 2. The Concurrency Architecture: Actor, Not Locks
 
-The single most important structural decision. The worker thread is an **actor**: it exclusively owns all mutable networking and loop state, and the only way anything crosses the thread boundary is **message passing** through two queues — a command queue in (send, cancel, shutdown) and an event queue out (deltas, tool requests, completions, errors).
+The single most important structural decision. The worker thread is an **actor**: it exclusively owns all mutable networking and loop state, and (bar the per-turn cancellation atomic, §3) the only way anything crosses the thread boundary is **message passing** through two queues — a command queue in (send, cancel, shutdown) and an event queue out (deltas, tool requests, completions, errors).
 
 Practices that follow:
 
-- **No shared mutable state, no user-visible locks.** There is no mutex a user callback can deadlock against. The queues are the *only* synchronization points, which makes the concurrency story auditable in one file.
+- **Enumerated shared state, no user-visible locks.** There is no mutex a user callback can deadlock against. Exactly three things are shared across the thread boundary, all internally synchronized: the command queue, the event queue, and one atomic cancellation flag per turn. Nothing else — worker-side state and pump-side state are exclusively owned (ownership table in §3), and the worker addresses turns only by immutable `TurnId`. This enumeration *is* the invariant TSan enforces; anything not on the list found crossing threads is a bug by definition.
 - **Messages are immutable values.** Commands and events are `std::variant` of small structs, moved (never copied) through the queue. Variant + `std::visit` gives exhaustive handling — adding an event type breaks the build until every consumer handles it. This is the same closed-set-of-alternatives reasoning that picks variant over inheritance everywhere in this codebase.
 - **Queue implementation: boring first.** Mutex + `std::deque` + condition variable, wrapped behind our own minimal interface so a lock-free MPSC queue can be swapped in *if profiling ever demands it*. Premature lock-free is how libraries acquire unfixable bugs.
-- **`std::jthread` + `std::stop_token`** for worker lifetime; `stop_token` is threaded through blocking waits and the transport layer so shutdown and per-turn cancellation share one mechanism. Cancellation state per turn is a `std::atomic<bool>` checked at every I/O boundary — cooperative, never `pthread_cancel`-style.
+- **Two cancellation mechanisms, deliberately separate.** The worker's `std::jthread` `stop_token` means one thing only: **Harness shutdown**. Per-turn cancellation is a distinct per-turn `std::atomic<bool>`, checked at every I/O boundary and plumbed into transport progress callbacks. Both are cooperative, never `pthread_cancel`-style. Conflating them was an early ambiguity: shutdown must abort *all* turns and join; cancelling one turn must not disturb its neighbors.
 - **The pump is the contract.** `update()` drains the event queue and invokes callbacks on the calling thread, under an optional time budget (deadline-checked between events, excess rolls to the next tick). Because *all* callbacks fire there, user code is single-threaded by construction. This is the harness's most sacred invariant; everything else may change.
 - **Backpressure by design.** Streaming deltas are coalesced worker-side (one aggregated text event per pump interval, not per token) so a fast stream cannot flood the queue or starve the frame budget.
 
 **Blocking-mode escape hatch:** a synchronous `send`-and-wait exists for CLI tools and tests, implemented *on top of* the async machinery (pump-until-complete internally), never as a second code path.
 
-## 3. Handle Pattern for In-Flight Work
+## 3. Turn Ownership, Lifecycle, and the Handle Pattern
 
-A `Turn` is a **handle**: a small value object referring to shared turn state, not the state itself. The pattern:
+A `Turn` is a **handle**: a move-only value holding an immutable `TurnId` plus a reference to the turn's cancellation flag — *not* the turn state itself. Copying a handle to in-flight work invites double-cancel ambiguity, hence move-only. This is the `std::future`/`std::stop_source` school: small, thread-safe by narrowness, no behavior hidden in destructors beyond a documented detach.
 
-- Turn state lives in a control block owned jointly by the handle and the worker (`shared_ptr` internally — one of the two sanctioned uses). The handle going out of scope must be *safe and meaningful*: default is detach (turn completes, events still delivered), with explicit cancel available.
-- Callbacks registered on the handle are stored in the control block and invoked only from the pump (§2), so registration order and thread guarantees hold no matter when the user attaches them — including *after* events have started arriving (late-attached callbacks receive buffered events; no races, no missed deltas).
-- Handles are move-only. Copying a handle to in-flight work invites double-cancel ambiguity; if two parts of the app need visibility, that's an app-level decision made explicit.
+### Ownership table (normative)
 
-This is deliberately the `std::future`/`std::stop_source` school of design: small, thread-safe-by-narrowness, no behavior hidden in destructors beyond a documented detach.
+| State | Exclusive owner | Notes |
+|---|---|---|
+| Transport handles, curl state, wire buffers, SSE parser state | Worker | Never visible to any other thread |
+| Loop state machines (per turn) | Worker | Addressed by `TurnId` |
+| Callback registrations, buffered undelivered events per turn | Pump side (Harness main-thread state) | Written/read only inside API calls and `update()` |
+| Conversation contents | App thread via pump | Mutated only at terminal-event delivery |
+| Command queue, event queue | Shared, internally synchronized | Sanctioned crossing points |
+| Per-turn cancel flag (`atomic<bool>`) | Shared | Third sanctioned crossing point |
+| `TurnId` | Immutable value | Freely copied everywhere |
+
+The worker never touches callbacks or buffers; it emits events tagged with `TurnId`. The pump owns routing, buffering, and delivery. This split is what makes the §2 enumeration true.
+
+### Send / cancel / shutdown
+
+```mermaid
+sequenceDiagram
+    participant App as App thread (API + pump)
+    participant CQ as Command queue
+    participant W as Worker
+    App->>CQ: SendTurn{id, request}
+    W->>W: dequeue, run transfer (checks cancel flag at every I/O boundary)
+    W-->>App: events{id, ...} via event queue, delivered in update()
+    App->>App: turn.cancel() → sets atomic flag
+    App->>CQ: Cancel{id} (covers still-queued turns)
+    W-->>App: terminal event: Cancelled{id}
+    App->>W: ~Harness(): request_stop() → abort all transfers, drain, join (bounded)
+```
+
+### Turn lifecycle (normative)
+
+```mermaid
+stateDiagram-v2
+    [*] --> Queued: send()
+    Queued --> AwaitingModel: worker picks up (FIFO)
+    Queued --> Cancelled: cancel() before start (no I/O ever issued)
+    AwaitingModel --> Streaming: first content event
+    Streaming --> AwaitingTool: stop_reason tool_use
+    AwaitingTool --> AwaitingModel: tool result submitted
+    AwaitingModel --> Completed
+    Streaming --> Completed
+    AwaitingModel --> Failed
+    Streaming --> Failed
+    AwaitingTool --> Cancelled
+    AwaitingModel --> Cancelled
+    Streaming --> Cancelled
+    Completed --> [*]
+    Failed --> [*]
+    Cancelled --> [*]
+```
+
+Exactly one terminal event per turn — never zero, never two. The remaining lifecycle contracts, each of which is a numbered requirement:
+
+- **Conversation commits are transactional.** History is mutated only by the pump at terminal-event delivery: `Completed` commits the full exchange (user message, all tool rounds, final answer) atomically; `Failed`/`Cancelled` commit nothing — the Conversation is exactly as it was before `send()`, so retry-by-resend is trivially correct.
+- **Detach semantics.** Dropping the handle detaches: the turn runs to termination, the Conversation still commits on completion. Events buffered for a destroyed handle are discarded at delivery time; the turn's *effects* survive, its *observability* doesn't.
+- **Late attachment.** Callbacks attached after events began arriving receive buffered prior events in order — no races, no missed deltas.
+- **Reentrancy.** Callbacks may call `send`, `cancel`, and registration APIs. Reentrant `update()` is forbidden and asserts. Tool registration changes take effect for subsequent turns, not in-flight ones.
+- **Non-preemption.** The `update()` budget is a soft deadline checked *between* callbacks; an individual callback or tool handler is never preempted and may overrun the budget. The budget bounds Scry's scheduling, not user code.
+- **Callback exceptions** propagate out of `update()` with the harness valid and the event counted delivered (§1).
+- **Shutdown.** `~Harness()` cancels all turns, aborts transfers, joins the worker within a bound set by transport-abort latency, and discards undelivered events. No callback ever fires after destruction begins.
 
 ## 4. The Agentic Loop: Sans-I/O State Machine
 
@@ -122,6 +178,8 @@ Every "boring first" choice is recorded here with the condition that triggers ev
 | Provider factory keyed on internal enum, no plugin API | A third-party provider that can't be upstreamed | Public adapter concept + registration hook; only then |
 | Trait/customization-point parameter descriptions | Pinned toolchain gains P3394 annotations | Annotations in the args struct become the primary path; trait remains as override |
 | No connection pooling beyond curl defaults | Measured connect/TLS overhead in streaming-heavy use | curl share/multi connection reuse, invisible above the transport seam |
+| Linux + macOS only | Concrete Windows user demand | Windows reflection-OFF via clang; MSVC leg only if/when P2996 ships there |
+| Serialized transfers: queued turns wait while the active turn awaits a main-thread tool | Serialized M1 scheduling measurably limits a real app | Tool-await releases the transfer slot under curl-multi multiplexing (same trigger as row 2) |
 
 ## 12. Pattern Summary
 
