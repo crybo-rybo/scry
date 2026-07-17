@@ -1,0 +1,9 @@
+# Build trees (all presets build under build/<preset>)
+/build/
+
+# Tooling caches and editor droppings
+.cache/
+compile_commands.json
+.DS_Store
+.vscode/
+.idea/

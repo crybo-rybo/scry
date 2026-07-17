@@ -1,0 +1,37 @@
+# clang-tidy profile — curated per ENGINEERING.md §5: this config is
+# documentation of our taste, and every disabled check carries a one-line
+# reason. WarningsAsErrors '*' makes the whole profile a per-commit gate.
+#
+# Disabled checks and why:
+#   bugprone-easily-swappable-parameters
+#       — flags nearly every two-argument function; noise outweighs catches.
+#   cppcoreguidelines-avoid-magic-numbers / readability-magic-numbers
+#       — twins; literal-heavy tests and golden files make them pure noise.
+#   cppcoreguidelines-avoid-non-const-global-variables
+#       — fires on Catch2's TEST_CASE auto-registration statics in every
+#         test TU; re-evaluate if non-test code ever trips it.
+#   modernize-use-trailing-return-type
+#       — pure style churn; prevents no defect.
+#   readability-identifier-length
+#       — short names are idiomatic in tight scopes (i, it, cq).
+#
+# The cognitive-complexity threshold pins QA-004 (fail above 25).
+Checks: >-
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  concurrency-*,
+  cppcoreguidelines-*,
+  -cppcoreguidelines-avoid-magic-numbers,
+  -cppcoreguidelines-avoid-non-const-global-variables,
+  modernize-*,
+  -modernize-use-trailing-return-type,
+  performance-*,
+  readability-*,
+  -readability-identifier-length,
+  -readability-magic-numbers
+WarningsAsErrors: '*'
+HeaderFilterRegex: 'include/scry/'
+FormatStyle: file
+CheckOptions:
+  - key: readability-function-cognitive-complexity.Threshold
+    value: 25

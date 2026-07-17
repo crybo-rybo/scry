@@ -1,0 +1,19 @@
+# Scry formatting — checked in at M0 so formatting arguments end on day one
+# (ARCHITECTURE.md §10). Enforced by CI and `just format-check`.
+BasedOnStyle: LLVM
+Standard: Latest
+ColumnLimit: 100
+IndentWidth: 4
+AccessModifierOffset: -4
+PointerAlignment: Left
+DerivePointerAlignment: false
+InsertNewlineAtEOF: true
+IncludeBlocks: Regroup
+IncludeCategories:
+  # Own public headers first, then third-party, then std.
+  - Regex: '^<scry/'
+    Priority: 1
+  - Regex: '^<(catch2|glaze|curl)/'
+    Priority: 2
+  - Regex: '^<'
+    Priority: 3
