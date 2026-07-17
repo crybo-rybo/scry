@@ -41,6 +41,7 @@ and write-callback feasibility check.
 | [REQUIREMENTS.md](REQUIREMENTS.md) | **The normative register.** Every binding requirement as a numbered RFC-2119 row with milestone and verification method. When prose elsewhere conflicts with the register, the register wins. |
 | [ADR 0001](docs/adr/0001-public-object-graph-and-lifetimes.md) | Accepted public ownership, registry snapshot, Turn detach, and callback-lifetime decisions. |
 | [ADR 0002](docs/adr/0002-build-and-dependency-foundation.md) | Build, package, dependency-acquisition, and initial test-harness decisions. |
+| [ADR 0003](docs/adr/0003-test-framework-deferred.md) | Test framework deferred to M1; Catch2 analysis preserved for that decision. |
 
 ## Reading order
 
