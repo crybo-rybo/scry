@@ -1,0 +1,126 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  core:
+    name: Core (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux GCC
+            os: ubuntu-24.04
+            cc: gcc
+            cxx: g++
+            libcxx: false
+            packages: ""
+          - name: Linux Clang
+            os: ubuntu-24.04
+            cc: clang
+            cxx: clang++
+            libcxx: true
+            packages: libc++-dev libc++abi-dev
+          - name: macOS AppleClang
+            os: macos-15
+            cc: clang
+            cxx: clang++
+            libcxx: false
+            packages: ""
+    runs-on: ${{ matrix.os }}
+    env:
+      CC: ${{ matrix.cc }}
+      CXX: ${{ matrix.cxx }}
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - name: Install Linux build tools
+        if: runner.os == 'Linux'
+        run: >
+          sudo apt-get update &&
+          sudo apt-get install -y clang-format ninja-build ${{ matrix.packages }}
+      - name: Install macOS build tools
+        if: runner.os == 'macOS'
+        run: brew install clang-format ninja
+      - name: Install complexity checker
+        run: python3 -m pip install --user --break-system-packages lizard==1.22.1
+      - name: Run local-equivalent CI
+        run: ./scripts/ci-local.sh -DSCRY_USE_LIBCXX=${{ matrix.libcxx }}
+
+  static-analysis:
+    name: clang-tidy
+    runs-on: ubuntu-24.04
+    env:
+      CC: clang
+      CXX: clang++
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - run: >
+          sudo apt-get update &&
+          sudo apt-get install -y clang-tidy libc++-dev libc++abi-dev ninja-build
+      - name: Configure
+        run: >
+          cmake --preset ci
+          -B build/tidy
+          -DSCRY_ENABLE_CLANG_TIDY=ON
+          -DSCRY_ENABLE_FORMAT_CHECK=OFF
+          -DSCRY_USE_LIBCXX=ON
+      - name: Analyze
+        run: cmake --build build/tidy
+
+  sanitizers:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: ASan + UBSan
+            preset: asan
+          - name: TSan
+            preset: tsan
+    runs-on: ubuntu-24.04
+    env:
+      CC: clang
+      CXX: clang++
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - run: >
+          sudo apt-get update &&
+          sudo apt-get install -y libc++-dev libc++abi-dev ninja-build
+      - run: |
+          cmake --preset ${{ matrix.preset }} -DSCRY_USE_LIBCXX=ON
+          cmake --build build/${{ matrix.preset }}
+          ctest --test-dir build/${{ matrix.preset }} --output-on-failure
+
+  reflection:
+    name: GCC 16 P2996 + Glaze
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - name: Install GCC 16
+        run: |
+          sudo add-apt-repository --yes ppa:ubuntu-toolchain-r/test
+          sudo apt-get update
+          sudo apt-get install -y g++-16 ninja-build
+      - name: Configure
+        run: cmake --preset reflection-gcc16
+      - name: Build feasibility spike
+        run: cmake --build build/reflection-gcc16
+
+  curl:
+    name: libcurl SSE feasibility
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev ninja-build
+      - run: |
+          cmake --preset curl
+          cmake --build build/curl
+          ctest --test-dir build/curl --output-on-failure

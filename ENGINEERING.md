@@ -82,7 +82,7 @@ Enforced via lizard and clang-tidy on every commit:
 
 Three rings, ordered by feedback speed; a failure in an inner ring stops the outer ones:
 
-1. **Per-commit (< ~10 min):** format check, tidy, build matrix (GCC trunk + clang-p2996 with reflection ON; stable GCC/Clang with reflection OFF — the severability proof), unit + component tests, ASan/UBSan/TSan suites, diff coverage, CRAP and complexity gates.
+1. **Per-commit (< ~10 min):** format check, tidy, build matrix (GCC 16 with reflection ON; stable GCC/Clang with reflection OFF — the severability proof), unit + component tests, ASan/UBSan/TSan suites, diff coverage, CRAP and complexity gates. clang-p2996 runs only as a non-gating compatibility experiment and never builds release artifacts while its upstream marks it non-production.
 2. **Per-merge to main:** integration tests, adapter golden suites, coverage report publication, short fuzz.
 3. **Nightly:** end-to-end against a real local model, long fuzz, deep static analysis, mutation testing (mutate the machine and parsers; surviving mutants reveal assertion-free tests — this audits the *tests*, which coverage cannot).
 

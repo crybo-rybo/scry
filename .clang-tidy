@@ -1,0 +1,19 @@
+---
+Checks: >
+  -*,
+  bugprone-*,
+  -bugprone-exception-escape,
+  concurrency-*,
+  modernize-use-equals-default,
+  modernize-use-nullptr,
+  performance-*,
+  readability-function-cognitive-complexity,
+  readability-redundant-*,
+  -readability-redundant-member-init
+WarningsAsErrors: '*'
+HeaderFilterRegex: '^.*/(include|src|tests|examples)/.*'
+CheckOptions:
+  readability-function-cognitive-complexity.Threshold: '25'
+# Allocation failures are outside Scry's failure-as-value contract, including main().
+# Explicit aggregate defaults keep partial designated initialization warning-clean.
+...
