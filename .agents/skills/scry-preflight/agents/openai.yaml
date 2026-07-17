@@ -1,0 +1,4 @@
+interface:
+  display_name: "Scry Preflight"
+  short_description: "Run Scry validation before a PR handoff"
+  default_prompt: "Use $scry-preflight to validate this change and report any remaining risks."
