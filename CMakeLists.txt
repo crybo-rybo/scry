@@ -8,6 +8,7 @@ project(
 )
 
 include(CMakePackageConfigHelpers)
+include(FetchContent)
 include(GNUInstallDirs)
 
 option(SCRY_BUILD_TESTS "Build Scry's tests" ${PROJECT_IS_TOP_LEVEL})
@@ -31,16 +32,38 @@ set_property(
   PROPERTY STRINGS none address-undefined thread
 )
 
-add_library(scry INTERFACE)
+find_package(CURL 7.84 REQUIRED)
+find_package(Threads REQUIRED)
+
+if(SCRY_BUILD_REFLECTION_SPIKE)
+  set(glaze_ENABLE_REFLECTION26 ON CACHE BOOL "" FORCE)
+endif()
+FetchContent_Declare(
+  glaze
+  GIT_REPOSITORY https://github.com/stephenberry/glaze.git
+  GIT_TAG 8b60d82c66311c145c4d03be3b556b555a9cb111
+  SYSTEM
+  EXCLUDE_FROM_ALL
+)
+FetchContent_MakeAvailable(glaze)
+
+add_library(
+  scry
+  STATIC
+    src/core/retry.cpp
+)
 add_library(scry::scry ALIAS scry)
 set_target_properties(scry PROPERTIES EXPORT_NAME scry)
-target_compile_features(scry INTERFACE cxx_std_23)
+target_compile_features(scry PUBLIC cxx_std_23)
 target_include_directories(
   scry
-  INTERFACE
+  PUBLIC
     "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>"
     "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
+  PRIVATE
+    "${PROJECT_SOURCE_DIR}/src"
 )
+target_include_directories(scry SYSTEM PRIVATE "${glaze_SOURCE_DIR}/include")
 
 add_library(scry_project_options INTERFACE)
 target_compile_options(
@@ -48,15 +71,22 @@ target_compile_options(
   INTERFACE
     "$<$<COMPILE_LANG_AND_ID:CXX,AppleClang,Clang,GNU>:-Wall;-Wextra;-Wconversion;-Wshadow>"
 )
+target_link_libraries(
+  scry
+  PRIVATE
+    CURL::libcurl
+    Threads::Threads
+    "$<BUILD_INTERFACE:scry_project_options>"
+)
 
 if(SCRY_USE_LIBCXX)
   if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     message(FATAL_ERROR "SCRY_USE_LIBCXX requires Clang or AppleClang")
   endif()
-  foreach(SCRY_TARGET IN ITEMS scry scry_project_options)
-    target_compile_options("${SCRY_TARGET}" INTERFACE -stdlib=libc++)
-    target_link_options("${SCRY_TARGET}" INTERFACE -stdlib=libc++)
-  endforeach()
+  target_compile_options(scry PUBLIC -stdlib=libc++)
+  target_link_options(scry PUBLIC -stdlib=libc++)
+  target_compile_options(scry_project_options INTERFACE -stdlib=libc++)
+  target_link_options(scry_project_options INTERFACE -stdlib=libc++)
 endif()
 
 if(SCRY_WARNINGS_AS_ERRORS)
@@ -123,16 +153,18 @@ add_custom_target(
 
 if(SCRY_ENABLE_FORMAT_CHECK)
   find_program(SCRY_CLANG_FORMAT_EXECUTABLE NAMES clang-format REQUIRED)
-  set(
+  file(
+    GLOB_RECURSE
     SCRY_FORMAT_SOURCES
-    ${SCRY_PUBLIC_HEADERS}
-    examples/main_loop.cpp
-    spikes/curl_sse.cpp
-    spikes/reflection_glaze.cpp
-    tests/package_consumer/main.cpp
-    tests/public_api_contract.cpp
+    CONFIGURE_DEPENDS
+      "${PROJECT_SOURCE_DIR}/examples/*.cpp"
+      "${PROJECT_SOURCE_DIR}/include/*.hpp"
+      "${PROJECT_SOURCE_DIR}/spikes/*.cpp"
+      "${PROJECT_SOURCE_DIR}/src/*.cpp"
+      "${PROJECT_SOURCE_DIR}/src/*.hpp"
+      "${PROJECT_SOURCE_DIR}/tests/*.cpp"
+      "${PROJECT_SOURCE_DIR}/tests/*.hpp"
   )
-  list(TRANSFORM SCRY_FORMAT_SOURCES PREPEND "${PROJECT_SOURCE_DIR}/")
 
   add_custom_target(
     format-check
@@ -220,16 +252,6 @@ if(SCRY_BUILD_REFLECTION_SPIKE)
     )
   endif()
 
-  include(FetchContent)
-  set(glaze_ENABLE_REFLECTION26 ON CACHE BOOL "" FORCE)
-  FetchContent_Declare(
-    glaze
-    GIT_REPOSITORY https://github.com/stephenberry/glaze.git
-    GIT_TAG v7.5.0
-    GIT_SHALLOW TRUE
-  )
-  FetchContent_MakeAvailable(glaze)
-
   add_executable(scry_reflection_spike spikes/reflection_glaze.cpp)
   target_link_libraries(
     scry_reflection_spike
@@ -247,6 +269,16 @@ endif()
 
 if(SCRY_BUILD_TESTS)
   include(CTest)
+  FetchContent_Declare(
+    Catch2
+    GIT_REPOSITORY https://github.com/catchorg/Catch2.git
+    GIT_TAG dfc2dff8d70d083c60c1c6986030e5389a867a93
+    SYSTEM
+    EXCLUDE_FROM_ALL
+  )
+  FetchContent_MakeAvailable(Catch2)
+  list(APPEND CMAKE_MODULE_PATH "${catch2_SOURCE_DIR}/extras")
+  include(Catch)
 
   file(MAKE_DIRECTORY "${PROJECT_BINARY_DIR}/generated/header_checks")
   foreach(SCRY_HEADER IN LISTS SCRY_PUBLIC_HEADERS)
@@ -281,6 +313,14 @@ if(SCRY_BUILD_TESTS)
     PRIVATE scry::scry scry_project_options
   )
   add_test(NAME public-api-contract COMMAND scry_public_api_contract)
+
+  add_executable(scry_retry_tests tests/core/retry_tests.cpp)
+  target_include_directories(scry_retry_tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
+  target_link_libraries(
+    scry_retry_tests
+    PRIVATE Catch2::Catch2WithMain scry::scry scry_project_options
+  )
+  catch_discover_tests(scry_retry_tests TEST_PREFIX "core.")
 endif()
 
 if(SCRY_BUILD_CURL_SPIKE)

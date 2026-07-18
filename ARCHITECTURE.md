@@ -79,19 +79,20 @@ stateDiagram-v2
     Queued --> AwaitingModel: worker picks up (FIFO)
     Queued --> Cancelled: cancel() before start (no I/O ever issued)
     AwaitingModel --> Streaming: first content event
-    Streaming --> AwaitingTool: stop_reason tool_use
-    AwaitingTool --> AwaitingModel: tool result submitted
     AwaitingModel --> Completed
     Streaming --> Completed
     AwaitingModel --> Failed
     Streaming --> Failed
-    AwaitingTool --> Cancelled
     AwaitingModel --> Cancelled
     Streaming --> Cancelled
     Completed --> [*]
     Failed --> [*]
     Cancelled --> [*]
 ```
+
+This diagram is the M1 chat lifecycle. M2 extends the same machine with
+`AwaitingTool` and the tool-result transition; it does not replace the M1
+states.
 
 Exactly one terminal event per turn — never zero, never two. The remaining lifecycle contracts, each of which is a numbered requirement:
 
@@ -184,7 +185,7 @@ Every "boring first" choice is recorded here with the condition that triggers ev
 | Scry-owned `UniqueFunction` at callable boundaries | All supported macOS/Linux standard libraries ship a conforming `std::move_only_function` and a pre-1.0 API change is acceptable | Replace the small owned erasure with the standard facility after ABI and allocation benchmarks |
 | Linux + macOS only | Concrete Windows user demand | Windows reflection-OFF via clang; MSVC leg only if/when P2996 ships there |
 | Reflection-ON CI leg on Linux only (PORT-005) | A production-grade P2996 toolchain becomes practically distributable on macOS | Gating reflection legs on both platforms |
-| Serialized transfers: queued turns wait while the active turn awaits a main-thread tool | Serialized M1 scheduling measurably limits a real app | Tool-await releases the transfer slot under curl-multi multiplexing (same trigger as row 2) |
+| Serialized turns: M2 queued turns wait while the active turn awaits a main-thread tool | Serialized scheduling measurably limits a real app | Tool-await releases the slot under curl-multi multiplexing (same trigger as row 2) |
 
 ## 12. Pattern Summary
 

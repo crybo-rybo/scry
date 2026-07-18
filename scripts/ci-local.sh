@@ -16,7 +16,7 @@ readonly format_check="${SCRY_FORMAT_CHECK:-1}"
 
 git diff --check
 python3 -m unittest scripts.test_quality_gate
-python3 -m lizard include examples spikes tests -l cpp -C 15 -L 60 -a 6
+python3 -m lizard include src examples spikes tests -l cpp -C 15 -L 60 -a 6
 python3 -m lizard scripts -l python -C 15 -L 60 -a 6
 if [[ "${format_check}" == "1" ]]; then
   cmake --preset ci "$@"

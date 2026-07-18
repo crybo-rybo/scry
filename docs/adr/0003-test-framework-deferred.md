@@ -1,6 +1,6 @@
 # ADR 0003: Test Framework Deferred to M1 (leading candidate: Catch2 v3)
 
-- Status: Accepted — framework selection deferred until M1 behavioral suites land
+- Status: Superseded by ADR 0005
 - Date: 2026-07-17
 
 ## Context
