@@ -138,25 +138,36 @@ jobs:
         include:
           - name: ASan + UBSan
             preset: asan
+            cc: gcc-14
+            cxx: g++-14
+            packages: g++-14 libcurl4-openssl-dev ninja-build
+            use_libcxx: false
           - name: TSan
             preset: tsan
+            cc: clang-18
+            cxx: clang++-18
+            packages: clang-18 libc++-dev libc++abi-dev libcurl4-openssl-dev ninja-build
+            use_libcxx: true
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
-      CC: clang-18
-      CXX: clang++-18
+      CC: ${{ matrix.cc }}
+      CXX: ${{ matrix.cxx }}
     steps:
       - uses: actions/checkout@v7.0.0
-      - run: >
-          sudo apt-get update &&
-          sudo apt-get install -y
-          clang-18 libc++-dev libc++abi-dev libcurl4-openssl-dev ninja-build
+      - name: Install sanitizer toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ${{ matrix.packages }}
       - name: Lower ASLR entropy for sanitizers
         # High-entropy ASLR (vm.mmap_rnd_bits=32) breaks ASan/TSan
         # shadow-memory mapping on Ubuntu 24.04 runners.
         run: sudo sysctl vm.mmap_rnd_bits=28
       - run: |
-          cmake --preset ${{ matrix.preset }} -DSCRY_USE_LIBCXX=ON
+          # GCC keeps alloc/dealloc mismatch detection live for ASan; Ubuntu's
+          # libc++ packaging otherwise triggers LP #2000322 on std exceptions.
+          cmake --preset ${{ matrix.preset }} \
+            -DSCRY_USE_LIBCXX=${{ matrix.use_libcxx }}
           cmake --build build/${{ matrix.preset }}
           ctest --test-dir build/${{ matrix.preset }} --output-on-failure
 
