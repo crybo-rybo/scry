@@ -382,12 +382,11 @@ therefore remains libcurl plus internal Glaze.
   `qwen3:1.7b-q4_K_M` manifest digest is verified before the smoke runs. This
   documents the live pipeline; no completed hosted nightly execution is
   claimed yet.
-- M5 acceptance requires deterministic NPC domain/registration cases,
+- M5's live acceptance gate covers deterministic NPC domain/registration cases,
   fake-controller panel send/stream/complete/error/cancel/lifetime cases, a
   warnings-as-errors compile/link against the pinned real Dear ImGui sources,
   one headless ImGui frame, and a clean-package absence audit. The shared
-  showcase script must run locally and in hosted CI before any M5 verification
-  is called live.
+  showcase script passes locally and in hosted CI.
 - CI matrix: GCC 16 with `-std=c++26 -freflection` is the supported M3
   component toolchain. The live `scripts/ci-reflection.sh` gate performs a
   fresh P2996-probed build, the reflection header audit, the 27-test schema,

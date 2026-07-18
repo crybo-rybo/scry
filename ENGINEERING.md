@@ -204,15 +204,13 @@ and required-tool paths using Ollama 0.22.1 against the exact
 That local pass does not claim execution of the checksum-pinned Ollama v0.32.1
 hosted job.
 
-The M5 implementation and complete preflight pass locally under ADR 0010.
-`scripts/ci-showcase.sh` is the single local/hosted entry point: it runs 20
-deterministic NPC, registration, and fake-controller panel tests three times;
-compiles and executes one headless frame with the pinned Dear ImGui sources
-under warnings-as-errors; and audits a clean reflection-OFF install plus
-downstream consumer to prove that no showcase artifact or dependency leaks
-into the package. `scripts/preflight.sh` calls that shared gate. The hosted
-showcase job has not yet run for this implementation, so M5 completion and live
-verification are not yet claimed.
+M5 is live under ADR 0010. `scripts/ci-showcase.sh` is the single local/hosted
+entry point: it runs 20 deterministic NPC, registration, and fake-controller
+panel tests three times; compiles and executes one headless frame with the
+pinned Dear ImGui sources under warnings-as-errors; and audits a clean
+reflection-OFF install plus downstream consumer to prove that no showcase
+artifact or dependency leaks into the package. `scripts/preflight.sh` and the
+hosted `showcase` job both call and pass that shared gate.
 
 ## 7. Workflow & Change Hygiene
 

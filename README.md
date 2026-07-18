@@ -12,13 +12,12 @@ consulting an oracle (the LLM).
 
 Built for the apps that live in C++ — games, GUI tools, simulators — where you can't block a frame, can't shell out to Python, and want tool use, not just chat.
 
-**Status:** M4 breadth is complete. The M5 showcase contract is accepted under
-[ADR 0010](docs/adr/0010-m5-showcase-contract.md), and its implementation and
-complete preflight pass locally. It provides opt-in C++23 examples for a
-host-owned Dear ImGui chat panel and a deterministic grid NPC driven through
+**Status:** M4 breadth and the M5 showcase are complete. M5 is implemented under
+[ADR 0010](docs/adr/0010-m5-showcase-contract.md) with opt-in C++23 examples for
+a host-owned Dear ImGui chat panel and a deterministic grid NPC driven through
 explicit tools. These examples consume only `scry::scry`: they add no public
 API, installed artifact, or runtime dependency. The shared showcase gate passes
-locally; hosted verification, and therefore M5 completion, remain pending.
+locally and in hosted CI.
 
 The C++23 runtime selects Anthropic Messages or the strict OpenAI-compatible
 Chat Completions subset from `Config`, including local servers with no API key.
@@ -96,8 +95,7 @@ preflight entry point.
 The M5 showcase gate is also wired through this entry point and passes locally:
 it runs 20 deterministic tests three times, compiles and executes a real
 headless Dear ImGui frame, and audits the default-OFF package plus a downstream
-consumer. The same gate must pass in hosted CI before the milestone is marked
-complete.
+consumer. Hosted CI runs and passes the same gate.
 `just ci` is the optional convenience wrapper.
 
 The reflection-OFF surface targets stable C++23 compilers. The accepted M3

@@ -126,9 +126,8 @@ M5 is complete only when one shared showcase gate:
 - audits a clean core install/package to prove that no showcase source,
   header, target, dependency, or build option leaks into the consumer surface.
 
-The gate is callable locally and by hosted CI. The implementation and complete
-preflight pass locally; hosted showcase verification remains pending. M5 is
-not claimed complete until the same gate passes there.
+The gate passes locally and in hosted CI. The M5 acceptance criteria are
+satisfied.
 
 ## Consequences
 

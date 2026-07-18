@@ -465,7 +465,7 @@ ARCHITECTURE.md §7). Remaining:
 | **M2 — Tools (complete)** | Snapshot and serialize explicit-schema registrations; multi-round tool states in the sans-I/O machine; main-thread ordered dispatch and automatic resend; transactional tool history and versioned Conversation persistence. |
 | **M3 — Reflection (complete)** | Optional GCC 16 `scry::reflection` component; P2996 lexical schema generation and strict typed marshalling; `scry::reflection::add<Args>()`; annotation/trait descriptions; package consumer and docs demo. |
 | **M4 — Breadth (complete)** | ADR 0008 OpenAI-compatible Chat Completions subset and ADR 0009 ordered per-tool worker execution; retries/backoff polish, cancellation hardening, and their deterministic, fuzz, sanitizer, Curl, and scheduled bounded local-model gates. |
-| **M5 — Showcase (implemented locally; hosted verification pending)** | ADR 0010 examples: an opt-in Dear ImGui chat panel and a deterministic grid world where the LLM drives an NPC through explicit tools, with no new public/package surface. |
+| **M5 — Showcase (complete)** | ADR 0010 examples: an opt-in Dear ImGui chat panel and a deterministic grid world where the LLM drives an NPC through explicit tools, with no new public/package surface. |
 
 ### M5 showcase contract
 
@@ -494,8 +494,7 @@ dependency set. SHOW-001–004 and ADR 0010 define the acceptance boundary; M5 i
 not complete until the deterministic panel/NPC tests, real headless ImGui frame,
 warnings-as-errors build, package audit, and shared local/hosted gate pass.
 Those checks pass locally through `scripts/ci-showcase.sh` and the complete
-preflight. The hosted showcase job has not yet run for this implementation, so
-M5 is not yet claimed complete.
+preflight and in hosted CI through the same script. M5 is complete.
 
 M1 and M2 precede M3 on purpose: reflection is the flashy layer, but it now
 has a complete, tested C++23 agentic runtime to lower onto.
