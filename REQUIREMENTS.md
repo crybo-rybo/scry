@@ -68,14 +68,18 @@ ID scheme: `SCRY-<AREA>-NNN`, abbreviated to `<AREA>-NNN` in the tables below. I
 | ID | Level | Requirement | Milestone | Verification |
 |---|---|---|---|---|
 | TOOL-001 | MUST | Explicit-schema registration (schema string + type-erased `json → json` callable) is public API and is the substrate all registration lowers onto. M1 validates and stores registrations but does not snapshot, serialize, or dispatch them; those behaviors begin in M2. | M1 (registry foundation); M2 (use) | **Live:** `tool registration accepts only JSON object schemas and canonicalizes them`, `Anthropic request serializes multiple schemas and tool results in order`, `tool dispatch canonicalizes successful handler results`, reflection-OFF build, and `scry_canonical_example` |
-| TOOL-002 | MUST | The P2996 reflection layer derives schema and argument marshalling from plain aggregate structs at compile time; schemas are `constexpr` artifacts. | M3 | Compile-time tests; schema golden files |
-| TOOL-003 | MUST | The reflection layer is severable: isolated header behind a feature macro; the library builds and passes tests with it disabled. | M0/M3 | CI matrix leg with reflection OFF |
-| TOOL-004 | MUST | Members with default initializers become optional parameters; member names become parameter names. | M3 | Schema golden files |
-| TOOL-005 | SHOULD | Reflected registration is concept-constrained; unsupported member types fail at the call site with a legible diagnostic. | M3 | Compile-fail tests |
+| TOOL-002 | MUST | The P2996 reflection layer derives a lexically canonical input schema and argument/return marshalling from plain aggregate structs. `scry::reflection::input_schema_v<Args>` is a `constexpr` artifact, and reflected registration lowers to TOOL-001 rather than creating a second registry or dispatch path. | M3 | **Live:** three exact `input_schema_v` compile-time goldens; `reflected registration lowers into the additive registry`; installed reflection consumer exercises both public entry points |
+| TOOL-003 | MUST | The reflection layer is severable: it is a separate optional `reflection` package component and `scry::reflection` target behind `SCRY_ENABLE_REFLECTION`. The C++23 core builds, tests, installs, and is consumable with it disabled; core-only consumers receive no C++26 flags, reflection headers/runtime, Glaze headers/types, or exported Glaze target. | M0/M3 | **Live:** reflection-OFF clean build/install/consumer plus artifact-absence audit in `scripts/ci-local.sh`; `scripts/ci-reflection.sh` clean install, `CheckReflectionPackage.cmake`, and reflection-component consumer |
+| TOOL-004 | MUST | Reflected member names become parameter names. Presence and nullability are independent: only a default member initializer permits omission and removes a member from `required`; only `std::optional<T>` permits JSON `null`. Omission preserves the C++ initializer, and no JSON Schema `default` is emitted. | M3 | **Live:** `PresenceArguments` compile-time schema covers the four presence/nullability cells; `reflected decoding preserves defaults and required nullability` |
+| TOOL-005 | SHOULD | Reflected registration is concept-constrained. Root and nested objects are complete, default-initializable, non-union plain aggregates with no bases and public named non-bit-field writable members; unsupported roots, members, metadata, handlers, and returns fail at the call site with a stable, legible Scry diagnostic. | M3 | **Live:** positive/negative `SupportedValue`, `ToolArguments`, and `ToolHandlerFor` assertions plus the five `reflection.compile-fail.*` diagnostic tests |
 | TOOL-006 | MUST | Tool-handler exceptions are caught at dispatch and returned to the model as tool-error results; they never propagate to the app. | M2 | **Live:** `tool dispatch contains standard and non-standard handler exceptions` |
-| TOOL-007 | SHOULD | Parameter descriptions come from P3394 annotations when the toolchain supports them, else a customization point. | M3 | Schema golden files per toolchain |
-| TOOL-008 | MAY | Tool return values may be any JSON-serializable type, including reflected structs. | M3 | Unit tests |
+| TOOL-007 | SHOULD | Parameter descriptions come from Scry's P3394 `description` annotation when annotation queries are supported. `tool_traits<Args>::descriptions` is always available as the portable path and overrides an annotation for a matching member; unknown/duplicate trait names and duplicate Scry description annotations fail at compile time. | M3 | **Live:** `PresenceArguments` schema golden proves annotation fallback and trait override; `reflection.compile-fail.unknown-description` and `.duplicate-description` enforce stable invalid-trait diagnostics |
+| TOOL-008 | MAY | A reflected handler may return a direct TOOL-010 supported value or `Result` of one, including a reflected aggregate. The reflected overload does not accept `void`, `Status`, raw `Json`, references, futures, or awaitables; dynamic/unsupported returns use TOOL-001. | M3 | **Live:** positive/negative `ToolHandlerFor` assertions, `reflected erased handlers retain move-only captures and typed errors`, and the void/raw-JSON compile-fail tests |
 | TOOL-009 | MUST | The M2 registry is additive-only: registering a duplicate tool name is rejected via `std::expected`, not silent replacement, and there is no removal/replacement API. A future mutation surface requires an explicit snapshot/lifetime decision. | M1 (duplicate rejection); M2 (mutation policy) | **Live:** `ToolRegistry rejects invalid and duplicate registrations`, `tool registration is additive and duplicate names do not replace records`, and ADR 0006 |
+| TOOL-010 | MUST | M3 supported values are `bool`; non-character signed/unsigned integral types; finite `float`/`double`; `std::string`; scoped enums with unique underlying values encoded by exact enumerator name; one layer of `std::optional<T>`; `std::vector<T,Allocator>` except every `vector<bool,Allocator>` specialization; `std::array<T,N>`; and recursively supported plain aggregates. Integers carry exact C++ range bounds; fixed arrays carry exact length bounds. Nested optionals and enum aliases are rejected because their JSON decode/encode is ambiguous. Other C++ shapes are not inferred from Glaze support and remain unsupported until separately specified. | M3 | **Live:** compile-time supported/rejected type assertions; exact type-family schema goldens; composite round trip, numeric/enum/fixed-array boundary, and non-finite/unnamed-value tests |
+| TOOL-011 | MUST | Generated schemas use Scry's closed provider-neutral JSON Schema 2020-12 subset from ADR 0007: closed inline objects; the keywords `additionalProperties`, `anyOf`, `description`, `enum`, `items`, `maxItems`, `minItems`, `minimum`, `maximum`, `properties`, `required`, and `type`; minified JSON; lexicographically sorted object/property keys and `required` names; and enum declaration order. Generated schemas omit `$schema`, references/definitions, `title`, and `default`. This subset does not restrict explicit TOOL-001 schemas. | M3 | **Live:** exact `PresenceArguments`, `AllTypesArguments`, and `NumericArguments` compile-time schema goldens plus installed-consumer schema assertion |
+| TOOL-012 | MUST | Reflected decoding is strict and recursive: it rejects a non-object root, unknown fields, missing required fields, wrong JSON kinds (including a lexical number such as `1.0` for an integral member), disallowed null, numeric sign/range/non-finite errors, unknown enum names, and fixed-array length errors. The canonical parsed JSON value is authoritative, so duplicate lexical object keys are not separately observable at M3 dispatch. Decode failures become bounded model-visible tool errors; configured payload-limit failures remain fatal `resource_limit` errors. | M3 | **Live:** strict root/member/type test; numeric, enum, fixed-array, non-finite, and unnamed-value boundary tests; typed-handler error test; existing exact tool argument/result resource-limit tests |
+| TOOL-013 | MUST | `scry::reflection::add<Args>(ToolRegistry&, ToolMetadata, Handler&&)` invokes the handler with `std::move(args)`, preserves move-only captures, and lowers the typed wrapper and `input_schema_v<Args>` through the existing additive registry. | M3 | **Live:** `reflected erased handlers retain move-only captures and typed errors`; `reflected registration lowers into the additive registry`; compiled reflection example and installed consumer |
 
 ## Provider & Protocol (SCRY-PROV)
 
@@ -119,10 +123,10 @@ ID scheme: `SCRY-<AREA>-NNN`, abbreviated to `<AREA>-NNN` in the tables below. I
 | ID | Level | Requirement | Milestone | Verification |
 |---|---|---|---|---|
 | PORT-001 | MUST | Core library (reflection OFF) targets C++23 and builds on stable GCC/libstdc++ and Clang/libc++. | M0 | **Live:** `ci.yml` core matrix (Linux GCC 14/libstdc++, Linux Clang 18/libc++, macOS AppleClang/libc++) |
-| PORT-002 | MUST | The supported reflection layer builds on GCC 16+ with `-std=c++26 -freflection`. clang-p2996 is a non-gating compatibility experiment and MUST NOT produce release artifacts while its maintainers classify it as non-production. | M0/M3 | **Live:** gating `ci.yml` reflection job (g++-16 + Glaze spike); clang-p2996 probe is manual/local via `SCRY_ENABLE_REFLECTION` (CMakeLists warns on Clang) |
+| PORT-002 | MUST | The supported reflection component builds on GCC 16+ with `-std=c++26 -freflection` and a positive P2996 feature probe. clang-p2996 is deferred to manual, non-gating compatibility work: it is not a supported reflection configuration and MUST NOT produce installable or release artifacts. | M0/M3 | **Live:** `scripts/ci-reflection.sh` fresh GCC 16/P2996-probed build, tests, install audit, and consumer; hosted `reflection` job calls the same script. No manual Clang result is claimed |
 | PORT-003 | MUST | Runtime dependencies are limited to libcurl + Glaze; any addition requires a written justification committed with the change. | M0 | Dependency manifest review gate |
-| PORT-004 | MUST | Glaze types do not appear in public headers; the tool-boundary JSON type is Scry-owned. | M2 | **Live:** public-header include audit, standalone header compile targets, and `public-api-contract` |
-| PORT-005 | MUST | The reflection-OFF C++23 core supports Linux and macOS from M0. The reflection-ON GCC 16 leg is supported on Linux first; macOS reflection support follows when a production-grade toolchain is practically distributable (evolution register row). Windows is deferred to the evolution register. | M0 | **Live:** `ci.yml` matrix (core legs on both platforms; reflection job on Linux) |
+| PORT-004 | MUST | Glaze headers and types do not appear in public headers; the tool-boundary JSON type and reflection JSON-view bridge are Scry-owned. | M2/M3 | **Live:** public-header audit and include-first reflection header target; `CheckReflectionPackage.cmake` rejects Glaze/export leakage; installed reflection consumer builds without a Glaze include path |
+| PORT-005 | MUST | The reflection-OFF C++23 core supports Linux and macOS from M0. The reflection-ON GCC 16 component is supported on Linux first; macOS reflection support follows when a production-grade toolchain is practically distributable (evolution register row). Windows is deferred to the evolution register. | M0/M3 | **Live:** stable reflection-OFF core matrix on Linux/macOS; Linux `reflection` job runs the shared component build/test/install/consumer gate |
 | PORT-006 | MUST | libcurl ≥ 7.84.0; `CURL_VERSION_THREADSAFE` is verified at first initialization (host threads may exist before the first Harness). | M1 | **Live:** CMake 7.84 floor; first-lease runtime capability validation and rejection matrix; `curl` CI leg |
 | PORT-007 | MUST | Pre-1.0: no API/ABI stability promises, breaking changes allowed with changelog notice. From 1.0: semver, inline-namespace ABI versioning. | M0 (documented) | Release checklist |
 
@@ -131,22 +135,25 @@ ID scheme: `SCRY-<AREA>-NNN`, abbreviated to `<AREA>-NNN` in the tables below. I
 | ID | Level | Requirement | Milestone | Verification |
 |---|---|---|---|---|
 | QA-001 | MUST | Diff branch coverage ≥ 90% on new/changed lines; coverage exclusions require an inline justification. | M0 | **Live:** `scripts/quality-gate.sh` branch-aware merge-base comparison; `quality` CI job |
-| QA-002 | MUST | Branch-coverage floor ≥ 95% on the sans-I/O machine, SSE parser, retry classifier, and schema generator. | M2 (runtime components); M3 (schema generator) | **Live (M2):** `scripts/quality-gate.sh` enforces the turn-machine, SSE-parser, and retry-classifier floors; **M3 planned:** add the schema generator when it lands |
+| QA-002 | MUST | Branch coverage is ≥ 95% on the sans-I/O machine, SSE parser, and retry classifier. The M3 runtime codec is gated at ≥ 95% adjusted source decisions and 100% functions; the compiled JSON bridge is gated at ≥ 95% GCC/gcovr CFG branches. Exactly one inline-justified GCC-generated enum-switch artifact may be excluded, and a checked validator MUST reject a missing, malformed, or widened exclusion. Unadjusted codec decisions and combined GCC/gcovr CFG arcs remain diagnostic. Type-directed constant-evaluation branches use the compile-time positive/negative matrix and MUST NOT be represented by a misleading runtime percentage. | M2 (runtime components); M3 (codec/bridge) | **Live:** `scripts/quality-gate.sh` enforces M2 floors; `scripts/reflection-coverage.sh` and `scripts/reflection_coverage_gate.py` enforce M3 at 32/32 adjusted codec decisions, 62/62 functions, and 97/97 bridge branches; schema assertions plus five compile-fail diagnostics cover consteval paths |
 | QA-003 | MUST | No function on main with CRAP score > 30. | M0 | **Live:** `scripts/quality-gate.sh` hard gate + top-10 report; `quality` CI job |
 | QA-004 | MUST | Cyclomatic complexity ≤ 15 per function (warn at 10); cognitive complexity ≤ 25. Named suppressions only. | M0 | **Live:** cyclomatic via lizard in `scripts/ci-local.sh` (`-C 15`); cognitive via `.clang-tidy` threshold in the tidy job |
-| QA-005 | MUST | ASan, UBSan, and TSan suites pass per commit; threaded tests always run under TSan. | M0 | **Live:** `ci.yml` sanitizers job (`asan`, `tsan` presets) |
+| QA-005 | MUST | ASan, UBSan, and TSan suites pass per commit; threaded tests always run under TSan, and the supported reflection marshalling/JSON bridge runs under ASan+UBSan. | M0/M3 | **Live:** core `asan`/`tsan` jobs; `scripts/ci-reflection.sh` separate GCC 16 `address-undefined` build with all 27 reflection-labelled tests passing |
 | QA-006 | MUST | Warnings-as-errors (`-Wall -Wextra -Wconversion -Wshadow`) across the full compiler matrix. | M0 | **Live:** `scry_project_options` target + `ci.yml` core matrix |
 | QA-007 | MUST | All quality metrics ratchet: compared against main, they may hold or improve, never regress. | M0 | **Live:** candidate and merge-base are rebuilt with one toolchain by `scripts/quality-gate.sh`; ADR 0004 defines ratcheted metrics |
 | QA-008 | MUST | Unit/machine tests are deterministic: no real time, sleeps, or network. Flaky tests are fixed or deleted immediately. | M0 | **Live:** core and coverage suites use CTest `--repeat until-fail:3`; sanctioned-seam review remains required |
 | QA-009 | MUST | Every bug fix lands with a regression test (machine-level replay where applicable). | M1+ | **Live:** regression-test item in `.github/pull_request_template.md` |
 | QA-010 | SHOULD | Nightly: mutation testing on machine/parsers, long fuzz runs, deep static analysis, e2e against a real local model. | M4+ | Nightly pipeline |
-| QA-011 | SHOULD | Everything CI enforces is runnable locally with one command. | M0 | **Live:** `scripts/preflight.sh` runs all gates, continues after failures, and reports unavailable host toolchains; `just ci` is an optional wrapper |
+| QA-011 | SHOULD | Everything CI enforces is runnable locally with one command. | M0/M3 | **Live:** `scripts/preflight.sh` calls the same `scripts/ci-reflection.sh` used by hosted CI and reports unavailable host toolchains; `just ci` remains the optional wrapper |
 | QA-012 | MUST | Definition of Done includes updating the four load-bearing docs — including this register — when behavior or a decision changes. | M0 | PR checklist gate |
 
 ## Unratified / Known Gaps
 
-New gaps land here, not in prose. There are no known M0, M1, or M2
-requirement gaps.
+New gaps land here, not in prose. There are no known M0, M1, M2, or M3 design
+requirement gaps. The live M3 feature, diagnostic, packaging, sanitizer, and
+runtime coverage evidence is named above. Randomized reflection property/fuzz
+testing and manual Clang compatibility remain unclaimed future hardening, not
+M3 completion evidence.
 
 Amendment log:
 
@@ -169,12 +176,17 @@ Amendment log:
   persistence are live. M2 verification cells now name the machine, provider,
   runtime, integration, example, and quality gates that enforce them (ADR
   0006).
-
-## Deferred to M3 Design (tracked, not yet normative)
-
-Per the pre-implementation review, these are deliberately not specified yet:
-complete C++-type→JSON-Schema mapping; defaulted vs. optional vs. nullable
-member semantics; schema dialect/subset, enum/nested-type behavior,
-unknown-field handling; and detailed reflection diagnostics and annotation
-behavior (TOOL-005/007 set the bar, details at M3). M2 registry mutation and
-agent-loop behavior are ratified by ADR 0006.
+- **2026-07, M3 contract closure:** ratified the reflected registration surface,
+  lexical schema subset and type matrix, independent omission/nullability
+  semantics, strict canonical-value decoding, description precedence,
+  supported GCC/component boundary, and no-Glaze public firewall
+  (TOOL-002–005/007/008/010–013, PORT-002, QA-002; ADR 0007). Verification was
+  intentionally deferred until implementation.
+- **2026-07, M3 implementation closure:** the GCC 16 component, typed schema
+  and codec, five compile-fail diagnostics, reflection header/package firewall,
+  clean core and reflection consumers, and ASan+UBSan reflection suite are
+  live. The shared script runs locally and in hosted CI; manual Clang and
+  unimplemented reflection property/fuzz expansion are not claimed. The pinned
+  runtime coverage gate separately enforces adjusted codec source decisions,
+  codec functions, and compiled-bridge GCC/gcovr CFG branches while consteval
+  paths use the compile-time matrix.

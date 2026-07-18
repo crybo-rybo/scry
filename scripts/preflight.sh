@@ -73,8 +73,7 @@ run_reflection() {
     echo "g++-16 is unavailable; the hosted Linux reflection leg is authoritative" >&2
     return 1
   fi
-  cmake --preset reflection-gcc16 &&
-    cmake --build build/reflection-gcc16
+  ./scripts/ci-reflection.sh
 }
 
 cd "${root_dir}"
@@ -85,7 +84,7 @@ run_gate "ASan + UBSan" run_preset asan
 run_gate "TSan" run_preset tsan
 run_gate "libcurl runtime" run_preset curl
 run_gate "short protocol fuzzing" run_fuzz
-run_gate "GCC 16 reflection feasibility" run_reflection
+run_gate "GCC 16 supported reflection component" run_reflection
 
 if [[ "${failures}" -ne 0 ]]; then
   echo

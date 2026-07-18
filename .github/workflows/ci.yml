@@ -172,7 +172,7 @@ jobs:
           ctest --test-dir build/${{ matrix.preset }} --output-on-failure
 
   reflection:
-    name: GCC 16 P2996 + Glaze
+    name: GCC 16 supported reflection component
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -182,10 +182,12 @@ jobs:
           sudo add-apt-repository --yes ppa:ubuntu-toolchain-r/test
           sudo apt-get update
           sudo apt-get install -y g++-16 libcurl4-openssl-dev ninja-build
-      - name: Configure
-        run: cmake --preset reflection-gcc16
-      - name: Build feasibility spike
-        run: cmake --build build/reflection-gcc16
+      - name: Lower ASLR entropy for sanitizers
+        run: sudo sysctl vm.mmap_rnd_bits=28
+      - name: Install pinned reflection coverage tool
+        run: python3 -m pip install --user --break-system-packages gcovr==8.6
+      - name: Build, test, install, consume, and cover reflection component
+        run: ./scripts/ci-reflection.sh
 
   curl:
     name: libcurl runtime integration

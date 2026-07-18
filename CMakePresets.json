@@ -16,6 +16,7 @@
         "SCRY_BUILD_EXAMPLES": true,
         "SCRY_BUILD_TESTS": true,
         "SCRY_ENABLE_FORMAT_CHECK": true,
+        "SCRY_ENABLE_REFLECTION": false,
         "SCRY_USE_LIBCXX": false,
         "SCRY_WARNINGS_AS_ERRORS": true
       }
@@ -58,12 +59,11 @@
     },
     {
       "name": "reflection-gcc16",
-      "displayName": "GCC 16 P2996 feasibility",
+      "displayName": "GCC 16 supported reflection component",
       "inherits": "base",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
         "CMAKE_CXX_COMPILER": "g++-16",
-        "SCRY_BUILD_REFLECTION_SPIKE": true,
         "SCRY_ENABLE_FORMAT_CHECK": false,
         "SCRY_ENABLE_REFLECTION": true
       }

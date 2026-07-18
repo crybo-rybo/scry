@@ -8,7 +8,7 @@
 #error "Scry reflection requires a compiler implementing P2996"
 #endif
 
-#include <meta>
+#include <scry/detail/reflection_registration.hpp>
 
 namespace scry::reflection {
 

@@ -5,8 +5,10 @@
 A C++ LLM harness for applications with their own main loops. Scry's stable
 C++23 surface turns explicit schemas and callables into LLM tools and hides the
 full agentic loop — HTTP, streaming, tool dispatch, retries — behind a small,
-poll-friendly API. M3 will add isolated **C++26 reflection** to derive the same
-registrations from ordinary C++ types.
+poll-friendly API. M3 adds isolated **C++26 reflection** to derive the same
+registrations from ordinary C++ types; its contract, implementation, package
+boundary, sanitizer leg, and runtime coverage gate are complete under ADR
+0007.
 
 The name is the design: **reflection** (the mirror) + **consulting an oracle** (the LLM). Namespace `scry::`, suggested repo name `scry` (fallbacks: `scry-cpp`, `scrylib`).
 
@@ -107,9 +109,10 @@ while (app.running()) {
 
 This explicit-schema overload is the implemented C++23 surface. The
 [checked-in canonical example](examples/main_loop.cpp) registers a read-only
-tool through it and drives the complete M2 loop. M3 adds reflected
-`add<Args>()` schema generation and marshalling as compile-time sugar over the
-same registry; it does not introduce a second dispatch system.
+tool through it and drives the complete M2 loop. M3 adds
+`scry::reflection::add<Args>()` schema generation and marshalling as
+compile-time sugar over the same registry; it does not introduce a second
+dispatch system.
 
 **Conversation persistence.** `Conversation::to_json()` returns a canonical,
 versioned Scry-owned JSON document suitable for app-managed storage;
@@ -269,18 +272,73 @@ and returning valid JSON; Scry converts unknown tools, handler errors,
 exceptions, and malformed handler output into bounded model-visible tool
 errors.
 
-P2996 is the M3 ergonomics layer over that boundary:
+P2996 is the M3 ergonomics layer over that boundary. [ADR
+0007](docs/adr/0007-m3-reflection-contract.md) fixes its contract. Its accepted
+public shape is a free function in the optional component, keeping
+experimental declarations out of the stable `ToolRegistry` class:
 
-- Args are described as a struct; `template<typename T> consteval` code will
-  walk `std::meta::nonstatic_data_members_of(^^T)` to emit the JSON schema
-  (member names become parameter names; members with default initializers
-  become optional parameters).
-- The same reflection will generate the JSON→struct deserializer used at
-  dispatch time.
-- Member descriptions will come from P3394 annotations when supported, else a
-  customization point.
-- JSON-serializable reflected return values will lower to the existing
-  `scry::Json` result boundary.
+```cpp
+struct ForecastArgs {
+    [[=scry::reflection::description{"City to query"}]]
+    std::string city;
+    std::optional<int> days = std::nullopt;
+};
+
+struct Forecast {
+    std::string summary;
+    double temperature_c;
+};
+
+auto status = scry::reflection::add<ForecastArgs>(
+    harness->tools(),
+    {
+        .name = "forecast",
+        .description = "Return the forecast for one city",
+    },
+    [](ForecastArgs args) -> scry::Result<Forecast> {
+        return lookup_forecast(std::move(args));
+    });
+```
+
+`input_schema_v<Args>` is a compile-time, minified canonical JSON schema.
+Objects and property names are sorted lexicographically, nested aggregates are
+closed inline objects, and enum values preserve declaration order. The M3
+value family is deliberately finite: booleans; non-character integral types;
+finite `float`/`double`; owning strings; scoped enums; optionals; vectors
+except every `vector<bool, Allocator>` specialization; fixed arrays; and
+recursively supported plain aggregates. Scoped enum values must be unique, and
+only one optional layer is supported: enum aliases and nested optionals are
+rejected because their JSON representation cannot preserve the C++ distinction.
+Integers carry their C++ range, fixed arrays carry their exact length, and
+unsupported shapes fail at the registration call. Glaze supporting another
+C++ type does not silently add it to Scry's contract.
+
+**Presence and null are separate.** A default member initializer alone permits
+omission; `std::optional` alone permits JSON `null`. Consequently
+`std::optional<T> value;` is required-but-nullable, while
+`T value = initializer;` is omittable-but-non-null. If an initialized member is
+omitted, normal C++ construction preserves its initializer. Generated schemas
+never publish a JSON Schema `default`.
+
+The generated decoder rejects a non-object root, unknown fields, missing
+required fields, wrong JSON kinds, disallowed null, numeric sign/range or
+non-finite errors, unknown enum names, and fixed-array length mismatches at
+every nesting level. These are bounded model-visible tool errors, not fatal
+turn failures. The canonical parsed JSON value is the dispatch boundary:
+duplicate lexical keys have already been collapsed by canonical parsing and
+are not separately observable to the reflected decoder.
+
+Parameter descriptions use Scry's P3394 `description` annotation when
+supported. `tool_traits<Args>::descriptions` is the portable path and explicit
+override; a matching trait entry wins while an absent entry falls back to the
+annotation. Unknown/duplicate trait names and duplicate Scry description
+annotations are compile-time errors.
+
+Handlers receive a moved `Args` and may return a supported value directly or
+inside `scry::Result`. Raw `Json`, `void`, `Status`, references, futures, and
+awaitables deliberately stay outside the reflected overload; the implemented
+explicit-schema API remains the escape hatch for dynamic or unsupported
+boundaries.
 
 **Explicit-schema registration (not a parallel system):** the registry's internal representation is necessarily runtime data — name, description, schema JSON, type-erased `json → json` callable — since that is what gets serialized to the server and dispatched on tool calls. The reflection API is `consteval` sugar that lowers onto this same table, so exposing the lower layer as a public overload costs one function signature, not a second code path to maintain. It earns its keep twice: today it covers toolchains without P2996; permanently it covers *dynamic* tools whose schemas exist only at runtime (plugin-loaded tools, MCP proxying, user scripting) — something compile-time reflection can never express. If universal P2996 adoption arrives, the overload remains as the dynamic-tool API rather than becoming debt.
 
@@ -296,7 +354,23 @@ result for duplicates; after an ambiguous failure, the app reconciles that
 ledger before resubmitting the user request. Read-only handlers, such as the
 canonical `get_application_status` example, need no such policy.
 
-**Glaze** is the ratified internal JSON dependency (ARCHITECTURE.md §9). Its types never cross the public-header boundary.
+**Glaze** is the ratified internal JSON dependency (ARCHITECTURE.md §9). The
+reflection header and installed target expose only Scry-owned and standard
+types; compiled implementation reaches Glaze through a Scry-owned JSON bridge.
+
+The live M3 verification path runs 27 reflection-labelled tests: 22 runtime,
+schema, codec, bridge, and registration cases plus five stable-diagnostic
+compile failures. `scripts/reflection-coverage.sh` pins GCC/gcov 16 and gcovr
+8.6, requires at least 95% adjusted source decisions and 100% functions in the
+runtime codec, and requires at least 95% GCC/gcovr CFG branches in the compiled
+JSON bridge. The current gated result is 32/32 codec decisions, 62/62 codec
+functions, and 97/97 bridge branches. The adjustment excludes exactly one
+inline-justified GCC-generated switch artifact, and its validator rejects a
+missing, malformed, or widened exclusion. Unadjusted codec decisions
+(33/37) and combined GCC/gcovr CFG arcs (405/462 after the standard exclusions
+and line merging) remain visible diagnostics rather than being mislabeled as
+source decisions. Consteval paths stay covered by the positive/negative compile
+matrix; no reflection property/fuzz or manual Clang result is claimed.
 
 ## 9. Provider Abstraction
 
@@ -311,7 +385,18 @@ are contained entirely in the adapter. After the M4 adapter lands, switching
 between supported dialects or pointing at a local model is a `Harness` config
 change.
 
-**Toolchain reality (mid-2026):** P2996 is in C++26. [GCC 16 provides P2996R13](https://gcc.gnu.org/projects/cxx-status.html) behind `-std=c++26 -freflection` and is the planned supported M3 reflection toolchain. Bloomberg's [clang-p2996 fork](https://github.com/bloomberg/clang-p2996) remains useful for compatibility experiments, but its own maintainers classify it as highly experimental and prohibit production artifacts; it is therefore a non-gating feasibility leg, not a supported production compiler. [Glaze documents](https://stephenberry.github.io/glaze/p2996-reflection/) both toolchains and their required flags. Stable GCC/Clang build the severable C++23 core with reflection disabled. MSVC reflection support remains deferred.
+**Toolchain and package reality (mid-2026):** P2996 is in C++26.
+[GCC 16 provides P2996R13](https://gcc.gnu.org/projects/cxx-status.html) behind
+`-std=c++26 -freflection` and is the supported M3 reflection toolchain.
+Reflection is opt-in at build time and is consumed as
+`find_package(scry CONFIG REQUIRED COMPONENTS reflection)` plus
+`scry::reflection`; the core `scry::scry` package remains C++23 and does not
+install or export reflection support when built with the feature off.
+Bloomberg's [clang-p2996 fork](https://github.com/bloomberg/clang-p2996)
+remains useful for manual compatibility experiments, but it is not a supported
+reflection configuration and produces no installable or release artifacts.
+Stable GCC/Clang build the severable C++23 core with reflection disabled. MSVC
+reflection support remains deferred.
 
 ## 10. Errors, Retries, Streaming
 
@@ -321,11 +406,12 @@ change.
 
 ## 11. Open Questions
 
-Resolved and removed from this list: concurrency baseline (§7, ratified), JSON library (Glaze — ARCHITECTURE.md §9), HTTP library (libcurl direct — ARCHITECTURE.md §7). Remaining, none of which block M2:
+Resolved and removed from this list: concurrency baseline (§7), JSON library
+(Glaze — ARCHITECTURE.md §9), and HTTP library (libcurl direct —
+ARCHITECTURE.md §7). Remaining:
 
-1. **Parameter descriptions** — P3394 annotations vs. customization point vs. convention. Decide during M3, once the pinned toolchain's annotation support is known.
-2. **Structured output** — reflected structs also enable "answer as this type" (schema-constrained responses). Natural v2 feature; keep the door open in `Turn`.
-3. **Coroutine sugar** — `co_await harness.send(...)` for apps with coroutine schedulers. Tracked in the evolution register; layered over the event queue later.
+1. **Structured output** — reflected structs also enable "answer as this type" (schema-constrained responses). Natural v2 feature; keep the door open in `Turn`.
+2. **Coroutine sugar** — `co_await harness.send(...)` for apps with coroutine schedulers. Tracked in the evolution register; layered over the event queue later.
 
 ## 12. Roadmap
 
@@ -334,7 +420,7 @@ Resolved and removed from this list: concurrency baseline (§7, ratified), JSON 
 | **M0 — Skeleton (complete)** | Compile-only public header sketch + canonical example; target-based build/install/package layout; stable Linux + macOS core CI; GCC 16 reflection feasibility with Glaze; clang-p2996 as a non-gating experiment; libcurl SSE feasibility probe. No runtime loop. |
 | **M1 — Chat (complete)** | Config + Conversation + Harness + Turn; worker actor + update() pump; minimal sans-I/O request/turn machine including retries; Anthropic adapter; blocking + streaming text. ToolRegistry validation/storage is inert infrastructure only. |
 | **M2 — Tools (complete)** | Snapshot and serialize explicit-schema registrations; multi-round tool states in the sans-I/O machine; main-thread ordered dispatch and automatic resend; transactional tool history and versioned Conversation persistence. |
-| **M3 — Reflection** | P2996 schema generation + marshalling; the `add<Args>()` API; docs demo. |
+| **M3 — Reflection (complete)** | Optional GCC 16 `scry::reflection` component; P2996 lexical schema generation and strict typed marshalling; `scry::reflection::add<Args>()`; annotation/trait descriptions; package consumer and docs demo. |
 | **M4 — Breadth** | OpenAI-compatible adapter (vLLM/Ollama/llama.cpp), retries/backoff polish, cancellation hardening, worker-thread tools. |
 | **M5 — Showcase** | Example integrations: ImGui chat panel; a small game where the LLM drives an NPC via tools. |
 

@@ -31,9 +31,9 @@ only, never stored across a suspension point.
 this where useful). Callable boundaries use Scry's small move-only
 `UniqueFunction` because supported macOS standard libraries do not yet
 consistently ship `std::move_only_function`; the boundary remains move-only
-rather than silently becoming copy-only on one platform. The M3 reflection
-layer will remain an isolated, severable C++26 module (see §5); its feasibility
-probe is not part of the stable runtime surface.
+rather than silently becoming copy-only on one platform. The implemented M3
+reflection layer remains an isolated, severable C++26 component (see §5) and
+is not part of the stable runtime surface.
 
 ## 2. The Concurrency Architecture: Actor, Not Locks
 
@@ -188,19 +188,64 @@ registration. Mutation is additive-only: duplicate names are rejected, and
 replacement/removal remain absent until a real hot-reload contract defines
 their snapshot semantics.
 
-**Upper layer — consteval code generation (M3).** The future P2996 layer is a compile-time *code generator* targeting the lower layer: given an args struct, `consteval` functions walk its members to (a) build the schema as a compile-time string and (b) instantiate a deserializer + invoker lambda that gets erased into the table like any hand-written tool. Practices:
+**Upper layer — consteval code generation (M3, implemented).**
+The accepted P2996 layer is a compile-time *code generator* targeting the lower
+layer. Given a plain aggregate, it builds
+`scry::reflection::input_schema_v<Args>` in canonical fixed storage and
+instantiates a typed deserializer/invoker erased into an ordinary
+`ToolHandler`. `scry::reflection::add<Args>(registry, metadata, handler)` then
+calls the existing public registry operation. The free function keeps C++26
+reflection declarations out of the stable `ToolRegistry` class.
 
-- The reflection code will live in its **own header, behind a feature macro**,
-  and touch nothing else. Severability will remain a build-time property: CI
-  will build the library both with and without the M3 surface.
-- **Concepts will guard the gate.** The reflected-registration entry point will
-  accept aggregate structs with supported member types, so misuse fails at the
-  call site with a legible diagnostic, not in the guts of a `consteval` walk.
-- **Schemas will be computed once, at compile time.** No runtime schema cache,
-  static registry, or macro tricks; the schema string will be a `constexpr`
-  artifact of the type.
-- Parameter descriptions will use P3394 annotations when supported, else a
-  trait/customization-point specialization per args struct.
+The dependency direction is deliberately split:
+
+```text
+app aggregate + handler
+        ↓
+public reflection header (P2996 + standard/Scry-owned types only)
+        ↓
+Scry-owned typed wrapper and JSON-view contract
+        ↓
+compiled optional scry::reflection component
+        ↓
+private Glaze-backed JSON implementation
+        ↓
+ToolDefinition + ToolHandler → existing ToolRegistry
+```
+
+This keeps both promises real: template instantiation can see application
+types, while Glaze remains absent from public headers and installed dependency
+metadata. A reflection-OFF build installs only the C++23 core and core headers;
+the optional `reflection` package component owns its public/detail headers,
+compiled bridge, C++26 flags, and `scry::reflection` target.
+
+Additional practices:
+
+- **Concepts guard the gate.** Root and nested objects are complete,
+  default-initializable, non-union aggregates without bases, bit-fields,
+  reference/cv members, or unsupported recursive values. Misuse fails at the
+  reflected call with Scry-owned diagnostics rather than in a dependency's
+  template internals. Nested optionals, scoped enum aliases, and every
+  `vector<bool, Allocator>` specialization are rejected because they cannot
+  preserve the accepted value semantics unambiguously.
+- **One lexical schema.** Object/property keys and `required` member names are
+  sorted lexicographically, enum values retain declaration order, and nested
+  objects are inlined and closed. The compile-time artifact is the exact text
+  passed to the lower registry; there is no runtime schema cache or macro
+  registry.
+- **One strict value mapping.** Schema, decode, and encode share the ADR 0007
+  recursive type matrix. Glaze gaining a serializer does not expand Scry's
+  public contract.
+- **Presence is declaration-driven.** P2996 default-member-initializer
+  reflection controls omission; `std::optional` controls nullability. The
+  decoder constructs normal C++ defaults and validates the canonical parsed
+  object before invocation.
+- **Descriptions have explicit precedence.** P3394 Scry annotations are the
+  primary inline source when supported; `tool_traits<Args>` is the portable
+  path and per-member override.
+- **Canonical parsed input is the seam.** Unknown/missing/type/range checks run
+  on the canonical unique-key object. Detecting duplicate lexical JSON keys
+  would require a different parser boundary and is not smuggled into M3.
 
 ## 6. Provider Adapters: Strategy at a Narrow Seam
 
@@ -237,17 +282,37 @@ The second sanctioned interface, existing for one reason: **dependency injection
 
 ## 9. JSON and Dependency Policy
 
-- **Glaze** for JSON (compile-time reflection alignment, header-only, fast); treated as an *internal* dependency — no Glaze types in public headers. The tool boundary's `json` value type is our own thin alias/wrapper so the JSON library remains swappable in principle.
+- **Glaze** for JSON (header-only, fast, and aligned with the pinned
+  reflection toolchain); treated as an *internal* dependency — no Glaze header
+  or type appears in Scry's public include path. The stable tool boundary uses
+  the Scry-owned `Json` value, and the optional reflection component exposes a
+  Scry-owned JSON-view bridge whose implementation alone includes Glaze. A
+  downstream core or reflection consumer never discovers or links an exported
+  Glaze target.
 - Dependency bar is high: curl, Glaze, and test frameworks. Each new dependency needs a written justification in this doc. Header hygiene enforced (IWYU in CI) so the PImpl firewall stays real.
 
 ## 10. Testing & Tooling Practices
 
 - **The test pyramid mirrors the architecture:** sans-I/O machine tests (majority, no network, no threads) → adapter golden-file tests → transport tests against a local mock HTTP/SSE server → a thin end-to-end smoke suite against a real local model (Ollama/llama.cpp in CI, nightly not per-commit).
 - Threaded code tested under **TSan and ASan in CI** from M0 — sanitizers are cheap the day the code is written and impossible to retrofit onto a flaky foundation. UBSan on the reflection layer especially.
-- CI matrix: GCC 16 with `-freflection` runs the reflection feasibility leg
-  and is the planned supported M3 toolchain; stable GCC/Clang build the current
-  reflection-OFF runtime on Linux and macOS. clang-p2996 remains a non-gating
-  experimental compatibility probe and never produces release artifacts.
+- CI matrix: GCC 16 with `-std=c++26 -freflection` is the supported M3
+  component toolchain. The live `scripts/ci-reflection.sh` gate performs a
+  fresh P2996-probed build, the reflection header audit, the 27-test schema,
+  codec, bridge, registration, and compile-fail suite, a clean component
+  install audit, and a downstream
+  `find_package(scry CONFIG REQUIRED COMPONENTS reflection)` consumer. A
+  separate GCC 16 ASan+UBSan build reruns all 27 reflection-labelled tests.
+  `scripts/reflection-coverage.sh` gates the runtime codec's adjusted source
+  decisions at 95% and functions at 100%, plus GCC/gcovr CFG branches at 95%
+  on the compiled bridge. Exactly one inline-justified GCC-generated enum
+  switch artifact is excluded by a validator that rejects any missing or
+  broadened exclusion; unadjusted codec decisions and combined CFG arcs remain
+  visible diagnostics. Stable GCC/Clang continue to build, test, install, and
+  consume the
+  reflection-OFF C++23 core on Linux and macOS; its clean-install audit rejects
+  every reflection header, detail directory, library, or export. clang-p2996
+  is deferred to manual, non-gating compatibility work and never produces
+  installable or release artifacts; no manual Clang result is claimed for M3.
   clang-format + clang-tidy configs are checked in at M0.
 - **Warnings are errors** (`-Wall -Wextra -Wconversion`), from the first commit.
 
@@ -261,7 +326,7 @@ Every "boring first" choice is recorded here with the condition that triggers ev
 | One worker thread per Harness, one turn in flight per Conversation | A real app needs concurrent turns at scale | curl-multi–driven multiplexing of N turns on one worker; the actor + sans-I/O split means the machine layer is untouched |
 | Blocking `send`-and-wait built on pump-until-complete | Coroutine-scheduler apps appear as users | `co_await`-able turn awaitable layered on the event queue; core remains callback/pump-based |
 | Provider factory keyed on internal enum, no plugin API | A third-party provider that can't be upstreamed | Public adapter concept + registration hook; only then |
-| Trait/customization-point parameter descriptions | Pinned toolchain gains P3394 annotations | Annotations in the args struct become the primary path; trait remains as override |
+| Closed M3 reflected-value matrix; P3394 descriptions plus `tool_traits` override | A concrete tool needs an unsupported type/constraint or metadata source | Add one schema/decode/encode/diagnostic contract at a time; keep the trait as portable fallback and deliberate override |
 | No connection pooling beyond curl defaults | Measured connect/TLS overhead in streaming-heavy use | curl share/multi connection reuse, invisible above the transport seam |
 | Scry-owned `UniqueFunction` at callable boundaries | All supported macOS/Linux standard libraries ship a conforming `std::move_only_function` and a pre-1.0 API change is acceptable | Replace the small owned erasure with the standard facility after ABI and allocation benchmarks |
 | Additive-only ToolRegistry with immutable accepted-turn snapshots | A concrete hot-reload or dynamic-plugin use case needs mutation | Explicit replace/remove operations with documented snapshot and handler-lifetime semantics |
@@ -278,7 +343,7 @@ Every "boring first" choice is recorded here with the condition that triggers ev
 | Delivery | Single-threaded-by-construction pump with time budget |
 | In-flight turns | Move-only PImpl handle + shared cancel flag + weak pump registration route |
 | Agentic loop | Sans-I/O explicit state machine; time as injected events |
-| Tool registry | Type erasure (`UniqueFunction`) now; M3 consteval codegen above it; concepts at the reflected gate |
+| Tool registry | One type-erased `UniqueFunction` table; optional M3 consteval codegen and strict Scry-owned JSON bridge above it; concepts at the reflected gate |
 | Providers | Strategy at a narrow seam; stateless translators; golden-file tests |
 | Transport | RAII curl, C-callback trampolines, injectable seam; pure incremental SSE parser |
 | Errors | One categorized value type; expected before acceptance, one async error event after |

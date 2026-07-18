@@ -44,5 +44,4 @@ curl:
     ctest --test-dir build/curl --output-on-failure
 
 reflection:
-    cmake --preset reflection-gcc16
-    cmake --build build/reflection-gcc16
+    ./scripts/ci-reflection.sh
