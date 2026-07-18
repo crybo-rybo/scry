@@ -47,17 +47,23 @@ namespace {
   if (!valid_http_url(config.base_url)) {
     return invalid("base_url must be an absolute HTTP or HTTPS URL");
   }
-  if (config.api_key.empty() ||
-      config.api_key.find_first_of("\r\n") != std::string::npos) {
-    return invalid("api_key must be present and contain no line breaks");
-  }
   if (config.model.empty()) {
     return invalid("model must not be empty");
   }
   return {};
 }
 
-[[nodiscard]] Status validate_sampling(const SamplingConfig& sampling) {
+[[nodiscard]] Status validate_auth(const Config& config) {
+  if (config.api_key.find_first_of("\r\n") != std::string::npos) {
+    return invalid("api_key must contain no line breaks");
+  }
+  if (config.dialect == ProviderDialect::anthropic && config.api_key.empty()) {
+    return invalid("Anthropic api_key must be present");
+  }
+  return {};
+}
+
+[[nodiscard]] Status validate_anthropic_sampling(const SamplingConfig& sampling) {
   if (!std::isfinite(sampling.temperature) || sampling.temperature < 0.0 ||
       sampling.temperature > 1.0) {
     return invalid("Anthropic temperature must be finite and between 0 and 1");
@@ -70,6 +76,35 @@ namespace {
     return invalid("Anthropic max_tokens must be configured and greater than 0");
   }
   return {};
+}
+
+[[nodiscard]] Status validate_openai_sampling(const SamplingConfig& sampling) {
+  if (!std::isfinite(sampling.temperature) || sampling.temperature < 0.0 ||
+      sampling.temperature > 2.0) {
+    return invalid("OpenAI temperature must be finite and between 0 and 2");
+  }
+  if (sampling.top_p && (!std::isfinite(*sampling.top_p) || *sampling.top_p < 0.0 ||
+                         *sampling.top_p > 1.0)) {
+    return invalid("OpenAI top_p must be finite and between 0 and 1");
+  }
+  if (!sampling.max_tokens || *sampling.max_tokens == 0) {
+    return invalid("OpenAI max_tokens must be configured and greater than 0");
+  }
+  return {};
+}
+
+[[nodiscard]] Status validate_provider(const Config& config) {
+  auto auth = validate_auth(config);
+  if (!auth) {
+    return auth;
+  }
+  switch (config.dialect) {
+  case ProviderDialect::anthropic:
+    return validate_anthropic_sampling(config.sampling);
+  case ProviderDialect::openai_compatible:
+    return validate_openai_sampling(config.sampling);
+  }
+  return invalid("the configured provider dialect is not available");
 }
 
 [[nodiscard]] Status validate_retry_policy(const RetryPolicy& retry) {
@@ -106,10 +141,7 @@ Status validate_config(const Config& config) {
   if (auto status = validate_endpoint(config); !status) {
     return status;
   }
-  if (config.dialect != ProviderDialect::anthropic) {
-    return invalid("the configured provider dialect is not available");
-  }
-  if (auto status = validate_sampling(config.sampling); !status) {
+  if (auto status = validate_provider(config); !status) {
     return status;
   }
   if (auto status = validate_retry_policy(config.retry); !status) {

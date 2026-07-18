@@ -226,5 +226,6 @@ jobs:
             libfuzzer-21-dev ninja-build
       - run: |
           cmake --preset fuzz
-          cmake --build build/fuzz --target scry_sse_fuzz scry_anthropic_fuzz
+          cmake --build build/fuzz --target \
+            scry_sse_fuzz scry_anthropic_fuzz scry_openai_fuzz
           ctest --test-dir build/fuzz --output-on-failure -R 'fuzz'

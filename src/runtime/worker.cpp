@@ -1,6 +1,7 @@
 #include "runtime/worker.hpp"
 
 #include "protocol/sse.hpp"
+#include "runtime/tool_dispatch.hpp"
 
 #include <algorithm>
 #include <cassert>
@@ -132,13 +133,18 @@ void WorkerActor::run(const std::stop_token& stopped) noexcept {
 }
 
 void WorkerActor::accept_command(WorkerCommand command) {
+  if (auto* registration = std::get_if<RegisterWorkerToolCommand>(&command)) {
+    register_worker_tool(std::move(*registration));
+    return;
+  }
   if (auto* send = std::get_if<SendTurnCommand>(&command)) {
     pending_.push_back(std::move(*send));
     return;
   }
-  if (std::holds_alternative<ToolResultCommand>(command)) {
-    // A tool result is meaningful only while its turn owns the serialized
-    // worker slot. Results that arrive after terminal cancellation are stale.
+  if (std::holds_alternative<ToolResultCommand>(command) ||
+      std::holds_alternative<ExecuteWorkerToolCommand>(command)) {
+    // Tool work is meaningful only while its turn owns the serialized worker
+    // slot. Values that arrive after terminal cancellation are stale.
     return;
   }
   const auto turn_id = std::get<CancelTurnCommand>(command).turn_id;
@@ -147,6 +153,21 @@ void WorkerActor::accept_command(WorkerCommand command) {
     pending_.erase(found);
     publish_terminal_event(CancelledEvent{.turn_id = turn_id});
   }
+}
+
+void WorkerActor::register_worker_tool(RegisterWorkerToolCommand command) {
+  const auto duplicate =
+      std::ranges::any_of(worker_tools_, [&command](const WorkerTool& tool) {
+        return tool.name == command.name;
+      });
+  assert(!duplicate);
+  if (duplicate) {
+    return;
+  }
+  worker_tools_.push_back(WorkerTool{
+      .name = std::move(command.name),
+      .handler = std::move(command.handler),
+  });
 }
 
 void WorkerActor::process_turn(SendTurnCommand&& command,
@@ -174,8 +195,7 @@ void WorkerActor::process_turn(SendTurnCommand&& command,
   while (!stopped.stop_requested()) {
     if (machine_commands.empty()) {
       if (machine.phase() == MachinePhase::awaiting_tool) {
-        append_commands(machine_commands, wait_for_tool(machine, command.turn_id,
-                                                        command.cancelled, stopped));
+        append_commands(machine_commands, wait_for_tool(machine, command, stopped));
         continue;
       }
       return;
@@ -322,7 +342,8 @@ TransitionResult WorkerActor::complete_attempt(TurnMachine& machine,
   if (response.provider_request_id.empty()) {
     response.provider_request_id = result.provider_request_id;
   }
-  if (response.provider_request_id.find(config_.api_key) != std::string::npos) {
+  if (!config_.api_key.empty() &&
+      response.provider_request_id.find(config_.api_key) != std::string::npos) {
     response.provider_request_id.clear();
   }
   return machine.apply(ModelCompleted{.response = std::move(response)});
@@ -350,38 +371,100 @@ WorkerActor::wait_for_retry(TurnMachine& machine, const ScheduleRetryWake& wake,
   });
 }
 
-TransitionResult
-WorkerActor::wait_for_tool(TurnMachine& machine, const TurnId turn_id,
-                           const std::shared_ptr<std::atomic<bool>>& cancelled,
-                           const std::stop_token& stopped) {
+TransitionResult WorkerActor::wait_for_tool(TurnMachine& machine,
+                                            const SendTurnCommand& turn,
+                                            const std::stop_token& stopped) {
   while (!stopped.stop_requested()) {
-    if (cancelled->load(std::memory_order_acquire)) {
+    if (turn.cancelled->load(std::memory_order_acquire)) {
       return machine.apply(CancelTurn{});
     }
     auto command = commands_->wait_pop(stopped);
     if (!command) {
       break;
     }
-    if (auto* result = std::get_if<ToolResultCommand>(&*command)) {
-      if (result->turn_id != turn_id) {
-        continue;
-      }
-      if (!result->result) {
-        return machine.apply(
-            ToolExecutionFailed{.error = std::move(result->result.error())});
-      }
-      return machine.apply(ToolResultReady{
-          .result = std::move(*result->result),
-          .observed_at = std::chrono::steady_clock::now(),
-      });
+    auto transition =
+        handle_tool_wait_command(machine, std::move(*command), turn, stopped);
+    if (transition) {
+      return std::move(*transition);
     }
-    if (const auto* cancel = std::get_if<CancelTurnCommand>(&*command);
-        cancel != nullptr && cancel->turn_id == turn_id) {
-      return machine.apply(CancelTurn{});
-    }
-    accept_command(std::move(*command));
   }
   return machine.apply(CancelTurn{});
+}
+
+std::optional<TransitionResult>
+WorkerActor::handle_tool_wait_command(TurnMachine& machine, WorkerCommand command,
+                                      const SendTurnCommand& turn,
+                                      const std::stop_token& stopped) {
+  if (auto* result = std::get_if<ToolResultCommand>(&command)) {
+    if (result->turn_id != turn.turn_id) {
+      return std::nullopt;
+    }
+    if (!result->result) {
+      return machine.apply(
+          ToolExecutionFailed{.error = std::move(result->result.error())});
+    }
+    return machine.apply(ToolResultReady{
+        .result = std::move(*result->result),
+        .observed_at = std::chrono::steady_clock::now(),
+    });
+  }
+  if (auto* execute = std::get_if<ExecuteWorkerToolCommand>(&command)) {
+    if (execute->turn_id != turn.turn_id) {
+      return std::nullopt;
+    }
+    return execute_worker_tool(machine, std::move(*execute), turn, stopped);
+  }
+  if (const auto* cancel = std::get_if<CancelTurnCommand>(&command);
+      cancel != nullptr && cancel->turn_id == turn.turn_id) {
+    return machine.apply(CancelTurn{});
+  }
+  accept_command(std::move(command));
+  return std::nullopt;
+}
+
+TransitionResult WorkerActor::execute_worker_tool(TurnMachine& machine,
+                                                  ExecuteWorkerToolCommand command,
+                                                  const SendTurnCommand& turn,
+                                                  const std::stop_token& stopped) {
+  if (turn.cancelled->load(std::memory_order_acquire)) {
+    return machine.apply(CancelTurn{});
+  }
+  const auto accepted = std::ranges::find(turn.worker_tool_names, command.call.name) !=
+                        turn.worker_tool_names.end();
+  auto* handler = accepted ? find_worker_handler(command.call.name) : nullptr;
+  if (handler == nullptr) {
+    return machine.apply(ToolExecutionFailed{
+        .error = worker_error(ErrorCategory::invalid_state,
+                              "worker tool is unavailable for the accepted turn",
+                              turn.turn_id, machine.attempt_count()),
+    });
+  }
+
+  auto result = dispatch_tool_handler(*handler, command.call,
+                                      config_.limits.max_tool_result_bytes);
+  if (stopped.stop_requested() || turn.cancelled->load(std::memory_order_acquire)) {
+    return machine.apply(CancelTurn{});
+  }
+  if (!result) {
+    return machine.apply(ToolExecutionFailed{.error = std::move(result.error())});
+  }
+
+  const auto result_payload_bytes = content_payload_bytes(*result);
+  auto transition = machine.apply(ToolResultReady{
+      .result = std::move(*result),
+      .observed_at = std::chrono::steady_clock::now(),
+  });
+  if (transition.status == TransitionStatus::applied &&
+      machine.phase() != MachinePhase::terminal) {
+    publish_worker_tool_accepted(turn.turn_id, std::move(command.call.id),
+                                 result_payload_bytes);
+  }
+  return transition;
+}
+
+ToolHandler* WorkerActor::find_worker_handler(const std::string_view name) noexcept {
+  const auto found = std::ranges::find(worker_tools_, name, &WorkerTool::name);
+  return found == worker_tools_.end() ? nullptr : &found->handler;
 }
 
 } // namespace scry::detail

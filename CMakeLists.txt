@@ -20,6 +20,11 @@ option(SCRY_USE_LIBCXX "Use libc++ with a Clang-family compiler" OFF)
 option(SCRY_ENABLE_REFLECTION "Build the supported GCC 16+ reflection component" OFF)
 option(SCRY_BUILD_CURL_SPIKE "Build the libcurl/SSE feasibility spike" OFF)
 option(SCRY_BUILD_FUZZERS "Build short protocol fuzz targets" OFF)
+option(
+  SCRY_BUILD_LOCAL_MODEL_SMOKE
+  "Build the nightly public-API local-model smoke executable"
+  OFF
+)
 
 set(
   SCRY_SANITIZER
@@ -55,6 +60,7 @@ add_library(
     src/runtime/harness.cpp
     src/runtime/messages.cpp
     src/runtime/pump.cpp
+    src/runtime/pump_state.cpp
     src/runtime/queue.cpp
     src/runtime/state.cpp
     src/runtime/tool_registry.cpp
@@ -315,6 +321,17 @@ if(SCRY_BUILD_EXAMPLES)
   )
 endif()
 
+if(SCRY_BUILD_LOCAL_MODEL_SMOKE)
+  add_executable(
+    scry_local_model_smoke
+    tests/nightly/local_model_smoke.cpp
+  )
+  target_link_libraries(
+    scry_local_model_smoke
+    PRIVATE scry::scry scry_project_options
+  )
+endif()
+
 if(SCRY_BUILD_TESTS)
   include(CTest)
   FetchContent_Declare(
@@ -407,11 +424,13 @@ if(SCRY_BUILD_TESTS)
     scry_runtime_tests
     tests/runtime/config_tests.cpp
     tests/runtime/conversation_persistence_tests.cpp
+    tests/runtime/pump_branch_tests.cpp
     tests/runtime/pump_regression_tests.cpp
     tests/runtime/queue_coverage_tests.cpp
     tests/runtime/runtime_coverage_tests.cpp
     tests/runtime/runtime_tests.cpp
     tests/runtime/tool_dispatch_tests.cpp
+    tests/runtime/tool_pump_tests.cpp
     tests/runtime/tool_registry_tests.cpp
   )
   target_include_directories(scry_runtime_tests PRIVATE "${PROJECT_SOURCE_DIR}/src")

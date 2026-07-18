@@ -57,14 +57,22 @@ namespace scry::reflection {
 template <ToolArguments Args, typename Handler>
   requires ToolHandlerFor<Handler, Args>
 [[nodiscard]] Status add(ToolRegistry& registry, ToolMetadata metadata,
-                         Handler&& handler) {
+                         Handler&& handler, ToolRegistrationOptions options) {
   return registry.add(
       ToolDefinition{
           .name = std::move(metadata.name),
           .description = std::move(metadata.description),
           .input_schema = Json{.text = std::string{input_schema_v<Args>}},
       },
-      detail::make_tool_handler<Args>(std::forward<Handler>(handler)));
+      detail::make_tool_handler<Args>(std::forward<Handler>(handler)), options);
+}
+
+template <ToolArguments Args, typename Handler>
+  requires ToolHandlerFor<Handler, Args>
+[[nodiscard]] Status add(ToolRegistry& registry, ToolMetadata metadata,
+                         Handler&& handler) {
+  return add<Args>(registry, std::move(metadata), std::forward<Handler>(handler),
+                   ToolRegistrationOptions{});
 }
 
 } // namespace scry::reflection

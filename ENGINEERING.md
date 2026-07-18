@@ -38,10 +38,13 @@ reported rather than frozen at M0's unusually small maximum.
 - **Test behavior at seams, not implementation inside them.** Tests target the sanctioned interfaces (machine, adapter, transport). Refactoring internals must not break tests; if it does, the test was coupled to the wrong thing.
 - **Fakes over mocks.** A hand-written fake transport with scriptable responses beats mock-framework expectations: fakes survive refactors and read as documentation. Mock frameworks are a smell here — the seams are few and narrow enough to fake properly.
 - **Property-based testing where inputs are adversarial.** The SSE parser uses
-  exhaustive and fixed-seed random chunk splits. M3 reflection uses a
-  deterministic compile-time family of supported/rejected struct shapes plus
-  table-driven runtime JSON boundary cases. Randomly generated reflection
-  values remain future hardening and are not claimed by the live M3 gate.
+  exhaustive and fixed-seed random chunk splits. The M4 OpenAI-compatible wire
+  boundary applies the same arbitrary-split discipline and adds a checked fuzz
+  corpus. M3
+  reflection uses a deterministic compile-time family of supported/rejected
+  struct shapes plus table-driven runtime JSON boundary cases. Randomly
+  generated reflection values remain future hardening and are not claimed by
+  the live M3 gate.
 - **Determinism is non-negotiable.** No real sleeps, no wall-clock time, no network in unit tests. Time is an injected event (the machine already "requests wake-ups"); a fake clock makes retry/backoff testable to the millisecond. A test that flakes gets fixed or deleted the day it flakes — a flaky suite trains you to ignore red, which destroys the entire system of gates.
 - **Test-first for pure logic, test-with for plumbing.** The state machine, parsers, and classifiers are TDD-friendly (pure functions, crisp specs) — write tests first there. Threading and curl plumbing are exploratory — tests land in the same commit, shaped by what was learned.
 - **Every bug becomes a test before it becomes a fix.** The reproduction (usually a machine-level event replay — this is why the sans-I/O design pays) is committed with the fix, permanently.
@@ -115,11 +118,13 @@ Enforced via lizard and clang-tidy on every commit:
 **Dynamic — sanitizers are first-class build modes from M0:**
 
 - ASan + UBSan on the full unit/integration suite per commit; TSan on all threaded tests per commit. TSan especially is non-negotiable: the actor model's "no shared mutable state" claim is exactly the kind of invariant that erodes silently, and TSan is its enforcement mechanism. The supported GCC reflection leg additionally runs its marshalling and Scry-owned JSON bridge under ASan+UBSan.
-- **Fuzzing** (libFuzzer) covers the SSE and Anthropic wire-JSON boundaries
+- **Fuzzing** (libFuzzer) covers the SSE, Anthropic, and OpenAI-compatible
+  wire-JSON boundaries
   because they consume attacker-adjacent input (a compromised or buggy server
   must not crash the host app). Reflection decoding has deterministic boundary
-  tests but no claimed property/fuzz gate in M3. Short live fuzz runs execute
-  in CI; long runs remain nightly work.
+  tests but no claimed property/fuzz gate in M3. Short live runs for all three
+  fuzz targets execute in the per-commit ring; the scheduled workflow runs the
+  same three targets for longer budgets.
 - Valgrind/memcheck occasionally as a differently-shaped net; not gating.
 
 ## 6. CI Pipeline Shape
@@ -136,7 +141,13 @@ Three rings, ordered by feedback speed; a failure in an inner ring stops the out
    consumer. clang-p2996 is manual, non-gating compatibility work and never
    builds installable or release artifacts.
 2. **Per-merge to main:** publish retained integration and coverage reports and perform release-oriented packaging checks.
-3. **Nightly:** end-to-end against a real local model, long fuzz, deep static analysis, mutation testing (mutate the machine and parsers; surviving mutants reveal assertion-free tests — this audits the *tests*, which coverage cannot).
+3. **Nightly:** a bounded end-to-end smoke against a pinned local
+   OpenAI-compatible server/model, long fuzz, deep static analysis, and
+   mutation testing (mutate the machine and parsers; surviving mutants reveal
+   assertion-free tests — this audits the *tests*, which coverage cannot). The
+   M4 smoke uses a health check, hard startup/turn/job timeouts, one chat case
+   and one tool round, and retained diagnostics on failure. It does not enter
+   the deterministic per-commit ring.
 
 **Everything CI does is orchestrated by one local command**
 (`./scripts/preflight.sh`; `just ci` is an optional wrapper).
@@ -147,7 +158,7 @@ environments. A gate with no local entry point is a gate you learn about only
 by pushing, which breeds resentment and workarounds — even solo.
 
 The shared `scripts/ci-reflection.sh` gate is called by local preflight and
-hosted CI. It performs a fresh GCC 16/P2996 build, runs the full 265-test suite
+hosted CI. It performs a fresh GCC 16/P2996 build, runs the full configured suite
 with `--repeat until-fail:3` (27 reflection-labelled tests: 22
 runtime/schema/codec/bridge cases plus five compile-fail diagnostics), audits
 and consumes a clean reflection install, then reruns the reflection tests in a
@@ -157,6 +168,37 @@ clean
 reflection-OFF install and downstream consumer. M3 evidence does not claim a
 manual clang-p2996 run, randomized reflection property generation, or a
 reflection fuzz target.
+
+M4's per-commit evidence is live. The current development suite passes 288/288
+tests, including exact OpenAI request/non-stream/stream cases; endpoint, auth,
+sampling, usage, error, lifecycle, fragmentation, and byte-limit matrices; the
+fragmented transactional tool round; concurrent cross-dialect isolation; and
+the public Curl path/header/SSE case. The provider slice passes 60/60 tests,
+and `scry_openai_fuzz` joins the existing checked-corpus short fuzz ring.
+
+ADR 0009 verification covers default and opted-in thread IDs, FIFO registration
+and accepted-turn snapshots, all-worker and mixed batches, result
+acknowledgements and cumulative budgets, exception/failure suppression,
+cancellation, observer thread affinity, detached execute/resend/commit, queued
+turns, and a bounded cooperating teardown handler under TSan. A deliberately
+non-cooperating user handler remains outside Scry's enforceable shutdown bound
+and is documented rather than represented by a hanging test.
+
+The correct-base quality ratchet passes at 2133/2380 head branches (89.622%)
+versus 1544/1734 at the base (89.043%), with 1118/1198 changed branches
+(93.322%), maximum CRAP 13.125, and no complexity warnings, long functions, or
+long files. The scheduled/manual `.github/workflows/nightly.yml` pipeline is
+implemented with CodeQL v4, long SSE/Anthropic/OpenAI fuzz jobs, checksum-pinned
+Mull 0.34.0 mutation reports, and a bounded OpenAI-compatible smoke using
+checksum-pinned Ollama v0.32.1 plus a verified
+`qwen3:1.7b-q4_K_M` manifest digest. These are live pipeline definitions; a
+completed hosted nightly execution is not yet claimed. Separate local evidence
+is live: `scripts/ci-local-model.sh` passed the public OpenAI-compatible chat
+and required-tool paths using Ollama 0.22.1 against the exact
+`qwen3:1.7b-q4_K_M` manifest
+`sha256:8f68893c685c3ddff2aa3fffce2aa60a30bb2da65ca488b61fff134a4d1730e7`.
+That local pass does not claim execution of the checksum-pinned Ollama v0.32.1
+hosted job.
 
 ## 7. Workflow & Change Hygiene
 

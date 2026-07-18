@@ -86,6 +86,18 @@
         "SCRY_BUILD_FUZZERS": true,
         "SCRY_ENABLE_FORMAT_CHECK": false
       }
+    },
+    {
+      "name": "nightly-local-model",
+      "displayName": "Nightly public-API local-model smoke",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "SCRY_BUILD_EXAMPLES": false,
+        "SCRY_BUILD_LOCAL_MODEL_SMOKE": true,
+        "SCRY_BUILD_TESTS": false,
+        "SCRY_ENABLE_FORMAT_CHECK": false
+      }
     }
   ]
 }

@@ -32,18 +32,21 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data,
   static_cast<void>((*adapter)->parse_response(result, input));
 
   parse_stream_payload(**adapter, input, {});
-  scry::detail::ProviderDecodeState message_started{.message_started = true};
+  scry::detail::ProviderDecodeState message_started{};
+  auto& anthropic =
+      message_started.dialect.emplace<scry::detail::AnthropicProviderDecodeState>();
+  anthropic.message_started = true;
   parse_stream_payload(**adapter, input, message_started);
 
-  message_started.active_content_index = 0;
+  anthropic.active_content_index = 0;
   message_started.response.content.push_back(scry::detail::TextBlock{});
   parse_stream_payload(**adapter, input, message_started);
 
   message_started.response.content[0] = scry::detail::ToolCallBlock{};
   parse_stream_payload(**adapter, input, message_started);
 
-  message_started.active_content_index.reset();
-  message_started.finish_observed = true;
+  anthropic.active_content_index.reset();
+  anthropic.finish_observed = true;
   parse_stream_payload(**adapter, input, message_started);
   return 0;
 }

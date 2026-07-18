@@ -161,3 +161,20 @@ TEST_CASE("reentrant pump update reports an explicit rejection") {
   CHECK(nested->reentrant_update_rejected);
   CHECK(nested->budget_exhausted);
 }
+
+TEST_CASE("a nonpositive pump budget expires before queued work") {
+  PumpFixture fixture;
+  auto now = std::chrono::steady_clock::time_point{};
+  scry::detail::PumpState pump{fixture.events, [&now] { return now; }};
+  const auto route = fixture.route(105);
+  pump.add_route(route);
+  REQUIRE(route->register_text([](std::string_view) {}));
+  REQUIRE(fixture.events->push(
+      scry::detail::TextDeltaEvent{.turn_id = route->id(), .text = "deferred"}, 1024));
+
+  const auto bounded = pump.update({.time_budget = std::chrono::microseconds{0}});
+  CHECK(bounded.callbacks_delivered == 0);
+  CHECK(bounded.events_remaining == 1);
+  CHECK(bounded.budget_exhausted);
+  CHECK(pump.update({}).callbacks_delivered == 1);
+}

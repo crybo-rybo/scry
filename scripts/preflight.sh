@@ -60,7 +60,8 @@ run_fuzz() {
   else
     cmake --preset fuzz || return
   fi
-  cmake --build "${build_dir}" --target scry_sse_fuzz scry_anthropic_fuzz &&
+  cmake --build "${build_dir}" \
+    --target scry_sse_fuzz scry_anthropic_fuzz scry_openai_fuzz &&
     ctest \
       --test-dir "${build_dir}" \
       --output-on-failure \

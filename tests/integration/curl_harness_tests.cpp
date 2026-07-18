@@ -34,6 +34,19 @@ data: {"type":"message_stop"}
 
 )"};
 
+constexpr auto openai_successful_stream = std::string_view{
+    R"(data: {"id":"chatcmpl-curl","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-curl","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Hello from OpenAI-compatible curl."},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-curl","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+data: {"id":"chatcmpl-curl","object":"chat.completion.chunk","choices":[],"usage":{"prompt_tokens":8,"completion_tokens":5,"total_tokens":13}}
+
+data: [DONE]
+
+)"};
+
 [[nodiscard]] std::string response(const std::string_view status,
                                    const std::string_view headers,
                                    const std::string_view body) {
@@ -52,6 +65,13 @@ data: {"type":"message_stop"}
   config.timeouts.connect = 500ms;
   config.timeouts.transfer = 2s;
   config.timeouts.shutdown = 25ms;
+  return config;
+}
+
+[[nodiscard]] scry::Config openai_config_for(const scry::test::LoopbackServer& server) {
+  auto config = config_for(server);
+  config.base_url = server.url("/v1/");
+  config.dialect = scry::ProviderDialect::openai_compatible;
   return config;
 }
 
@@ -114,6 +134,45 @@ TEST_CASE("public Harness completes an Anthropic SSE turn through Curl") {
   CHECK(body.find(R"("stream":true)") != std::string_view::npos);
   CHECK(body.find("Question from app") != std::string_view::npos);
   CHECK(body.find("Use the public Curl path.") != std::string_view::npos);
+}
+
+TEST_CASE("public Harness completes an OpenAI-compatible SSE turn through Curl") {
+  scry::test::LoopbackServer server{response(
+      "200 OK", "Content-Type: text/event-stream\r\nx-request-id: req-openai-curl\r\n",
+      openai_successful_stream)};
+  auto harness = scry::Harness::create(openai_config_for(server));
+  REQUIRE(harness);
+  auto conversation =
+      scry::Conversation::create({.system_prompt = "Use the compatible API."});
+  REQUIRE(conversation);
+
+  const auto completion =
+      harness->send_and_wait(*conversation, "Question from compatible app");
+
+  REQUIRE(completion);
+  CHECK(completion->text == "Hello from OpenAI-compatible curl.");
+  CHECK(completion->finish_reason == scry::FinishReason::completed);
+  CHECK(completion->usage.input_tokens == 8);
+  CHECK(completion->usage.output_tokens == 5);
+  CHECK(completion->provider_request_id == "req-openai-curl");
+  CHECK(conversation->message_count() == 2);
+
+  const auto request = server.request();
+  const auto separator = request.find("\r\n\r\n");
+  REQUIRE(separator != std::string::npos);
+  const auto headers = ascii_lower(request.substr(0, separator));
+  const auto body = std::string_view{request}.substr(separator + 4);
+  CHECK(headers.starts_with("post /v1/chat/completions http/1.1\r\n"));
+  CHECK(headers.find("\r\ncontent-type: application/json\r\n") != std::string::npos);
+  CHECK(headers.find("\r\naccept: text/event-stream\r\n") != std::string::npos);
+  CHECK(headers.find("\r\nauthorization: bearer curl-integration-key\r\n") !=
+        std::string::npos);
+  CHECK(headers.find("anthropic-") == std::string::npos);
+  CHECK(body.find(R"("model":"test-model")") != std::string_view::npos);
+  CHECK(body.find(R"("stream":true)") != std::string_view::npos);
+  CHECK(body.find(R"("include_usage":true)") != std::string_view::npos);
+  CHECK(body.find("Question from compatible app") != std::string_view::npos);
+  CHECK(body.find("Use the compatible API.") != std::string_view::npos);
 }
 
 TEST_CASE("non-success HTTP status cannot publish an SSE-shaped body") {

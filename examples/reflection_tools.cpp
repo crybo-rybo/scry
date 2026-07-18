@@ -42,6 +42,9 @@ int main() {
             .running = true,
             .state = arguments.verbose ? "running" : "",
         };
+      },
+      scry::ToolRegistrationOptions{
+          .execution = scry::ToolExecution::app_thread,
       });
   if (!registration) {
     std::cerr << registration.error().message << '\n';
