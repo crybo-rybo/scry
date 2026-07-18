@@ -195,6 +195,7 @@ jobs:
     env:
       CC: clang-18
       CXX: clang++-18
+      CXXFLAGS: --gcc-install-dir=/usr/lib/gcc/x86_64-linux-gnu/14
     steps:
       - uses: actions/checkout@v7.0.0
       - run: >
