@@ -1,0 +1,161 @@
+# Per-commit CI ring (ENGINEERING.md §6, ring 1).
+#
+# Live gates: format (pinned clang-format-18), core build matrix with
+# warnings-as-errors (QA-006/PORT-001/PORT-005), lizard complexity + contract
+# tests + install/package-consumer via ci-local.sh, ASan/UBSan/TSan (QA-005),
+# clang-tidy (QA-004 cognitive), gating GCC 16 reflection leg (PORT-002),
+# libcurl feasibility (PORT-006 preview).
+# Still planned for M0 (tracked in REQUIREMENTS.md): diff coverage (QA-001),
+# CRAP gate (QA-003), ratchet comparison (QA-007).
+#
+# Toolchains are pinned deliberately (ENGINEERING.md §7): compiler drift on
+# experimental legs is a first-class risk.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  format:
+    name: clang-format (pinned 18)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - name: Install pinned formatter
+        run: sudo apt-get update && sudo apt-get install -y clang-format-18
+      - name: Check formatting
+        run: git ls-files '*.cpp' '*.hpp' | xargs clang-format-18 --dry-run --Werror
+
+  core:
+    name: Core (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux GCC 14
+            os: ubuntu-24.04
+            cc: gcc-14
+            cxx: g++-14
+            libcxx: false
+            packages: g++-14
+          - name: Linux Clang 18
+            os: ubuntu-24.04
+            cc: clang-18
+            cxx: clang++-18
+            libcxx: true
+            packages: clang-18 libc++-dev libc++abi-dev
+          - name: macOS AppleClang
+            os: macos-15
+            cc: clang
+            cxx: clang++
+            libcxx: false
+            packages: ""
+    runs-on: ${{ matrix.os }}
+    env:
+      CC: ${{ matrix.cc }}
+      CXX: ${{ matrix.cxx }}
+      # The dedicated format job owns the formatting gate with a pinned
+      # clang-format; core legs skip it so unpinned tool versions can't skew.
+      SCRY_FORMAT_CHECK: "0"
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - name: Install Linux build tools
+        if: runner.os == 'Linux'
+        run: >
+          sudo apt-get update &&
+          sudo apt-get install -y ninja-build ${{ matrix.packages }}
+      - name: Install macOS build tools
+        if: runner.os == 'macOS'
+        run: brew install ninja
+      - name: Install complexity checker
+        run: python3 -m pip install --user --break-system-packages lizard==1.22.1
+      - name: Run local-equivalent CI
+        run: ./scripts/ci-local.sh -DSCRY_USE_LIBCXX=${{ matrix.libcxx }}
+
+  static-analysis:
+    name: clang-tidy
+    runs-on: ubuntu-24.04
+    env:
+      CC: clang-18
+      CXX: clang++-18
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - run: >
+          sudo apt-get update &&
+          sudo apt-get install -y
+          clang-18 clang-tidy-18 libc++-dev libc++abi-dev ninja-build
+      - name: Configure
+        run: >
+          cmake --preset ci
+          -B build/tidy
+          -DSCRY_ENABLE_CLANG_TIDY=ON
+          -DSCRY_ENABLE_FORMAT_CHECK=OFF
+          -DSCRY_USE_LIBCXX=ON
+      - name: Analyze
+        run: cmake --build build/tidy
+
+  sanitizers:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: ASan + UBSan
+            preset: asan
+          - name: TSan
+            preset: tsan
+    runs-on: ubuntu-24.04
+    env:
+      CC: clang-18
+      CXX: clang++-18
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - run: >
+          sudo apt-get update &&
+          sudo apt-get install -y
+          clang-18 libc++-dev libc++abi-dev ninja-build
+      - name: Lower ASLR entropy for sanitizers
+        # High-entropy ASLR (vm.mmap_rnd_bits=32) breaks ASan/TSan
+        # shadow-memory mapping on Ubuntu 24.04 runners.
+        run: sudo sysctl vm.mmap_rnd_bits=28
+      - run: |
+          cmake --preset ${{ matrix.preset }} -DSCRY_USE_LIBCXX=ON
+          cmake --build build/${{ matrix.preset }}
+          ctest --test-dir build/${{ matrix.preset }} --output-on-failure
+
+  reflection:
+    name: GCC 16 P2996 + Glaze
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - name: Install GCC 16
+        run: |
+          sudo add-apt-repository --yes ppa:ubuntu-toolchain-r/test
+          sudo apt-get update
+          sudo apt-get install -y g++-16 ninja-build
+      - name: Configure
+        run: cmake --preset reflection-gcc16
+      - name: Build feasibility spike
+        run: cmake --build build/reflection-gcc16
+
+  curl:
+    name: libcurl SSE feasibility
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev ninja-build
+      - run: |
+          cmake --preset curl
+          cmake --build build/curl
+          ctest --test-dir build/curl --output-on-failure

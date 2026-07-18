@@ -38,34 +38,38 @@ Scry lets an existing C++ application add LLM capabilities — chat *and* tool u
 
 Primary: applications with a main loop that ticks at some frequency — game engines, Qt/ImGui/native GUI apps, simulators. Consequences that drive the whole design:
 
-- **Never block.** Network turns take seconds; the main loop runs at 60 Hz or handles UI events. All network work happens on a harness-owned worker thread.
+- **Never block by default.** Network turns take seconds; the main loop runs at 60 Hz or handles UI events. The async surface never waits on network I/O; the explicitly named `send_and_wait` convenience is reserved for CLI tools and tests.
 - **Poll, don't push.** The app calls `scry::Harness::update()` once per tick. All callbacks fire inside `update()`, on the caller's thread. User code needs no locks.
 - **Cancellation is normal.** Windows close, scenes change mid-request. Every in-flight turn has a `cancel()` safe to call at any time.
 
 ## 4. Core Concepts (the public surface)
 
-The app touches ~5 types:
+The app touches five core concepts:
 
 | Type | Responsibility |
 |------|---------------|
 | `scry::Config` | Plain value aggregate: base URL, API key, model, sampling params, provider dialect. Designated-initializer friendly. |
-| `scry::Client` | PImpl handle over connection/auth state, constructed from a `Config`. Reusable across Harnesses. |
 | `scry::Conversation` | Owns message history (system prompt, user/assistant turns, tool calls/results). Serializable for persistence. |
-| `scry::ToolRegistry` | Named tools: description + reflected schema + callable. Attached to a Conversation or Client. |
+| `scry::ToolRegistry` | Named tools: description + schema + callable. Owned by a Harness and snapshotted when a turn is accepted. |
 | `scry::Turn` | Handle to one in-flight agentic exchange. Carries callbacks (`on_text_delta`, `on_tool_call`, `on_complete`, `on_error`) and `cancel()`. |
-| `scry::Harness` | Owns the worker thread and event queue. `send()` starts a turn; `update()` pumps completions into the app thread. |
+| `scry::Harness` | Constructed directly from `Config`; owns provider/auth state, the tool registry, worker thread, and event queue. `send()` starts a turn; `update()` pumps completions into the app thread. |
 
 Intended feel:
 
 ```cpp
-// Config is a plain aggregate; Client and Harness are PImpl handles built from it.
-// Fallible construction returns std::expected — no exceptions at the boundary.
+// Config is a plain aggregate; Harness is the single configured runtime owner.
+// Semantic failures are values. Allocation failure remains an ordinary C++ exception.
 auto harness = scry::Harness::create(scry::Config{
     .base_url = "https://api.anthropic.com",
     .api_key  = env("API_KEY"),
     .model    = "claude-sonnet-5",
 });
-if (!harness) { /* harness.error(): config/auth problem, reported as a value */ }
+if (!harness) { /* invalid configuration, reported as a value */ }
+
+auto conversation = scry::Conversation::create({
+    .system_prompt = "Answer briefly and use tools when useful.",
+});
+if (!conversation) { /* invalid conversation configuration */ }
 
 struct ForecastArgs {
     std::string city;   ///< City name
@@ -76,8 +80,11 @@ harness->tools().add<ForecastArgs>(
     "get_forecast", "Weather forecast for a city",
     [&](const ForecastArgs& a) { return app.forecast(a.city, a.days); });
 
-auto turn = harness->send(convo, "Will it rain in Detroit this week?");
-turn.on_complete([&](std::string_view answer) { ui.show(answer); });
+auto turn = harness->send(*conversation, "Will it rain in Detroit this week?");
+if (!turn) { /* busy, invalid state, or admission/resource limit */ }
+turn->on_complete([&](const scry::Completion& result) {
+    ui.show(result.text);
+});
 
 // somewhere in the existing main loop:
 while (app.running()) {
@@ -85,6 +92,10 @@ while (app.running()) {
     app.tick();
 }
 ```
+
+The reflected `add<Args>()` call above is the M3 end state. The checked-in M0
+canonical example compiles only the currently declared core surface; M2 first
+lands explicit-schema registration as the substrate for that reflected form.
 
 ## 5. Architecture Overview
 
@@ -96,7 +107,7 @@ graph LR
     end
 
     subgraph Scry["Scry harness"]
-        API["Public API<br/>Client · Conversation · Turn"]
+        API["Public API<br/>Harness · Conversation · Turn"]
         REG["ToolRegistry<br/>(P2996 reflected schemas)"]
         LOOP["Agentic loop engine"]
         Q["Event queue<br/>(worker → main)"]
@@ -165,11 +176,35 @@ graph TB
 
 **Tool execution policy.** Tools touch app state, so by default tool handlers also run on the main thread inside `update()` — the worker thread posts a `ToolCallPending` event and waits. Opt-in escape hatch (lands M4): `add<Args>(..., scry::run_on_worker)` for handlers that are thread-safe and slow (disk, DB), so they don't stall the frame.
 
-**Frame budget.** `update()` accepts an optional time budget; excess events roll to the next tick. A 60 Hz app never spends more than its budget on Scry.
+**Frame budget.** `update()` accepts an optional time budget; excess events roll to the next tick. The budget is a soft deadline checked between callbacks. Scry never preempts user code, so one slow callback or tool handler can overrun it.
 
-**Cancellation.** `Turn::cancel()` sets an atomic flag; the worker aborts the HTTP transfer at the next opportunity and posts a `Cancelled` event. Cancelling a still-queued turn removes it before any I/O is issued. `Turn` handles are safe to drop (detach semantics) or can be joined.
+**Cancellation.** `Turn::cancel()` sets an atomic flag; the worker aborts the HTTP transfer at the next opportunity and posts a `Cancelled` event. Cancelling a still-queued turn removes it before any I/O is issued. `Turn` handles are safe to drop (detach semantics); dropping does not join, block, or cancel.
 
-**M1 scheduling baseline (ratified — no longer an open question).** A Harness accepts any number of turns; they queue FIFO and exactly **one HTTP transfer is active at a time**. A second `send()` on a Conversation that already has a turn queued or in flight fails immediately with a distinct error. While the active turn awaits a main-thread tool result, it retains the transfer slot — queued turns wait (deliberate simplification; trigger and end state in the ARCHITECTURE.md evolution register, which moves to curl-multi multiplexing when serialized scheduling measurably limits a real app).
+**M1 scheduling baseline (ratified — no longer an open question).** A Harness accepts up to `Config::limits.max_pending_turns`; accepted turns queue FIFO and exactly **one HTTP transfer is active at a time**. Admission beyond that bound fails immediately with `resource_limit`. A second `send()` on a Conversation that already has a turn queued or in flight fails immediately with `busy`. While the active turn awaits a main-thread tool result, it retains the transfer slot — queued turns wait (deliberate simplification; trigger and end state in the ARCHITECTURE.md evolution register, which moves to curl-multi multiplexing when serialized scheduling measurably limits a real app).
+
+**Registry ownership and snapshots.** A Harness owns exactly one `ToolRegistry`. `send()` snapshots its registrations into the accepted turn, so reentrant registration is safe and affects only later turns. There is no Conversation-local or process-global registry.
+
+**M1 configuration defaults.** Limits count payload bytes (not allocator
+overhead); implementations may reject earlier when a provider's own limit is
+lower. These defaults are conservative starting points and remain configurable:
+
+| Setting | Default |
+|---|---:|
+| Pending turns per Harness | 64 |
+| SSE event | 256 KiB |
+| Response | 8 MiB |
+| Tool arguments | 1 MiB |
+| Tool result | 4 MiB |
+| Queued event payload per turn | 2 MiB |
+| Conversation payload | 16 MiB |
+| Tool rounds | 8 |
+| Retry attempts / elapsed time | 3 / 30 s |
+| Retry initial / maximum backoff | 250 ms / 10 s |
+| Connect / transfer / shutdown timeout | 10 s / 120 s / 2 s |
+
+TLS peer verification defaults on. M1 must prove that DNS resolution, connect,
+transfer, and shutdown behavior all respect the configured bounds; a transport
+configuration that cannot honor the shutdown contract is rejected.
 
 ## 8. Tool Registration via C++26 Reflection
 
@@ -182,7 +217,7 @@ The make-or-break API. The LLM needs a JSON schema per tool; the harness needs t
 
 **Explicit-schema registration (not a parallel system):** the registry's internal representation is necessarily runtime data — name, description, schema JSON, type-erased `json → json` callable — since that is what gets serialized to the server and dispatched on tool calls. The reflection API is `consteval` sugar that lowers onto this same table, so exposing the lower layer as a public overload costs one function signature, not a second code path to maintain. It earns its keep twice: today it covers toolchains without P2996; permanently it covers *dynamic* tools whose schemas exist only at runtime (plugin-loaded tools, MCP proxying, user scripting) — something compile-time reflection can never express. If universal P2996 adoption arrives, the overload remains as the dynamic-tool API rather than becoming debt.
 
-Prior art to study: **Glaze** (compile-time JSON with P2996 support) — potentially even a dependency for the JSON layer.
+**Glaze** is the ratified internal JSON dependency (ARCHITECTURE.md §9). Its types never cross the public-header boundary.
 
 ## 9. Provider Abstraction
 
@@ -191,15 +226,15 @@ Neutral internal model: `Message { role, vector<ContentBlock> }` where `ContentB
 - **Anthropic Messages API** — content blocks, `tool_use`/`tool_result`.
 - **OpenAI-compatible Chat Completions** — covers OpenAI plus vLLM, Ollama, llama.cpp server, LM Studio; one adapter, many backends.
 
-Adapter differences (schema envelope, streaming event shapes, stop reasons) are contained entirely in the adapter. Switching providers or pointing at a local model is a `Client` config change.
+Adapter differences (schema envelope, streaming event shapes, stop reasons) are contained entirely in the adapter. Switching providers or pointing at a local model is a `Harness` config change.
 
-**Toolchain reality (mid-2026):** P2996 is in C++26; GCC trunk has support; Bloomberg's clang-p2996 fork is the most complete implementation; MSVC has no public support. Development targets GCC trunk / clang-p2996. This is deliberately acceptable — the project doubles as a demonstration of C++26 reflection.
+**Toolchain reality (mid-2026):** P2996 is in C++26. [GCC 16 provides P2996R13](https://gcc.gnu.org/projects/cxx-status.html) behind `-std=c++26 -freflection` and is the supported reflection toolchain. Bloomberg's [clang-p2996 fork](https://github.com/bloomberg/clang-p2996) remains useful for compatibility experiments, but its own maintainers classify it as highly experimental and prohibit production artifacts; it is therefore a non-gating feasibility leg, not a supported production compiler. [Glaze documents](https://stephenberry.github.io/glaze/p2996-reflection/) both toolchains and their required flags. Stable GCC/Clang build the severable C++23 core with reflection disabled. MSVC reflection support remains deferred.
 
 ## 10. Errors, Retries, Streaming
 
-- **Retries:** exponential backoff with jitter for 429/5xx/transport errors, honoring `Retry-After`, under configurable attempt and elapsed-time caps. Retry eligibility is strict: a request is retried only if **no semantic output has been consumed** (failure before the first content event). After partial output the turn fails with a retryable-flagged error and the app decides — automatic mid-stream resumption is later hardening, not M1. A dispatched tool call is **never re-dispatched** by retry machinery: tool execution is at-most-once per tool-call ID, and completed tool rounds live in history, so re-sending a request never re-runs a side effect.
-- **Errors** surface as a single `on_error(scry::Error)` callback with category (auth, rate limit, network, protocol, tool exception) — tool handler exceptions are caught and returned to the model as tool errors (the model can often recover), not thrown into the app.
-- **Streaming:** SSE parsed on the worker; text deltas batched per `update()` tick rather than per-token, so a fast stream doesn't flood the queue.
+- **Retries:** exponential backoff with jitter for 429/5xx/transport errors, honoring `Retry-After`, under configurable attempt and elapsed-time caps. Retry eligibility is strict: a request is retried only if **no semantic output has been consumed** (failure before the first content event). After partial output the turn fails with a retryable-flagged error and the app decides — automatic mid-stream resumption is later hardening, not M1. Within one turn, retry machinery never dispatches the same tool-call ID twice. A failed or cancelled turn commits no tool rounds, so resubmitting the user message is **not** automatically safe for side-effecting tools; applications must supply their own idempotency keys or reconciliation policy.
+- **Errors:** immediate API rejection (`create`, `send`, callback/tool registration) returns `std::expected<..., scry::Error>`. Once a turn is accepted, asynchronous failure has one channel: `on_error(scry::Error)`. Categories include invalid configuration/state, busy, authentication, rate limit, network, protocol, resource limit, tool failure, maximum tool rounds, and cancellation. Tool-handler exceptions are caught and returned to the model as tool errors (the model can often recover), not thrown into the app. Exceptions thrown by app callbacks are different: they propagate synchronously out of `update()` after the event is counted delivered.
+- **Streaming:** SSE parsed on the worker; text deltas batched per `update()` tick rather than per-token, so a fast stream doesn't flood the queue. Callback arguments are borrowed for the duration of the invocation; apps copy any data they retain.
 
 ## 11. Open Questions
 
@@ -213,9 +248,9 @@ Resolved and removed from this list: concurrency baseline (§7, ratified), JSON 
 
 | Milestone | Scope |
 |-----------|-------|
-| **M0 — Skeleton** | Compile-only public header sketch + canonical example; build/CI matrix (Linux + macOS; reflection ON/OFF legs); bounded feasibility spikes: P2996 schema generation on GCC trunk + clang-p2996 with Glaze, and a libcurl SSE streaming probe. No agentic loop. |
-| **M1 — Chat** | Client + Conversation + Harness + worker thread + update() pump; Anthropic adapter; blocking + streaming text. No tools. |
-| **M2 — Tools** | ToolRegistry with explicit-schema registration; agentic loop engine; main-thread tool execution. |
+| **M0 — Skeleton** | Compile-only public header sketch + canonical example; target-based build/install/package layout; stable Linux + macOS core CI; GCC 16 reflection feasibility with Glaze; clang-p2996 as a non-gating experiment; libcurl SSE feasibility probe. No runtime loop. |
+| **M1 — Chat** | Config + Conversation + Harness + Turn; worker actor + update() pump; minimal sans-I/O request/turn machine including retries; Anthropic adapter; blocking + streaming text. No tools. |
+| **M2 — Tools** | ToolRegistry with explicit-schema registration; extend the M1 machine with tool states and multi-round agentic behavior; main-thread tool execution. |
 | **M3 — Reflection** | P2996 schema generation + marshalling; the `add<Args>()` API; docs demo. |
 | **M4 — Breadth** | OpenAI-compatible adapter (vLLM/Ollama/llama.cpp), retries/backoff polish, cancellation hardening, worker-thread tools. |
 | **M5 — Showcase** | Example integrations: ImGui chat panel; a small game where the LLM drives an NPC via tools. |

@@ -8,19 +8,19 @@ Companion to [DESIGN.md](DESIGN.md). That document says *what* the pieces are; t
 
 These apply everywhere and settle arguments before they start.
 
-**Value semantics at the boundary, ownership inside.** Public types are cheap-to-move value types or lightweight handles. Internally, every resource has exactly one owner (`std::unique_ptr`, RAII wrappers); `shared_ptr` appears only where lifetime is genuinely shared across threads — which after the §3 ownership split is exactly one node: the per-turn cancellation flag, jointly referenced by handle and worker. Raw pointers are non-owning observers only, never stored across a suspension point.
+**Value semantics at the boundary, ownership inside.** Public types are cheap-to-move value types or lightweight handles. Internally, every resource has exactly one owner (`std::unique_ptr`, RAII wrappers). Shared ownership is narrowly enumerated: the per-turn cancellation flag crosses threads, while a pump-side registration route is owned by the Harness and observed weakly by the Turn handle. Raw pointers are non-owning observers only, never stored across a suspension point.
 
 **Rule of Zero.** Types define no special member functions unless they manage a resource directly; resource management is pushed into dedicated RAII wrappers (curl handles, threads, queues) so everything above them defaults.
 
-**PImpl on stateful handles; plain values for contracts.** The five stateful handle types (Client, Conversation, ToolRegistry, Turn, Harness) hold a single pointer to an implementation — ABI stays stable across internal refactors, and compile-time cost for consumers stays flat. Everything else the user touches is an ordinary value type: configuration aggregates (designated-initializer friendly), errors, options, enums, event payloads, and the Scry-owned JSON boundary type. The binding rule underneath both is: **no third-party types in public headers, ever** (enforced by include audit). Handles are constructed *from* config values (`Client` from a `Config` aggregate), which is how aggregate-style configuration and PImpl coexist. The indirection cost is irrelevant next to network latency — this library's hot path is measured in milliseconds, not nanoseconds.
+**PImpl on stateful handles; plain values for contracts.** The four stateful handle types (Conversation, ToolRegistry, Turn, Harness) hold a single pointer to an implementation — ABI stays stable across internal refactors, and compile-time cost for consumers stays flat. Everything else the user touches is an ordinary value type: configuration aggregates (designated-initializer friendly), errors, options, enums, event payloads, and the Scry-owned JSON boundary type. The binding rule underneath both is: **no third-party types in public headers, ever** (enforced by include audit). `Harness` is constructed directly from `Config` and is the single owner of provider/auth/connection state; a separate Client handle would add lifetime ambiguity without an independent responsibility. The indirection cost is irrelevant next to network latency — this library's hot path is measured in milliseconds, not nanoseconds.
 
 **No singletons, no globals, no static init order problems.** Everything hangs off a `Harness` instance. Two harnesses in one process (e.g., different providers) must just work. The one unavoidable global — libcurl's `curl_global_init` — is wrapped in a reference-counted RAII guard (Meyers-style function-local static, initialized on first Harness).
 
-**Exceptions stop at the membrane.** Internals may use whatever is idiomatic for the dependency at hand, but the public boundary is exception-free by contract: fallible operations report through `std::expected` or the `on_error` callback. Precisely scoped: *semantic* failures (bad config, duplicate tool name, invalid state) never throw — fallible construction goes through factories returning `std::expected`, and registration returns `expected` too. Allocation and standard-library construction failure (`std::bad_alloc`) are **excluded from the contract** — we do not pretend to survive OOM, and smearing `noexcept`+expected over every allocating call would buy nothing. Two hard rules stand regardless: nothing ever throws *across* the worker/main thread boundary, and tool-handler exceptions are caught at the dispatch site and converted into tool-error results returned to the model. User callbacks should not throw; if one does, the exception propagates out of `update()` to the app with the harness left in a valid state and the event counted as delivered (see §3).
+**Semantic failures are values; callback exceptions stay synchronous.** Internals may use whatever is idiomatic for the dependency at hand, but Scry-originated semantic and operational failures never throw across the public boundary. Immediate rejection reports through `std::expected`; failure after a turn is accepted reports through its `on_error` callback. Allocation and standard-library construction failure (`std::bad_alloc`) are **excluded from the contract** — we do not pretend to survive OOM, and smearing `noexcept`+expected over every allocating call would buy nothing. Two hard rules stand regardless: nothing ever throws *across* the worker/main thread boundary, and tool-handler exceptions are caught at the dispatch site and converted into tool-error results returned to the model. User callbacks should not throw; if one does, the exception propagates synchronously out of `update()` to the app with the Harness left in a valid state and the event counted as delivered (see §3).
 
 **Concepts over inheritance in templates, interfaces only at seams.** Virtual dispatch appears in exactly two places (provider adapter, transport — §6, §7), both internal. The public API has no inheritable types; extension points are callables and config, not subclassing.
 
-**C++ standard posture.** Core library targets C++23 (`std::expected`, `std::move_only_function`, deducing this where useful). The reflection layer is an isolated C++26 module of the codebase, kept severable (see §5).
+**C++ standard posture.** Core library targets C++23 (`std::expected`, deducing this where useful). Callable boundaries use Scry's small move-only `UniqueFunction` because supported macOS standard libraries do not yet consistently ship `std::move_only_function`; the boundary remains move-only rather than silently becoming copy-only on one platform. The reflection layer is an isolated C++26 module of the codebase, kept severable (see §5).
 
 ## 2. The Concurrency Architecture: Actor, Not Locks
 
@@ -33,13 +33,13 @@ Practices that follow:
 - **Queue implementation: boring first.** Mutex + `std::deque` + condition variable, wrapped behind our own minimal interface so a lock-free MPSC queue can be swapped in *if profiling ever demands it*. Premature lock-free is how libraries acquire unfixable bugs.
 - **Two cancellation mechanisms, deliberately separate.** The worker's `std::jthread` `stop_token` means one thing only: **Harness shutdown**. Per-turn cancellation is a distinct per-turn `std::atomic<bool>`, checked at every I/O boundary and plumbed into transport progress callbacks. Both are cooperative, never `pthread_cancel`-style. Conflating them was an early ambiguity: shutdown must abort *all* turns and join; cancelling one turn must not disturb its neighbors.
 - **The pump is the contract.** `update()` drains the event queue and invokes callbacks on the calling thread, under an optional time budget (deadline-checked between events, excess rolls to the next tick). Because *all* callbacks fire there, user code is single-threaded by construction. This is the harness's most sacred invariant; everything else may change.
-- **Backpressure by design.** Streaming deltas are coalesced worker-side (one aggregated text event per pump interval, not per token) so a fast stream cannot flood the queue or starve the frame budget.
+- **Backpressure by design.** Streaming deltas are coalesced worker-side (one aggregated text event per pump interval, not per token) so a fast stream cannot flood the queue or starve the frame budget. Coalescing is not the memory bound: configurable byte ceilings on pending turns, per-turn queued events, responses, tool payloads, and conversations are the hard limits.
 
 **Blocking-mode escape hatch:** a synchronous `send`-and-wait exists for CLI tools and tests, implemented *on top of* the async machinery (pump-until-complete internally), never as a second code path.
 
 ## 3. Turn Ownership, Lifecycle, and the Handle Pattern
 
-A `Turn` is a **handle**: a move-only value holding an immutable `TurnId` plus a reference to the turn's cancellation flag — *not* the turn state itself. Copying a handle to in-flight work invites double-cancel ambiguity, hence move-only. This is the `std::future`/`std::stop_source` school: small, thread-safe by narrowness, no behavior hidden in destructors beyond a documented detach.
+A `Turn` is a **handle**: a move-only PImpl value holding an immutable `TurnId`, a shared reference to the turn's cancellation flag, and a weak route to pump-side registration state — *not* the worker's turn state itself. The weak route makes callback registration and queued-turn cancellation safe when a Turn outlives its Harness: registration returns `invalid_state`, while `cancel()` remains a harmless atomic operation. Copying a handle to in-flight work invites double-cancel ambiguity, hence move-only. This is the `std::future`/`std::stop_source` school: small, thread-safe by narrowness, no behavior hidden in destructors beyond a documented detach.
 
 ### Ownership table (normative)
 
@@ -47,7 +47,7 @@ A `Turn` is a **handle**: a move-only value holding an immutable `TurnId` plus a
 |---|---|---|
 | Transport handles, curl state, wire buffers, SSE parser state | Worker | Never visible to any other thread |
 | Loop state machines (per turn) | Worker | Addressed by `TurnId` |
-| Callback registrations, buffered undelivered events per turn | Pump side (Harness main-thread state) | Written/read only inside API calls and `update()` |
+| Callback registrations, buffered undelivered events per turn, Turn registration routes | Pump side (Harness main-thread state) | Written/read only inside API calls and `update()`; handles observe routes weakly |
 | Conversation contents | App thread via pump | Mutated only at terminal-event delivery |
 | Command queue, event queue | Shared, internally synchronized | Sanctioned crossing points |
 | Per-turn cancel flag (`atomic<bool>`) | Shared | Third sanctioned crossing point |
@@ -95,17 +95,18 @@ stateDiagram-v2
 
 Exactly one terminal event per turn — never zero, never two. The remaining lifecycle contracts, each of which is a numbered requirement:
 
-- **Conversation commits are transactional.** History is mutated only by the pump at terminal-event delivery: `Completed` commits the full exchange (user message, all tool rounds, final answer) atomically; `Failed`/`Cancelled` commit nothing — the Conversation is exactly as it was before `send()`, so retry-by-resend is trivially correct.
-- **Detach semantics.** Dropping the handle detaches: the turn runs to termination, the Conversation still commits on completion. Events buffered for a destroyed handle are discarded at delivery time; the turn's *effects* survive, its *observability* doesn't.
-- **Late attachment.** Callbacks attached after events began arriving receive buffered prior events in order — no races, no missed deltas.
+- **Conversation commits are transactional.** History is mutated only by the pump at terminal-event delivery: `Completed` commits the full exchange (user message, all tool rounds, final answer) atomically; `Failed`/`Cancelled` commit nothing. This makes chat-only resend mechanically clean, but does not make external side effects from tool handlers reversible or automatically idempotent.
+- **Detach semantics.** Dropping the handle detaches: the turn runs to termination, the Conversation still commits on completion, and callbacks already registered in the Harness continue to receive events. Unclaimed buffered events may be discarded once no Turn handle remains; dropping loses future control and registration, not callbacks already registered.
+- **Late attachment.** While the handle remains attached, callbacks registered after events began arriving receive buffered prior events in order — no races, no missed deltas within configured buffer limits.
 - **Reentrancy.** Callbacks may call `send`, `cancel`, and registration APIs. Reentrant `update()` is forbidden and asserts. Tool registration changes take effect for subsequent turns, not in-flight ones.
 - **Non-preemption.** The `update()` budget is a soft deadline checked *between* callbacks; an individual callback or tool handler is never preempted and may overrun the budget. The budget bounds Scry's scheduling, not user code.
 - **Callback exceptions** propagate out of `update()` with the harness valid and the event counted delivered (§1).
+- **Callback arguments are borrowed** for the invocation only; apps copy values or text views they retain.
 - **Shutdown.** `~Harness()` cancels all turns, aborts transfers, joins the worker within a bound set by transport-abort latency, and discards undelivered events. No callback ever fires after destruction begins.
 
 ## 4. The Agentic Loop: Sans-I/O State Machine
 
-The loop engine — the heart of the library — is written **sans-I/O**: a pure state machine that consumes events (*provider replied with tool call*, *tool result ready*, *stream ended*, *transport failed*) and emits commands (*issue this request*, *run this tool*, *deliver this to the app*), and performs **no I/O itself**. The worker thread is a thin driver that feeds it transport events and executes its commands.
+The loop engine — the heart of the library — is written **sans-I/O**: a pure state machine that consumes events (*provider replied with content or a tool call*, *tool result ready*, *stream ended*, *transport failed*) and emits commands (*issue this request*, *run this tool*, *deliver this to the app*), and performs **no I/O itself**. M1 lands the minimal chat/request lifecycle, retry, cancellation, and terminal-state machine; M2 extends that same machine with tool-await and multi-round states. The worker thread is a thin driver that feeds it transport events and executes its commands.
 
 Why this is the hill to defend:
 
@@ -113,13 +114,15 @@ Why this is the hill to defend:
 - **Replayability.** A recorded event log reproduces any bug exactly. Given how nondeterministic LLM behavior is, deterministic *harness* behavior is the only debuggable posture.
 - **The state machine is explicit, not emergent.** States (awaiting-model, awaiting-tool, retrying, cancelling, terminal) are a variant/enum with a drawn transition diagram, not an implicit property of nested callbacks. Illegal transitions are unrepresentable or assert.
 
-Retry policy (backoff + jitter) lives inside the machine as state, driven by *time events* injected by the driver — the machine never sleeps, it requests "wake me at T." This keeps even timing testable with a fake clock.
+Retry policy (backoff + jitter) lands with the M1 machine as state, driven by *time events* injected by the driver — the machine never sleeps, it requests "wake me at T." This keeps even timing testable with a fake clock.
 
 ## 5. Tool Registry: Type Erasure Below, Reflection Above
 
 Two layers, one table (as settled in DESIGN.md §8):
 
-**Lower layer — type erasure.** A registered tool is a record: name, description, schema (JSON string), and a type-erased callable (`json → expected<json, error>` in spirit; `std::move_only_function` so captures needn't be copyable). This is the `std::function`-style erasure idiom: the registry is runtime-uniform, closed to no one, and has zero knowledge of reflection.
+**Lower layer — type erasure.** A registered tool is a record: name, description, schema (JSON string), and a type-erased callable (`json → expected<json, error>` in spirit; Scry's `UniqueFunction` keeps captures move-only). This is the `std::function`-style erasure idiom: the registry is runtime-uniform, closed to no one, and has zero knowledge of reflection.
+
+The Registry is owned by its Harness. `send()` snapshots the table for the accepted turn, so registration during `update()` never mutates an in-flight turn and no registry state crosses the worker boundary.
 
 **Upper layer — consteval code generation.** The P2996 layer is a compile-time *code generator* targeting the lower layer: given an args struct, `consteval` functions walk its members to (a) build the schema as a compile-time string and (b) instantiate a deserializer + invoker lambda that gets erased into the table like any hand-written tool. Practices:
 
@@ -145,14 +148,14 @@ The second sanctioned interface, existing for one reason: **dependency injection
 
 - libcurl used directly (not through a wrapper lib) for SSE control, but every curl object lives in a RAII wrapper with the curl types visible only in the `.cpp`. curl's C callbacks trampoline into C++ via the standard `void* userdata` → object pointer pattern, with all exceptions caught at the trampoline (C stacks must never unwind).
 - **SSE parsing is a pure incremental function**: bytes in, zero-or-more events out, remainder buffered. No I/O, no allocation beyond the buffer — property-testable with randomly split byte chunks (the classic bug in SSE parsers is delimiter-across-chunk; the test generator targets it directly).
-- `stop_token` plumbed into curl's progress callback for prompt cancellation of in-flight transfers.
+- Curl's progress callback checks both the worker `stop_token` (Harness shutdown) and the active turn's atomic cancellation flag. Neither signal is repurposed for the other.
 - Connection reuse (curl multi/share) is an internal optimization invisible above the seam.
 
 ## 8. Errors as Values, Categorized Once
 
-- Internal fallible paths return `std::expected<T, Error>`; `Error` is one struct with a category enum (auth, rate-limit, network, protocol, tool, cancelled) + message + provider-specific detail. One error type end-to-end — no per-layer error hierarchies to translate between.
+- Internal fallible paths return `std::expected<T, Error>`; `Error` is one struct with a category enum (`invalid_config`, `invalid_state`, `busy`, `authentication`, `rate_limit`, `network`, `protocol`, `resource_limit`, `tool`, `max_tool_rounds`, `cancelled`) plus message, sanitized provider detail, retryability, and correlation fields. One error type end-to-end — no per-layer error hierarchies to translate between.
 - The retry classifier (which categories are retryable) is a pure function owned by the loop state machine, tested as a table.
-- At the boundary, errors become the `on_error` event. `errno`-style status polling is deliberately absent; there is exactly one way to learn of failure.
+- At the boundary, failures before work is accepted are returned immediately by `std::expected`. After acceptance, errors become the `on_error` event. `errno`-style status polling is deliberately absent; there is exactly one asynchronous failure channel.
 
 ## 9. JSON and Dependency Policy
 
@@ -163,7 +166,7 @@ The second sanctioned interface, existing for one reason: **dependency injection
 
 - **The test pyramid mirrors the architecture:** sans-I/O machine tests (majority, no network, no threads) → adapter golden-file tests → transport tests against a local mock HTTP/SSE server → a thin end-to-end smoke suite against a real local model (Ollama/llama.cpp in CI, nightly not per-commit).
 - Threaded code tested under **TSan and ASan in CI** from M0 — sanitizers are cheap the day the code is written and impossible to retrofit onto a flaky foundation. UBSan on the reflection layer especially.
-- CI matrix: GCC trunk and clang-p2996 (reflection ON), plus a stable GCC/Clang (reflection OFF) proving severability. clang-format + clang-tidy configs checked in at M0; formatting arguments end on day one.
+- CI matrix: GCC 16 with `-freflection` is the supported reflection leg; stable GCC/Clang build with reflection OFF to prove severability on Linux and macOS. clang-p2996 remains a non-gating experimental compatibility probe and never produces release artifacts. clang-format + clang-tidy configs are checked in at M0; formatting arguments end on day one.
 - **Warnings are errors** (`-Wall -Wextra -Wconversion`), from the first commit.
 
 ## 11. Evolution Register: Deliberate Simplifications and Their End States
@@ -178,20 +181,22 @@ Every "boring first" choice is recorded here with the condition that triggers ev
 | Provider factory keyed on internal enum, no plugin API | A third-party provider that can't be upstreamed | Public adapter concept + registration hook; only then |
 | Trait/customization-point parameter descriptions | Pinned toolchain gains P3394 annotations | Annotations in the args struct become the primary path; trait remains as override |
 | No connection pooling beyond curl defaults | Measured connect/TLS overhead in streaming-heavy use | curl share/multi connection reuse, invisible above the transport seam |
+| Scry-owned `UniqueFunction` at callable boundaries | All supported macOS/Linux standard libraries ship a conforming `std::move_only_function` and a pre-1.0 API change is acceptable | Replace the small owned erasure with the standard facility after ABI and allocation benchmarks |
 | Linux + macOS only | Concrete Windows user demand | Windows reflection-OFF via clang; MSVC leg only if/when P2996 ships there |
+| Reflection-ON CI leg on Linux only (PORT-005) | A production-grade P2996 toolchain becomes practically distributable on macOS | Gating reflection legs on both platforms |
 | Serialized transfers: queued turns wait while the active turn awaits a main-thread tool | Serialized M1 scheduling measurably limits a real app | Tool-await releases the transfer slot under curl-multi multiplexing (same trigger as row 2) |
 
 ## 12. Pattern Summary
 
 | Piece | Governing pattern / idiom |
 |---|---|
-| Public types | PImpl, value semantics, Rule of Zero |
+| Public types | PImpl handles, plain contract values, Rule of Zero |
 | Concurrency | Actor model; message passing over variant commands/events; jthread + stop_token |
 | Delivery | Single-threaded-by-construction pump with time budget |
-| In-flight turns | Move-only handle + shared control block (future/stop_source school) |
+| In-flight turns | Move-only PImpl handle + shared cancel flag + weak pump registration route |
 | Agentic loop | Sans-I/O explicit state machine; time as injected events |
-| Tool registry | Type erasure (move_only_function) below; consteval codegen above; concepts at the gate |
+| Tool registry | Type erasure (`UniqueFunction`) below; consteval codegen above; concepts at the gate |
 | Providers | Strategy at a narrow seam; stateless translators; golden-file tests |
 | Transport | RAII curl, C-callback trampolines, injectable seam; pure incremental SSE parser |
-| Errors | expected-based values, single categorized type, one failure channel |
+| Errors | One categorized value type; expected before acceptance, one async error event after |
 | Extensibility | Callables and config, not inheritance; YAGNI on plugin machinery |

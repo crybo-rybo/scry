@@ -1,0 +1,81 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 25,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": true,
+        "SCRY_BUILD_EXAMPLES": true,
+        "SCRY_BUILD_TESTS": true,
+        "SCRY_ENABLE_FORMAT_CHECK": true,
+        "SCRY_USE_LIBCXX": false,
+        "SCRY_WARNINGS_AS_ERRORS": true
+      }
+    },
+    {
+      "name": "dev",
+      "displayName": "Developer build",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "ci",
+      "displayName": "CI release-like build",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+      }
+    },
+    {
+      "name": "asan",
+      "displayName": "Address and undefined behavior sanitizers",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "SCRY_ENABLE_FORMAT_CHECK": false,
+        "SCRY_SANITIZER": "address-undefined"
+      }
+    },
+    {
+      "name": "tsan",
+      "displayName": "Thread sanitizer",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "SCRY_ENABLE_FORMAT_CHECK": false,
+        "SCRY_SANITIZER": "thread"
+      }
+    },
+    {
+      "name": "reflection-gcc16",
+      "displayName": "GCC 16 P2996 feasibility",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_CXX_COMPILER": "g++-16",
+        "SCRY_BUILD_REFLECTION_SPIKE": true,
+        "SCRY_ENABLE_FORMAT_CHECK": false,
+        "SCRY_ENABLE_REFLECTION": true
+      }
+    },
+    {
+      "name": "curl",
+      "displayName": "libcurl SSE feasibility",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "SCRY_BUILD_CURL_SPIKE": true
+      }
+    }
+  ]
+}
