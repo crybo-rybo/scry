@@ -50,7 +50,7 @@ The app touches five core concepts:
 |------|---------------|
 | `scry::Config` | Plain value aggregate: base URL, API key, model, sampling params, provider dialect. Designated-initializer friendly. |
 | `scry::Conversation` | Owns message history (system prompt, user/assistant turns, tool calls/results). Serializable for persistence. |
-| `scry::ToolRegistry` | Named tools: description + schema + callable. Owned by a Harness and snapshotted when a turn is accepted. |
+| `scry::ToolRegistry` | Named tools: description + schema + callable. Owned by a Harness; beginning in M2, snapshotted when a turn is accepted. |
 | `scry::Turn` | Handle to one in-flight agentic exchange. Carries callbacks (`on_text_delta`, `on_tool_call`, `on_complete`, `on_error`) and `cancel()`. |
 | `scry::Harness` | Constructed directly from `Config`; owns provider/auth state, the tool registry, worker thread, and event queue. `send()` starts a turn; `update()` pumps completions into the app thread. |
 
@@ -93,9 +93,10 @@ while (app.running()) {
 }
 ```
 
-The reflected `add<Args>()` call above is the M3 end state. The checked-in M0
-canonical example compiles only the currently declared core surface; M2 first
-lands explicit-schema registration as the substrate for that reflected form.
+The reflected `add<Args>()` call above is the M3 end state. The checked-in
+canonical example links the M1 chat runtime; M2 first lands explicit-schema
+registration and executable tool dispatch as the substrate for that reflected
+form.
 
 ## 5. Architecture Overview
 
@@ -180,9 +181,14 @@ graph TB
 
 **Cancellation.** `Turn::cancel()` sets an atomic flag; the worker aborts the HTTP transfer at the next opportunity and posts a `Cancelled` event. Cancelling a still-queued turn removes it before any I/O is issued. `Turn` handles are safe to drop (detach semantics); dropping does not join, block, or cancel.
 
-**M1 scheduling baseline (ratified — no longer an open question).** A Harness accepts up to `Config::limits.max_pending_turns`; accepted turns queue FIFO and exactly **one HTTP transfer is active at a time**. Admission beyond that bound fails immediately with `resource_limit`. A second `send()` on a Conversation that already has a turn queued or in flight fails immediately with `busy`. While the active turn awaits a main-thread tool result, it retains the transfer slot — queued turns wait (deliberate simplification; trigger and end state in the ARCHITECTURE.md evolution register, which moves to curl-multi multiplexing when serialized scheduling measurably limits a real app).
+**M1 scheduling baseline (ratified — no longer an open question).** A Harness accepts up to `Config::limits.max_pending_turns`; accepted turns queue FIFO and exactly **one HTTP transfer is active at a time**. Admission beyond that bound fails immediately with `resource_limit`. A second `send()` on a Conversation that already has a turn queued or in flight fails immediately with `busy`. Beginning in M2, while the active turn awaits a main-thread tool result, it retains the transfer slot — queued turns wait (deliberate simplification; trigger and end state in the ARCHITECTURE.md evolution register, which moves to curl-multi multiplexing when serialized scheduling measurably limits a real app).
 
-**Registry ownership and snapshots.** A Harness owns exactly one `ToolRegistry`. `send()` snapshots its registrations into the accepted turn, so reentrant registration is safe and affects only later turns. There is no Conversation-local or process-global registry.
+**Registry ownership and snapshots.** A Harness owns exactly one `ToolRegistry`;
+there is no Conversation-local or process-global registry. M1 exposes validated
+registration and storage as inert infrastructure, but chat requests do not
+snapshot, serialize, or execute tools. Beginning in M2, `send()` snapshots the
+registry into the accepted turn, so reentrant registration remains safe and
+affects only later turns.
 
 **M1 configuration defaults.** Limits count payload bytes (not allocator
 overhead); implementations may reject earlier when a provider's own limit is
@@ -198,13 +204,18 @@ lower. These defaults are conservative starting points and remain configurable:
 | Queued event payload per turn | 2 MiB |
 | Conversation payload | 16 MiB |
 | Tool rounds | 8 |
+| Default maximum output tokens | 1024 |
 | Retry attempts / elapsed time | 3 / 30 s |
 | Retry initial / maximum backoff | 250 ms / 10 s |
 | Connect / transfer / shutdown timeout | 10 s / 120 s / 2 s |
 
-TLS peer verification defaults on. M1 must prove that DNS resolution, connect,
-transfer, and shutdown behavior all respect the configured bounds; a transport
-configuration that cannot honor the shutdown contract is rejected.
+TLS peer verification defaults on. M1 uses a Curl build with asynchronous DNS,
+applies Curl's connect timeout (which covers name resolution and connection)
+and total transfer timeout, and caps each multi-poll wait by the shutdown
+timeout. A runtime that cannot provide the required resolver/global
+capabilities is rejected. Deterministic tests cover held transfers, cancellation,
+and capability rejection; the timeout wiring is source-reviewed rather than
+tested against a flaky DNS black hole.
 
 ## 8. Tool Registration via C++26 Reflection
 
@@ -248,9 +259,9 @@ Resolved and removed from this list: concurrency baseline (§7, ratified), JSON 
 
 | Milestone | Scope |
 |-----------|-------|
-| **M0 — Skeleton** | Compile-only public header sketch + canonical example; target-based build/install/package layout; stable Linux + macOS core CI; GCC 16 reflection feasibility with Glaze; clang-p2996 as a non-gating experiment; libcurl SSE feasibility probe. No runtime loop. |
-| **M1 — Chat** | Config + Conversation + Harness + Turn; worker actor + update() pump; minimal sans-I/O request/turn machine including retries; Anthropic adapter; blocking + streaming text. No tools. |
-| **M2 — Tools** | ToolRegistry with explicit-schema registration; extend the M1 machine with tool states and multi-round agentic behavior; main-thread tool execution. |
+| **M0 — Skeleton (complete)** | Compile-only public header sketch + canonical example; target-based build/install/package layout; stable Linux + macOS core CI; GCC 16 reflection feasibility with Glaze; clang-p2996 as a non-gating experiment; libcurl SSE feasibility probe. No runtime loop. |
+| **M1 — Chat (complete)** | Config + Conversation + Harness + Turn; worker actor + update() pump; minimal sans-I/O request/turn machine including retries; Anthropic adapter; blocking + streaming text. ToolRegistry validation/storage is inert infrastructure only. |
+| **M2 — Tools** | Snapshot and serialize explicit-schema registrations; extend the M1 machine with tool states and multi-round agentic behavior; main-thread tool execution. |
 | **M3 — Reflection** | P2996 schema generation + marshalling; the `add<Args>()` API; docs demo. |
 | **M4 — Breadth** | OpenAI-compatible adapter (vLLM/Ollama/llama.cpp), retries/backoff polish, cancellation hardening, worker-thread tools. |
 | **M5 — Showcase** | Example integrations: ImGui chat panel; a small game where the LLM drives an NPC via tools. |

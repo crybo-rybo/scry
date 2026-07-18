@@ -1,0 +1,10 @@
+target_sources(
+  scry
+  PRIVATE
+    anthropic_content.cpp
+    anthropic_request.cpp
+    anthropic_response.cpp
+    anthropic_stream.cpp
+    provider.cpp
+    wire_json.cpp
+)

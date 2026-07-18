@@ -16,7 +16,7 @@ enum class ProviderDialect : std::uint8_t {
 struct SamplingConfig {
   double temperature{1.0};
   std::optional<double> top_p{};
-  std::optional<std::uint32_t> max_tokens{};
+  std::optional<std::uint32_t> max_tokens{1024};
 };
 
 struct RetryPolicy {

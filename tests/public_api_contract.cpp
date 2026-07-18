@@ -75,6 +75,7 @@ int main() {
       config.limits.max_queued_event_bytes_per_turn == 2 * kibibyte * kibibyte,
       config.limits.max_conversation_bytes == 16 * kibibyte * kibibyte,
       config.max_tool_rounds == 8,
+      config.sampling.max_tokens == 1024,
       config.retry.max_attempts == 3,
       config.retry.initial_backoff == std::chrono::milliseconds{250},
       config.retry.max_backoff == std::chrono::seconds{10},

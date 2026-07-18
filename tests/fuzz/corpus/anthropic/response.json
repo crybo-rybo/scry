@@ -1,0 +1,1 @@
+{"id":"seed","type":"message","role":"assistant","content":[{"type":"text","text":"seed"}],"model":"seed","stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":1}}

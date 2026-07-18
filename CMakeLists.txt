@@ -8,6 +8,7 @@ project(
 )
 
 include(CMakePackageConfigHelpers)
+include(FetchContent)
 include(GNUInstallDirs)
 
 option(SCRY_BUILD_TESTS "Build Scry's tests" ${PROJECT_IS_TOP_LEVEL})
@@ -19,6 +20,7 @@ option(SCRY_USE_LIBCXX "Use libc++ with a Clang-family compiler" OFF)
 option(SCRY_ENABLE_REFLECTION "Enable the experimental C++26 reflection surface" OFF)
 option(SCRY_BUILD_REFLECTION_SPIKE "Build the Glaze/P2996 feasibility spike" OFF)
 option(SCRY_BUILD_CURL_SPIKE "Build the libcurl/SSE feasibility spike" OFF)
+option(SCRY_BUILD_FUZZERS "Build short protocol fuzz targets" OFF)
 
 set(
   SCRY_SANITIZER
@@ -31,16 +33,48 @@ set_property(
   PROPERTY STRINGS none address-undefined thread
 )
 
-add_library(scry INTERFACE)
+find_package(CURL 7.84 REQUIRED)
+find_package(Threads REQUIRED)
+
+if(SCRY_BUILD_REFLECTION_SPIKE)
+  set(glaze_ENABLE_REFLECTION26 ON CACHE BOOL "" FORCE)
+endif()
+FetchContent_Declare(
+  glaze
+  GIT_REPOSITORY https://github.com/stephenberry/glaze.git
+  GIT_TAG 8b60d82c66311c145c4d03be3b556b555a9cb111
+  SYSTEM
+  EXCLUDE_FROM_ALL
+)
+FetchContent_MakeAvailable(glaze)
+
+add_library(
+  scry
+  STATIC
+    src/core/retry.cpp
+    src/runtime/config.cpp
+    src/runtime/conversation.cpp
+    src/runtime/harness.cpp
+    src/runtime/messages.cpp
+    src/runtime/pump.cpp
+    src/runtime/queue.cpp
+    src/runtime/state.cpp
+    src/runtime/tool_registry.cpp
+    src/runtime/turn.cpp
+    src/runtime/worker.cpp
+)
 add_library(scry::scry ALIAS scry)
 set_target_properties(scry PROPERTIES EXPORT_NAME scry)
-target_compile_features(scry INTERFACE cxx_std_23)
+target_compile_features(scry PUBLIC cxx_std_23)
 target_include_directories(
   scry
-  INTERFACE
+  PUBLIC
     "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>"
     "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
+  PRIVATE
+    "${PROJECT_SOURCE_DIR}/src"
 )
+target_include_directories(scry SYSTEM PRIVATE "${glaze_SOURCE_DIR}/include")
 
 add_library(scry_project_options INTERFACE)
 target_compile_options(
@@ -48,15 +82,35 @@ target_compile_options(
   INTERFACE
     "$<$<COMPILE_LANG_AND_ID:CXX,AppleClang,Clang,GNU>:-Wall;-Wextra;-Wconversion;-Wshadow>"
 )
+target_link_libraries(
+  scry
+  PRIVATE
+    CURL::libcurl
+    Threads::Threads
+    "$<BUILD_INTERFACE:scry_project_options>"
+)
+add_subdirectory(src/machine)
+add_subdirectory(src/protocol)
+add_subdirectory(src/provider)
+add_subdirectory(src/transport)
 
 if(SCRY_USE_LIBCXX)
   if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     message(FATAL_ERROR "SCRY_USE_LIBCXX requires Clang or AppleClang")
   endif()
-  foreach(SCRY_TARGET IN ITEMS scry scry_project_options)
-    target_compile_options("${SCRY_TARGET}" INTERFACE -stdlib=libc++)
-    target_link_options("${SCRY_TARGET}" INTERFACE -stdlib=libc++)
-  endforeach()
+  target_compile_options(scry PUBLIC -stdlib=libc++)
+  target_link_options(scry PUBLIC -stdlib=libc++)
+  target_compile_options(scry_project_options INTERFACE -stdlib=libc++)
+  target_link_options(scry_project_options INTERFACE -stdlib=libc++)
+endif()
+
+# LLVM 18 and Apple libc++ expose the standard C++20 stop-token/jthread
+# surface only when their matching experimental-library mode is enabled.
+if(CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang" OR SCRY_USE_LIBCXX)
+  target_compile_options(scry PUBLIC -fexperimental-library)
+  target_link_options(scry PUBLIC -fexperimental-library)
+  target_compile_options(scry_project_options INTERFACE -fexperimental-library)
+  target_link_options(scry_project_options INTERFACE -fexperimental-library)
 endif()
 
 if(SCRY_WARNINGS_AS_ERRORS)
@@ -88,9 +142,11 @@ endif()
 
 if(SCRY_ENABLE_CLANG_TIDY)
   find_program(SCRY_CLANG_TIDY_EXECUTABLE NAMES clang-tidy REQUIRED)
-  set(
-    CMAKE_CXX_CLANG_TIDY
-    "${SCRY_CLANG_TIDY_EXECUTABLE};--warnings-as-errors=*"
+  set_property(
+    TARGET scry
+    PROPERTY
+      CXX_CLANG_TIDY
+        "${SCRY_CLANG_TIDY_EXECUTABLE};--warnings-as-errors=*"
   )
 endif()
 
@@ -123,16 +179,18 @@ add_custom_target(
 
 if(SCRY_ENABLE_FORMAT_CHECK)
   find_program(SCRY_CLANG_FORMAT_EXECUTABLE NAMES clang-format REQUIRED)
-  set(
+  file(
+    GLOB_RECURSE
     SCRY_FORMAT_SOURCES
-    ${SCRY_PUBLIC_HEADERS}
-    examples/main_loop.cpp
-    spikes/curl_sse.cpp
-    spikes/reflection_glaze.cpp
-    tests/package_consumer/main.cpp
-    tests/public_api_contract.cpp
+    CONFIGURE_DEPENDS
+      "${PROJECT_SOURCE_DIR}/examples/*.cpp"
+      "${PROJECT_SOURCE_DIR}/include/*.hpp"
+      "${PROJECT_SOURCE_DIR}/spikes/*.cpp"
+      "${PROJECT_SOURCE_DIR}/src/*.cpp"
+      "${PROJECT_SOURCE_DIR}/src/*.hpp"
+      "${PROJECT_SOURCE_DIR}/tests/*.cpp"
+      "${PROJECT_SOURCE_DIR}/tests/*.hpp"
   )
-  list(TRANSFORM SCRY_FORMAT_SOURCES PREPEND "${PROJECT_SOURCE_DIR}/")
 
   add_custom_target(
     format-check
@@ -220,16 +278,6 @@ if(SCRY_BUILD_REFLECTION_SPIKE)
     )
   endif()
 
-  include(FetchContent)
-  set(glaze_ENABLE_REFLECTION26 ON CACHE BOOL "" FORCE)
-  FetchContent_Declare(
-    glaze
-    GIT_REPOSITORY https://github.com/stephenberry/glaze.git
-    GIT_TAG v7.5.0
-    GIT_SHALLOW TRUE
-  )
-  FetchContent_MakeAvailable(glaze)
-
   add_executable(scry_reflection_spike spikes/reflection_glaze.cpp)
   target_link_libraries(
     scry_reflection_spike
@@ -238,7 +286,7 @@ if(SCRY_BUILD_REFLECTION_SPIKE)
 endif()
 
 if(SCRY_BUILD_EXAMPLES)
-  add_library(scry_canonical_example OBJECT examples/main_loop.cpp)
+  add_executable(scry_canonical_example examples/main_loop.cpp)
   target_link_libraries(
     scry_canonical_example
     PRIVATE scry::scry scry_project_options
@@ -247,6 +295,22 @@ endif()
 
 if(SCRY_BUILD_TESTS)
   include(CTest)
+  FetchContent_Declare(
+    Catch2
+    GIT_REPOSITORY https://github.com/catchorg/Catch2.git
+    GIT_TAG dfc2dff8d70d083c60c1c6986030e5389a867a93
+    SYSTEM
+    EXCLUDE_FROM_ALL
+  )
+  FetchContent_MakeAvailable(Catch2)
+  foreach(SCRY_CATCH_TARGET IN ITEMS Catch2 Catch2WithMain)
+    target_compile_features("${SCRY_CATCH_TARGET}" PRIVATE cxx_std_23)
+    if(SCRY_USE_LIBCXX)
+      target_compile_options("${SCRY_CATCH_TARGET}" PRIVATE -stdlib=libc++)
+    endif()
+  endforeach()
+  list(APPEND CMAKE_MODULE_PATH "${catch2_SOURCE_DIR}/extras")
+  include(Catch)
 
   file(MAKE_DIRECTORY "${PROJECT_BINARY_DIR}/generated/header_checks")
   foreach(SCRY_HEADER IN LISTS SCRY_PUBLIC_HEADERS)
@@ -281,6 +345,43 @@ if(SCRY_BUILD_TESTS)
     PRIVATE scry::scry scry_project_options
   )
   add_test(NAME public-api-contract COMMAND scry_public_api_contract)
+
+  add_executable(
+    scry_retry_tests
+    tests/core/retry_tests.cpp
+    src/core/retry.cpp
+  )
+  target_compile_features(scry_retry_tests PRIVATE cxx_std_23)
+  target_include_directories(
+    scry_retry_tests
+    PRIVATE
+      "${PROJECT_SOURCE_DIR}/include"
+      "${PROJECT_SOURCE_DIR}/src"
+  )
+  target_link_libraries(
+    scry_retry_tests
+    PRIVATE Catch2::Catch2WithMain scry_project_options
+  )
+  catch_discover_tests(scry_retry_tests TEST_PREFIX "core.")
+
+  add_executable(
+    scry_runtime_tests
+    tests/runtime/config_tests.cpp
+    tests/runtime/pump_regression_tests.cpp
+    tests/runtime/runtime_coverage_tests.cpp
+    tests/runtime/runtime_tests.cpp
+  )
+  target_include_directories(scry_runtime_tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
+  target_link_libraries(
+    scry_runtime_tests
+    PRIVATE Catch2::Catch2WithMain scry::scry scry_project_options
+  )
+  catch_discover_tests(scry_runtime_tests TEST_PREFIX "runtime.")
+  add_subdirectory(tests/machine)
+  add_subdirectory(tests/protocol)
+  add_subdirectory(tests/provider)
+  add_subdirectory(tests/transport)
+  add_subdirectory(tests/integration)
 endif()
 
 if(SCRY_BUILD_CURL_SPIKE)

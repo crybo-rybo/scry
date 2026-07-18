@@ -5,7 +5,7 @@
 # tests + install/package-consumer via ci-local.sh, diff branch coverage + CRAP
 # + quality ratchets (QA-001/003/007), ASan/UBSan/TSan (QA-005), clang-tidy
 # (QA-004 cognitive), gating GCC 16 reflection leg (PORT-002), libcurl
-# feasibility (PORT-006 preview).
+# runtime integration (PORT-006) and short protocol fuzzing (NET-004).
 #
 # Toolchains are pinned deliberately (ENGINEERING.md §7): compiler drift on
 # experimental legs is a first-class risk.
@@ -29,6 +29,7 @@ jobs:
   format:
     name: clang-format (pinned 18)
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7.0.0
       - name: Install pinned formatter
@@ -47,13 +48,13 @@ jobs:
             cc: gcc-14
             cxx: g++-14
             libcxx: false
-            packages: g++-14
+            packages: g++-14 libcurl4-openssl-dev
           - name: Linux Clang 18
             os: ubuntu-24.04
             cc: clang-18
             cxx: clang++-18
             libcxx: true
-            packages: clang-18 libc++-dev libc++abi-dev
+            packages: clang-18 libc++-dev libc++abi-dev libcurl4-openssl-dev
           - name: macOS AppleClang
             os: macos-15
             cc: clang
@@ -61,6 +62,7 @@ jobs:
             libcxx: false
             packages: ""
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     env:
       CC: ${{ matrix.cc }}
       CXX: ${{ matrix.cxx }}
@@ -85,6 +87,7 @@ jobs:
   quality:
     name: Coverage + CRAP ratchet
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     env:
       CC: clang-18
       CXX: clang++-18
@@ -97,7 +100,7 @@ jobs:
         run: >-
           sudo apt-get update &&
           sudo apt-get install -y
-          clang-18 llvm-18 libc++-dev libc++abi-dev ninja-build
+          clang-18 llvm-18 libc++-dev libc++abi-dev libcurl4-openssl-dev ninja-build
       - name: Install pinned complexity checker
         run: python3 -m pip install --user --break-system-packages lizard==1.22.1
       - name: Compare branch quality to main
@@ -106,6 +109,7 @@ jobs:
   static-analysis:
     name: clang-tidy
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     env:
       CC: clang-18
       CXX: clang++-18
@@ -114,7 +118,8 @@ jobs:
       - run: >
           sudo apt-get update &&
           sudo apt-get install -y
-          clang-18 clang-tidy-18 libc++-dev libc++abi-dev ninja-build
+          clang-18 clang-tidy-18 libc++-dev libc++abi-dev
+          libcurl4-openssl-dev ninja-build
       - name: Configure
         run: >
           cmake --preset ci
@@ -133,45 +138,59 @@ jobs:
         include:
           - name: ASan + UBSan
             preset: asan
+            cc: gcc-14
+            cxx: g++-14
+            packages: g++-14 libcurl4-openssl-dev ninja-build
+            use_libcxx: false
           - name: TSan
             preset: tsan
+            cc: clang-18
+            cxx: clang++-18
+            packages: clang-18 libc++-dev libc++abi-dev libcurl4-openssl-dev ninja-build
+            use_libcxx: true
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     env:
-      CC: clang-18
-      CXX: clang++-18
+      CC: ${{ matrix.cc }}
+      CXX: ${{ matrix.cxx }}
     steps:
       - uses: actions/checkout@v7.0.0
-      - run: >
-          sudo apt-get update &&
-          sudo apt-get install -y
-          clang-18 libc++-dev libc++abi-dev ninja-build
+      - name: Install sanitizer toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ${{ matrix.packages }}
       - name: Lower ASLR entropy for sanitizers
         # High-entropy ASLR (vm.mmap_rnd_bits=32) breaks ASan/TSan
         # shadow-memory mapping on Ubuntu 24.04 runners.
         run: sudo sysctl vm.mmap_rnd_bits=28
       - run: |
-          cmake --preset ${{ matrix.preset }} -DSCRY_USE_LIBCXX=ON
+          # GCC keeps alloc/dealloc mismatch detection live for ASan; Ubuntu's
+          # libc++ packaging otherwise triggers LP #2000322 on std exceptions.
+          cmake --preset ${{ matrix.preset }} \
+            -DSCRY_USE_LIBCXX=${{ matrix.use_libcxx }}
           cmake --build build/${{ matrix.preset }}
           ctest --test-dir build/${{ matrix.preset }} --output-on-failure
 
   reflection:
     name: GCC 16 P2996 + Glaze
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7.0.0
       - name: Install GCC 16
         run: |
           sudo add-apt-repository --yes ppa:ubuntu-toolchain-r/test
           sudo apt-get update
-          sudo apt-get install -y g++-16 ninja-build
+          sudo apt-get install -y g++-16 libcurl4-openssl-dev ninja-build
       - name: Configure
         run: cmake --preset reflection-gcc16
       - name: Build feasibility spike
         run: cmake --build build/reflection-gcc16
 
   curl:
-    name: libcurl SSE feasibility
+    name: libcurl runtime integration
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7.0.0
       - run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev ninja-build
@@ -179,3 +198,31 @@ jobs:
           cmake --preset curl
           cmake --build build/curl
           ctest --test-dir build/curl --output-on-failure
+
+  fuzz:
+    name: Short protocol fuzzing
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      # Clang 18 advertises the pre-DR concepts feature level, so GCC 14
+      # intentionally withholds C++23 std::expected. LLVM 21 keeps the fuzz
+      # target on libstdc++ (matching its packaged libFuzzer runtime) while
+      # the Clang 18/libc++ core leg remains the portability authority.
+      CC: clang-21
+      CXX: clang++-21
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - name: Install the pinned fuzz toolchain
+        run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
+            | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
+          echo "deb https://apt.llvm.org/noble/ llvm-toolchain-noble-21 main" \
+            | sudo tee /etc/apt/sources.list.d/llvm-21.list
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang-21 g++-14 libclang-rt-21-dev libcurl4-openssl-dev \
+            libfuzzer-21-dev ninja-build
+      - run: |
+          cmake --preset fuzz
+          cmake --build build/fuzz --target scry_sse_fuzz scry_anthropic_fuzz
+          ctest --test-dir build/fuzz --output-on-failure -R 'fuzz'

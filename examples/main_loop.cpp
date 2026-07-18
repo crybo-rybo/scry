@@ -1,3 +1,4 @@
+#include <chrono>
 #include <iostream>
 #include <scry/scry.hpp>
 #include <string>
@@ -7,14 +8,20 @@ namespace {
 
 class Application {
 public:
-  [[nodiscard]] bool running() const noexcept { return ticks_remaining_ != 0; }
+  [[nodiscard]] bool running() const noexcept { return !done_; }
 
-  void show_answer(const std::string& answer) const { std::cout << answer << '\n'; }
+  void show_answer(const std::string& answer) {
+    std::cout << answer << '\n';
+    done_ = true;
+  }
 
-  void tick() noexcept { --ticks_remaining_; }
+  void show_error(const std::string& message) {
+    std::cerr << message << '\n';
+    done_ = true;
+  }
 
 private:
-  int ticks_remaining_{1};
+  bool done_{false};
 };
 
 } // namespace
@@ -54,13 +61,24 @@ int main() {
     std::cerr << callback_status.error().message << '\n';
     return 1;
   }
+  callback_status = turn.on_error(
+      [&app](const scry::Error& error) { app.show_error(error.message); });
+  if (!callback_status) {
+    std::cerr << callback_status.error().message << '\n';
+    return 1;
+  }
+  callback_status = turn.on_cancelled(
+      [&app](const scry::Cancelled&) { app.show_error("Turn cancelled"); });
+  if (!callback_status) {
+    std::cerr << callback_status.error().message << '\n';
+    return 1;
+  }
 
   while (app.running()) {
     harness.update({
         .time_budget = std::chrono::milliseconds{2},
         .max_callbacks = 32,
     });
-    app.tick();
   }
 
   return 0;

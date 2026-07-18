@@ -18,11 +18,11 @@ and a system libcurl new enough for thread-safe global initialization.
   expose the required C++23 `std::expected`; GCC continues to use libstdc++.
 - Install and export `scry::scry`, then compile a downstream `find_package`
   consumer in local CI to keep package metadata honest.
-- Acquire libcurl from the system with a 7.84 minimum. Fetch Glaze only for the
-  reflection spike and pin its exact release tag.
-- Use plain CTest executables for the compile-only M0 contracts. Select a test
-  framework when behavioral suites in M1 make its assertion and generator
-  facilities valuable, rather than adding a dependency preemptively.
+- Acquire libcurl from the system with a 7.84 minimum. M0 fetches Glaze only
+  for the reflection spike; ADR 0005 supersedes that acquisition scope for the
+  M1 runtime.
+- Use plain CTest executables for the compile-only M0 contracts. ADR 0005
+  records the M1 behavioral test-framework selection.
 - Pin lizard as a CI-only complexity checker; it has no effect on consumers or
   runtime dependencies.
 
