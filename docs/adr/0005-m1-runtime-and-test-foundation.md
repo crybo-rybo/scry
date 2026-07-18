@@ -27,12 +27,30 @@ can proceed independently without making implementation types public.
 - Keep neutral messages, transport values, and provider events as internal
   Scry-owned values. The provider adapter and transport remain the only two
   virtual seams.
-- Keep M1 chat-only. Tool-capable value shapes are present so M2 extends the
-  contracts, but M1 does not dispatch tools or enter a tool-await state.
+- Drive one transfer at a time with Curl's multi interface. Multi polling,
+  progress callbacks, and a required asynchronous resolver keep shutdown and
+  per-turn cancellation bounded without introducing a process-owned event
+  loop. Curl's connect timeout covers name resolution and connection, its total
+  timeout covers the transfer, and every multi-poll wait is capped by the
+  configured shutdown bound. Tests use deterministic held transfers rather
+  than a nondeterministic DNS black hole.
+- Bound retained SSE, response, queued-event, and Conversation payloads. Reserve
+  space for one compact terminal event so a payload-limit failure can still
+  terminate the accepted turn exactly once.
+- Make streaming the M1 production path. Completion metadata carries usage,
+  finish reason, attempt count, and provider request correlation; non-success
+  HTTP bodies never reach the SSE decoder.
+- Keep M1 chat-only. Tool-capable value shapes and validated ToolRegistry
+  storage are present so M2 extends the contracts, but M1 does not snapshot,
+  serialize, or dispatch tools and never enters a tool-await state.
 
 ## Consequences
 
 Core M1 builds now acquire Glaze source on first configure and require libcurl
-development files. Consumers never fetch Catch2 or Glaze. Parallel feature work
-must propose shared-contract changes through the integration owner rather than
-introducing alternate types or compatibility layers.
+development files. Consumers never fetch Catch2 or Glaze. Curl runtimes without
+thread-safe global initialization or asynchronous DNS are rejected at
+construction because they cannot satisfy Scry's host-thread and shutdown
+contracts. Serialized transfers are intentionally simple; multiplexing remains
+an evolution-register decision. Parallel feature work must propose
+shared-contract changes through the integration owner rather than introducing
+alternate types or compatibility layers.

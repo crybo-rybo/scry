@@ -17,8 +17,9 @@ ambiguous ownership.
   public Client type.
 - A Harness owns its provider/auth/connection state, worker actor, pump state,
   and one ToolRegistry.
-- `send()` snapshots registry entries into the accepted turn. Reentrant registry
-  changes affect later turns only.
+- M1 may validate and store inert registry entries. Beginning in M2, `send()`
+  snapshots entries into the accepted turn and reentrant registry changes
+  affect later turns only.
 - Conversation is a move-only PImpl handle. A Conversation may have at most one
   queued or active turn.
 - Turn is a move-only PImpl handle containing a TurnId, a shared cancellation

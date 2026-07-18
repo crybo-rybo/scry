@@ -226,4 +226,11 @@ TEST_CASE("Anthropic HTTP failures map to stable categories and safe detail") {
     CHECK(response.error().provider_detail.find("sk-ant-secret") == std::string::npos);
     CHECK(response.error().retryable == (status == 429 || status == 500));
   }
+
+  const auto unsafe = (*adapter)->parse_response(
+      TransportResult{.status_code = 400},
+      R"({"type":"error","error":{"type":"unsafe-secret-value"}})");
+  REQUIRE_FALSE(unsafe);
+  CHECK(unsafe.error().provider_detail == "anthropic:unknown_error");
+  CHECK(unsafe.error().provider_detail.find("secret") == std::string::npos);
 }

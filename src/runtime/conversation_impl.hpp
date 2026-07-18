@@ -11,8 +11,10 @@ namespace scry {
 class Conversation::Impl final {
 public:
   explicit Impl(ConversationConfig config)
-      : state(std::make_shared<detail::ConversationState>(
-            detail::ConversationState{.config = std::move(config)})) {}
+      : state(std::make_shared<detail::ConversationState>()) {
+    state->payload_bytes = config.system_prompt.size();
+    state->config = std::move(config);
+  }
 
   std::shared_ptr<detail::ConversationState> state{};
 };

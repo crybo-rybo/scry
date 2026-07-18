@@ -38,6 +38,8 @@ struct ModelTextDelta {
   std::string text{};
 };
 
+struct ModelSemanticOutput {};
+
 struct ModelCompleted {
   ModelResponse response{};
 };
@@ -55,12 +57,13 @@ struct RetryWake {
 
 struct CancelTurn {};
 
-using MachineEvent = std::variant<BeginTurn, ModelTextDelta, ModelCompleted,
-                                  AttemptFailed, RetryWake, CancelTurn>;
+using MachineEvent = std::variant<BeginTurn, ModelTextDelta, ModelSemanticOutput,
+                                  ModelCompleted, AttemptFailed, RetryWake, CancelTurn>;
 
 enum class MachineEventKind : std::uint8_t {
   begin,
   text_delta,
+  semantic_output,
   completed,
   attempt_failed,
   retry_wake,
@@ -164,6 +167,7 @@ private:
 
   [[nodiscard]] TransitionResult on_event(BeginTurn event);
   [[nodiscard]] TransitionResult on_event(ModelTextDelta event);
+  [[nodiscard]] TransitionResult on_event(ModelSemanticOutput event);
   [[nodiscard]] TransitionResult on_event(ModelCompleted event);
   [[nodiscard]] TransitionResult on_event(AttemptFailed event);
   [[nodiscard]] TransitionResult on_event(RetryWake event);

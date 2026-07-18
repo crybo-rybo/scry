@@ -6,12 +6,13 @@ A C++ LLM harness for applications with their own main loops. Scry uses **C++26 
 
 Built for the apps that live in C++ — games, GUI tools, simulators — where you can't block a frame, can't shell out to Python, and want tool use, not just chat.
 
-**Status:** M0 foundation complete. The public contracts, canonical example,
-target-based CMake package, quality ratchet, and local/hosted validation are in
-place, along with bounded reflection and libcurl/SSE feasibility probes. The
-runtime is intentionally not implemented yet: the PImpl handle methods are
-declarations, and the example is compile-checked rather than linked. M1 is the
-next milestone.
+**Status:** M1 chat runtime complete. The public handles now drive a compiled
+C++23 actor runtime with a main-thread `update()` pump, transactional
+Conversations, streaming Anthropic Messages support, bounded Curl transport,
+retry and cancellation state, and synchronous `send_and_wait` layered over the
+same async path. The canonical example links, and the installed package is
+executed by a real downstream consumer. Tool dispatch remains intentionally
+assigned to M2.
 
 ## Build and preflight
 
@@ -21,27 +22,28 @@ Run the fast, platform-stable core workflow:
 ./scripts/ci-local.sh
 ```
 
-That command checks formatting and public-header boundaries, builds the
-compile-only API example, runs contract tests, installs the package to a staging
-prefix, and builds a downstream `find_package(scry)` consumer. If
+That command checks formatting and public-header boundaries, builds the linked
+API example, runs the behavioral and contract suites, installs the package to a
+staging prefix, and runs a downstream `find_package(scry)` consumer. If
 [`just`](https://github.com/casey/just) is installed, `just ci-fast` is the
 equivalent convenience command.
 
 Before handing off a pull request, run the complete local preflight:
 
 ```sh
-just ci
+./scripts/preflight.sh
 ```
 
 That one command adds the live branch-coverage/CRAP ratchet, clang-tidy,
-sanitizers, and the curl and reflection feasibility legs. It runs all legs and
-reports host-specific toolchains that are unavailable locally; hosted CI is
-authoritative for those environments.
+sanitizers, short protocol fuzzing, and the curl and reflection feasibility
+legs. It runs all legs and reports host-specific toolchains that are unavailable
+locally; hosted CI is authoritative for those environments. `just ci` is the
+optional convenience wrapper.
 
 The reflection-OFF surface targets stable C++23 compilers. The separate
 reflection feasibility target requires GCC 16+ with `-freflection`; it is not
-part of the default local build. `just curl` runs the independent system-libcurl
-and write-callback feasibility check.
+part of the default local build. `just curl` exercises the production Curl
+runtime integration as well as the retained low-level feasibility probe.
 
 ## Documentation
 

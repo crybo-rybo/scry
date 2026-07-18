@@ -1,6 +1,7 @@
 #include "runtime/queue.hpp"
 
 #include <algorithm>
+#include <limits>
 #include <type_traits>
 
 namespace scry::detail {
@@ -25,29 +26,48 @@ bool EventQueue::coalesce_delta(const TextDeltaEvent& event,
 }
 
 bool EventQueue::push(WorkerEvent event, const std::size_t max_bytes_per_turn) {
-  const std::scoped_lock lock{mutex_};
-  if (const auto* delta = std::get_if<TextDeltaEvent>(&event);
-      delta != nullptr && coalesce_delta(*delta, max_bytes_per_turn)) {
-    return true;
-  }
+  {
+    const std::scoped_lock lock{mutex_};
+    if (const auto* delta = std::get_if<TextDeltaEvent>(&event);
+        delta != nullptr && coalesce_delta(*delta, max_bytes_per_turn)) {
+      return true;
+    }
 
-  const auto turn_id = event_turn_id(event);
-  const auto payload_bytes = event_payload_bytes(event);
-  const auto queued_bytes = bytes_by_turn_[turn_id];
-  if (queued_bytes > max_bytes_per_turn ||
-      payload_bytes > max_bytes_per_turn - queued_bytes) {
-    return false;
+    const auto turn_id = event_turn_id(event);
+    const auto payload_bytes = event_payload_bytes(event);
+    const auto queued_bytes = bytes_by_turn_[turn_id];
+    if (queued_bytes > max_bytes_per_turn ||
+        payload_bytes > max_bytes_per_turn - queued_bytes) {
+      return false;
+    }
+    values_.push_back(std::move(event));
+    bytes_by_turn_[turn_id] = queued_bytes + payload_bytes;
   }
-  values_.push_back(std::move(event));
-  bytes_by_turn_[turn_id] = queued_bytes + payload_bytes;
+  ready_.notify_one();
   return true;
 }
 
 void EventQueue::push_terminal(WorkerEvent event) {
-  const std::scoped_lock lock{mutex_};
-  const auto turn_id = event_turn_id(event);
-  bytes_by_turn_[turn_id] += event_payload_bytes(event);
-  values_.push_back(std::move(event));
+  static_cast<void>(
+      push_terminal(std::move(event), std::numeric_limits<std::size_t>::max()));
+}
+
+bool EventQueue::push_terminal(WorkerEvent event,
+                               const std::size_t max_bytes_per_turn) {
+  {
+    const std::scoped_lock lock{mutex_};
+    const auto turn_id = event_turn_id(event);
+    const auto queued_bytes = bytes_by_turn_[turn_id];
+    const auto payload_bytes = event_payload_bytes(event);
+    if (queued_bytes > max_bytes_per_turn ||
+        payload_bytes > max_bytes_per_turn - queued_bytes) {
+      return false;
+    }
+    bytes_by_turn_[turn_id] = queued_bytes + payload_bytes;
+    values_.push_back(std::move(event));
+  }
+  ready_.notify_one();
+  return true;
 }
 
 void EventQueue::discard(const TurnId turn_id) {
@@ -71,12 +91,15 @@ void EventQueue::discard(const TurnId turn_id) {
 }
 
 void EventQueue::release(const WorkerEvent& event) {
+  release(event_turn_id(event), event_payload_bytes(event));
+}
+
+void EventQueue::release(const TurnId turn_id, const std::size_t payload_bytes) {
   const std::scoped_lock lock{mutex_};
-  const auto found = bytes_by_turn_.find(event_turn_id(event));
+  const auto found = bytes_by_turn_.find(turn_id);
   if (found == bytes_by_turn_.end()) {
     return;
   }
-  const auto payload_bytes = event_payload_bytes(event);
   found->second -= std::min(found->second, payload_bytes);
   if (found->second == 0) {
     bytes_by_turn_.erase(found);
@@ -96,6 +119,11 @@ std::optional<WorkerEvent> EventQueue::try_pop() {
 std::size_t EventQueue::size() const {
   const std::scoped_lock lock{mutex_};
   return values_.size();
+}
+
+bool EventQueue::wait_for_data(const std::chrono::milliseconds timeout) {
+  std::unique_lock lock{mutex_};
+  return ready_.wait_for(lock, timeout, [this] { return !values_.empty(); });
 }
 
 } // namespace scry::detail

@@ -1,5 +1,6 @@
 #include "runtime/pump.hpp"
 
+#include <array>
 #include <atomic>
 #include <catch2/catch_test_macros.hpp>
 #include <chrono>
@@ -92,6 +93,46 @@ TEST_CASE("pump commits completion before a late callback is registered") {
   CHECK(answer == "answer");
 }
 
+TEST_CASE("late text callback receives every buffered delta in order") {
+  constexpr auto deltas = std::array<std::string_view, 4>{"one", "-", "two", "-three"};
+  for (std::size_t split = 0; split <= deltas.size(); ++split) {
+    RouteFixture fixture;
+    scry::detail::PumpState pump{fixture.events};
+    const auto route = fixture.route(100 + split);
+    pump.add_route(route);
+
+    for (std::size_t index = 0; index < split; ++index) {
+      REQUIRE(fixture.events->push(
+          scry::detail::TextDeltaEvent{
+              .turn_id = route->id(),
+              .text = std::string{deltas[index]},
+          },
+          1024));
+    }
+    CHECK(pump.update({}).callbacks_delivered == 0);
+
+    std::string received;
+    std::size_t callback_count = 0;
+    REQUIRE(route->register_text(
+        [&received, &callback_count](const std::string_view delta) {
+          received.append(delta);
+          ++callback_count;
+        }));
+    for (std::size_t index = split; index < deltas.size(); ++index) {
+      REQUIRE(fixture.events->push(
+          scry::detail::TextDeltaEvent{
+              .turn_id = route->id(),
+              .text = std::string{deltas[index]},
+          },
+          1024));
+    }
+
+    static_cast<void>(pump.update({}));
+    CHECK(received == "one-two-three");
+    CHECK(callback_count == 1);
+  }
+}
+
 TEST_CASE("callback exceptions consume the event and leave the pump valid") {
   RouteFixture fixture;
   scry::detail::PumpState pump{fixture.events};
@@ -129,6 +170,46 @@ TEST_CASE("pump budget is a soft deadline between callbacks") {
   CHECK(stats.events_remaining == 1);
   CHECK(stats.budget_exhausted);
   CHECK(pump.update({}).callbacks_delivered == 1);
+}
+
+TEST_CASE("pump budget bounds event ingestion and terminal commits") {
+  RouteFixture fixture;
+  auto now = std::chrono::steady_clock::time_point{};
+  scry::detail::PumpState pump{
+      fixture.events,
+      [&now] {
+        const auto sampled = now;
+        now += 1ms;
+        return sampled;
+      },
+  };
+  const auto first = fixture.route(15);
+  const auto second = fixture.route(16);
+  pump.add_route(first);
+  pump.add_route(second);
+  bool first_completed = false;
+  bool second_completed = false;
+  REQUIRE(first->register_completion(
+      [&first_completed](const scry::Completion&) { first_completed = true; }));
+  REQUIRE(second->register_completion(
+      [&second_completed](const scry::Completion&) { second_completed = true; }));
+  REQUIRE(fixture.events->push(completion(15, "first"), 1024));
+  REQUIRE(fixture.events->push(completion(16, "second"), 1024));
+
+  const auto bounded = pump.update({.time_budget = 2ms});
+  CHECK(bounded.callbacks_delivered == 0);
+  CHECK(bounded.events_remaining == 2);
+  CHECK(bounded.budget_exhausted);
+  CHECK(fixture.conversation->messages.size() == 2);
+  CHECK_FALSE(first_completed);
+  CHECK_FALSE(second_completed);
+
+  const auto drained = pump.update({});
+  CHECK(drained.callbacks_delivered == 2);
+  CHECK(drained.events_remaining == 0);
+  CHECK(first_completed);
+  CHECK(second_completed);
+  CHECK(fixture.conversation->messages.size() == 4);
 }
 
 TEST_CASE("detaching retains callbacks already registered") {

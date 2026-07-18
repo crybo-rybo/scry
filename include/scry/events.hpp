@@ -14,6 +14,18 @@
 
 namespace scry {
 
+enum class FinishReason : std::uint8_t {
+  completed,
+  length,
+  tool_use,
+  unknown,
+};
+
+struct Usage {
+  std::uint64_t input_tokens{};
+  std::uint64_t output_tokens{};
+};
+
 struct ToolCall {
   TurnId turn_id{};
   std::string id{};
@@ -24,6 +36,8 @@ struct ToolCall {
 struct Completion {
   TurnId turn_id{};
   std::string text{};
+  FinishReason finish_reason{FinishReason::unknown};
+  Usage usage{};
   std::uint32_t attempt_count{};
   std::string provider_request_id{};
 };
@@ -41,6 +55,7 @@ struct UpdateStats {
   std::size_t callbacks_delivered{};
   std::size_t events_remaining{};
   bool budget_exhausted{false};
+  bool reentrant_update_rejected{false};
 };
 
 using TextDeltaCallback = UniqueFunction<void(std::string_view)>;

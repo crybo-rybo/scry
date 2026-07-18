@@ -77,6 +77,19 @@ TransitionResult TurnMachine::on_event(ModelTextDelta event) {
   });
 }
 
+TransitionResult TurnMachine::on_event(const ModelSemanticOutput /*event*/) {
+  const auto* awaiting = std::get_if<AwaitingModelState>(&state_);
+  if (awaiting != nullptr) {
+    state_.emplace<StreamingState>(awaiting->attempt);
+    return {};
+  }
+  if (std::holds_alternative<StreamingState>(state_)) {
+    return {};
+  }
+  return illegal(MachineEventKind::semantic_output,
+                 TransitionDiagnosticReason::event_not_allowed);
+}
+
 TransitionResult TurnMachine::on_event(ModelCompleted event) {
   if (phase() != MachinePhase::awaiting_model && phase() != MachinePhase::streaming) {
     return illegal(MachineEventKind::completed,
@@ -97,7 +110,11 @@ TransitionResult TurnMachine::on_event(AttemptFailed event) {
     return illegal(MachineEventKind::attempt_failed,
                    TransitionDiagnosticReason::event_not_allowed);
   }
-  if (event.observed_at < *latest_time_) {
+  if (!latest_time_ || !started_at_) {
+    return illegal(MachineEventKind::attempt_failed,
+                   TransitionDiagnosticReason::event_not_allowed);
+  }
+  if (event.observed_at < latest_time_.value()) {
     return illegal(MachineEventKind::attempt_failed,
                    TransitionDiagnosticReason::non_monotonic_time);
   }
@@ -114,7 +131,7 @@ TransitionResult TurnMachine::on_event(AttemptFailed event) {
   const auto delay = retry_delay(retry_policy_, attempt_count_, event.retry_after,
                                  event.jitter_sample);
   const auto deadline = event.observed_at + delay;
-  const auto elapsed_deadline = *started_at_ + bounded_elapsed(retry_policy_);
+  const auto elapsed_deadline = started_at_.value() + bounded_elapsed(retry_policy_);
   if (deadline > elapsed_deadline) {
     return finish_error(std::move(error));
   }
@@ -132,11 +149,15 @@ TransitionResult TurnMachine::on_event(const RetryWake event) {
     return illegal(MachineEventKind::retry_wake,
                    TransitionDiagnosticReason::event_not_allowed);
   }
+  if (!started_at_) {
+    return illegal(MachineEventKind::retry_wake,
+                   TransitionDiagnosticReason::event_not_allowed);
+  }
   if (event.observed_at < waiting->deadline) {
     return illegal(MachineEventKind::retry_wake,
                    TransitionDiagnosticReason::wake_before_deadline);
   }
-  const auto elapsed_deadline = *started_at_ + bounded_elapsed(retry_policy_);
+  const auto elapsed_deadline = started_at_.value() + bounded_elapsed(retry_policy_);
   if (event.observed_at > elapsed_deadline) {
     return finish_error(waiting->last_error);
   }
@@ -179,10 +200,11 @@ TransitionResult TurnMachine::illegal(const MachineEventKind event,
 
 bool TurnMachine::retry_is_allowed(const Error& error,
                                    const MachineTimePoint observed_at) const noexcept {
-  if (!is_retryable(error.category) || attempt_count_ >= retry_policy_.max_attempts) {
+  if (!started_at_ || !is_retryable(error.category) ||
+      attempt_count_ >= retry_policy_.max_attempts) {
     return false;
   }
-  const auto deadline = *started_at_ + bounded_elapsed(retry_policy_);
+  const auto deadline = started_at_.value() + bounded_elapsed(retry_policy_);
   return observed_at <= deadline;
 }
 

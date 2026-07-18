@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <expected>
 #include <optional>
@@ -27,6 +28,7 @@ struct Error {
   std::string message{};
   std::string provider_detail{};
   bool retryable{false};
+  std::optional<std::chrono::milliseconds> retry_after{};
   std::optional<TurnId> turn_id{};
   std::uint32_t attempt{};
   std::string provider_request_id{};

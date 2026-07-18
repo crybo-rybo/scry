@@ -1,10 +1,20 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <scry/error.hpp>
 
 namespace scry::detail {
+
+struct CurlRuntimeCapabilities {
+  std::uint32_t version_number{};
+  bool thread_safe{};
+  bool asynchronous_dns{};
+};
+
+[[nodiscard]] Status
+validate_curl_runtime_capabilities(CurlRuntimeCapabilities capabilities);
 
 class CurlGlobalState;
 

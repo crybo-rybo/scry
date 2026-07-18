@@ -44,6 +44,21 @@ private:
   bool& updating_;
 };
 
+[[nodiscard]] std::chrono::steady_clock::time_point
+update_deadline(const std::chrono::steady_clock::time_point started,
+                const std::optional<std::chrono::microseconds> time_budget) {
+  if (!time_budget) {
+    return std::chrono::steady_clock::time_point::max();
+  }
+  if (*time_budget <= std::chrono::microseconds{0}) {
+    return started;
+  }
+  const auto capacity = std::chrono::steady_clock::time_point::max() - started;
+  return started +
+         std::min(*time_budget,
+                  std::chrono::duration_cast<std::chrono::microseconds>(capacity));
+}
+
 } // namespace
 
 TurnRoute::TurnRoute(const TurnId turn_id, std::shared_ptr<std::atomic<bool>> cancelled,
@@ -126,6 +141,8 @@ void TurnRoute::invoke(const WorkerEvent& event) {
           const Completion completion{
               .turn_id = value.turn_id,
               .text = response_text(value.response),
+              .finish_reason = value.response.finish_reason,
+              .usage = value.response.usage,
               .attempt_count = value.attempt_count,
               .provider_request_id = value.response.provider_request_id,
           };
@@ -167,23 +184,26 @@ std::shared_ptr<TurnRoute> PumpState::find_route(const TurnId turn_id) const {
 
 std::size_t PumpState::route_count() const noexcept { return routes_.size(); }
 
+std::size_t PumpState::live_route_count() const noexcept {
+  return static_cast<std::size_t>(std::ranges::count_if(
+      routes_, [](const auto& entry) { return !entry.second->terminal(); }));
+}
+
+bool PumpState::updating() const noexcept { return updating_; }
+
 UpdateStats PumpState::update(const UpdateOptions options) {
   if (updating_) {
-    assert(false && "reentrant Harness::update() is forbidden");
     return UpdateStats{
         .events_remaining = pending_callbacks_.size() + events_->size(),
         .budget_exhausted = true,
+        .reentrant_update_rejected = true,
     };
   }
   UpdateGuard guard{updating_};
-  ingest_events();
-
   const auto started = clock_();
-  const auto deadline = options.time_budget
-                            ? started + *options.time_budget
-                            : std::chrono::steady_clock::time_point::max();
+  const auto deadline = update_deadline(started, options.time_budget);
   std::size_t delivered = 0;
-  bool exhausted = false;
+  bool exhausted = ingest_events(deadline);
   while (delivered < options.max_callbacks && has_deliverable()) {
     if (clock_() >= deadline) {
       exhausted = true;
@@ -192,10 +212,11 @@ UpdateStats PumpState::update(const UpdateOptions options) {
     if (!deliver_one(delivered)) {
       break;
     }
-    ingest_events();
   }
-  release_discarded();
-  clean_routes();
+  if (!exhausted) {
+    release_discarded();
+    clean_routes();
+  }
   const auto remaining = pending_callbacks_.size() + events_->size();
   exhausted = exhausted || (delivered == options.max_callbacks && has_deliverable());
   return UpdateStats{
@@ -211,7 +232,7 @@ void PumpState::shutdown() noexcept {
     route->conversation()->busy = false;
   }
   for (const auto& event : pending_callbacks_) {
-    events_->release(event);
+    events_->release(event_turn_id(event.event), event.accounted_bytes);
   }
   pending_callbacks_.clear();
   while (auto event = events_->try_pop()) {
@@ -220,13 +241,22 @@ void PumpState::shutdown() noexcept {
   routes_.clear();
 }
 
-void PumpState::ingest_events() {
-  while (auto event = events_->try_pop()) {
+bool PumpState::ingest_events(const std::chrono::steady_clock::time_point deadline) {
+  while (events_->size() != 0) {
+    if (clock_() >= deadline) {
+      return true;
+    }
+    auto event = events_->try_pop();
+    if (!event) {
+      return false;
+    }
     accept_event(std::move(*event));
   }
+  return false;
 }
 
 void PumpState::accept_event(WorkerEvent event) {
+  const auto accounted_bytes = event_payload_bytes(event);
   const auto route = find_route(event_turn_id(event));
   if (!route) {
     events_->release(event);
@@ -239,10 +269,32 @@ void PumpState::accept_event(WorkerEvent event) {
 
   apply_terminal(*route, event);
   if (route->attached() || route->has_callback(event)) {
-    pending_callbacks_.push_back(std::move(event));
+    if (const auto* delta = std::get_if<TextDeltaEvent>(&event);
+        delta != nullptr && coalesce_pending_delta(*delta, accounted_bytes)) {
+      return;
+    }
+    pending_callbacks_.push_back(PendingCallback{
+        .event = std::move(event),
+        .accounted_bytes = accounted_bytes,
+    });
   } else {
     events_->release(event);
   }
+}
+
+bool PumpState::coalesce_pending_delta(const TextDeltaEvent& event,
+                                       const std::size_t accounted_bytes) {
+  const auto found =
+      std::ranges::find_if(pending_callbacks_, [&event](const auto& pending) {
+        const auto* delta = std::get_if<TextDeltaEvent>(&pending.event);
+        return delta != nullptr && delta->turn_id == event.turn_id;
+      });
+  if (found == pending_callbacks_.end()) {
+    return false;
+  }
+  std::get<TextDeltaEvent>(found->event).text += event.text;
+  found->accounted_bytes += accounted_bytes;
+  return true;
 }
 
 void PumpState::apply_terminal(TurnRoute& route, WorkerEvent& event) {
@@ -302,36 +354,37 @@ void PumpState::commit_completion(TurnRoute& route, const CompletionEvent& event
 }
 
 bool PumpState::deliver_one(std::size_t& callbacks_delivered) {
-  const auto found = std::find_if(pending_callbacks_.begin(), pending_callbacks_.end(),
-                                  [this](const auto& event) {
-                                    const auto route = find_route(event_turn_id(event));
-                                    return route && route->has_callback(event);
-                                  });
+  const auto found = std::find_if(
+      pending_callbacks_.begin(), pending_callbacks_.end(), [this](const auto& event) {
+        const auto route = find_route(event_turn_id(event.event));
+        return route && route->has_callback(event.event);
+      });
   if (found == pending_callbacks_.end()) {
     return false;
   }
-  auto event = std::move(*found);
+  auto pending = std::move(*found);
   pending_callbacks_.erase(found);
-  const auto route = find_route(event_turn_id(event));
-  events_->release(event);
+  const auto route = find_route(event_turn_id(pending.event));
+  events_->release(event_turn_id(pending.event), pending.accounted_bytes);
   ++callbacks_delivered;
-  route->invoke(event);
+  route->invoke(pending.event);
   return true;
 }
 
 bool PumpState::has_deliverable() const noexcept {
   return std::ranges::any_of(pending_callbacks_, [this](const auto& event) {
-    const auto route = find_route(event_turn_id(event));
-    return route && route->has_callback(event);
+    const auto route = find_route(event_turn_id(event.event));
+    return route && route->has_callback(event.event);
   });
 }
 
 void PumpState::release_discarded() {
   std::erase_if(pending_callbacks_, [this](const auto& event) {
-    const auto route = find_route(event_turn_id(event));
-    const auto discard = !route || (!route->attached() && !route->has_callback(event));
+    const auto route = find_route(event_turn_id(event.event));
+    const auto discard =
+        !route || (!route->attached() && !route->has_callback(event.event));
     if (discard) {
-      events_->release(event);
+      events_->release(event_turn_id(event.event), event.accounted_bytes);
     }
     return discard;
   });
@@ -344,7 +397,7 @@ void PumpState::clean_routes() {
       return false;
     }
     return std::ranges::none_of(pending_callbacks_, [turn_id](const auto& event) {
-      return event_turn_id(event) == turn_id;
+      return event_turn_id(event.event) == turn_id;
     });
   });
 }

@@ -46,13 +46,18 @@ using scry::detail::TransportRequest;
   }};
 }
 
-[[nodiscard]] scry::Result<scry::detail::TransportResult>
-interrupt_during_transfer(const bool stop_harness) {
+struct InterruptedTransfer {
+  scry::Result<scry::detail::TransportResult> result;
+  std::chrono::steady_clock::duration shutdown_elapsed{};
+};
+
+[[nodiscard]] InterruptedTransfer interrupt_during_transfer(const bool stop_harness) {
   using namespace std::chrono_literals;
   scry::test::LoopbackServer server{response("200 OK", "", "body"), true};
   CurlTransport transport;
   auto held_request = request(server.url());
   held_request.timeouts.transfer = 2s;
+  held_request.timeouts.shutdown = 50ms;
   std::string body;
   auto sink = append_to(body);
   std::stop_source shutdown;
@@ -67,8 +72,12 @@ interrupt_during_transfer(const bool stop_harness) {
   } else {
     cancelled.store(true, std::memory_order_release);
   }
+  const auto started = std::chrono::steady_clock::now();
   worker.join();
-  return std::move(*outcome);
+  return {
+      .result = std::move(*outcome),
+      .shutdown_elapsed = std::chrono::steady_clock::now() - started,
+  };
 }
 
 } // namespace
@@ -198,9 +207,11 @@ TEST_CASE("curl transport maps HTTP failures without leaking request data") {
 
   for (const auto& test_case : cases) {
     CAPTURE(std::string{test_case.status});
-    scry::test::LoopbackServer server{
-        response(test_case.status, "request-id: failed-request\r\n",
-                 "test-key-never-log request-body-never-log")};
+    const auto retry_after =
+        test_case.category == ErrorCategory::rate_limit ? "Retry-After: 7\r\n" : "";
+    scry::test::LoopbackServer server{response(
+        test_case.status, "request-id: failed-request\r\n" + std::string{retry_after},
+        "test-key-never-log request-body-never-log")};
     CurlTransport transport;
     std::string body;
     auto sink = append_to(body);
@@ -214,6 +225,12 @@ TEST_CASE("curl transport maps HTTP failures without leaking request data") {
     CHECK(result.error().category == test_case.category);
     CHECK(result.error().retryable == test_case.retryable);
     CHECK(result.error().provider_request_id == "failed-request");
+    if (test_case.category == ErrorCategory::rate_limit) {
+      CHECK(result.error().retry_after == std::chrono::seconds{7});
+    } else {
+      CHECK_FALSE(result.error().retry_after);
+    }
+    CHECK(body.empty());
     CHECK(result.error().message.find("test-key-never-log") == std::string::npos);
     CHECK(result.error().message.find("request-body-never-log") == std::string::npos);
     CHECK(result.error().provider_detail.empty());
@@ -243,14 +260,80 @@ TEST_CASE("curl transport handles cancellation signals before network IO") {
 
 TEST_CASE("curl progress callback independently observes both cancellation signals") {
   const auto turn_result = interrupt_during_transfer(false);
-  REQUIRE_FALSE(turn_result);
-  CHECK(turn_result.error().category == ErrorCategory::cancelled);
-  CHECK(turn_result.error().message == "transfer cancelled");
+  REQUIRE_FALSE(turn_result.result);
+  CHECK(turn_result.result.error().category == ErrorCategory::cancelled);
+  CHECK(turn_result.result.error().message == "transfer cancelled");
+  CHECK(turn_result.shutdown_elapsed < std::chrono::milliseconds{500});
 
   const auto shutdown_result = interrupt_during_transfer(true);
-  REQUIRE_FALSE(shutdown_result);
-  CHECK(shutdown_result.error().category == ErrorCategory::cancelled);
-  CHECK(shutdown_result.error().message == "transfer cancelled by harness shutdown");
+  REQUIRE_FALSE(shutdown_result.result);
+  CHECK(shutdown_result.result.error().category == ErrorCategory::cancelled);
+  CHECK(shutdown_result.result.error().message ==
+        "transfer cancelled by harness shutdown");
+  CHECK(shutdown_result.shutdown_elapsed < std::chrono::milliseconds{500});
+}
+
+TEST_CASE("curl transport never forwards redirect bodies to the response sink") {
+  scry::test::LoopbackServer server{
+      response("302 Found", "Location: /elsewhere\r\n",
+               "event: content_block_delta\r\ndata: semantic-output\r\n\r\n")};
+  CurlTransport transport;
+  std::string body;
+  auto sink = append_to(body);
+  std::stop_source shutdown;
+  const std::atomic cancelled{false};
+
+  const auto result =
+      transport.perform(request(server.url()), shutdown.get_token(), cancelled, sink);
+
+  REQUIRE_FALSE(result);
+  CHECK(result.error().category == ErrorCategory::protocol);
+  CHECK(body.empty());
+}
+
+TEST_CASE("curl transport parses HTTP-date Retry-After values") {
+  scry::test::LoopbackServer server{
+      response("429 Too Many Requests",
+               "Retry-After: Wed, 21 Oct 2099 07:28:00 GMT\r\n", "retry later")};
+  CurlTransport transport;
+  std::string body;
+  auto sink = append_to(body);
+  std::stop_source shutdown;
+  const std::atomic cancelled{false};
+
+  const auto result =
+      transport.perform(request(server.url()), shutdown.get_token(), cancelled, sink);
+
+  REQUIRE_FALSE(result);
+  CHECK(result.error().category == ErrorCategory::rate_limit);
+  REQUIRE(result.error().retry_after);
+  CHECK(*result.error().retry_after > std::chrono::hours{24});
+  CHECK(body.empty());
+}
+
+TEST_CASE("curl transport preserves provider-neutral sanitized error detail") {
+  scry::test::LoopbackServer server{
+      response("200 OK", "request-id: header-request\r\n", "body")};
+  CurlTransport transport;
+  BodyChunkSink sink{[](std::string_view) -> scry::Status {
+    return std::unexpected(scry::Error{
+        .category = ErrorCategory::network,
+        .message = "private provider message",
+        .provider_detail = "anthropic:overloaded_error",
+        .retryable = true,
+        .provider_request_id = "body-request",
+    });
+  }};
+  std::stop_source shutdown;
+  const std::atomic cancelled{false};
+
+  const auto result =
+      transport.perform(request(server.url()), shutdown.get_token(), cancelled, sink);
+
+  REQUIRE_FALSE(result);
+  CHECK(result.error().message == "response consumer rejected response data");
+  CHECK(result.error().provider_detail == "anthropic:overloaded_error");
+  CHECK(result.error().provider_request_id == "body-request");
 }
 
 TEST_CASE("curl callbacks contain response consumer exceptions") {

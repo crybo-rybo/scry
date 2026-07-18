@@ -17,6 +17,8 @@ public:
   CurlTransport(const CurlTransport&) = delete;
   CurlTransport& operator=(const CurlTransport&) = delete;
 
+  [[nodiscard]] Status status() const;
+
   [[nodiscard]] Result<TransportResult> perform(const TransportRequest& request,
                                                 std::stop_token shutdown,
                                                 const std::atomic<bool>& cancelled,

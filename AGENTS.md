@@ -34,18 +34,19 @@ Run the core local gate from the repository root:
 ```
 
 This checks the diff, complexity, formatting, public-header boundaries,
-compile-only examples, contract tests, installation, and a downstream
+the linked canonical example, contract tests, installation, and a downstream
 `find_package(scry)` consumer. `just ci-fast` is an optional equivalent.
 
 Run the complete local preflight before a PR handoff:
 
 ```sh
-just ci
+./scripts/preflight.sh
 ```
 
-This adds the branch-coverage/CRAP ratchet, clang-tidy, sanitizers, curl, and
-reflection feasibility. It runs every leg and reports unavailable host
-toolchains explicitly; hosted CI remains authoritative for those legs.
+This adds the branch-coverage/CRAP ratchet, clang-tidy, sanitizers, short
+protocol fuzzing, curl, and reflection feasibility. It runs every leg and
+reports unavailable host toolchains explicitly; hosted CI remains authoritative
+for those legs. `just ci` is an optional equivalent.
 
 For a normal edit/build loop:
 

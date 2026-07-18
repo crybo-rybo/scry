@@ -1,5 +1,6 @@
 #include "provider/anthropic.hpp"
 #include "provider/anthropic_content.hpp"
+#include "provider/anthropic_error.hpp"
 #include "provider/wire_json.hpp"
 
 #include <limits>
@@ -55,12 +56,10 @@ namespace {
   return value;
 }
 
-[[nodiscard]] std::string identifier(const WireValue& root) {
-  for (const auto name : {"request_id", "id"}) {
-    auto value = optional_wire_string(root, name);
-    if (value && *value) {
-      return std::string{**value};
-    }
+[[nodiscard]] std::string request_identifier(const WireValue& root) {
+  auto value = optional_wire_string(root, "request_id");
+  if (value && *value) {
+    return std::string{**value};
   }
   return {};
 }
@@ -99,11 +98,17 @@ decode_initial_content(const WireValue& message, ProviderDecodeState& state) {
     return std::unexpected(std::move(finish.error()));
   }
   state.response.finish_reason = *finish;
+  state.finish_observed = reason->has_value();
   return {};
 }
 
 [[nodiscard]] Result<std::vector<ProviderEvent>>
 handle_message_start(const WireValue& root, ProviderDecodeState& state) {
+  if (state.message_started) {
+    return std::unexpected(
+        make_provider_error(ErrorCategory::protocol,
+                            "Anthropic stream emitted more than one message_start"));
+  }
   auto message = required_object(root, "message");
   if (!message) {
     return std::unexpected(std::move(message.error()));
@@ -116,7 +121,7 @@ handle_message_start(const WireValue& root, ProviderDecodeState& state) {
              : std::move(type.error()));
   }
   if (state.response.provider_request_id.empty()) {
-    state.response.provider_request_id = identifier(**message);
+    state.response.provider_request_id = request_identifier(**message);
   }
   auto usage = apply_anthropic_usage(**message, state.response.usage);
   if (!usage) {
@@ -126,11 +131,17 @@ handle_message_start(const WireValue& root, ProviderDecodeState& state) {
   if (!finish) {
     return std::unexpected(std::move(finish.error()));
   }
+  state.message_started = true;
   return decode_initial_content(**message, state);
 }
 
 [[nodiscard]] Result<std::vector<ProviderEvent>>
 handle_content_start(const WireValue& root, ProviderDecodeState& state) {
+  if (!state.message_started || state.active_content_index || state.finish_observed) {
+    return std::unexpected(make_provider_error(
+        ErrorCategory::protocol,
+        "Anthropic content block began outside the message lifecycle"));
+  }
   auto index = content_index(root);
   if (!index) {
     return std::unexpected(std::move(index.error()));
@@ -156,6 +167,7 @@ handle_content_start(const WireValue& root, ProviderDecodeState& state) {
     events.push_back(ProviderTextDelta{.text = text->text});
   }
   state.response.content.push_back(std::move(*block));
+  state.active_content_index = *index;
   return events;
 }
 
@@ -169,6 +181,11 @@ handle_content_start(const WireValue& root, ProviderDecodeState& state) {
     return std::unexpected(
         make_provider_error(ErrorCategory::protocol,
                             "Anthropic content event referenced an unknown block"));
+  }
+  if (state.active_content_index != *index) {
+    return std::unexpected(make_provider_error(
+        ErrorCategory::protocol,
+        "Anthropic content event targeted a block that is not active"));
   }
   return &state.response.content[*index];
 }
@@ -243,6 +260,7 @@ handle_content_stop(const WireValue& root, ProviderDecodeState& state) {
   }
   auto* tool = std::get_if<ToolCallBlock>(*block);
   if (tool == nullptr) {
+    state.active_content_index.reset();
     return std::vector<ProviderEvent>{};
   }
   if (tool->arguments.text.empty()) {
@@ -260,11 +278,17 @@ handle_content_stop(const WireValue& root, ProviderDecodeState& state) {
     return std::unexpected(std::move(canonical.error()));
   }
   tool->arguments.text = std::move(*canonical);
+  state.active_content_index.reset();
   return std::vector<ProviderEvent>{};
 }
 
 [[nodiscard]] Result<std::vector<ProviderEvent>>
 handle_message_delta(const WireValue& root, ProviderDecodeState& state) {
+  if (!state.message_started || state.active_content_index || state.finish_observed) {
+    return std::unexpected(
+        make_provider_error(ErrorCategory::protocol,
+                            "Anthropic message_delta violated the message lifecycle"));
+  }
   auto delta = required_object(root, "delta");
   if (!delta) {
     return std::unexpected(std::move(delta.error()));
@@ -278,6 +302,7 @@ handle_message_delta(const WireValue& root, ProviderDecodeState& state) {
     return std::unexpected(std::move(finish.error()));
   }
   state.response.finish_reason = *finish;
+  state.finish_observed = reason->has_value();
   auto usage = apply_anthropic_usage(root, state.response.usage);
   if (!usage) {
     return std::unexpected(std::move(usage.error()));
@@ -287,10 +312,11 @@ handle_message_delta(const WireValue& root, ProviderDecodeState& state) {
 
 [[nodiscard]] Result<std::vector<ProviderEvent>>
 handle_message_stop(ProviderDecodeState& state) {
-  if (state.completed) {
+  if (!state.message_started || state.active_content_index || !state.finish_observed ||
+      state.completed) {
     return std::unexpected(
         make_provider_error(ErrorCategory::protocol,
-                            "Anthropic stream emitted more than one terminal event"));
+                            "Anthropic message_stop violated the message lifecycle"));
   }
   state.completed = true;
   return std::vector<ProviderEvent>{
@@ -304,7 +330,7 @@ handle_message_stop(ProviderDecodeState& state) {
       value != nullptr && value->is_object()) {
     auto parsed = optional_wire_string(*value, "type");
     if (parsed && *parsed) {
-      type = std::string{**parsed};
+      type = sanitize_anthropic_error_type(**parsed);
     }
   }
 
@@ -322,7 +348,7 @@ handle_message_stop(ProviderDecodeState& state) {
   Error error =
       make_provider_error(category, "Anthropic stream returned an error", retryable);
   error.provider_detail = "anthropic:" + type;
-  error.provider_request_id = identifier(root);
+  error.provider_request_id = request_identifier(root);
   return error;
 }
 

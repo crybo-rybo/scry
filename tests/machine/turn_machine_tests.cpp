@@ -189,7 +189,11 @@ TEST_CASE("elapsed retry cap rejects waits beyond the deadline") {
 
 TEST_CASE("semantic output prevents automatic retry") {
   auto machine = make_machine();
-  enter_streaming(machine);
+  begin(machine);
+  const auto observed = machine.apply(scry::detail::ModelSemanticOutput{});
+  CHECK(observed.status == scry::detail::TransitionStatus::applied);
+  CHECK(observed.commands.empty());
+  CHECK(machine.phase() == scry::detail::MachinePhase::streaming);
 
   const auto failed = machine.apply(scry::detail::AttemptFailed{
       .error = error(scry::ErrorCategory::network),
@@ -222,6 +226,21 @@ TEST_CASE("non-retryable categories terminate without a wake") {
     CHECK(command.error.category == category);
     CHECK_FALSE(command.error.retryable);
   }
+}
+
+TEST_CASE("TLS protocol failures terminate without a wake") {
+  auto machine = make_machine();
+  begin(machine);
+
+  const auto failed = machine.apply(scry::detail::AttemptFailed{
+      .error = error(scry::ErrorCategory::protocol, "TLS verification failed"),
+      .observed_at = at(1ms),
+  });
+  const auto& command = only_command<scry::detail::PublishError>(failed);
+
+  CHECK(command.error.category == scry::ErrorCategory::protocol);
+  CHECK_FALSE(command.error.retryable);
+  CHECK(machine.phase() == scry::detail::MachinePhase::terminal);
 }
 
 TEST_CASE("transport cancellation maps to the cancelled terminal channel") {
@@ -307,8 +326,9 @@ TEST_CASE("illegal transitions are diagnosed without mutating the machine") {
 
   SECTION("queued accepts only begin or cancel") {
     for (const auto kind :
-         {MachineEventKind::text_delta, MachineEventKind::completed,
-          MachineEventKind::attempt_failed, MachineEventKind::retry_wake}) {
+         {MachineEventKind::text_delta, MachineEventKind::semantic_output,
+          MachineEventKind::completed, MachineEventKind::attempt_failed,
+          MachineEventKind::retry_wake}) {
       auto machine = make_machine();
       check_illegal(machine, kind);
     }
@@ -333,7 +353,8 @@ TEST_CASE("illegal transitions are diagnosed without mutating the machine") {
   SECTION("retry wait accepts only wake or cancel") {
     for (const auto kind :
          {MachineEventKind::begin, MachineEventKind::text_delta,
-          MachineEventKind::completed, MachineEventKind::attempt_failed}) {
+          MachineEventKind::semantic_output, MachineEventKind::completed,
+          MachineEventKind::attempt_failed}) {
       auto machine = make_machine();
       enter_retry_wait(machine);
       check_illegal(machine, kind);

@@ -21,6 +21,24 @@ constexpr auto minimum_curl_version = CURL_VERSION_BITS(7, 84, 0);
 
 } // namespace
 
+Status validate_curl_runtime_capabilities(const CurlRuntimeCapabilities capabilities) {
+  if (capabilities.version_number < minimum_curl_version) {
+    return std::unexpected(startup_error(ErrorCategory::invalid_config,
+                                         "libcurl 7.84 or newer is required"));
+  }
+  if (!capabilities.thread_safe) {
+    return std::unexpected(
+        startup_error(ErrorCategory::invalid_config,
+                      "libcurl must support thread-safe global initialization"));
+  }
+  if (!capabilities.asynchronous_dns) {
+    return std::unexpected(
+        startup_error(ErrorCategory::invalid_config,
+                      "libcurl must provide asynchronous DNS resolution"));
+  }
+  return {};
+}
+
 class CurlGlobalState final {
 public:
   CurlGlobalState() {
@@ -48,19 +66,15 @@ public:
 private:
   void validate_runtime() {
     const auto* version = curl_version_info(CURLVERSION_NOW);
-    if (version == nullptr || version->version_num < minimum_curl_version) {
-      error_ = startup_error(ErrorCategory::invalid_config,
-                             "libcurl 7.84 or newer is required");
-      return;
-    }
-    if ((version->features & CURL_VERSION_THREADSAFE) == 0) {
-      error_ = startup_error(ErrorCategory::invalid_config,
-                             "libcurl must support thread-safe global initialization");
-      return;
-    }
-    if ((version->features & CURL_VERSION_ASYNCHDNS) == 0) {
-      error_ = startup_error(ErrorCategory::invalid_config,
-                             "libcurl must provide asynchronous DNS resolution");
+    const auto status = validate_curl_runtime_capabilities({
+        .version_number = version == nullptr ? 0U : version->version_num,
+        .thread_safe =
+            version != nullptr && (version->features & CURL_VERSION_THREADSAFE) != 0,
+        .asynchronous_dns =
+            version != nullptr && (version->features & CURL_VERSION_ASYNCHDNS) != 0,
+    });
+    if (!status) {
+      error_ = status.error();
     }
   }
 

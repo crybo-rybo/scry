@@ -4,6 +4,7 @@
 #include <cctype>
 #include <charconv>
 #include <chrono>
+#include <cstdint>
 #include <string>
 #include <utility>
 
@@ -31,7 +32,123 @@ namespace {
   });
 }
 
+[[nodiscard]] std::string_view trim(std::string_view value) noexcept {
+  while (!value.empty() &&
+         std::isspace(static_cast<unsigned char>(value.front())) != 0) {
+    value.remove_prefix(1);
+  }
+  while (!value.empty() &&
+         std::isspace(static_cast<unsigned char>(value.back())) != 0) {
+    value.remove_suffix(1);
+  }
+  return value;
+}
+
+[[nodiscard]] Result<std::int32_t> response_status(const std::string_view line) {
+  const auto first_space = line.find(' ');
+  if (first_space == std::string_view::npos) {
+    return std::unexpected(
+        make_error(ErrorCategory::protocol, "malformed HTTP status line"));
+  }
+  auto value = line.substr(first_space + 1);
+  value = value.substr(0, value.find(' '));
+  std::int32_t status = 0;
+  const auto parsed =
+      std::from_chars(value.data(), value.data() + value.size(), status);
+  if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size()) {
+    return std::unexpected(
+        make_error(ErrorCategory::protocol, "malformed HTTP status line"));
+  }
+  return status;
+}
+
+[[nodiscard]] Status account_bytes(ResponseState& response, const std::size_t bytes) {
+  if (response.received_bytes > response.limit ||
+      bytes > response.limit - response.received_bytes) {
+    return std::unexpected(
+        make_error(ErrorCategory::resource_limit, "response exceeds configured limit"));
+  }
+  response.received_bytes += bytes;
+  return {};
+}
+
+[[nodiscard]] Status accept_status_line(ResponseState& response,
+                                        const std::string_view line) {
+  auto status = response_status(line);
+  if (!status) {
+    return std::unexpected(std::move(status.error()));
+  }
+  response.deliver_body = *status >= 200 && *status < 300;
+  response.headers.clear();
+  response.provider_request_id.clear();
+  return {};
+}
+
+[[nodiscard]] Status validate_content_length(const ResponseState& response,
+                                             const std::string_view value) {
+  const auto length = parse_size(value);
+  if (!length) {
+    return std::unexpected(
+        make_error(ErrorCategory::protocol, "invalid response length"));
+  }
+  if (*length > response.limit) {
+    return std::unexpected(
+        make_error(ErrorCategory::resource_limit, "response exceeds configured limit"));
+  }
+  return {};
+}
+
+[[nodiscard]] Status record_header(ResponseState& response, const std::string_view name,
+                                   const std::string_view value) {
+  if (is_content_length_header(name)) {
+    if (auto status = validate_content_length(response, value); !status) {
+      return status;
+    }
+  }
+  response.headers.push_back(
+      HttpHeader{.name = std::string{name}, .value = std::string{value}});
+  if (!is_request_id_header(name)) {
+    return {};
+  }
+  constexpr std::size_t maximum_request_id_bytes = 256;
+  if (value.size() > maximum_request_id_bytes) {
+    return std::unexpected(make_error(ErrorCategory::protocol,
+                                      "provider request identifier is too large"));
+  }
+  response.provider_request_id = value;
+  return {};
+}
+
 } // namespace
+
+Status ResponseState::accept_header(std::string_view line) {
+  if (auto status = account_bytes(*this, line.size()); !status) {
+    return status;
+  }
+  line = trim(line);
+  if (line.empty()) {
+    return {};
+  }
+  if (line.starts_with("HTTP/")) {
+    return accept_status_line(*this, line);
+  }
+  const auto separator = line.find(':');
+  if (separator == std::string_view::npos) {
+    return std::unexpected(
+        make_error(ErrorCategory::protocol, "malformed response header"));
+  }
+  const auto name = trim(line.substr(0, separator));
+  const auto value = trim(line.substr(separator + 1));
+  if (name.empty()) {
+    return std::unexpected(
+        make_error(ErrorCategory::protocol, "malformed response header"));
+  }
+  return record_header(*this, name, value);
+}
+
+Status ResponseState::account_body(const std::size_t bytes) {
+  return account_bytes(*this, bytes);
+}
 
 bool header_name_equal(const std::string_view left,
                        const std::string_view right) noexcept {
@@ -75,7 +192,8 @@ Status validate_request(const TransportRequest& request,
         make_error(ErrorCategory::invalid_state, "response sink is missing"));
   }
   if (request.timeouts.connect <= std::chrono::milliseconds::zero() ||
-      request.timeouts.transfer <= std::chrono::milliseconds::zero()) {
+      request.timeouts.transfer <= std::chrono::milliseconds::zero() ||
+      request.timeouts.shutdown <= std::chrono::milliseconds::zero()) {
     return std::unexpected(make_error(ErrorCategory::invalid_config,
                                       "transport timeouts must be positive"));
   }
@@ -106,6 +224,22 @@ Error http_error(const std::int32_t status, const std::string& request_id) {
   }
   error.provider_request_id = request_id;
   return error;
+}
+
+std::string sanitize_provider_detail(const std::string_view detail) {
+  constexpr std::size_t maximum_size = 128;
+  const auto separator = detail.find(':');
+  if (detail.empty() || detail.size() > maximum_size ||
+      separator == std::string_view::npos || separator == 0 ||
+      separator + 1 == detail.size() ||
+      detail.find(':', separator + 1) != std::string_view::npos) {
+    return {};
+  }
+  const auto safe = std::ranges::all_of(detail, [](const char value) {
+    const auto character = static_cast<unsigned char>(value);
+    return std::isalnum(character) != 0 || value == '_' || value == ':';
+  });
+  return safe ? std::string{detail} : std::string{};
 }
 
 } // namespace scry::detail::transport_policy

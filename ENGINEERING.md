@@ -10,7 +10,7 @@ Third of three: [DESIGN.md](DESIGN.md) says what we're building, [ARCHITECTURE.m
 
 **The architecture was designed for testability — the process must cash that check.** The sans-I/O state machine, injectable transport, and pure parsers exist so the hardest logic can be tested deterministically. If coverage on those components is low, that's not a testing failure, it's an architecture violation.
 
-**Walking skeleton first.** The first milestone that "works" is a thread of execution through every layer — public API → machine → adapter → transport → real server — doing the simplest possible thing (one non-streaming chat turn). Depth comes after the skeleton stands. This front-loads discovery of the integration risks (threading contract, curl lifetime, SSE realities) while the codebase is still cheap to reshape.
+**Walking skeleton first.** The first milestone that "works" is a thread of execution through every layer — public API → machine → adapter → transport → local server — doing the simplest useful thing (one streaming chat turn). Depth comes after the skeleton stands. This front-loads discovery of the integration risks (threading contract, curl lifetime, SSE realities) while the codebase is still cheap to reshape.
 
 **Main is always green, always releasable.** Trunk-based development, short-lived branches, no long-running feature branches. Anything not ready to be on main hides behind a build flag (as the reflection layer already must).
 
@@ -87,16 +87,17 @@ Enforced via lizard and clang-tidy on every commit:
 
 Three rings, ordered by feedback speed; a failure in an inner ring stops the outer ones:
 
-1. **Per-commit (< ~10 min):** format check, tidy, build matrix (GCC 16 with reflection ON; stable GCC/Clang with reflection OFF — the severability proof), unit + component tests, ASan/UBSan/TSan suites, diff coverage, CRAP and complexity gates. clang-p2996 runs only as a non-gating compatibility experiment and never builds release artifacts while its upstream marks it non-production.
-2. **Per-merge to main:** integration tests, adapter golden suites, coverage report publication, short fuzz.
+1. **Per-commit (< ~10 min):** format check, tidy, build matrix (GCC 16 with reflection ON; stable GCC/Clang with reflection OFF — the severability proof), unit + component tests, deterministic fake-transport and local-loopback integration tests, adapter golden suites, ASan/UBSan/TSan suites, short fuzz, diff coverage, CRAP, and complexity gates. clang-p2996 runs only as a non-gating compatibility experiment and never builds release artifacts while its upstream marks it non-production.
+2. **Per-merge to main:** publish retained integration and coverage reports and perform release-oriented packaging checks.
 3. **Nightly:** end-to-end against a real local model, long fuzz, deep static analysis, mutation testing (mutate the machine and parsers; surviving mutants reveal assertion-free tests — this audits the *tests*, which coverage cannot).
 
-**Everything CI does is orchestrated by one local command** (`just ci`).
-`just ci-fast` remains the quick core ring. The full command runs every leg,
-continues after failures, and identifies toolchains that the host cannot
-provide; hosted CI is authoritative for those environments. A gate with no
-local entry point is a gate you learn about only by pushing, which breeds
-resentment and workarounds — even solo.
+**Everything CI does is orchestrated by one local command**
+(`./scripts/preflight.sh`; `just ci` is an optional wrapper).
+`just ci-fast` remains the optional wrapper for the quick core ring. The full
+command runs every leg, continues after failures, and identifies toolchains
+that the host cannot provide; hosted CI is authoritative for those
+environments. A gate with no local entry point is a gate you learn about only
+by pushing, which breeds resentment and workarounds — even solo.
 
 ## 7. Workflow & Change Hygiene
 

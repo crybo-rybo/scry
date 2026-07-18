@@ -16,7 +16,7 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data,
   const auto chunk_size =
       std::max<std::size_t>(1, static_cast<std::size_t>(bytes.front()));
   scry::detail::SseParser parser{4096};
-  for (std::size_t offset = 1; offset < bytes.size();) {
+  for (std::size_t offset = 0; offset < bytes.size();) {
     const auto count = std::min(chunk_size, bytes.size() - offset);
     const auto chunk =
         std::string_view{reinterpret_cast<const char*>(bytes.data() + offset), count};

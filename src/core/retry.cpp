@@ -28,22 +28,7 @@ exponential_delay(const RetryPolicy& policy, std::uint32_t failed_attempt) noexc
 } // namespace
 
 bool is_retryable(const ErrorCategory category) noexcept {
-  switch (category) {
-  case ErrorCategory::rate_limit:
-  case ErrorCategory::network:
-    return true;
-  case ErrorCategory::invalid_config:
-  case ErrorCategory::invalid_state:
-  case ErrorCategory::busy:
-  case ErrorCategory::authentication:
-  case ErrorCategory::protocol:
-  case ErrorCategory::resource_limit:
-  case ErrorCategory::tool:
-  case ErrorCategory::max_tool_rounds:
-  case ErrorCategory::cancelled:
-    return false;
-  }
-  return false;
+  return category == ErrorCategory::rate_limit || category == ErrorCategory::network;
 }
 
 std::chrono::milliseconds

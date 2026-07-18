@@ -106,6 +106,11 @@ TEST_CASE("Anthropic stream decoder rejects malformed required events") {
   CHECK(event.error().category == ErrorCategory::protocol);
 
   event = (*adapter)->parse_stream_event(
+      "message_start",
+      R"({"type":"message_start","message":{"type":"message","content":[],"stop_reason":null}})",
+      state);
+  REQUIRE(event.has_value());
+  event = (*adapter)->parse_stream_event(
       "content_block_start",
       R"({"type":"content_block_start","index":0,"content_block":{"type":"future_required"}})",
       state);
@@ -122,6 +127,11 @@ TEST_CASE("Anthropic stream decoder preserves fragmented tool input shape") {
   REQUIRE(adapter.has_value());
   ProviderDecodeState state{};
 
+  const auto message_start = (*adapter)->parse_stream_event(
+      "message_start",
+      R"({"type":"message_start","message":{"type":"message","content":[],"stop_reason":null}})",
+      state);
+  REQUIRE(message_start.has_value());
   const auto start = (*adapter)->parse_stream_event(
       "content_block_start",
       R"({"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"tool_1","name":"lookup","input":{}}})",
@@ -163,6 +173,28 @@ TEST_CASE("Anthropic stream decoder maps provider errors and terminal misuse") {
   CHECK(event.error().provider_detail == "anthropic:overloaded_error");
   CHECK(event.error().message.find("private") == std::string::npos);
 
+  event = (*adapter)->parse_stream_event(
+      "error",
+      R"({"type":"error","error":{"type":"unsafe-secret-value","message":"private"}})",
+      state);
+  REQUIRE_FALSE(event.has_value());
+  CHECK(event.error().category == ErrorCategory::protocol);
+  CHECK(event.error().provider_detail == "anthropic:unknown_error");
+  CHECK(event.error().provider_detail.find("secret") == std::string::npos);
+
+  event = (*adapter)->parse_stream_event("message_stop", R"({"type":"message_stop"})",
+                                         state);
+  REQUIRE_FALSE(event.has_value());
+
+  event = (*adapter)->parse_stream_event(
+      "message_start",
+      R"({"type":"message_start","message":{"type":"message","content":[],"stop_reason":null}})",
+      state);
+  REQUIRE(event.has_value());
+  event = (*adapter)->parse_stream_event(
+      "message_delta", R"({"type":"message_delta","delta":{"stop_reason":"end_turn"}})",
+      state);
+  REQUIRE(event.has_value());
   event = (*adapter)->parse_stream_event("message_stop", R"({"type":"message_stop"})",
                                          state);
   REQUIRE(event.has_value());
@@ -170,4 +202,25 @@ TEST_CASE("Anthropic stream decoder maps provider errors and terminal misuse") {
                                          state);
   REQUIRE_FALSE(event.has_value());
   CHECK(event.error().category == ErrorCategory::protocol);
+}
+
+TEST_CASE("Anthropic stream decoder rejects content after the finish event") {
+  auto adapter = make_provider_adapter(ProviderDialect::anthropic);
+  REQUIRE(adapter.has_value());
+  ProviderDecodeState state{};
+
+  REQUIRE((*adapter)->parse_stream_event(
+      "message_start",
+      R"({"type":"message_start","message":{"type":"message","content":[],"stop_reason":null}})",
+      state));
+  REQUIRE((*adapter)->parse_stream_event(
+      "message_delta", R"({"type":"message_delta","delta":{"stop_reason":"end_turn"}})",
+      state));
+  const auto late_content = (*adapter)->parse_stream_event(
+      "content_block_start",
+      R"({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}})",
+      state);
+
+  REQUIRE_FALSE(late_content);
+  CHECK(late_content.error().category == ErrorCategory::protocol);
 }

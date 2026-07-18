@@ -37,3 +37,4 @@ cmake \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_PREFIX_PATH="${stage_dir}"
 cmake --build "${consumer_dir}"
+"${consumer_dir}/scry_package_consumer"

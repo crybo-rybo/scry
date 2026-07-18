@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <scry/config.hpp>
+#include <scry/events.hpp>
 #include <scry/json.hpp>
 #include <string>
 #include <variant>
@@ -52,17 +53,8 @@ struct ModelRequest {
   bool streaming{true};
 };
 
-enum class FinishReason : std::uint8_t {
-  completed,
-  length,
-  tool_use,
-  unknown,
-};
-
-struct Usage {
-  std::uint64_t input_tokens{};
-  std::uint64_t output_tokens{};
-};
+using ::scry::FinishReason;
+using ::scry::Usage;
 
 struct ModelResponse {
   std::vector<ContentBlock> content{};

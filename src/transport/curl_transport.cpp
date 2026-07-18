@@ -1,10 +1,10 @@
 #include "transport/curl_transport.hpp"
 
+#include "transport/curl_error.hpp"
 #include "transport/curl_global.hpp"
 #include "transport/transport_policy.hpp"
 
 #include <algorithm>
-#include <cctype>
 #include <chrono>
 #include <climits>
 #include <cstddef>
@@ -34,6 +34,39 @@ struct EasyDeleter {
 };
 
 using EasyHandle = std::unique_ptr<CURL, EasyDeleter>;
+
+class MultiTransfer final {
+public:
+  MultiTransfer() : multi_(curl_multi_init()) {}
+
+  ~MultiTransfer() {
+    if (multi_ != nullptr && easy_ != nullptr) {
+      static_cast<void>(curl_multi_remove_handle(multi_, easy_));
+    }
+    if (multi_ != nullptr) {
+      static_cast<void>(curl_multi_cleanup(multi_));
+    }
+  }
+
+  MultiTransfer(const MultiTransfer&) = delete;
+  MultiTransfer& operator=(const MultiTransfer&) = delete;
+
+  [[nodiscard]] bool valid() const noexcept { return multi_ != nullptr; }
+
+  [[nodiscard]] CURLMcode add(CURL* easy) noexcept {
+    const auto code = curl_multi_add_handle(multi_, easy);
+    if (code == CURLM_OK) {
+      easy_ = easy;
+    }
+    return code;
+  }
+
+  [[nodiscard]] CURLM* get() const noexcept { return multi_; }
+
+private:
+  CURLM* multi_{};
+  CURL* easy_{};
+};
 
 class HeaderList final {
 public:
@@ -67,78 +100,17 @@ private:
   curl_slist* headers_{};
 };
 
-enum class AbortCause : std::uint8_t {
-  none,
-  turn_cancelled,
-  harness_shutdown,
-};
-
 struct TransferContext {
   std::stop_token shutdown{};
   const std::atomic<bool>* cancelled{};
   BodyChunkSink* body_sink{};
-  std::size_t response_limit{};
-  std::size_t received_bytes{};
-  std::vector<HttpHeader> headers{};
-  std::string provider_request_id{};
+  transport_policy::ResponseState response{};
   std::optional<Error> callback_error{};
-  AbortCause abort_cause{AbortCause::none};
+  curl_error::AbortCause abort_cause{curl_error::AbortCause::none};
 };
-
-[[nodiscard]] std::string_view trim(std::string_view value) noexcept {
-  while (!value.empty() &&
-         std::isspace(static_cast<unsigned char>(value.front())) != 0) {
-    value.remove_prefix(1);
-  }
-  while (!value.empty() &&
-         std::isspace(static_cast<unsigned char>(value.back())) != 0) {
-    value.remove_suffix(1);
-  }
-  return value;
-}
 
 void set_callback_error(TransferContext& context, Error error) noexcept {
   context.callback_error = std::move(error);
-}
-
-[[nodiscard]] Status accept_header(TransferContext& context, std::string_view line) {
-  line = trim(line);
-  if (line.empty()) {
-    return {};
-  }
-  if (line.starts_with("HTTP/")) {
-    context.headers.clear();
-    context.provider_request_id.clear();
-    return {};
-  }
-  const auto separator = line.find(':');
-  if (separator == std::string_view::npos) {
-    return std::unexpected(
-        make_error(ErrorCategory::protocol, "malformed response header"));
-  }
-  const auto name = trim(line.substr(0, separator));
-  const auto value = trim(line.substr(separator + 1));
-  if (name.empty()) {
-    return std::unexpected(
-        make_error(ErrorCategory::protocol, "malformed response header"));
-  }
-  if (transport_policy::is_content_length_header(name)) {
-    const auto length = transport_policy::parse_size(value);
-    if (!length) {
-      return std::unexpected(
-          make_error(ErrorCategory::protocol, "invalid response length"));
-    }
-    if (*length > context.response_limit) {
-      return std::unexpected(make_error(ErrorCategory::resource_limit,
-                                        "response exceeds configured limit"));
-    }
-  }
-  context.headers.push_back(
-      HttpHeader{.name = std::string{name}, .value = std::string{value}});
-  if (transport_policy::is_request_id_header(name)) {
-    context.provider_request_id = value;
-  }
-  return {};
 }
 
 std::size_t header_callback(char* data, const std::size_t size, const std::size_t count,
@@ -146,8 +118,8 @@ std::size_t header_callback(char* data, const std::size_t size, const std::size_
   auto& context = *static_cast<TransferContext*>(userdata);
   const auto bytes = size * count;
   try {
-    auto status =
-        accept_header(context, std::string_view{data, static_cast<std::size_t>(bytes)});
+    auto status = context.response.accept_header(
+        std::string_view{data, static_cast<std::size_t>(bytes)});
     if (!status) {
       set_callback_error(context, std::move(status.error()));
       return 0;
@@ -162,18 +134,21 @@ std::size_t header_callback(char* data, const std::size_t size, const std::size_
 
 [[nodiscard]] Status accept_body(TransferContext& context,
                                  const std::string_view chunk) {
-  if (context.received_bytes > context.response_limit ||
-      chunk.size() > context.response_limit - context.received_bytes) {
-    return std::unexpected(
-        make_error(ErrorCategory::resource_limit, "response exceeds configured limit"));
+  if (auto status = context.response.account_body(chunk.size()); !status) {
+    return status;
   }
-  context.received_bytes += chunk.size();
+  if (!context.response.deliver_body) {
+    return {};
+  }
   auto status = (*context.body_sink)(chunk);
   if (!status) {
     return std::unexpected(Error{
         .category = status.error().category,
         .message = "response consumer rejected response data",
+        .provider_detail =
+            transport_policy::sanitize_provider_detail(status.error().provider_detail),
         .retryable = status.error().retryable,
+        .retry_after = status.error().retry_after,
         .turn_id = status.error().turn_id,
         .attempt = status.error().attempt,
         .provider_request_id = status.error().provider_request_id,
@@ -205,11 +180,11 @@ int progress_callback(void* userdata, curl_off_t, curl_off_t, curl_off_t,
                       curl_off_t) noexcept {
   auto& context = *static_cast<TransferContext*>(userdata);
   if (context.shutdown.stop_requested()) {
-    context.abort_cause = AbortCause::harness_shutdown;
+    context.abort_cause = curl_error::AbortCause::harness_shutdown;
     return 1;
   }
   if (context.cancelled->load(std::memory_order_acquire)) {
-    context.abort_cause = AbortCause::turn_cancelled;
+    context.abort_cause = curl_error::AbortCause::turn_cancelled;
     return 1;
   }
   return 0;
@@ -233,6 +208,12 @@ int progress_callback(void* userdata, curl_off_t, curl_off_t, curl_off_t,
 timeout_milliseconds(const std::chrono::milliseconds value) noexcept {
   return static_cast<long>(std::min<std::chrono::milliseconds::rep>(
       value.count(), static_cast<std::chrono::milliseconds::rep>(LONG_MAX)));
+}
+
+[[nodiscard]] int
+poll_timeout_milliseconds(const std::chrono::milliseconds value) noexcept {
+  return static_cast<int>(std::min<std::chrono::milliseconds::rep>(
+      value.count(), static_cast<std::chrono::milliseconds::rep>(INT_MAX)));
 }
 
 [[nodiscard]] Status check_setopt(const CURLcode code) {
@@ -332,51 +313,91 @@ timeout_milliseconds(const std::chrono::milliseconds value) noexcept {
                        static_cast<curl_off_t>(request.limits.max_response_bytes)));
 }
 
-[[nodiscard]] Error cancelled_error(const AbortCause cause) {
-  const auto message = cause == AbortCause::harness_shutdown
-                           ? "transfer cancelled by harness shutdown"
-                           : "transfer cancelled";
-  return make_error(ErrorCategory::cancelled, message);
+[[nodiscard]] Status configure_easy(CURL* easy, const TransportRequest& request,
+                                    HeaderList& headers, TransferContext& context) {
+  if (auto status = configure_request(easy, request, headers); !status) {
+    return status;
+  }
+  if (auto status = configure_callbacks(easy, context); !status) {
+    return status;
+  }
+  if (auto status = configure_timeouts(easy, request); !status) {
+    return status;
+  }
+  return configure_tls(easy, request);
 }
 
-[[nodiscard]] bool is_nonretryable_tls_error(const CURLcode code) noexcept {
-  switch (code) {
-  case CURLE_PEER_FAILED_VERIFICATION:
-  case CURLE_SSL_CERTPROBLEM:
-  case CURLE_SSL_CACERT_BADFILE:
-  case CURLE_SSL_ISSUER_ERROR:
+[[nodiscard]] Status validate_execution(const std::optional<Error>& startup_error,
+                                        const std::stop_token& shutdown,
+                                        const std::atomic<bool>& cancelled) {
+  if (startup_error) {
+    return std::unexpected(*startup_error);
+  }
+  if (shutdown.stop_requested()) {
+    return std::unexpected(
+        curl_error::cancelled(curl_error::AbortCause::harness_shutdown));
+  }
+  if (cancelled.load(std::memory_order_acquire)) {
+    return std::unexpected(
+        curl_error::cancelled(curl_error::AbortCause::turn_cancelled));
+  }
+  return {};
+}
+
+[[nodiscard]] bool cancellation_requested(TransferContext& context) noexcept {
+  if (context.shutdown.stop_requested()) {
+    context.abort_cause = curl_error::AbortCause::harness_shutdown;
     return true;
-  default:
-    return false;
   }
+  if (context.cancelled->load(std::memory_order_acquire)) {
+    context.abort_cause = curl_error::AbortCause::turn_cancelled;
+    return true;
+  }
+  return false;
 }
 
-[[nodiscard]] Error curl_error(const CURLcode code, const TransferContext& context) {
-  if (context.callback_error) {
-    return *context.callback_error;
+[[nodiscard]] Result<CURLcode>
+drive_transfer(MultiTransfer& multi, TransferContext& context,
+               const std::chrono::milliseconds shutdown_bound) {
+  int running = 0;
+  while (true) {
+    if (cancellation_requested(context)) {
+      return CURLE_ABORTED_BY_CALLBACK;
+    }
+    if (curl_multi_perform(multi.get(), &running) != CURLM_OK) {
+      return std::unexpected(
+          make_error(ErrorCategory::network, "libcurl transfer driver failed", true));
+    }
+    if (running == 0) {
+      break;
+    }
+    int ready = 0;
+    if (curl_multi_poll(multi.get(), nullptr, 0,
+                        poll_timeout_milliseconds(shutdown_bound),
+                        &ready) != CURLM_OK) {
+      return std::unexpected(
+          make_error(ErrorCategory::network, "libcurl transfer wait failed", true));
+    }
   }
-  if (context.abort_cause != AbortCause::none) {
-    return cancelled_error(context.abort_cause);
+
+  int messages_remaining = 0;
+  while (auto* message = curl_multi_info_read(multi.get(), &messages_remaining)) {
+    if (message->msg == CURLMSG_DONE) {
+      return message->data.result;
+    }
   }
-  if (code == CURLE_FILESIZE_EXCEEDED) {
-    return make_error(ErrorCategory::resource_limit,
-                      "response exceeds configured limit");
-  }
-  if (is_nonretryable_tls_error(code)) {
-    return make_error(ErrorCategory::network, "TLS verification failed");
-  }
-  if (code == CURLE_WEIRD_SERVER_REPLY || code == CURLE_UNSUPPORTED_PROTOCOL ||
-      code == CURLE_URL_MALFORMAT) {
-    return make_error(ErrorCategory::protocol, "invalid server response");
-  }
-  return make_error(ErrorCategory::network, "network transfer failed", true);
+  return std::unexpected(
+      make_error(ErrorCategory::protocol, "libcurl transfer result is missing"));
 }
 
 [[nodiscard]] Result<TransportResult> finish_transfer(CURL* easy, const CURLcode code,
                                                       TransferContext& context) {
-  if (code != CURLE_OK) {
-    auto error = curl_error(code, context);
-    error.provider_request_id = context.provider_request_id;
+  if (code != CURLE_OK && code != CURLE_HTTP_RETURNED_ERROR) {
+    auto error = curl_error::classify(static_cast<int>(code), context.callback_error,
+                                      context.abort_cause);
+    if (error.provider_request_id.empty()) {
+      error.provider_request_id = context.response.provider_request_id;
+    }
     return std::unexpected(std::move(error));
   }
   long response_code{};
@@ -387,13 +408,15 @@ timeout_milliseconds(const std::chrono::milliseconds value) noexcept {
   }
   const auto status = static_cast<std::int32_t>(response_code);
   if (status < 200 || status >= 300) {
-    return std::unexpected(
-        transport_policy::http_error(status, context.provider_request_id));
+    auto error =
+        transport_policy::http_error(status, context.response.provider_request_id);
+    error.retry_after = curl_error::retry_after(context.response.headers);
+    return std::unexpected(std::move(error));
   }
   return TransportResult{
       .status_code = status,
-      .headers = std::move(context.headers),
-      .provider_request_id = std::move(context.provider_request_id),
+      .headers = std::move(context.response.headers),
+      .provider_request_id = std::move(context.response.provider_request_id),
   };
 }
 
@@ -419,18 +442,20 @@ CurlTransport::CurlTransport(CurlTransport&&) noexcept = default;
 
 CurlTransport& CurlTransport::operator=(CurlTransport&&) noexcept = default;
 
+Status CurlTransport::status() const {
+  if (impl_->startup_error()) {
+    return std::unexpected(*impl_->startup_error());
+  }
+  return {};
+}
+
 Result<TransportResult> CurlTransport::perform(const TransportRequest& request,
                                                const std::stop_token shutdown,
                                                const std::atomic<bool>& cancelled,
                                                BodyChunkSink& body_sink) {
-  if (impl_->startup_error()) {
-    return std::unexpected(*impl_->startup_error());
-  }
-  if (shutdown.stop_requested()) {
-    return std::unexpected(cancelled_error(AbortCause::harness_shutdown));
-  }
-  if (cancelled.load(std::memory_order_acquire)) {
-    return std::unexpected(cancelled_error(AbortCause::turn_cancelled));
+  if (auto status = validate_execution(impl_->startup_error(), shutdown, cancelled);
+      !status) {
+    return std::unexpected(std::move(status.error()));
   }
   if (auto status = transport_policy::validate_request(request, body_sink); !status) {
     return std::unexpected(std::move(status.error()));
@@ -448,22 +473,25 @@ Result<TransportResult> CurlTransport::perform(const TransportRequest& request,
       .shutdown = shutdown,
       .cancelled = &cancelled,
       .body_sink = &body_sink,
-      .response_limit = request.limits.max_response_bytes,
+      .response =
+          {
+              .limit = request.limits.max_response_bytes,
+          },
   };
-  if (auto status = configure_request(easy.get(), request, *headers); !status) {
+  if (auto status = configure_easy(easy.get(), request, *headers, context); !status) {
     return std::unexpected(std::move(status.error()));
   }
-  if (auto status = configure_callbacks(easy.get(), context); !status) {
-    return std::unexpected(std::move(status.error()));
+  MultiTransfer multi;
+  if (!multi.valid() || multi.add(easy.get()) != CURLM_OK) {
+    return std::unexpected(
+        make_error(ErrorCategory::network, "libcurl transfer setup failed", true));
   }
-  if (auto status = configure_timeouts(easy.get(), request); !status) {
-    return std::unexpected(std::move(status.error()));
+  auto code = drive_transfer(multi, context, request.timeouts.shutdown);
+  if (!code) {
+    code.error().provider_request_id = context.response.provider_request_id;
+    return std::unexpected(std::move(code.error()));
   }
-  if (auto status = configure_tls(easy.get(), request); !status) {
-    return std::unexpected(std::move(status.error()));
-  }
-  const auto code = curl_easy_perform(easy.get());
-  return finish_transfer(easy.get(), code, context);
+  return finish_transfer(easy.get(), *code, context);
 }
 
 } // namespace scry::detail

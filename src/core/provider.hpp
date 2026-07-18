@@ -29,7 +29,10 @@ using ProviderEvent =
 
 struct ProviderDecodeState {
   ModelResponse response{};
+  std::optional<std::size_t> active_content_index{};
   bool semantic_output_consumed{false};
+  bool message_started{false};
+  bool finish_observed{false};
   bool completed{false};
 };
 

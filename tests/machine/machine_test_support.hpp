@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/retry.hpp"
 #include "machine/turn_machine.hpp"
 
 #include <catch2/catch_test_macros.hpp>
@@ -50,6 +51,7 @@ inline constexpr TurnId turn_id{42};
       .category = category,
       .message = std::move(message),
       .provider_detail = "sanitized detail",
+      .retryable = is_retryable(category),
       .provider_request_id = "request-123",
   };
 }
@@ -101,6 +103,8 @@ inline void enter_retry_wait(TurnMachine& machine) {
     return BeginTurn{.observed_at = at(0ms)};
   case text_delta:
     return ModelTextDelta{.text = "delta"};
+  case semantic_output:
+    return ModelSemanticOutput{};
   case completed:
     return ModelCompleted{};
   case attempt_failed:

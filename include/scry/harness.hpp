@@ -11,6 +11,10 @@
 
 namespace scry {
 
+namespace detail {
+class HarnessTestAccess;
+} // namespace detail
+
 class Harness final {
 public:
   [[nodiscard]] static Result<Harness> create(Config config);
@@ -34,9 +38,13 @@ public:
 private:
   class Impl;
 
+  [[nodiscard]] static ToolRegistry make_tool_registry();
+
   explicit Harness(std::unique_ptr<Impl> impl) noexcept;
 
   std::unique_ptr<Impl> impl_;
+
+  friend class detail::HarnessTestAccess;
 };
 
 } // namespace scry

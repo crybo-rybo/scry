@@ -8,66 +8,66 @@ ID scheme: `SCRY-<AREA>-NNN`, abbreviated to `<AREA>-NNN` in the tables below. I
 
 ## API — Public Surface (SCRY-API)
 
-| ID | Level | Requirement | Milestone | Verification (planned) |
+| ID | Level | Requirement | Milestone | Verification |
 |---|---|---|---|---|
 | API-001 | MUST | The public API is centered on five core concepts (Config, Conversation, ToolRegistry, Turn, Harness); no public type is designed for inheritance. | M0 | Header review; no virtual/protected in public headers (grep gate) |
 | API-002 | MUST | No third-party types or headers (curl, Glaze) appear in the public include path. The four stateful handles (Conversation, ToolRegistry, Turn, Harness) use PImpl; configuration, errors, options, enums, event payloads, and the Scry-owned JSON boundary type are plain value types. | M0 | Include audit + header review |
-| API-003 | MUST | Scry-originated semantic and operational failures surface via `std::expected` before acceptance or the error callback after acceptance, never by throw. Allocation failure is excluded, and exceptions thrown by app callbacks propagate synchronously from `update()` per THR-020. | M1 | API tests exercising all failure paths; no Scry-originated throw reaches the boundary under ASan/UBSan |
-| API-004 | MUST | Server/model configuration (base URL, auth, model, sampling params, dialect) is a plain `Config` value aggregate; switching providers or local servers requires no code changes. | M1 (shape); M4 (second dialect proves it) | Integration test: same app code against two dialects via config only |
+| API-003 | MUST | Scry-originated semantic and operational failures surface via `std::expected` before acceptance or the error callback after acceptance, never by throw. Allocation failure is excluded, and exceptions thrown by app callbacks propagate synchronously from `update()` per THR-020. | M1 | **Live:** `construction and synchronous admission failures are immediate`, `accepted failure uses one async error channel and commits nothing`, `worker exceptions are contained and reported through the turn`; ASan/UBSan suite |
+| API-004 | MUST | Server/model configuration (base URL, auth, model, sampling params, dialect) is a plain `Config` value aggregate; switching providers or local servers requires no code changes. | M1 (shape); M4 (second dialect proves it) | **Live (M1):** `public-api-contract` plus Anthropic request/config suites; **M4 planned:** config-only two-dialect integration |
 | API-005 | MUST | The library never owns `main()`, never spins an event loop the app must join, and imposes no lifecycle on the host. | M0 | Design invariant; example apps demonstrate integration into pre-existing loops |
-| API-006 | MUST | Multiple Harness instances in one process work independently; no singletons or mutable globals beyond the ref-counted curl-global guard. Different configured dialects share the same isolation guarantee once the second dialect lands. | M1 (instance isolation); M4 (cross-dialect proof) | M1: two concurrent Anthropic Harnesses; M4: concurrent Harnesses with different dialects; symbol audit |
+| API-006 | MUST | Multiple Harness instances in one process work independently; no singletons or mutable globals beyond the ref-counted curl-global guard. Different configured dialects share the same isolation guarantee once the second dialect lands. | M1 (instance isolation); M4 (cross-dialect proof) | **Live (M1):** `two Harness workers can overlap independent transfers`, `two Harness instances keep provider and worker state isolated`; **M4 planned:** concurrent different dialects |
 | API-007 | SHOULD | Conversation history is serializable/deserializable for app-side persistence. | M2 | Round-trip unit test |
-| API-008 | MUST | A synchronous send-and-wait convenience exists, implemented on top of the async path (not a second code path). | M1 | Unit test; code review invariant |
+| API-008 | MUST | A synchronous send-and-wait convenience exists, implemented on top of the async path (not a second code path). | M1 | **Live:** `send-and-wait layers over the async path`; implementation delegates to `send()` + `update()` |
 | API-009 | MUST NOT | The library does not provide prompt-template/chain DSLs and is not an inference engine. | — | Scope gate at review |
 | API-010 | MUST | Fallible construction (Harness from Config and Conversation from its config) uses factories returning `std::expected`; semantic failures never throw. Allocation failure (`std::bad_alloc`) is excluded from the failure-as-value contract. | M0 | API tests over invalid configs; header review |
-| API-011 | MUST | Conversation commits are transactional: history is mutated only by the pump at terminal-event delivery. Completion commits the full exchange atomically; error/cancellation commits nothing. M2 extends the committed exchange to include all tool rounds. | M1 (chat); M2 (tool rounds) | M1: history across all three chat terminal paths; M2: multi-round tool history |
-| API-012 | MUST | Harness owns its ToolRegistry; `send()` snapshots registrations for the accepted turn. Registry changes affect subsequent turns only. There is no Conversation-local or process-global registry. | M0 (shape); M2 (behavior) | Header review; reentrant registration test |
-| API-013 | MUST | Callback arguments are borrowed and remain valid only for the callback invocation; an app that retains data MUST copy it. This includes the `std::string_view` passed to text-delta callbacks. | M0 (shape); M1 (behavior) | Header review; callback-lifetime tests under ASan |
+| API-011 | MUST | Conversation commits are transactional: history is mutated only by the pump at terminal-event delivery. Completion commits the full exchange atomically; error/cancellation commits nothing. M2 extends the committed exchange to include all tool rounds. | M1 (chat); M2 (tool rounds) | **Live (M1):** `public async path streams and commits only inside update`, `accepted failure uses one async error channel and commits nothing`, queued/retry cancellation and Conversation-limit suites; **M2 planned:** multi-round tool history |
+| API-012 | MUST | Harness owns its ToolRegistry; there is no Conversation-local or process-global registry. M1 permits validated registry mutation as inert infrastructure: chat requests neither snapshot nor send tools. Beginning in M2, `send()` snapshots registrations for the accepted turn and registry changes affect subsequent turns only. | M0 (shape); M1 (storage); M2 (snapshot/use) | **Live (M1):** ownership, validation, duplicate, and reentrant mutation suites; **M2 planned:** accepted-turn snapshot/isolation suite |
+| API-013 | MUST | Callback arguments are borrowed and remain valid only for the callback invocation; an app that retains data MUST copy it. This includes the `std::string_view` passed to text-delta callbacks. | M0 (shape); M1 (behavior) | **Live:** callback delivery suites under ASan; public signatures and ARCHITECTURE.md lifetime review |
 
 ## Threading & Concurrency (SCRY-THR)
 
-| ID | Level | Requirement | Milestone | Verification (planned) |
+| ID | Level | Requirement | Milestone | Verification |
 |---|---|---|---|---|
-| THR-001 | MUST | No async public API call blocks the calling thread on network I/O; all blocking work happens on a harness-owned worker thread. The explicitly named `send_and_wait` convenience is the sole blocking exception. | M1 | Integration test with watchdog timing on async API calls |
-| THR-002 | MUST | All user callbacks execute only inside `update()`, on the thread calling it. M2 applies the same rule to default-mode tool handlers. | M1 (turn events); M2 (tool handlers) | Thread-ID assertions in integration tests; TSan suite |
-| THR-003 | MUST | Exactly three internally-synchronized objects cross the thread boundary: command queue, event queue, and one atomic cancellation flag per turn. All other state is exclusively owned per the ARCHITECTURE.md §3 ownership table; the worker addresses turns only by immutable TurnId. | M1 | TSan on all threaded tests, per commit; ownership review against the table |
-| THR-004 | MUST | `update()` honors an optional caller-supplied time budget; undelivered events roll to the next call, none are lost. | M1 | Unit test with fake clock + event counting |
-| THR-005 | MUST | Streaming deltas are coalesced (at most one aggregated text event per pump interval) so token rate cannot flood the queue. | M1 | Unit test with high-rate fake stream |
-| THR-006 | MUST | `Turn::cancel()` is safe to call from the app thread at any time, including after completion; cancellation is cooperative and aborts in-flight transfers promptly. | M1 (chat); M2 (tool execution) | M1: randomized queued, transfer, stream, and post-completion cancellation under TSan; M2: mid-tool cancellation |
-| THR-007 | MUST | Dropping a Turn handle detaches: the turn continues, the Conversation still commits on completion, and callbacks already registered in Harness remain deliverable. It never blocks or cancels implicitly; unclaimed buffered events may be discarded once no handle remains. | M1 | Unit test; destructor audit |
+| THR-001 | MUST | No async public API call blocks the calling thread on network I/O; all blocking work happens on a harness-owned worker thread. The explicitly named `send_and_wait` convenience is the sole blocking exception. | M1 | **Live:** held-transport async tests continue after `send()` while the worker is blocked; integration tests carry a 15 s watchdog |
+| THR-002 | MUST | All user callbacks execute only inside `update()`, on the thread calling it. M2 applies the same rule to default-mode tool handlers. | M1 (turn events); M2 (tool handlers) | **Live (M1):** thread-ID assertion in `public async path streams and commits only inside update`; TSan suite; **M2 planned:** tool handler IDs |
+| THR-003 | MUST | Exactly three internally-synchronized objects cross the thread boundary: command queue, event queue, and one atomic cancellation flag per turn. All other state is exclusively owned per the ARCHITECTURE.md §3 ownership table; the worker addresses turns only by immutable TurnId. | M1 | **Live:** TSan threaded suite plus ownership review against ARCHITECTURE.md §3 |
+| THR-004 | MUST | `update()` honors an optional caller-supplied time budget; undelivered events roll to the next call, none are lost. | M1 | **Live:** `pump budget is a soft deadline between callbacks` with fake clock and event count |
+| THR-005 | MUST | Streaming deltas are coalesced (at most one aggregated text event per pump interval) so token rate cannot flood the queue. | M1 | **Live:** EventQueue coalescing, capacity, and cross-turn component suites |
+| THR-006 | MUST | `Turn::cancel()` is safe to call from the app thread at any time, including after completion; cancellation is cooperative and aborts in-flight transfers promptly. | M1 (chat); M2 (tool execution) | **Live (M1):** machine cancellation across every live phase; queued, retry-wait, active Curl, post-completion, and post-Harness public cases under TSan; **M2 planned:** mid-tool cancellation |
+| THR-007 | MUST | Dropping a Turn handle detaches: the turn continues, the Conversation still commits on completion, and callbacks already registered in Harness remain deliverable. It never blocks or cancels implicitly; unclaimed buffered events may be discarded once no handle remains. | M1 | **Live:** `dropping a Turn detaches without cancelling its callbacks or commit` plus detached-route component cases |
 | THR-008 | MUST | Turn handles are move-only. | M0 | `static_assert` in tests |
-| THR-009 | MUST | While a Turn handle remains attached, callbacks added after events begin arriving receive buffered prior events in order within configured buffer limits; no event races past registration. | M1 | Unit test attaching late at randomized points |
-| THR-010 | MUST | Nothing throws across the thread boundary; worker-side failures become error events. | M1 | Failure-injection tests under sanitizers |
+| THR-009 | MUST | While a Turn handle remains attached, callbacks added after events begin arriving receive buffered prior events in order within configured buffer limits; no event races past registration. | M1 | **Live:** `late text callback receives every buffered delta in order` at every registration split plus late text/error/completion cases |
+| THR-010 | MUST | Nothing throws across the thread boundary; worker-side failures become error events. | M1 | **Live:** `worker exceptions are contained and reported through the turn`; ASan/UBSan/TSan suites |
 | THR-011 | MUST | Tool handlers execute on the app thread inside `update()`. (Opt-in worker-thread execution is THR-021, M4.) | M2 | Thread-ID assertions |
-| THR-012 | MUST | Worker lifetime uses `std::jthread`; the worker `stop_token` signals Harness shutdown only — per-turn cancellation uses the per-turn atomic (THR-003), never the stop token. | M1 | TSan/ASan on construction-destruction stress test; code review invariant |
-| THR-013 | MUST | A Harness accepts up to `Config::limits.max_pending_turns`; accepted turns queue FIFO and exactly one HTTP transfer is active at a time (M1 baseline; evolution register governs multiplexing). Admission beyond the bound fails immediately with `resource_limit`. | M1 | Boundary tests plus integration test asserting FIFO order and one active transfer |
-| THR-014 | MUST | A `send()` on a Conversation that already has a turn queued or in flight fails immediately with a distinct error category; the Conversation is untouched. | M1 | Unit test |
-| THR-015 | MUST | Cancelling a still-queued turn removes it before any I/O is issued; its terminal event is Cancelled. | M1 | Machine + integration test |
+| THR-012 | MUST | Worker lifetime uses `std::jthread`; the worker `stop_token` signals Harness shutdown only — per-turn cancellation uses the per-turn atomic (THR-003), never the stop token. | M1 | **Live:** held-Curl destruction and cancellation-signal separation cases under ASan/TSan; source invariant review |
+| THR-013 | MUST | A Harness accepts up to `Config::limits.max_pending_turns`; accepted turns queue FIFO and exactly one HTTP transfer is active at a time (M1 baseline; evolution register governs multiplexing). Admission beyond the bound fails immediately with `resource_limit`. | M1 | **Live:** `pending-turn admission limit rejects before acceptance` and `serialized turns begin in FIFO order with one active transfer` |
+| THR-014 | MUST | A `send()` on a Conversation that already has a turn queued or in flight fails immediately with a distinct error category; the Conversation is untouched. | M1 | **Live:** `busy conversations and queued cancellation issue no second transfer` |
+| THR-015 | MUST | Cancelling a still-queued turn removes it before any I/O is issued; its terminal event is Cancelled. | M1 | **Live:** machine queued cancellation plus `busy conversations and queued cancellation issue no second transfer` |
 | THR-016 | MUST | While the active turn awaits a main-thread tool result it retains the serialized turn slot; queued turns wait. | M2 | Integration test |
-| THR-017 | MUST | Harness destruction cancels all turns, aborts transfers, joins the worker within configured transport/shutdown bounds, and discards undelivered events; no callback fires after destruction begins. Resolver behavior and every blocking curl phase MUST be covered by those bounds. | M1 | Timed destruction stress test under TSan/ASan including stalled DNS/connect/transfer cases |
-| THR-018 | MUST | The `update()` budget is a soft deadline checked between callbacks; an individual callback or tool handler is never preempted and may overrun it. | M1 | Unit test with deliberately slow callback |
-| THR-019 | MUST | Callbacks may reentrantly call `send`, `cancel`, and tool registration (affecting subsequent turns only); reentrant `update()` is forbidden and diagnosed. | M1 | Reentrancy unit tests |
-| THR-020 | MUST | An exception escaping a user callback propagates out of `update()`; the harness remains valid and the event counts as delivered. Callbacks SHOULD NOT throw. | M1 | Fault-injection unit test |
+| THR-017 | MUST | Harness destruction cancels all turns, aborts transfers, joins the worker within configured transport/shutdown bounds, and discards undelivered events; no callback fires after destruction begins. Resolver behavior and every blocking curl phase MUST be covered by those bounds. | M1 | **Live:** timed held-transfer destruction under ASan/TSan; Curl progress-signal tests; `curl runtime rejects capabilities that cannot honor host shutdown`; source review of asynchronous DNS, Curl connect/total timeouts, and shutdown-bounded multi polling. Deliberately no nondeterministic DNS-blackhole test |
+| THR-018 | MUST | The `update()` budget is a soft deadline checked between callbacks; an individual callback or tool handler is never preempted and may overrun it. | M1 | **Live:** `pump budget is a soft deadline between callbacks` with a deliberately overrunning fake clock callback |
+| THR-019 | MUST | Callbacks may reentrantly call `send`, `cancel`, and tool registration; reentrant `update()` is forbidden and diagnosed. M1 registration mutates only the inert registry foundation. Beginning in M2, such changes affect subsequent accepted turns only. | M1 (safe mutation); M2 (turn effect) | **Live (M1):** `callbacks may use public operations and nested update is diagnosed`; blocking nested wait is rejected; **M2 planned:** snapshot-isolation assertion |
+| THR-020 | MUST | An exception escaping a user callback propagates out of `update()`; the harness remains valid and the event counts as delivered. Callbacks SHOULD NOT throw. | M1 | **Live:** `callback exceptions consume the event and leave the pump valid` |
 | THR-021 | MUST | Per-tool opt-in moves a handler to the worker thread (for thread-safe, slow handlers). | M4 | Thread-ID assertions per mode |
 
 ## Agentic Loop (SCRY-LOOP)
 
-| ID | Level | Requirement | Milestone | Verification (planned) |
+| ID | Level | Requirement | Milestone | Verification |
 |---|---|---|---|---|
 | LOOP-001 | MUST | The harness owns the full agentic loop (model → tool → result → resend, until final answer); the app never re-submits intermediate results. | M2 | Machine tests: multi-round tool sequences |
-| LOOP-002 | MUST | The loop engine is sans-I/O: it performs no network, file, or clock access; it consumes events and emits commands only. M1 lands chat/retry/cancellation states; M2 extends the same machine with tool states. | M1/M2 | Code review invariant; machine test suite runs with no I/O linked |
+| LOOP-002 | MUST | The loop engine is sans-I/O: it performs no network, file, or clock access; it consumes events and emits commands only. M1 lands chat/retry/cancellation states; M2 extends the same machine with tool states. | M1/M2 | **Live (M1):** `scry_turn_machine_tests` compiles machine + retry sources directly with no transport/provider library linked; **M2:** same gate extends |
 | LOOP-003 | MUST | Loop rounds are bounded by configurable `max_tool_rounds`; exceeding it terminates the turn with a distinct error. | M2 | Machine test |
-| LOOP-004 | MUST | Loop states are explicit (variant/enum) with a documented transition diagram; illegal transitions are unrepresentable or assert. The M1 subset is extended, not replaced, in M2. | M1/M2 | Exhaustive-transition machine tests |
-| LOOP-005 | MUST | Time enters the machine only as injected events ("wake me at T"); retry backoff (exponential + jitter, configurable cap) is machine state. | M1 | Machine tests with fake clock |
-| LOOP-006 | MUST | Retryability is decided by a pure classifier over error categories (429/5xx/transport retryable; auth/protocol not). | M1 | Table-driven unit test |
+| LOOP-004 | MUST | Loop states are explicit (variant/enum) with a documented transition diagram. Events that are illegal for the current state are diagnosed and MUST NOT mutate state or emit commands. The M1 subset is extended, not replaced, in M2. | M1/M2 | **Live (M1):** exhaustive machine transition, illegal-event, and terminal-idempotence cases; **M2:** extended matrix |
+| LOOP-005 | MUST | Time enters the machine only as injected events ("wake me at T"); retry backoff (exponential + jitter, configurable cap) is machine state. | M1 | **Live:** fake-time machine cases for monotonicity, early wake, jitter, attempt cap, and elapsed cap |
+| LOOP-006 | MUST | Retryability is decided by a pure classifier over error categories (429/5xx/transport retryable; auth/protocol not). | M1 | **Live:** table-driven `retry classifier accepts only transient categories`; pure retry target has no transport linked |
 | LOOP-007 | SHOULD | Intermediate loop activity (tool calls, text deltas) is observable via optional callbacks without requiring app participation. | M2 | Integration test |
 | LOOP-008 | MUST | Within one turn, tool execution is at-most-once per tool-call ID: retry machinery never re-dispatches an ID already dispatched by that turn. Failed/cancelled turns commit no tool rounds, so application-level resend of side-effecting tools requires an app-supplied idempotency or reconciliation policy. | M2 | Machine tests around dispatch plus documented side-effecting-tool example |
 
 ## Tool Registration (SCRY-TOOL)
 
-| ID | Level | Requirement | Milestone | Verification (planned) |
+| ID | Level | Requirement | Milestone | Verification |
 |---|---|---|---|---|
-| TOOL-001 | MUST | Explicit-schema registration (schema string + type-erased `json → json` callable) is public API and is the substrate all registration lowers onto. | M2 | Unit tests; reflection-OFF CI build uses only this path |
+| TOOL-001 | MUST | Explicit-schema registration (schema string + type-erased `json → json` callable) is public API and is the substrate all registration lowers onto. M1 validates and stores registrations but does not snapshot, serialize, or dispatch them; those behaviors begin in M2. | M1 (registry foundation); M2 (use) | **Live (M1):** public registration validation and storage suites; reflection-OFF build; **M2 planned:** request/dispatch suites |
 | TOOL-002 | MUST | The P2996 reflection layer derives schema and argument marshalling from plain aggregate structs at compile time; schemas are `constexpr` artifacts. | M3 | Compile-time tests; schema golden files |
 | TOOL-003 | MUST | The reflection layer is severable: isolated header behind a feature macro; the library builds and passes tests with it disabled. | M0/M3 | CI matrix leg with reflection OFF |
 | TOOL-004 | MUST | Members with default initializers become optional parameters; member names become parameter names. | M3 | Schema golden files |
@@ -75,60 +75,60 @@ ID scheme: `SCRY-<AREA>-NNN`, abbreviated to `<AREA>-NNN` in the tables below. I
 | TOOL-006 | MUST | Tool-handler exceptions are caught at dispatch and returned to the model as tool-error results; they never propagate to the app. | M2 | Fault-injection unit tests |
 | TOOL-007 | SHOULD | Parameter descriptions come from P3394 annotations when the toolchain supports them, else a customization point. | M3 | Schema golden files per toolchain |
 | TOOL-008 | MAY | Tool return values may be any JSON-serializable type, including reflected structs. | M3 | Unit tests |
-| TOOL-009 | MUST | Registering a duplicate tool name is rejected via `std::expected` error, not silent replacement; removal/replacement semantics are explicit API decisions deferred to M2 design. | M2 | Unit test |
+| TOOL-009 | MUST | Registering a duplicate tool name is rejected via `std::expected` error, not silent replacement; removal/replacement semantics are explicit API decisions deferred to M2 design. | M1 (duplicate rejection); M2 (mutation policy) | **Live (M1):** `ToolRegistry rejects invalid and duplicate registrations`; **M2 planned:** removal/replacement decision |
 
 ## Provider & Protocol (SCRY-PROV)
 
-| ID | Level | Requirement | Milestone | Verification (planned) |
+| ID | Level | Requirement | Milestone | Verification |
 |---|---|---|---|---|
-| PROV-001 | MUST | An internal neutral message model (roles + content blocks incl. tool call/result) isolates all wire-format knowledge inside adapters. | M1 | Layering check: only adapters reference wire schemas |
-| PROV-002 | MUST | Anthropic Messages adapter. | M1 | Golden-file round-trip tests |
+| PROV-001 | MUST | An internal neutral message model (roles + content blocks incl. tool call/result) isolates all wire-format knowledge inside adapters. | M1 | **Live:** neutral model/request/response component suites; wire JSON remains confined to `src/provider/` |
+| PROV-002 | MUST | Anthropic Messages adapter. | M1 | **Live:** sanitized request golden fixture, non-streaming response fixture, streaming lifecycle suite, and public Curl walking skeleton |
 | PROV-003 | MUST | OpenAI-compatible Chat Completions adapter (covers vLLM, Ollama, llama.cpp server, LM Studio). | M4 | Golden-file tests + e2e against local model |
-| PROV-004 | MUST | Streaming (SSE) is supported on all adapters; the SSE parser is a pure incremental function tolerant of arbitrary chunk splits. | M1 | Property tests with randomized splits; fuzzing |
+| PROV-004 | MUST | Streaming (SSE) is supported on all adapters; the SSE parser is a pure incremental function tolerant of arbitrary chunk splits. | M1 | **Live:** every-split and fixed-seed random partition suites; direct no-I/O SSE target; `scry_sse_fuzz` and `scry_anthropic_fuzz` |
 | PROV-005 | MUST | Adapter selection is config-driven (dialect enum + factory); no public plugin API until a concrete third-party need exists (evolution register). | M4 | Config-only switch test (API-004) |
-| PROV-006 | SHOULD | Adapters are stateless translators; stream-parse state lives in per-turn parser objects. | M1 | Code review invariant; concurrent-turn test |
+| PROV-006 | SHOULD | Adapters are stateless translators; stream-parse state lives in per-turn parser objects. | M1 | **Live:** adapter state-shape review; independent concurrent Harness/provider integration |
 | PROV-007 | MUST | The neutral model carries multiple tool calls per assistant message with stable tool-call IDs, and accumulates partially-streamed JSON tool arguments before dispatch. | M2 | Golden-file + machine tests |
-| PROV-008 | MUST | Unknown/unmappable *optional* stream events are skipped (debug-observable); unmappable *required* content (e.g., an unrecognized block the turn depends on) fails the turn with a protocol error — never silently discarded. | M1 | Adapter tests with synthetic unknown events |
-| PROV-009 | SHOULD | Usage/token counts, finish reasons, and provider request IDs are surfaced on the completed turn. | M1 | Golden-file tests |
+| PROV-008 | MUST | Unknown/unmappable *optional* stream events are skipped and represented by an internal debug-observable provider event; the M1 worker intentionally consumes that marker because no public logging surface exists. Unmappable *required* content (e.g., an unrecognized block the turn depends on) fails the turn with a protocol error — never silently discarded. | M1 | **Live:** `Anthropic stream decoder observes optional unknown events` asserts the marker/name at the provider seam; required content/delta rejection matrix |
+| PROV-009 | SHOULD | Usage/token counts, finish reasons, and provider request IDs are surfaced on the completed turn. | M1 | **Live:** provider fixture suites plus `public Harness completes an Anthropic SSE turn through Curl` |
 
 ## Transport & Robustness (SCRY-NET)
 
-| ID | Level | Requirement | Milestone | Verification (planned) |
+| ID | Level | Requirement | Milestone | Verification |
 |---|---|---|---|---|
-| NET-001 | MUST | Transport sits behind an injectable seam; the full harness runs against a fake transport in tests. | M1 | Existence of integration suite on fake transport |
-| NET-002 | MUST | All curl objects are RAII-wrapped; curl types are confined to implementation files; C-callback trampolines catch all exceptions. | M1 | Include audit; fault-injection under ASan |
-| NET-003 | MUST | Curl progress callbacks check both the worker `stop_token` (Harness shutdown) and the active turn's atomic flag (per-turn cancellation), so either aborts transfers promptly without conflating their scopes. | M1 | Timed per-turn cancellation and shutdown integration tests |
-| NET-004 | MUST | Malformed or hostile server output (broken SSE, invalid JSON, oversized payloads) must never crash or corrupt the host app: it becomes a protocol-category error. | M1 | Fuzzing (libFuzzer) on SSE + JSON boundaries; corpus in repo |
-| NET-005 | MUST | Transient failures retry with exponential backoff + jitter, honoring `Retry-After`, under configurable max-attempt and elapsed-time caps (see LOOP-005/006). | M1 | Machine tests with fake clock |
-| NET-006 | MUST | Retry eligibility: a request is retried only if no semantic output has been consumed (failure before the first content event). After partial output, the turn fails with a retryable-flagged error; the app decides. | M1 | Machine tests: failure injection at each stream stage |
-| NET-007 | MUST | TLS certificate verification is on by default; disabling it is an explicit, named config option. | M1 | Integration test against mis-certified mock server |
-| NET-008 | MUST | Resource bounds are configurable with documented defaults: pending-turn count, SSE-event bytes, response bytes, tool argument/result bytes, per-turn queued-event bytes, and Conversation bytes. Exceeding admission limits rejects `send()`; exceeding an accepted turn's limit fails it with `resource_limit`. A stalled pump therefore bounds memory, not just event rate. | M1 (chat limits); M2 (tool payload limits) | M1: pending/SSE/response/event/Conversation bounds; M2: tool argument/result bounds |
+| NET-001 | MUST | Transport sits behind an injectable seam; the full harness runs against a fake transport in tests. | M1 | **Live:** threaded `scry_harness_integration_tests` use `FakeTransport`, controlled transports, and public Curl |
+| NET-002 | MUST | All curl objects are RAII-wrapped; curl types are confined to implementation files; C-callback trampolines catch all exceptions. | M1 | **Live:** public-header/include audit, Curl move/destructor cases, callback exception containment under ASan |
+| NET-003 | MUST | Curl progress callbacks check both the worker `stop_token` (Harness shutdown) and the active turn's atomic flag (per-turn cancellation), so either aborts transfers promptly without conflating their scopes. | M1 | **Live:** `curl progress callback independently observes both cancellation signals`, active Curl cancellation, and held-transfer destruction |
+| NET-004 | MUST | Malformed or hostile server output must never crash or corrupt the host app. Broken SSE or invalid JSON becomes a `protocol` error; exceeding a configured size bound becomes `resource_limit` per NET-008. | M1 | **Live:** bounded/malformed SSE + JSON matrices; short `scry_sse_fuzz` and `scry_anthropic_fuzz` with checked-in corpus |
+| NET-005 | MUST | Transient failures retry with exponential backoff + jitter, honoring `Retry-After`, under configurable max-attempt and elapsed-time caps (see LOOP-005/006). | M1 | **Live:** fake-time machine/retry suites and `a transient failure retries once and reports the successful attempt` |
+| NET-006 | MUST | Retry eligibility: a request is retried only if no semantic output has been consumed (failure before the first content event). After partial output, the turn fails with a retryable-flagged error; the app decides. | M1 | **Live:** semantic-output machine cases and `semantic output prevents a retry after a transient transport failure` |
+| NET-007 | MUST | TLS certificate verification is on by default; disabling it is an explicit, named config option. | M1 | **Live:** `self-signed TLS is rejected unless explicitly disabled`; public default contract |
+| NET-008 | MUST | Resource bounds are configurable with documented defaults: pending-turn count, SSE-event bytes, response bytes, tool argument/result bytes, per-turn queued-event bytes, and Conversation bytes. Exceeding admission limits rejects `send()`; exceeding an accepted turn's limit fails it with `resource_limit`. A stalled pump therefore bounds memory, not just event rate. | M1 (chat limits); M2 (tool payload limits) | **Live (M1):** public defaults plus pending, SSE, response, queued-event, terminal-reserve, and Conversation boundary suites; **M2 planned:** tool payload enforcement |
 
 ## Errors (SCRY-ERR)
 
-| ID | Level | Requirement | Milestone | Verification (planned) |
+| ID | Level | Requirement | Milestone | Verification |
 |---|---|---|---|---|
-| ERR-001 | MUST | One error type end-to-end: category enum (`invalid_config`, `invalid_state`, `busy`, `authentication`, `rate_limit`, `network`, `protocol`, `resource_limit`, `tool`, `max_tool_rounds`, `cancelled`) plus message, sanitized provider detail, retryability, and correlation fields. | M1 | Unit tests; no other error types cross the boundary |
-| ERR-002 | MUST | Immediate validation/admission/registration failure returns `std::expected`. After a turn is accepted, exactly one asynchronous failure channel exists: its error event/callback. No status-polling API. | M1 | API surface review |
-| ERR-003 | MUST | Every turn terminates in exactly one terminal event (complete, error, or cancelled) — never zero, never two. | M1 | Machine tests asserting terminal-event uniqueness across randomized event orders |
-| ERR-004 | MUST | API keys and auth headers never appear in error messages, logs, or diagnostics — redacted at the transport boundary. Prompt/tool content is never logged by default. | M1 | Unit tests grepping error/log output under failure injection |
-| ERR-005 | SHOULD | Errors and completed turns carry correlation identifiers (turn ID, attempt number, provider request ID where available). | M1 | Unit tests |
+| ERR-001 | MUST | One error type end-to-end: category enum (`invalid_config`, `invalid_state`, `busy`, `authentication`, `rate_limit`, `network`, `protocol`, `resource_limit`, `tool`, `max_tool_rounds`, `cancelled`) plus message, sanitized provider detail, retryability/Retry-After metadata, and correlation fields. | M1 | **Live:** public contract plus transport/provider category, metadata, and sanitizer matrices; only `scry::Error` crosses public seams |
+| ERR-002 | MUST | Immediate validation/admission/registration failure returns `std::expected`. After a turn is accepted, exactly one asynchronous failure channel exists: its error event/callback. No status-polling API. | M1 | **Live:** construction/admission/registration suites and `accepted failure uses one async error channel and commits nothing`; API surface review |
+| ERR-003 | MUST | While its Harness remains alive, every accepted turn terminates in exactly one observable terminal event (complete, error, or cancelled) — never zero, never two. Harness destruction is the explicit exception: it aborts active work and discards all undelivered events, so teardown exposes no terminal callback. | M1 | **Live:** terminal idempotence across event orderings, duplicate-completion rejection, all public terminal-path suites, and held-transfer destruction with no callback |
+| ERR-004 | MUST | API keys and auth headers never appear in error messages, logs, or diagnostics — redacted at the transport boundary. Prompt/tool content is never logged by default. | M1 | **Live:** `accepted results redact the configured API key from correlation fields`, Curl request-data leak checks, provider detail sanitization |
+| ERR-005 | SHOULD | Errors and completed turns carry correlation identifiers (turn ID, attempt number, provider request ID where available). | M1 | **Live:** machine error correlation, stream-vs-transport request ID, public Curl completion, and production SSE error cases |
 
 ## Portability & Toolchain (SCRY-PORT)
 
-| ID | Level | Requirement | Milestone | Verification (planned) |
+| ID | Level | Requirement | Milestone | Verification |
 |---|---|---|---|---|
 | PORT-001 | MUST | Core library (reflection OFF) targets C++23 and builds on stable GCC/libstdc++ and Clang/libc++. | M0 | **Live:** `ci.yml` core matrix (Linux GCC 14/libstdc++, Linux Clang 18/libc++, macOS AppleClang/libc++) |
 | PORT-002 | MUST | The supported reflection layer builds on GCC 16+ with `-std=c++26 -freflection`. clang-p2996 is a non-gating compatibility experiment and MUST NOT produce release artifacts while its maintainers classify it as non-production. | M0/M3 | **Live:** gating `ci.yml` reflection job (g++-16 + Glaze spike); clang-p2996 probe is manual/local via `SCRY_ENABLE_REFLECTION` (CMakeLists warns on Clang) |
 | PORT-003 | MUST | Runtime dependencies are limited to libcurl + Glaze; any addition requires a written justification committed with the change. | M0 | Dependency manifest review gate |
 | PORT-004 | MUST | Glaze types do not appear in public headers; the tool-boundary JSON type is Scry-owned. | M2 | Include audit (API-002 machinery) |
 | PORT-005 | MUST | The reflection-OFF C++23 core supports Linux and macOS from M0. The reflection-ON GCC 16 leg is supported on Linux first; macOS reflection support follows when a production-grade toolchain is practically distributable (evolution register row). Windows is deferred to the evolution register. | M0 | **Live:** `ci.yml` matrix (core legs on both platforms; reflection job on Linux) |
-| PORT-006 | MUST | libcurl ≥ 7.84.0; `CURL_VERSION_THREADSAFE` is verified at first initialization (host threads may exist before the first Harness). | M1 | Startup check + version-pinned CI |
+| PORT-006 | MUST | libcurl ≥ 7.84.0; `CURL_VERSION_THREADSAFE` is verified at first initialization (host threads may exist before the first Harness). | M1 | **Live:** CMake 7.84 floor; first-lease runtime capability validation and rejection matrix; `curl` CI leg |
 | PORT-007 | MUST | Pre-1.0: no API/ABI stability promises, breaking changes allowed with changelog notice. From 1.0: semver, inline-namespace ABI versioning. | M0 (documented) | Release checklist |
 
 ## Quality Gates (SCRY-QA) — binding form of ENGINEERING.md
 
-| ID | Level | Requirement | Milestone | Verification (planned) |
+| ID | Level | Requirement | Milestone | Verification |
 |---|---|---|---|---|
 | QA-001 | MUST | Diff branch coverage ≥ 90% on new/changed lines; coverage exclusions require an inline justification. | M0 | **Live:** `scripts/quality-gate.sh` branch-aware merge-base comparison; `quality` CI job |
 | QA-002 | MUST | Branch-coverage floor ≥ 95% on the sans-I/O machine, SSE parser, retry classifier, and schema generator. | M2+ | Per-component CI gate |
@@ -140,12 +140,12 @@ ID scheme: `SCRY-<AREA>-NNN`, abbreviated to `<AREA>-NNN` in the tables below. I
 | QA-008 | MUST | Unit/machine tests are deterministic: no real time, sleeps, or network. Flaky tests are fixed or deleted immediately. | M0 | **Live:** core and coverage suites use CTest `--repeat until-fail:3`; sanctioned-seam review remains required |
 | QA-009 | MUST | Every bug fix lands with a regression test (machine-level replay where applicable). | M1+ | **Live:** regression-test item in `.github/pull_request_template.md` |
 | QA-010 | SHOULD | Nightly: mutation testing on machine/parsers, long fuzz runs, deep static analysis, e2e against a real local model. | M4+ | Nightly pipeline |
-| QA-011 | SHOULD | Everything CI enforces is runnable locally with one command. | M0 | **Live:** `just ci` → `scripts/preflight.sh` runs all gates, continues after failures, and reports unavailable host toolchains |
+| QA-011 | SHOULD | Everything CI enforces is runnable locally with one command. | M0 | **Live:** `scripts/preflight.sh` runs all gates, continues after failures, and reports unavailable host toolchains; `just ci` is an optional wrapper |
 | QA-012 | MUST | Definition of Done includes updating the four load-bearing docs — including this register — when behavior or a decision changes. | M0 | PR checklist gate |
 
 ## Unratified / Known Gaps
 
-New gaps land here, not in prose. There are no known M0 requirement gaps.
+New gaps land here, not in prose. There are no known M0 or M1 requirement gaps.
 
 Amendment log:
 
@@ -154,6 +154,14 @@ Amendment log:
 - **2026-07, M0 unification:** verification cells updated to name live gates (PORT-001/002/005, QA-004/005/006) and the partial QA-011 gate; test-framework decision recorded as deferred to M1 (ADR 0003).
 - **2026-07, M0 closure:** live merge-base coverage, CRAP, and quality ratchets added for QA-001/003/007 (ADR 0004); repeat-run verification added for QA-008; the one-command preflight closes QA-011.
 - **2026-07, M1 kickoff:** cross-milestone verification was split explicitly for API-006/011, THR-002/006/016, and NET-008; M1 remains chat-only while M2 owns executable tool behavior (ADR 0005).
+- **2026-07, M1 closure:** runtime, machine, provider, protocol, transport,
+  threading, resource-bound, security, packaging, sanitizer, fuzz, and quality
+  gates are live; M1 verification cells now name their concrete tests and CI
+  legs.
+- **2026-07, M1 closure audit:** ratified inert M1 registry mutation as early
+  M2 infrastructure (API-012/THR-019/TOOL-001/009), non-mutating illegal-event
+  diagnostics (LOOP-004), teardown's discarded-event exception (ERR-003), and
+  distinct malformed-input versus configured-limit categories (NET-004/008).
 
 ## Deferred to M2/M3 Design (tracked, not yet normative)
 

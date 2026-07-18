@@ -69,13 +69,22 @@ public:
   void add_route(std::shared_ptr<TurnRoute> route);
   [[nodiscard]] std::shared_ptr<TurnRoute> find_route(TurnId turn_id) const;
   [[nodiscard]] std::size_t route_count() const noexcept;
+  [[nodiscard]] std::size_t live_route_count() const noexcept;
+  [[nodiscard]] bool updating() const noexcept;
 
   [[nodiscard]] UpdateStats update(UpdateOptions options);
   void shutdown() noexcept;
 
 private:
-  void ingest_events();
+  struct PendingCallback {
+    WorkerEvent event{};
+    std::size_t accounted_bytes{};
+  };
+
+  [[nodiscard]] bool ingest_events(std::chrono::steady_clock::time_point deadline);
   void accept_event(WorkerEvent event);
+  [[nodiscard]] bool coalesce_pending_delta(const TextDeltaEvent& event,
+                                            std::size_t accounted_bytes);
   void apply_terminal(TurnRoute& route, WorkerEvent& event);
   [[nodiscard]] bool
   conversation_limit_exceeded(const TurnRoute& route,
@@ -89,7 +98,7 @@ private:
   std::shared_ptr<EventQueue> events_{};
   PumpClock clock_{};
   std::unordered_map<TurnId, std::shared_ptr<TurnRoute>, TurnIdHash> routes_{};
-  std::deque<WorkerEvent> pending_callbacks_{};
+  std::deque<PendingCallback> pending_callbacks_{};
   bool updating_{false};
 };
 

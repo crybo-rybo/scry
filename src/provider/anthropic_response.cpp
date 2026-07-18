@@ -1,5 +1,6 @@
 #include "provider/anthropic.hpp"
 #include "provider/anthropic_content.hpp"
+#include "provider/anthropic_error.hpp"
 #include "provider/wire_json.hpp"
 
 #include <string>
@@ -40,7 +41,7 @@ namespace {
     return {};
   }
   const auto type = optional_wire_string(*error, "type");
-  return type && *type ? std::string{**type} : std::string{};
+  return type && *type ? sanitize_anthropic_error_type(**type) : std::string{};
 }
 
 [[nodiscard]] std::string response_identifier(const WireValue& root,
@@ -48,11 +49,9 @@ namespace {
   if (!fallback.empty()) {
     return fallback;
   }
-  for (const auto name : {"request_id", "id"}) {
-    auto identifier = optional_wire_string(root, name);
-    if (identifier && *identifier) {
-      return std::string{**identifier};
-    }
+  auto identifier = optional_wire_string(root, "request_id");
+  if (identifier && *identifier) {
+    return std::string{**identifier};
   }
   return fallback;
 }

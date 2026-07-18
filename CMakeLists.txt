@@ -20,6 +20,7 @@ option(SCRY_USE_LIBCXX "Use libc++ with a Clang-family compiler" OFF)
 option(SCRY_ENABLE_REFLECTION "Enable the experimental C++26 reflection surface" OFF)
 option(SCRY_BUILD_REFLECTION_SPIKE "Build the Glaze/P2996 feasibility spike" OFF)
 option(SCRY_BUILD_CURL_SPIKE "Build the libcurl/SSE feasibility spike" OFF)
+option(SCRY_BUILD_FUZZERS "Build short protocol fuzz targets" OFF)
 
 set(
   SCRY_SANITIZER
@@ -51,13 +52,16 @@ add_library(
   scry
   STATIC
     src/core/retry.cpp
+    src/runtime/config.cpp
     src/runtime/conversation.cpp
+    src/runtime/harness.cpp
     src/runtime/messages.cpp
     src/runtime/pump.cpp
     src/runtime/queue.cpp
     src/runtime/state.cpp
     src/runtime/tool_registry.cpp
     src/runtime/turn.cpp
+    src/runtime/worker.cpp
 )
 add_library(scry::scry ALIAS scry)
 set_target_properties(scry PROPERTIES EXPORT_NAME scry)
@@ -85,6 +89,10 @@ target_link_libraries(
     Threads::Threads
     "$<BUILD_INTERFACE:scry_project_options>"
 )
+add_subdirectory(src/machine)
+add_subdirectory(src/protocol)
+add_subdirectory(src/provider)
+add_subdirectory(src/transport)
 
 if(SCRY_USE_LIBCXX)
   if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
@@ -125,9 +133,11 @@ endif()
 
 if(SCRY_ENABLE_CLANG_TIDY)
   find_program(SCRY_CLANG_TIDY_EXECUTABLE NAMES clang-tidy REQUIRED)
-  set(
-    CMAKE_CXX_CLANG_TIDY
-    "${SCRY_CLANG_TIDY_EXECUTABLE};--warnings-as-errors=*"
+  set_property(
+    TARGET scry
+    PROPERTY
+      CXX_CLANG_TIDY
+        "${SCRY_CLANG_TIDY_EXECUTABLE};--warnings-as-errors=*"
   )
 endif()
 
@@ -267,7 +277,7 @@ if(SCRY_BUILD_REFLECTION_SPIKE)
 endif()
 
 if(SCRY_BUILD_EXAMPLES)
-  add_library(scry_canonical_example OBJECT examples/main_loop.cpp)
+  add_executable(scry_canonical_example examples/main_loop.cpp)
   target_link_libraries(
     scry_canonical_example
     PRIVATE scry::scry scry_project_options
@@ -284,6 +294,12 @@ if(SCRY_BUILD_TESTS)
     EXCLUDE_FROM_ALL
   )
   FetchContent_MakeAvailable(Catch2)
+  foreach(SCRY_CATCH_TARGET IN ITEMS Catch2 Catch2WithMain)
+    target_compile_features("${SCRY_CATCH_TARGET}" PRIVATE cxx_std_23)
+    if(SCRY_USE_LIBCXX)
+      target_compile_options("${SCRY_CATCH_TARGET}" PRIVATE -stdlib=libc++)
+    endif()
+  endforeach()
   list(APPEND CMAKE_MODULE_PATH "${catch2_SOURCE_DIR}/extras")
   include(Catch)
 
@@ -321,21 +337,42 @@ if(SCRY_BUILD_TESTS)
   )
   add_test(NAME public-api-contract COMMAND scry_public_api_contract)
 
-  add_executable(scry_retry_tests tests/core/retry_tests.cpp)
-  target_include_directories(scry_retry_tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
+  add_executable(
+    scry_retry_tests
+    tests/core/retry_tests.cpp
+    src/core/retry.cpp
+  )
+  target_compile_features(scry_retry_tests PRIVATE cxx_std_23)
+  target_include_directories(
+    scry_retry_tests
+    PRIVATE
+      "${PROJECT_SOURCE_DIR}/include"
+      "${PROJECT_SOURCE_DIR}/src"
+  )
   target_link_libraries(
     scry_retry_tests
-    PRIVATE Catch2::Catch2WithMain scry::scry scry_project_options
+    PRIVATE Catch2::Catch2WithMain scry_project_options
   )
   catch_discover_tests(scry_retry_tests TEST_PREFIX "core.")
 
-  add_executable(scry_runtime_tests tests/runtime/runtime_tests.cpp)
+  add_executable(
+    scry_runtime_tests
+    tests/runtime/config_tests.cpp
+    tests/runtime/pump_regression_tests.cpp
+    tests/runtime/runtime_coverage_tests.cpp
+    tests/runtime/runtime_tests.cpp
+  )
   target_include_directories(scry_runtime_tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
   target_link_libraries(
     scry_runtime_tests
     PRIVATE Catch2::Catch2WithMain scry::scry scry_project_options
   )
   catch_discover_tests(scry_runtime_tests TEST_PREFIX "runtime.")
+  add_subdirectory(tests/machine)
+  add_subdirectory(tests/protocol)
+  add_subdirectory(tests/provider)
+  add_subdirectory(tests/transport)
+  add_subdirectory(tests/integration)
 endif()
 
 if(SCRY_BUILD_CURL_SPIKE)

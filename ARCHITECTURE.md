@@ -1,6 +1,6 @@
 # Scry — Architectural Patterns & Implementation Practices
 
-Companion to [DESIGN.md](DESIGN.md). That document says *what* the pieces are; this one says *how* each piece is built — the C++ design patterns, idioms, and practices we commit to, and why. Deliberately no class listings or method signatures; those belong to the M0 header sketch.
+Companion to [DESIGN.md](DESIGN.md). That document says *what* the pieces are; this one says *how* each piece is built — the C++ design patterns, idioms, and practices we commit to, and why. Deliberately no class listings or method signatures; the public headers are the API source of truth.
 
 ---
 
@@ -8,7 +8,14 @@ Companion to [DESIGN.md](DESIGN.md). That document says *what* the pieces are; t
 
 These apply everywhere and settle arguments before they start.
 
-**Value semantics at the boundary, ownership inside.** Public types are cheap-to-move value types or lightweight handles. Internally, every resource has exactly one owner (`std::unique_ptr`, RAII wrappers). Shared ownership is narrowly enumerated: the per-turn cancellation flag crosses threads, while a pump-side registration route is owned by the Harness and observed weakly by the Turn handle. Raw pointers are non-owning observers only, never stored across a suspension point.
+**Value semantics at the boundary, explicit ownership inside.** Public types are
+cheap-to-move value types or lightweight handles. Exclusively owned resources
+use `std::unique_ptr` or dedicated RAII wrappers. Shared lifetime is deliberate
+and enumerated: command/event queues and the per-turn cancellation flag cross
+the worker boundary; a Conversation handle and its live pump route share
+Conversation state; and a pump-side registration route is owned by the Harness
+and observed weakly by the Turn handle. Raw pointers are non-owning observers
+only, never stored across a suspension point.
 
 **Rule of Zero.** Types define no special member functions unless they manage a resource directly; resource management is pushed into dedicated RAII wrappers (curl handles, threads, queues) so everything above them defaults.
 
@@ -28,7 +35,7 @@ The single most important structural decision. The worker thread is an **actor**
 
 Practices that follow:
 
-- **Enumerated shared state, no user-visible locks.** There is no mutex a user callback can deadlock against. Exactly three things are shared across the thread boundary, all internally synchronized: the command queue, the event queue, and one atomic cancellation flag per turn. Nothing else — worker-side state and pump-side state are exclusively owned (ownership table in §3), and the worker addresses turns only by immutable `TurnId`. This enumeration *is* the invariant TSan enforces; anything not on the list found crossing threads is a bug by definition.
+- **Enumerated shared state, no user-visible locks.** There is no mutex a user callback can deadlock against. Exactly three things are shared across the thread boundary, all internally synchronized: the command queue, the event queue, and one atomic cancellation flag per turn. Nothing else — worker-side state and pump-side state are exclusively owned (ownership table in §3), and the worker addresses turns only by immutable `TurnId`. Pump-side objects may share lifetime with other pump-side objects; shared ownership does not make them cross-thread state. This enumeration *is* the invariant TSan enforces; anything not on the list found crossing threads is a bug by definition.
 - **Messages are immutable values.** Commands and events are `std::variant` of small structs, moved (never copied) through the queue. Variant + `std::visit` gives exhaustive handling — adding an event type breaks the build until every consumer handles it. This is the same closed-set-of-alternatives reasoning that picks variant over inheritance everywhere in this codebase.
 - **Queue implementation: boring first.** Mutex + `std::deque` + condition variable, wrapped behind our own minimal interface so a lock-free MPSC queue can be swapped in *if profiling ever demands it*. Premature lock-free is how libraries acquire unfixable bugs.
 - **Two cancellation mechanisms, deliberately separate.** The worker's `std::jthread` `stop_token` means one thing only: **Harness shutdown**. Per-turn cancellation is a distinct per-turn `std::atomic<bool>`, checked at every I/O boundary and plumbed into transport progress callbacks. Both are cooperative, never `pthread_cancel`-style. Conflating them was an early ambiguity: shutdown must abort *all* turns and join; cancelling one turn must not disturb its neighbors.
@@ -48,7 +55,7 @@ A `Turn` is a **handle**: a move-only PImpl value holding an immutable `TurnId`,
 | Transport handles, curl state, wire buffers, SSE parser state | Worker | Never visible to any other thread |
 | Loop state machines (per turn) | Worker | Addressed by `TurnId` |
 | Callback registrations, buffered undelivered events per turn, Turn registration routes | Pump side (Harness main-thread state) | Written/read only inside API calls and `update()`; handles observe routes weakly |
-| Conversation contents | App thread via pump | Mutated only at terminal-event delivery |
+| Conversation contents | App thread via pump | A live route retains shared lifetime on the pump side; contents are mutated only at terminal-event delivery |
 | Command queue, event queue | Shared, internally synchronized | Sanctioned crossing points |
 | Per-turn cancel flag (`atomic<bool>`) | Shared | Third sanctioned crossing point |
 | `TurnId` | Immutable value | Freely copied everywhere |
@@ -80,6 +87,10 @@ stateDiagram-v2
     Queued --> Cancelled: cancel() before start (no I/O ever issued)
     AwaitingModel --> Streaming: first content event
     AwaitingModel --> Completed
+    AwaitingModel --> RetryWait: retryable failure before semantic output
+    RetryWait --> AwaitingModel: retry wake
+    RetryWait --> Failed: retry/elapsed cap reached
+    RetryWait --> Cancelled: cancel()
     Streaming --> Completed
     AwaitingModel --> Failed
     Streaming --> Failed
@@ -94,12 +105,21 @@ This diagram is the M1 chat lifecycle. M2 extends the same machine with
 `AwaitingTool` and the tool-result transition; it does not replace the M1
 states.
 
-Exactly one terminal event per turn — never zero, never two. The remaining lifecycle contracts, each of which is a numbered requirement:
+While the Harness remains alive, exactly one observable terminal event is
+delivered per accepted turn — never zero, never two. Harness destruction is the
+explicit exception: shutdown aborts work and discards undelivered events, so it
+does not expose teardown callbacks. The remaining lifecycle contracts, each of
+which is a numbered requirement:
 
 - **Conversation commits are transactional.** History is mutated only by the pump at terminal-event delivery: `Completed` commits the full exchange (user message, all tool rounds, final answer) atomically; `Failed`/`Cancelled` commit nothing. This makes chat-only resend mechanically clean, but does not make external side effects from tool handlers reversible or automatically idempotent.
 - **Detach semantics.** Dropping the handle detaches: the turn runs to termination, the Conversation still commits on completion, and callbacks already registered in the Harness continue to receive events. Unclaimed buffered events may be discarded once no Turn handle remains; dropping loses future control and registration, not callbacks already registered.
 - **Late attachment.** While the handle remains attached, callbacks registered after events began arriving receive buffered prior events in order — no races, no missed deltas within configured buffer limits.
-- **Reentrancy.** Callbacks may call `send`, `cancel`, and registration APIs. Reentrant `update()` is forbidden and asserts. Tool registration changes take effect for subsequent turns, not in-flight ones.
+- **Reentrancy.** Callbacks may call `send`, `cancel`, and registration APIs.
+  Reentrant `update()` performs no work and reports
+  `UpdateStats::reentrant_update_rejected`; it never recurses into callback
+  delivery. M1 registration mutates an inert registry only; beginning in M2,
+  accepted turns snapshot the registry, so later changes affect subsequent
+  turns rather than in-flight ones.
 - **Non-preemption.** The `update()` budget is a soft deadline checked *between* callbacks; an individual callback or tool handler is never preempted and may overrun the budget. The budget bounds Scry's scheduling, not user code.
 - **Callback exceptions** propagate out of `update()` with the harness valid and the event counted delivered (§1).
 - **Callback arguments are borrowed** for the invocation only; apps copy values or text views they retain.
@@ -113,7 +133,7 @@ Why this is the hill to defend:
 
 - **Testability without a network.** The full agentic loop — multi-round tool use, retries, cancellation mid-tool-call, malformed model output — is tested by feeding event sequences and asserting command sequences. Deterministic, sub-millisecond tests for the most complex logic in the system.
 - **Replayability.** A recorded event log reproduces any bug exactly. Given how nondeterministic LLM behavior is, deterministic *harness* behavior is the only debuggable posture.
-- **The state machine is explicit, not emergent.** States (awaiting-model, awaiting-tool, retrying, cancelling, terminal) are a variant/enum with a drawn transition diagram, not an implicit property of nested callbacks. Illegal transitions are unrepresentable or assert.
+- **The state machine is explicit, not emergent.** States (queued, awaiting-model, streaming, retry-wait, and terminal; awaiting-tool joins in M2) are a variant/enum with a drawn transition diagram, not an implicit property of nested callbacks. An event that is illegal in the current state returns a diagnostic without mutating state or emitting commands, making integration failures observable without relying on debug-only assertions.
 
 Retry policy (backoff + jitter) lands with the M1 machine as state, driven by *time events* injected by the driver — the machine never sleeps, it requests "wake me at T." This keeps even timing testable with a fake clock.
 
@@ -123,7 +143,10 @@ Two layers, one table (as settled in DESIGN.md §8):
 
 **Lower layer — type erasure.** A registered tool is a record: name, description, schema (JSON string), and a type-erased callable (`json → expected<json, error>` in spirit; Scry's `UniqueFunction` keeps captures move-only). This is the `std::function`-style erasure idiom: the registry is runtime-uniform, closed to no one, and has zero knowledge of reflection.
 
-The Registry is owned by its Harness. `send()` snapshots the table for the accepted turn, so registration during `update()` never mutates an in-flight turn and no registry state crosses the worker boundary.
+The Registry is owned by its Harness. M1 validates and stores registrations as
+inert pump-side infrastructure. Beginning in M2, `send()` snapshots the table
+for the accepted turn, so registration during `update()` never mutates an
+in-flight turn and no registry state crosses the worker boundary.
 
 **Upper layer — consteval code generation.** The P2996 layer is a compile-time *code generator* targeting the lower layer: given an args struct, `consteval` functions walk its members to (a) build the schema as a compile-time string and (b) instantiate a deserializer + invoker lambda that gets erased into the table like any hand-written tool. Practices:
 
@@ -148,7 +171,11 @@ Discipline that keeps it clean:
 The second sanctioned interface, existing for one reason: **dependency injection of a fake transport in tests** (and of the sans-I/O driver's event source). Practices:
 
 - libcurl used directly (not through a wrapper lib) for SSE control, but every curl object lives in a RAII wrapper with the curl types visible only in the `.cpp`. curl's C callbacks trampoline into C++ via the standard `void* userdata` → object pointer pattern, with all exceptions caught at the trampoline (C stacks must never unwind).
-- **SSE parsing is a pure incremental function**: bytes in, zero-or-more events out, remainder buffered. No I/O, no allocation beyond the buffer — property-testable with randomly split byte chunks (the classic bug in SSE parsers is delimiter-across-chunk; the test generator targets it directly).
+- **SSE parsing is a pure incremental function**: bytes in, zero-or-more events
+  out, remainder buffered. It performs no I/O and all retained data is covered
+  by the configured event bound, making it property-testable with randomly
+  split byte chunks (the classic bug in SSE parsers is
+  delimiter-across-chunk; the test generator targets it directly).
 - Curl's progress callback checks both the worker `stop_token` (Harness shutdown) and the active turn's atomic cancellation flag. Neither signal is repurposed for the other.
 - Connection reuse (curl multi/share) is an internal optimization invisible above the seam.
 
@@ -183,6 +210,7 @@ Every "boring first" choice is recorded here with the condition that triggers ev
 | Trait/customization-point parameter descriptions | Pinned toolchain gains P3394 annotations | Annotations in the args struct become the primary path; trait remains as override |
 | No connection pooling beyond curl defaults | Measured connect/TLS overhead in streaming-heavy use | curl share/multi connection reuse, invisible above the transport seam |
 | Scry-owned `UniqueFunction` at callable boundaries | All supported macOS/Linux standard libraries ship a conforming `std::move_only_function` and a pre-1.0 API change is acceptable | Replace the small owned erasure with the standard facility after ABI and allocation benchmarks |
+| M1 ToolRegistry uses one mutable shared-state wrapper but never snapshots or shares it | M2 sends accepted-turn tool snapshots | Store immutable shared registration records; each accepted turn snapshots record ownership, and later registry mutation creates new records without changing in-flight views |
 | Linux + macOS only | Concrete Windows user demand | Windows reflection-OFF via clang; MSVC leg only if/when P2996 ships there |
 | Reflection-ON CI leg on Linux only (PORT-005) | A production-grade P2996 toolchain becomes practically distributable on macOS | Gating reflection legs on both platforms |
 | Serialized turns: M2 queued turns wait while the active turn awaits a main-thread tool | Serialized scheduling measurably limits a real app | Tool-await releases the slot under curl-multi multiplexing (same trigger as row 2) |
