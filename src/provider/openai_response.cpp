@@ -90,7 +90,7 @@ namespace {
   if (!index) {
     return std::unexpected(std::move(index.error()));
   }
-  if (!*index || **index != 0) {
+  if (index->value_or(1) != 0) {
     return std::unexpected(make_provider_error(
         ErrorCategory::protocol, "OpenAI response choice index must be zero"));
   }
@@ -108,7 +108,7 @@ namespace {
   if (!refusal) {
     return std::unexpected(std::move(refusal.error()));
   }
-  if (*refusal && !(*refusal)->empty()) {
+  if (!refusal->value_or(std::string_view{}).empty()) {
     return std::unexpected(
         make_provider_error(ErrorCategory::protocol,
                             "OpenAI returned unsupported structured refusal content"));

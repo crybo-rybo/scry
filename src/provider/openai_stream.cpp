@@ -51,12 +51,16 @@ openai_decode_state(ProviderDecodeState& state) {
   if (!parsed) {
     return std::unexpected(std::move(parsed.error()));
   }
-  if (!*parsed ||
-      **parsed > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
+  if (!parsed->has_value()) {
     return std::unexpected(make_provider_error(
         ErrorCategory::protocol, "OpenAI streamed tool call requires a usable index"));
   }
-  return static_cast<std::size_t>(**parsed);
+  const auto index = parsed->value_or(0);
+  if (index > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
+    return std::unexpected(make_provider_error(
+        ErrorCategory::protocol, "OpenAI streamed tool call requires a usable index"));
+  }
+  return static_cast<std::size_t>(index);
 }
 
 [[nodiscard]] Status assign_metadata(std::optional<std::string>& destination,
@@ -82,11 +86,12 @@ openai_decode_state(ProviderDecodeState& state) {
   if (!parsed) {
     return std::unexpected(std::move(parsed.error()));
   }
-  if (!*parsed) {
+  if (!parsed->has_value()) {
     return {};
   }
-  return assign_metadata(destination,
-                         MetadataFragment{.value = **parsed, .field = field});
+  return assign_metadata(
+      destination,
+      MetadataFragment{.value = parsed->value_or(std::string_view{}), .field = field});
 }
 
 [[nodiscard]] Status append_arguments(OpenAiToolDecodeState& tool,
@@ -121,10 +126,10 @@ openai_decode_state(ProviderDecodeState& state) {
   if (!arguments) {
     return std::unexpected(std::move(arguments.error()));
   }
-  if (!*arguments) {
+  if (!arguments->has_value()) {
     return {};
   }
-  return append_arguments(tool, **arguments, limit);
+  return append_arguments(tool, arguments->value_or(std::string_view{}), limit);
 }
 
 [[nodiscard]] Status apply_tool_fragment(const WireValue& value,
@@ -243,7 +248,7 @@ apply_text_delta(const WireValue& delta, ProviderDecodeState& state,
   if (!role) {
     return std::unexpected(std::move(role.error()));
   }
-  if (*role && **role != "assistant") {
+  if (role->has_value() && role->value_or(std::string_view{}) != "assistant") {
     return std::unexpected(make_provider_error(
         ErrorCategory::protocol, "OpenAI streamed response role must be assistant"));
   }
@@ -291,7 +296,7 @@ apply_text_delta(const WireValue& delta, ProviderDecodeState& state,
   if (!index) {
     return std::unexpected(std::move(index.error()));
   }
-  if (!*index || **index != 0) {
+  if (index->value_or(1) != 0) {
     return std::unexpected(make_provider_error(
         ErrorCategory::protocol, "OpenAI stream choice index must be zero"));
   }
