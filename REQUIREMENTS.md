@@ -133,6 +133,15 @@ ID scheme: `SCRY-<AREA>-NNN`, abbreviated to `<AREA>-NNN` in the tables below. I
 | PORT-006 | MUST | libcurl ≥ 7.84.0; `CURL_VERSION_THREADSAFE` is verified at first initialization (host threads may exist before the first Harness). | M1 | **Live:** CMake 7.84 floor; first-lease runtime capability validation and rejection matrix; `curl` CI leg |
 | PORT-007 | MUST | Pre-1.0: no API/ABI stability promises, breaking changes allowed with changelog notice. From 1.0: semver, inline-namespace ABI versioning. | M0 (documented) | Release checklist |
 
+## Showcase Integrations (SCRY-SHOW)
+
+| ID | Level | Requirement | Milestone | Verification |
+|---|---|---|---|---|
+| SHOW-001 | MUST | An opt-in C++23 Dear ImGui chat-panel example consumes only the public `scry::scry` target and demonstrates non-blocking send, streamed text, completion, error, and cancellation. The host owns and outlives the Harness and Conversation, calls `update()`, and owns the ImGui context, platform/renderer backends, window, and main loop. Panel destruction requests cancellation and MUST NOT block. | M5 | **Implemented locally; hosted verification pending:** `scry_showcase_tests` fake-controller send/stream/terminal/cancel/stale-callback/destruction cases; `showcase.imgui-headless-frame`; source-boundary review |
+| SHOW-002 | MUST | The NPC showcase is a deterministic, ephemeral 5-by-5 in-memory grid with explicit-schema zero-argument `look`, `move_north`, `move_south`, `move_east`, and `move_west` tools. The tools execute on the app thread, reject nonempty arguments, return canonical JSON, leave blocked boundary moves unchanged, and rely on application-owned idempotency or reconciliation for any durable adaptation. | M5 | **Implemented locally; hosted verification pending:** `scry_showcase_tests` NPC cases cover initial observation, deterministic move order, every direction, boundaries, argument rejection, canonical results, and explicit app-thread registration; example build/run seam |
+| SHOW-003 | MUST | M5 adds no Scry public API, installed header, package target, export, or runtime dependency. Dear ImGui is a showcase-only MIT build dependency, pinned to `v1.92.8` commit `8936b58fe26e8c3da834b8f60b06511d537b4c63`, compiled only when `SCRY_BUILD_IMGUI_SHOWCASE=ON` (default `OFF`), and includes no window-system or renderer backend. A normal core build MUST NOT fetch or discover it. | M5 | **Implemented locally; hosted verification pending:** default-OFF configure audit; pinned-source check; public-header/target review; clean install and downstream `find_package(scry)` artifact-absence audit |
+| SHOW-004 | MUST | The showcase gate builds with the repository warnings-as-errors policy and runs deterministic NPC tests, fake-controller panel behavior tests, a real Dear ImGui compile/link/headless-frame smoke, and the clean-package audit. It MUST be callable locally and by hosted CI before M5 is complete. | M5 | **Implemented locally; hosted verification pending:** `scripts/ci-showcase.sh` passes directly and through `scripts/preflight.sh`; hosted `showcase` job is wired but has not yet run for this implementation |
+
 ## Quality Gates (SCRY-QA) — binding form of ENGINEERING.md
 
 | ID | Level | Requirement | Milestone | Verification |
@@ -153,12 +162,15 @@ ID scheme: `SCRY-<AREA>-NNN`, abbreviated to `<AREA>-NNN` in the tables below. I
 ## Unratified / Known Gaps
 
 New gaps land here, not in prose. There are no known M0, M1, M2, M3, or M4
-design requirement gaps. M4 implementation and deterministic verification are
-live; the scheduled nightly pipeline is present, but no completed hosted
-nightly execution is claimed yet. The live M3 feature, diagnostic, packaging,
-sanitizer, and runtime coverage evidence is named above. Randomized reflection
-property/fuzz testing and manual Clang compatibility remain unclaimed future
-hardening, not M3 completion evidence.
+design requirement gaps. The M5 contract is ratified by SHOW-001–004 and ADR
+0010. Implementation and the complete preflight pass locally; hosted
+verification remains pending, so none of the M5 gates above is claimed live
+yet. M4 implementation and deterministic verification are live; the scheduled
+nightly pipeline is present, but no completed hosted nightly execution is
+claimed yet. The live M3 feature,
+diagnostic, packaging, sanitizer, and runtime coverage evidence is named above.
+Randomized reflection property/fuzz testing and manual Clang compatibility
+remain unclaimed future hardening, not M3 completion evidence.
 
 Amendment log:
 
@@ -210,3 +222,15 @@ Amendment log:
   live. The scheduled/manual CodeQL, long-fuzz, Mull, and checksum-pinned
   Ollama/model smoke pipeline is implemented; a completed hosted nightly run
   is not yet claimed.
+- **2026-07, M5 contract closure:** ratified the showcase-only public/package
+  boundary, host-owned ImGui lifecycle, non-blocking panel behavior,
+  deterministic app-thread NPC tools, ephemeral side-effect policy,
+  build-only pinned Dear ImGui dependency, and the local/hosted acceptance gate
+  (SHOW-001–004; ADR 0010). Verification is intentionally deferred until
+  implementation.
+- **2026-07, M5 local implementation closure:** the host-owned ImGui panel,
+  deterministic NPC world and explicit registrations, pinned/default-OFF
+  showcase build, 20-test deterministic suite, real headless frame, clean
+  package/consumer audit, and shared preflight/hosted entry point are
+  implemented and pass locally. Hosted showcase verification remains pending,
+  so SHOW-001–004 and M5 are not yet claimed live.

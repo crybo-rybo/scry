@@ -85,6 +85,7 @@ run_gate "ASan + UBSan" run_preset asan
 run_gate "TSan" run_preset tsan
 run_gate "libcurl runtime" run_preset curl
 run_gate "short protocol fuzzing" run_fuzz
+run_gate "opt-in showcase" ./scripts/ci-showcase.sh
 run_gate "GCC 16 supported reflection component" run_reflection
 
 if [[ "${failures}" -ne 0 ]]; then

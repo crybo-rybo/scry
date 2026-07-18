@@ -21,6 +21,11 @@ option(SCRY_ENABLE_REFLECTION "Build the supported GCC 16+ reflection component"
 option(SCRY_BUILD_CURL_SPIKE "Build the libcurl/SSE feasibility spike" OFF)
 option(SCRY_BUILD_FUZZERS "Build short protocol fuzz targets" OFF)
 option(
+  SCRY_BUILD_IMGUI_SHOWCASE
+  "Build the opt-in Dear ImGui and grid-NPC showcase"
+  OFF
+)
+option(
   SCRY_BUILD_LOCAL_MODEL_SMOKE
   "Build the nightly public-API local-model smoke executable"
   OFF
@@ -304,21 +309,10 @@ if(SCRY_ENABLE_REFLECTION)
     PRIVATE "$<BUILD_INTERFACE:scry_project_options>"
   )
 
-  if(SCRY_BUILD_EXAMPLES AND EXISTS "${PROJECT_SOURCE_DIR}/examples/reflection_tools.cpp")
-    add_executable(scry_reflection_example examples/reflection_tools.cpp)
-    target_link_libraries(
-      scry_reflection_example
-      PRIVATE scry::reflection scry_project_options
-    )
-  endif()
 endif()
 
-if(SCRY_BUILD_EXAMPLES)
-  add_executable(scry_canonical_example examples/main_loop.cpp)
-  target_link_libraries(
-    scry_canonical_example
-    PRIVATE scry::scry scry_project_options
-  )
+if(SCRY_BUILD_EXAMPLES OR SCRY_BUILD_IMGUI_SHOWCASE)
+  add_subdirectory(examples)
 endif()
 
 if(SCRY_BUILD_LOCAL_MODEL_SMOKE)
@@ -452,6 +446,9 @@ if(SCRY_BUILD_TESTS)
   add_subdirectory(tests/provider)
   add_subdirectory(tests/transport)
   add_subdirectory(tests/integration)
+  if(SCRY_BUILD_IMGUI_SHOWCASE)
+    add_subdirectory(tests/showcase)
+  endif()
 
   if(SCRY_ENABLE_REFLECTION)
     file(
