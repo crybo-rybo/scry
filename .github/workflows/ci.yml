@@ -193,15 +193,24 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
-      CC: clang-18
-      CXX: clang++-18
-      CXXFLAGS: --gcc-install-dir=/usr/lib/gcc/x86_64-linux-gnu/14
+      # Clang 18 advertises the pre-DR concepts feature level, so GCC 14
+      # intentionally withholds C++23 std::expected. LLVM 21 keeps the fuzz
+      # target on libstdc++ (matching its packaged libFuzzer runtime) while
+      # the Clang 18/libc++ core leg remains the portability authority.
+      CC: clang-21
+      CXX: clang++-21
     steps:
       - uses: actions/checkout@v7.0.0
-      - run: >
-          sudo apt-get update &&
-          sudo apt-get install -y
-          clang-18 g++-14 libcurl4-openssl-dev ninja-build
+      - name: Install the pinned fuzz toolchain
+        run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
+            | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
+          echo "deb https://apt.llvm.org/noble/ llvm-toolchain-noble-21 main" \
+            | sudo tee /etc/apt/sources.list.d/llvm-21.list
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang-21 g++-14 libclang-rt-21-dev libcurl4-openssl-dev \
+            libfuzzer-21-dev ninja-build
       - run: |
           cmake --preset fuzz
           cmake --build build/fuzz --target scry_sse_fuzz scry_anthropic_fuzz
