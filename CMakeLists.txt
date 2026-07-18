@@ -104,6 +104,15 @@ if(SCRY_USE_LIBCXX)
   target_link_options(scry_project_options INTERFACE -stdlib=libc++)
 endif()
 
+# LLVM 18 and Apple libc++ expose the standard C++20 stop-token/jthread
+# surface only when their matching experimental-library mode is enabled.
+if(CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang" OR SCRY_USE_LIBCXX)
+  target_compile_options(scry PUBLIC -fexperimental-library)
+  target_link_options(scry PUBLIC -fexperimental-library)
+  target_compile_options(scry_project_options INTERFACE -fexperimental-library)
+  target_link_options(scry_project_options INTERFACE -fexperimental-library)
+endif()
+
 if(SCRY_WARNINGS_AS_ERRORS)
   target_compile_options(
     scry_project_options
