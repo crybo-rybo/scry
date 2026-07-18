@@ -6,15 +6,16 @@ A C++ LLM harness for applications with their own main loops. Scry uses **C++26 
 
 Built for the apps that live in C++ — games, GUI tools, simulators — where you can't block a frame, can't shell out to Python, and want tool use, not just chat.
 
-**Status:** M0 foundation in progress. The public contracts, canonical example,
-target-based CMake package, and local/hosted validation skeleton are present,
-along with bounded reflection and libcurl/SSE feasibility probes. The runtime
-is intentionally not implemented yet: the PImpl handle methods are declarations,
-and the example is compile-checked rather than linked.
+**Status:** M0 foundation complete. The public contracts, canonical example,
+target-based CMake package, quality ratchet, and local/hosted validation are in
+place, along with bounded reflection and libcurl/SSE feasibility probes. The
+runtime is intentionally not implemented yet: the PImpl handle methods are
+declarations, and the example is compile-checked rather than linked. M1 is the
+next milestone.
 
-## Build the foundation
+## Build and preflight
 
-Run the same core workflow used by CI:
+Run the fast, platform-stable core workflow:
 
 ```sh
 ./scripts/ci-local.sh
@@ -25,6 +26,17 @@ compile-only API example, runs contract tests, installs the package to a staging
 prefix, and builds a downstream `find_package(scry)` consumer. If
 [`just`](https://github.com/casey/just) is installed, `just ci-fast` is the
 equivalent convenience command.
+
+Before handing off a pull request, run the complete local preflight:
+
+```sh
+just ci
+```
+
+That one command adds the live branch-coverage/CRAP ratchet, clang-tidy,
+sanitizers, and the curl and reflection feasibility legs. It runs all legs and
+reports host-specific toolchains that are unavailable locally; hosted CI is
+authoritative for those environments.
 
 The reflection-OFF surface targets stable C++23 compilers. The separate
 reflection feasibility target requires GCC 16+ with `-freflection`; it is not
@@ -42,6 +54,7 @@ and write-callback feasibility check.
 | [ADR 0001](docs/adr/0001-public-object-graph-and-lifetimes.md) | Accepted public ownership, registry snapshot, Turn detach, and callback-lifetime decisions. |
 | [ADR 0002](docs/adr/0002-build-and-dependency-foundation.md) | Build, package, dependency-acquisition, and initial test-harness decisions. |
 | [ADR 0003](docs/adr/0003-test-framework-deferred.md) | Test framework deferred to M1; Catch2 analysis preserved for that decision. |
+| [ADR 0004](docs/adr/0004-live-quality-ratchet.md) | Live merge-base quality comparison for diff branch coverage, CRAP, and ratcheted debt metrics. |
 
 ## Reading order
 

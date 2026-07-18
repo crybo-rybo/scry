@@ -2,11 +2,10 @@
 #
 # Live gates: format (pinned clang-format-18), core build matrix with
 # warnings-as-errors (QA-006/PORT-001/PORT-005), lizard complexity + contract
-# tests + install/package-consumer via ci-local.sh, ASan/UBSan/TSan (QA-005),
-# clang-tidy (QA-004 cognitive), gating GCC 16 reflection leg (PORT-002),
-# libcurl feasibility (PORT-006 preview).
-# Still planned for M0 (tracked in REQUIREMENTS.md): diff coverage (QA-001),
-# CRAP gate (QA-003), ratchet comparison (QA-007).
+# tests + install/package-consumer via ci-local.sh, diff branch coverage + CRAP
+# + quality ratchets (QA-001/003/007), ASan/UBSan/TSan (QA-005), clang-tidy
+# (QA-004 cognitive), gating GCC 16 reflection leg (PORT-002), libcurl
+# feasibility (PORT-006 preview).
 #
 # Toolchains are pinned deliberately (ENGINEERING.md §7): compiler drift on
 # experimental legs is a first-class risk.
@@ -82,6 +81,27 @@ jobs:
         run: python3 -m pip install --user --break-system-packages lizard==1.22.1
       - name: Run local-equivalent CI
         run: ./scripts/ci-local.sh -DSCRY_USE_LIBCXX=${{ matrix.libcxx }}
+
+  quality:
+    name: Coverage + CRAP ratchet
+    runs-on: ubuntu-24.04
+    env:
+      CC: clang-18
+      CXX: clang++-18
+      SCRY_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before || 'origin/main' }}
+    steps:
+      - uses: actions/checkout@v7.0.0
+        with:
+          fetch-depth: 0
+      - name: Install pinned quality tools
+        run: >-
+          sudo apt-get update &&
+          sudo apt-get install -y
+          clang-18 llvm-18 libc++-dev libc++abi-dev ninja-build
+      - name: Install pinned complexity checker
+        run: python3 -m pip install --user --break-system-packages lizard==1.22.1
+      - name: Compare branch quality to main
+        run: ./scripts/quality-gate.sh
 
   static-analysis:
     name: clang-tidy
