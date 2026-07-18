@@ -130,30 +130,29 @@ ID scheme: `SCRY-<AREA>-NNN`, abbreviated to `<AREA>-NNN` in the tables below. I
 
 | ID | Level | Requirement | Milestone | Verification (planned) |
 |---|---|---|---|---|
-| QA-001 | MUST | Diff branch coverage ≥ 90% on new/changed lines; coverage exclusions require an inline justification. | M0 | Per-commit CI gate |
+| QA-001 | MUST | Diff branch coverage ≥ 90% on new/changed lines; coverage exclusions require an inline justification. | M0 | **Live:** `scripts/quality-gate.sh` branch-aware merge-base comparison; `quality` CI job |
 | QA-002 | MUST | Branch-coverage floor ≥ 95% on the sans-I/O machine, SSE parser, retry classifier, and schema generator. | M2+ | Per-component CI gate |
-| QA-003 | MUST | No function on main with CRAP score > 30. | M0 | Per-commit CI gate + top-10 report |
+| QA-003 | MUST | No function on main with CRAP score > 30. | M0 | **Live:** `scripts/quality-gate.sh` hard gate + top-10 report; `quality` CI job |
 | QA-004 | MUST | Cyclomatic complexity ≤ 15 per function (warn at 10); cognitive complexity ≤ 25. Named suppressions only. | M0 | **Live:** cyclomatic via lizard in `scripts/ci-local.sh` (`-C 15`); cognitive via `.clang-tidy` threshold in the tidy job |
 | QA-005 | MUST | ASan, UBSan, and TSan suites pass per commit; threaded tests always run under TSan. | M0 | **Live:** `ci.yml` sanitizers job (`asan`, `tsan` presets) |
 | QA-006 | MUST | Warnings-as-errors (`-Wall -Wextra -Wconversion -Wshadow`) across the full compiler matrix. | M0 | **Live:** `scry_project_options` target + `ci.yml` core matrix |
-| QA-007 | MUST | All quality metrics ratchet: compared against main, they may hold or improve, never regress. | M0 | Ratchet comparison in CI |
-| QA-008 | MUST | Unit/machine tests are deterministic: no real time, sleeps, or network. Flaky tests are fixed or deleted immediately. | M0 | Repeat-run CI check (e.g., 3× on suspicion) |
+| QA-007 | MUST | All quality metrics ratchet: compared against main, they may hold or improve, never regress. | M0 | **Live:** candidate and merge-base are rebuilt with one toolchain by `scripts/quality-gate.sh`; ADR 0004 defines ratcheted metrics |
+| QA-008 | MUST | Unit/machine tests are deterministic: no real time, sleeps, or network. Flaky tests are fixed or deleted immediately. | M0 | **Live:** core and coverage suites use CTest `--repeat until-fail:3`; sanctioned-seam review remains required |
 | QA-009 | MUST | Every bug fix lands with a regression test (machine-level replay where applicable). | M1+ | PR checklist gate |
 | QA-010 | SHOULD | Nightly: mutation testing on machine/parsers, long fuzz runs, deep static analysis, e2e against a real local model. | M4+ | Nightly pipeline |
-| QA-011 | SHOULD | Everything CI enforces is runnable locally with one command. | M0 | **Partial:** `just ci-fast` → `scripts/ci-local.sh` runs the core ring; extended gates remain separate commands in `AGENTS.md` / `$scry-preflight` |
+| QA-011 | SHOULD | Everything CI enforces is runnable locally with one command. | M0 | **Live:** `just ci` → `scripts/preflight.sh` runs all gates, continues after failures, and reports unavailable host toolchains |
 | QA-012 | MUST | Definition of Done includes updating the four load-bearing docs — including this register — when behavior or a decision changes. | M0 | PR checklist gate |
 
 ## Unratified / Known Gaps
 
-New gaps land here, not in prose.
-
-- **QA-011 remains partial:** the core ring is one local command; clang-tidy, sanitizers, reflection, and curl still require separate preflight commands.
+New gaps land here, not in prose. There are no known M0 requirement gaps.
 
 Amendment log:
 
 - **2026-07, original extraction audit:** four gaps ratified — platform targets → PORT-005, versioning/ABI → PORT-007, resource ceilings → NET-008, security posture → ERR-004/NET-007.
 - **2026-07, pre-M0 contract-closure review:** ratified the public object graph (API-012, no Client — ADR 0001), Turn detach/registration lifetime (THR-007/009), exception scope (API-003/THR-020), bounded admission (THR-013/NET-008), cancellation signals (THR-012/NET-003), M1 machine scope (LOOP-002/004/005), side-effect retry boundary (LOOP-008), and the expanded ERR-001 category enum.
 - **2026-07, M0 unification:** verification cells updated to name live gates (PORT-001/002/005, QA-004/005/006) and the partial QA-011 gate; test-framework decision recorded as deferred to M1 (ADR 0003).
+- **2026-07, M0 closure:** live merge-base coverage, CRAP, and quality ratchets added for QA-001/003/007 (ADR 0004); repeat-run verification added for QA-008; the one-command preflight closes QA-011.
 
 ## Deferred to M2/M3 Design (tracked, not yet normative)
 

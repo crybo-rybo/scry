@@ -4,7 +4,7 @@
 
 ## Definition of done
 
-- [ ] `just ci-fast` passes locally
+- [ ] `just ci` passes locally, or unavailable hosted-only toolchain legs are identified
 - [ ] Behavior and architecture changes update the load-bearing documentation
 - [ ] Public API changes include a compiling example
 - [ ] Deliberate simplifications are recorded in the evolution register

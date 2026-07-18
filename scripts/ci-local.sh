@@ -15,7 +15,9 @@ cd "${root_dir}"
 readonly format_check="${SCRY_FORMAT_CHECK:-1}"
 
 git diff --check
+python3 -m unittest scripts.test_quality_gate
 python3 -m lizard include examples spikes tests -l cpp -C 15 -L 60 -a 6
+python3 -m lizard scripts -l python -C 15 -L 60 -a 6
 if [[ "${format_check}" == "1" ]]; then
   cmake --preset ci "$@"
   cmake --build "${build_dir}" --target all format-check
@@ -23,7 +25,10 @@ else
   cmake --preset ci -DSCRY_ENABLE_FORMAT_CHECK=OFF "$@"
   cmake --build "${build_dir}" --target all
 fi
-ctest --test-dir "${build_dir}" --output-on-failure
+ctest \
+  --test-dir "${build_dir}" \
+  --output-on-failure \
+  --repeat until-fail:3
 cmake --install "${build_dir}" --prefix "${stage_dir}"
 cmake \
   -S tests/package_consumer \

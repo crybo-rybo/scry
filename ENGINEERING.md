@@ -14,7 +14,12 @@ Third of three: [DESIGN.md](DESIGN.md) says what we're building, [ARCHITECTURE.m
 
 **Main is always green, always releasable.** Trunk-based development, short-lived branches, no long-running feature branches. Anything not ready to be on main hides behind a build flag (as the reflection layer already must).
 
-**Ratchet, never regress.** Every quality metric — coverage, complexity, warnings, sanitizer cleanliness — may improve or hold, never decline. Gates compare against the previous state of main, not against an absolute aspiration, so the bar rises as the code improves and there is never an excuse window.
+**Ratchet, never regress.** Every quality metric — coverage, complexity debt,
+warnings, sanitizer cleanliness — may improve or hold, never decline. Gates
+compare the candidate against its merge-base on main with the same toolchain,
+not against an editable snapshot. Numeric debt counts ratchet while absolute
+limits remain authoritative; raw complexity below the warning threshold is
+reported rather than frozen at M0's unusually small maximum.
 
 ## 2. Testing Plan
 
@@ -86,7 +91,12 @@ Three rings, ordered by feedback speed; a failure in an inner ring stops the out
 2. **Per-merge to main:** integration tests, adapter golden suites, coverage report publication, short fuzz.
 3. **Nightly:** end-to-end against a real local model, long fuzz, deep static analysis, mutation testing (mutate the machine and parsers; surviving mutants reveal assertion-free tests — this audits the *tests*, which coverage cannot).
 
-**Everything CI does is one command locally** (`just ci-fast`, or equivalent). A gate you can't run before pushing is a gate you learn about by failing, which breeds resentment and workarounds — even solo.
+**Everything CI does is orchestrated by one local command** (`just ci`).
+`just ci-fast` remains the quick core ring. The full command runs every leg,
+continues after failures, and identifies toolchains that the host cannot
+provide; hosted CI is authoritative for those environments. A gate with no
+local entry point is a gate you learn about only by pushing, which breeds
+resentment and workarounds — even solo.
 
 ## 7. Workflow & Change Hygiene
 
