@@ -9,14 +9,12 @@
 #include <optional>
 #include <string>
 #include <string_view>
-#include <type_traits>
 #include <utility>
 #include <variant>
+#include <vector>
 
 namespace scry::detail {
 namespace {
-
-constexpr std::size_t terminal_event_reserve = 512;
 
 [[nodiscard]] Error worker_error(const ErrorCategory category, std::string message,
                                  const TurnId turn_id,
@@ -45,24 +43,6 @@ void append_commands(std::deque<MachineCommand>& destination,
   value ^= value >> 27U;
   const auto unit = static_cast<double>(value & std::uint64_t{0xFFFF}) / 65535.0;
   return (unit * 2.0) - 1.0;
-}
-
-[[nodiscard]] bool contains_tool_content(const ModelResponse& response) noexcept {
-  return response.finish_reason == FinishReason::tool_use ||
-         std::ranges::any_of(response.content, [](const auto& block) {
-           return !std::holds_alternative<TextBlock>(block);
-         });
-}
-
-[[nodiscard]] WorkerEvent bound_terminal_event(WorkerEvent event) {
-  auto* error = std::get_if<ErrorEvent>(&event);
-  if (error == nullptr || event_payload_bytes(event) <= terminal_event_reserve) {
-    return event;
-  }
-  error->error.message = "turn failed; diagnostic exceeded the event buffer";
-  error->error.provider_detail.clear();
-  error->error.provider_request_id.clear();
-  return event;
 }
 
 void redact_sensitive_fields(Error& error, const std::string_view secret) {
@@ -100,6 +80,11 @@ void redact_sensitive_fields(Error& error, const std::string_view secret) {
   });
 }
 
+struct AttemptLimits final {
+  std::size_t maximum_event_bytes{};
+  std::size_t maximum_tool_arguments_bytes{};
+};
+
 } // namespace
 
 WorkerActor::WorkerActor(Config config, std::unique_ptr<ProviderAdapter> provider,
@@ -111,8 +96,9 @@ WorkerActor::WorkerActor(Config config, std::unique_ptr<ProviderAdapter> provide
       events_(std::move(events)) {}
 
 struct WorkerActor::AttemptState {
-  explicit AttemptState(const std::size_t maximum_event_bytes)
-      : parser(maximum_event_bytes) {}
+  explicit AttemptState(const AttemptLimits& limits)
+      : parser(limits.maximum_event_bytes),
+        decode{.max_tool_arguments_bytes = limits.maximum_tool_arguments_bytes} {}
 
   SseParser parser;
   ProviderDecodeState decode{};
@@ -150,6 +136,11 @@ void WorkerActor::accept_command(WorkerCommand command) {
     pending_.push_back(std::move(*send));
     return;
   }
+  if (std::holds_alternative<ToolResultCommand>(command)) {
+    // A tool result is meaningful only while its turn owns the serialized
+    // worker slot. Results that arrive after terminal cancellation are stale.
+    return;
+  }
   const auto turn_id = std::get<CancelTurnCommand>(command).turn_id;
   const auto found = std::ranges::find(pending_, turn_id, &SendTurnCommand::turn_id);
   if (found != pending_.end()) {
@@ -160,7 +151,16 @@ void WorkerActor::accept_command(WorkerCommand command) {
 
 void WorkerActor::process_turn(SendTurnCommand&& command,
                                const std::stop_token& stopped) {
-  TurnMachine machine{command.turn_id, std::move(command.request), config_.retry};
+  TurnMachine machine{
+      command.turn_id,
+      std::move(command.request),
+      config_.retry,
+      ToolLoopPolicy{
+          .max_rounds = config_.max_tool_rounds,
+          .max_argument_bytes = config_.limits.max_tool_arguments_bytes,
+          .max_exchange_bytes = command.max_exchange_bytes,
+      },
+  };
   std::deque<MachineCommand> machine_commands;
   if (command.cancelled->load(std::memory_order_acquire)) {
     append_commands(machine_commands, machine.apply(CancelTurn{}));
@@ -171,34 +171,73 @@ void WorkerActor::process_turn(SendTurnCommand&& command,
                     }));
   }
 
-  while (!machine_commands.empty() && !stopped.stop_requested()) {
+  while (!stopped.stop_requested()) {
+    if (machine_commands.empty()) {
+      if (machine.phase() == MachinePhase::awaiting_tool) {
+        append_commands(machine_commands, wait_for_tool(machine, command.turn_id,
+                                                        command.cancelled, stopped));
+        continue;
+      }
+      return;
+    }
     auto next = std::move(machine_commands.front());
     machine_commands.pop_front();
-    if (const auto* issue = std::get_if<IssueModelRequest>(&next)) {
-      append_commands(machine_commands,
-                      perform_attempt(machine, *issue, command.cancelled, stopped));
-      continue;
-    }
-    if (const auto* wake = std::get_if<ScheduleRetryWake>(&next)) {
-      append_commands(machine_commands,
-                      wait_for_retry(machine, *wake, command.cancelled, stopped));
-      continue;
-    }
-    auto published = publish_command(next);
-    if (!published) {
-      if (machine.phase() == MachinePhase::terminal) {
-        auto error = worker_error(ErrorCategory::resource_limit,
-                                  "turn events exceed the configured queue limit",
-                                  command.turn_id, machine.attempt_count());
-        publish_terminal_event(
-            ErrorEvent{.turn_id = command.turn_id, .error = std::move(error)});
-        return;
-      }
-      append_commands(machine_commands,
-                      failed_attempt(machine, std::move(published.error()),
-                                     command.turn_id, config_.api_key));
+    if (!process_machine_command(machine, std::move(next), command, stopped,
+                                 machine_commands)) {
+      return;
     }
   }
+}
+
+bool WorkerActor::process_machine_command(
+    TurnMachine& machine, MachineCommand command, const SendTurnCommand& turn,
+    const std::stop_token& stopped, std::deque<MachineCommand>& pending_commands) {
+  if (const auto* issue = std::get_if<IssueModelRequest>(&command)) {
+    if (turn.cancelled->load(std::memory_order_acquire)) {
+      append_commands(pending_commands, machine.apply(CancelTurn{}));
+    } else {
+      append_commands(pending_commands,
+                      perform_attempt(machine, *issue, turn.cancelled, stopped));
+    }
+    return true;
+  }
+  if (const auto* wake = std::get_if<ScheduleRetryWake>(&command)) {
+    append_commands(pending_commands,
+                    wait_for_retry(machine, *wake, turn.cancelled, stopped));
+    return true;
+  }
+  if (auto* tool = std::get_if<PublishToolCall>(&command)) {
+    auto published = publish_tool_batch(std::move(*tool), pending_commands);
+    if (!published) {
+      pending_commands.clear();
+      append_commands(pending_commands, machine.apply(ToolExecutionFailed{
+                                            .error = std::move(published.error()),
+                                        }));
+    }
+    return true;
+  }
+  auto published = publish_command(command);
+  if (published) {
+    return true;
+  }
+  if (machine.phase() == MachinePhase::terminal) {
+    auto error = worker_error(ErrorCategory::resource_limit,
+                              "turn events exceed the configured queue limit",
+                              turn.turn_id, machine.attempt_count());
+    publish_terminal_event(
+        ErrorEvent{.turn_id = turn.turn_id, .error = std::move(error)});
+    return false;
+  }
+  if (machine.phase() == MachinePhase::awaiting_tool) {
+    append_commands(pending_commands, machine.apply(ToolExecutionFailed{
+                                          .error = std::move(published.error()),
+                                      }));
+  } else {
+    append_commands(pending_commands,
+                    failed_attempt(machine, std::move(published.error()), turn.turn_id,
+                                   config_.api_key));
+  }
+  return true;
 }
 
 TransitionResult
@@ -212,7 +251,10 @@ WorkerActor::perform_attempt(TurnMachine& machine, const IssueModelRequest& issu
   }
 
   assert(request->streaming);
-  AttemptState state{config_.limits.max_sse_event_bytes};
+  AttemptState state{AttemptLimits{
+      .maximum_event_bytes = config_.limits.max_sse_event_bytes,
+      .maximum_tool_arguments_bytes = config_.limits.max_tool_arguments_bytes,
+  }};
   BodyChunkSink body_sink{
       [this, &machine, &state](const std::string_view chunk) -> Status {
         return consume_stream_chunk(machine, state, chunk);
@@ -228,7 +270,7 @@ WorkerActor::perform_attempt(TurnMachine& machine, const IssueModelRequest& issu
     return failed_attempt(machine, std::move(response.error()), issue.turn_id,
                           config_.api_key);
   }
-  return complete_attempt(machine, std::move(*response), *result, issue);
+  return complete_attempt(machine, std::move(*response), *result);
 }
 
 Status WorkerActor::consume_stream_chunk(TurnMachine& machine, AttemptState& state,
@@ -276,21 +318,12 @@ Result<ModelResponse> WorkerActor::finish_stream(TurnMachine& machine,
 
 TransitionResult WorkerActor::complete_attempt(TurnMachine& machine,
                                                ModelResponse response,
-                                               const TransportResult& result,
-                                               const IssueModelRequest& issue) {
+                                               const TransportResult& result) {
   if (response.provider_request_id.empty()) {
     response.provider_request_id = result.provider_request_id;
   }
   if (response.provider_request_id.find(config_.api_key) != std::string::npos) {
     response.provider_request_id.clear();
-  }
-  if (contains_tool_content(response)) {
-    return failed_attempt(
-        machine,
-        worker_error(ErrorCategory::protocol,
-                     "provider requested tool execution, which begins in M2",
-                     issue.turn_id, issue.attempt),
-        issue.turn_id, config_.api_key);
   }
   return machine.apply(ModelCompleted{.response = std::move(response)});
 }
@@ -317,115 +350,38 @@ WorkerActor::wait_for_retry(TurnMachine& machine, const ScheduleRetryWake& wake,
   });
 }
 
-Status
-WorkerActor::publish_stream_events(TurnMachine& machine,
-                                   const std::vector<ProviderEvent>& provider_events,
-                                   std::optional<ModelResponse>& completed_response,
-                                   const bool semantic_output_consumed) {
-  if (semantic_output_consumed && machine.phase() == MachinePhase::awaiting_model) {
-    const auto transition = machine.apply(ModelSemanticOutput{});
-    if (transition.status != TransitionStatus::applied) {
-      return std::unexpected(worker_error(
-          ErrorCategory::invalid_state,
-          "provider semantic output could not enter streaming state", TurnId{}));
+TransitionResult
+WorkerActor::wait_for_tool(TurnMachine& machine, const TurnId turn_id,
+                           const std::shared_ptr<std::atomic<bool>>& cancelled,
+                           const std::stop_token& stopped) {
+  while (!stopped.stop_requested()) {
+    if (cancelled->load(std::memory_order_acquire)) {
+      return machine.apply(CancelTurn{});
     }
-  }
-  for (const auto& event : provider_events) {
-    auto status = publish_provider_event(machine, event, completed_response);
-    if (!status) {
-      return status;
+    auto command = commands_->wait_pop(stopped);
+    if (!command) {
+      break;
     }
-  }
-  return {};
-}
-
-Status
-WorkerActor::publish_provider_event(TurnMachine& machine, const ProviderEvent& event,
-                                    std::optional<ModelResponse>& completed_response) {
-  if (const auto* text = std::get_if<ProviderTextDelta>(&event)) {
-    auto transition = machine.apply(ModelTextDelta{.text = text->text});
-    for (const auto& command : transition.commands) {
-      auto status = publish_command(command);
-      if (!status) {
-        return status;
+    if (auto* result = std::get_if<ToolResultCommand>(&*command)) {
+      if (result->turn_id != turn_id) {
+        continue;
       }
+      if (!result->result) {
+        return machine.apply(
+            ToolExecutionFailed{.error = std::move(result->result.error())});
+      }
+      return machine.apply(ToolResultReady{
+          .result = std::move(*result->result),
+          .observed_at = std::chrono::steady_clock::now(),
+      });
     }
-    return {};
-  }
-  if (const auto* completed = std::get_if<ProviderCompleted>(&event)) {
-    if (completed_response) {
-      return std::unexpected(
-          worker_error(ErrorCategory::protocol,
-                       "provider stream emitted more than one completion", TurnId{}));
+    if (const auto* cancel = std::get_if<CancelTurnCommand>(&*command);
+        cancel != nullptr && cancel->turn_id == turn_id) {
+      return machine.apply(CancelTurn{});
     }
-    completed_response = completed->response;
-    return {};
+    accept_command(std::move(*command));
   }
-  // The provider seam preserves an ignored event's name for debug inspection.
-  // M1 has no public logging surface, so the worker intentionally consumes it.
-  assert(std::holds_alternative<ProviderIgnoredEvent>(event));
-  return {};
-}
-
-Status WorkerActor::publish_command(const MachineCommand& command) {
-  const auto payload_limit =
-      config_.limits.max_queued_event_bytes_per_turn - terminal_event_reserve;
-  if (const auto* delta = std::get_if<PublishTextDelta>(&command)) {
-    if (!events_->push(TextDeltaEvent{.turn_id = delta->turn_id, .text = delta->text},
-                       payload_limit)) {
-      return std::unexpected(
-          worker_error(ErrorCategory::resource_limit,
-                       "turn events exceed the configured queue limit", delta->turn_id,
-                       delta->attempt));
-    }
-    return {};
-  }
-  if (const auto* completion = std::get_if<CommitCompletion>(&command)) {
-    if (!events_->push(
-            CompletionEvent{
-                .turn_id = completion->turn_id,
-                .response = completion->response,
-                .attempt_count = completion->attempt_count,
-            },
-            payload_limit)) {
-      return std::unexpected(
-          worker_error(ErrorCategory::resource_limit,
-                       "turn events exceed the configured queue limit",
-                       completion->turn_id, completion->attempt_count));
-    }
-    return {};
-  }
-  if (const auto* error = std::get_if<PublishError>(&command)) {
-    const auto turn_id = error->error.turn_id.value_or(TurnId{});
-    publish_terminal_event(ErrorEvent{.turn_id = turn_id, .error = error->error});
-    return {};
-  }
-  if (const auto* cancelled = std::get_if<PublishCancelled>(&command)) {
-    publish_terminal_event(CancelledEvent{.turn_id = cancelled->turn_id});
-  }
-  return {};
-}
-
-void WorkerActor::publish_terminal_event(WorkerEvent event) {
-  event = bound_terminal_event(std::move(event));
-  const auto pushed = events_->push_terminal(
-      std::move(event), config_.limits.max_queued_event_bytes_per_turn);
-  static_cast<void>(pushed);
-  assert(pushed);
-}
-
-void WorkerActor::publish_unhandled_failure(const TurnId turn_id) noexcept {
-  try {
-    publish_terminal_event(ErrorEvent{
-        .turn_id = turn_id,
-        .error = worker_error(ErrorCategory::invalid_state,
-                              "worker could not process the accepted turn", turn_id),
-    });
-  } catch (...) {
-    // Allocation failure is outside Scry's semantic-failure contract. The
-    // thread boundary still never permits an exception to escape.
-    return;
-  }
+  return machine.apply(CancelTurn{});
 }
 
 } // namespace scry::detail

@@ -88,9 +88,16 @@ TEST_CASE("SSE parser dispatches multiple events and safely finishes empty state
 }
 
 TEST_CASE("SSE parser accounts for the implicit terminator at end of input") {
+  SseParser enough{5};
+  REQUIRE(enough.push("data")->empty());
+  const auto accepted_finish = enough.finish();
+  REQUIRE(accepted_finish);
+  REQUIRE(accepted_finish->size() == 1);
+  CHECK(accepted_finish->front() == SseEvent{.name = "message", .data = ""});
+  CHECK(enough.buffered_bytes() == 0);
+
   SseParser exact{4};
   REQUIRE(exact.push("data")->empty());
-  CHECK(exact.buffered_bytes() == 4);
 
   const auto rejected_finish = exact.finish();
 

@@ -24,7 +24,11 @@ struct PumpFixture {
   route(const std::uint64_t id) const {
     return std::make_shared<scry::detail::TurnRoute>(
         scry::TurnId{.value = id}, std::make_shared<std::atomic<bool>>(false), commands,
-        conversation, "q", max_conversation_bytes);
+        conversation, "q",
+        scry::detail::TurnRouteOptions{
+            .max_tool_result_bytes = 1024,
+            .max_conversation_bytes = max_conversation_bytes,
+        });
   }
 };
 
@@ -32,13 +36,15 @@ struct PumpFixture {
 oversized_completion(const scry::TurnId turn_id) {
   return {
       .turn_id = turn_id,
-      .response =
-          {
-              .content = {scry::detail::TextBlock{.text = std::string(128, 'a')}},
-              .finish_reason = scry::detail::FinishReason::completed,
-              .provider_request_id = "request-id",
-          },
+      .exchange = {scry::detail::Message{
+          .role = scry::detail::Role::assistant,
+          .content = {scry::detail::TextBlock{
+              .text = std::string(128, 'a'),
+          }},
+      }},
+      .finish_reason = scry::detail::FinishReason::completed,
       .attempt_count = 1,
+      .provider_request_id = "request-id",
   };
 }
 

@@ -45,6 +45,33 @@ inline constexpr TurnId turn_id{42};
   };
 }
 
+[[nodiscard]] inline ToolLoopPolicy tool_policy() {
+  return {
+      .max_rounds = 3,
+      .max_argument_bytes = 1024,
+  };
+}
+
+[[nodiscard]] inline ToolCallBlock tool_call(std::string id = "call-1",
+                                             std::string name = "lookup",
+                                             std::string arguments = R"({"x":1})") {
+  return {
+      .id = std::move(id),
+      .name = std::move(name),
+      .arguments = Json{.text = std::move(arguments)},
+  };
+}
+
+[[nodiscard]] inline ModelResponse tool_response(std::vector<ContentBlock> content = {
+                                                     tool_call()}) {
+  return {
+      .content = std::move(content),
+      .finish_reason = FinishReason::tool_use,
+      .usage = {.input_tokens = 2, .output_tokens = 3},
+      .provider_request_id = "tool-request",
+  };
+}
+
 [[nodiscard]] inline Error error(const ErrorCategory category,
                                  std::string message = "attempt failed") {
   return {
@@ -66,8 +93,9 @@ template <typename Command>
 }
 
 [[nodiscard]] inline TurnMachine
-make_machine(const RetryPolicy policy = retry_policy()) {
-  return {turn_id, request(), policy};
+make_machine(const RetryPolicy policy = retry_policy(),
+             const ToolLoopPolicy tools = tool_policy()) {
+  return {turn_id, request(), policy, tools};
 }
 
 inline void begin(TurnMachine& machine, const std::chrono::milliseconds elapsed = 0ms) {
@@ -88,6 +116,12 @@ inline void enter_retry_wait(TurnMachine& machine) {
       .observed_at = at(0ms),
   });
   static_cast<void>(only_command<ScheduleRetryWake>(result));
+}
+
+inline void enter_awaiting_tool(TurnMachine& machine) {
+  begin(machine);
+  const auto result = machine.apply(ModelCompleted{.response = tool_response()});
+  static_cast<void>(only_command<PublishToolCall>(result));
 }
 
 [[nodiscard]] inline bool is_terminal_command(const MachineCommand& command) {
@@ -114,6 +148,17 @@ inline void enter_retry_wait(TurnMachine& machine) {
     };
   case retry_wake:
     return RetryWake{.observed_at = at(100ms)};
+  case tool_result_ready:
+    return ToolResultReady{
+        .result =
+            ToolResultBlock{
+                .tool_call_id = "call-1",
+                .result = Json{.text = "{}"},
+            },
+        .observed_at = at(0ms),
+    };
+  case tool_execution_failed:
+    return ToolExecutionFailed{.error = error(ErrorCategory::resource_limit)};
   case cancel:
     return CancelTurn{};
   }

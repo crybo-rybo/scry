@@ -3,6 +3,7 @@
 #include "core/model.hpp"
 #include "core/transport.hpp"
 
+#include <limits>
 #include <memory>
 #include <scry/error.hpp>
 #include <string>
@@ -30,6 +31,7 @@ using ProviderEvent =
 struct ProviderDecodeState {
   ModelResponse response{};
   std::optional<std::size_t> active_content_index{};
+  std::size_t max_tool_arguments_bytes{std::numeric_limits<std::size_t>::max()};
   bool semantic_output_consumed{false};
   bool message_started{false};
   bool finish_observed{false};

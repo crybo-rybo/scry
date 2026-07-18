@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cstddef>
 #include <deque>
+#include <limits>
 #include <memory>
 #include <scry/events.hpp>
 #include <scry/unique_function.hpp>
@@ -15,12 +16,19 @@
 
 namespace scry::detail {
 
+struct TurnRouteOptions {
+  ToolSnapshot tools{};
+  std::size_t max_tool_result_bytes{};
+  std::size_t max_exchange_bytes{std::numeric_limits<std::size_t>::max()};
+  std::size_t max_conversation_bytes{};
+};
+
 class TurnRoute final {
 public:
   TurnRoute(TurnId turn_id, std::shared_ptr<std::atomic<bool>> cancelled,
             std::weak_ptr<CommandQueue> commands,
             std::shared_ptr<ConversationState> conversation, std::string user_message,
-            std::size_t max_conversation_bytes);
+            TurnRouteOptions options);
 
   [[nodiscard]] TurnId id() const noexcept;
   [[nodiscard]] std::shared_ptr<std::atomic<bool>> cancel_flag() const noexcept;
@@ -45,14 +53,20 @@ public:
   [[nodiscard]] std::size_t max_conversation_bytes() const noexcept;
 
 private:
+  void dispatch(const ToolCallEvent& event);
+
   TurnId turn_id_{};
   std::shared_ptr<std::atomic<bool>> cancelled_{};
   std::weak_ptr<CommandQueue> commands_{};
   std::shared_ptr<ConversationState> conversation_{};
   std::string user_message_{};
+  ToolSnapshot tools_{};
+  std::size_t max_tool_result_bytes_{};
+  std::size_t remaining_exchange_bytes_{std::numeric_limits<std::size_t>::max()};
   std::size_t max_conversation_bytes_{};
   bool attached_{true};
   bool terminal_{false};
+  bool tool_dispatch_failed_{false};
   TextDeltaCallback on_text_{};
   ToolCallCallback on_tool_{};
   CompletionCallback on_completion_{};

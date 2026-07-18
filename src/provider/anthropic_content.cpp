@@ -25,19 +25,20 @@ namespace {
     return std::unexpected(std::move(name.error()));
   }
 
+  const auto* input = wire_field(value, "input");
+  if (input == nullptr || !input->is_object()) {
+    return std::unexpected(make_provider_error(
+        ErrorCategory::protocol, "Anthropic tool_use input must be a JSON object"));
+  }
+
   std::string arguments{};
-  if (streaming_start) {
-    arguments.clear();
-  } else if (const auto* input = wire_field(value, "input"); input != nullptr) {
+  if (!streaming_start) {
     auto encoded = write_wire_json(*input, ErrorCategory::protocol,
                                    "Anthropic tool input could not be preserved");
     if (!encoded) {
       return std::unexpected(std::move(encoded.error()));
     }
     arguments = std::move(*encoded);
-  } else {
-    return std::unexpected(make_provider_error(
-        ErrorCategory::protocol, "Anthropic tool_use block is missing input"));
   }
 
   return ContentBlock{ToolCallBlock{

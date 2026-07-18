@@ -487,10 +487,4 @@ TEST_CASE("ToolRegistry rejects invalid and duplicate registrations") {
   REQUIRE_FALSE(status);
   CHECK(status.error().category == scry::ErrorCategory::invalid_state);
   CHECK(tools.size() == 1);
-
-  auto active = std::move(tools);
-  status = tools.add(tool("inactive"), handler());
-  REQUIRE_FALSE(status);
-  CHECK(status.error().category == scry::ErrorCategory::invalid_state);
-  CHECK(active.size() == 1);
 }

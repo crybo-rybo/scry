@@ -14,7 +14,8 @@ static_assert(std::is_aggregate_v<scry::UpdateOptions>);
 
 static_assert(std::is_move_constructible_v<scry::Conversation>);
 static_assert(!std::is_copy_constructible_v<scry::Conversation>);
-static_assert(std::is_move_constructible_v<scry::ToolRegistry>);
+static_assert(!std::is_move_constructible_v<scry::ToolRegistry>);
+static_assert(!std::is_move_assignable_v<scry::ToolRegistry>);
 static_assert(!std::is_copy_constructible_v<scry::ToolRegistry>);
 static_assert(std::is_move_constructible_v<scry::Turn>);
 static_assert(!std::is_copy_constructible_v<scry::Turn>);

@@ -27,7 +27,13 @@ only, never stored across a suspension point.
 
 **Concepts over inheritance in templates, interfaces only at seams.** Virtual dispatch appears in exactly two places (provider adapter, transport — §6, §7), both internal. The public API has no inheritable types; extension points are callables and config, not subclassing.
 
-**C++ standard posture.** Core library targets C++23 (`std::expected`, deducing this where useful). Callable boundaries use Scry's small move-only `UniqueFunction` because supported macOS standard libraries do not yet consistently ship `std::move_only_function`; the boundary remains move-only rather than silently becoming copy-only on one platform. The reflection layer is an isolated C++26 module of the codebase, kept severable (see §5).
+**C++ standard posture.** Core library targets C++23 (`std::expected`, deducing
+this where useful). Callable boundaries use Scry's small move-only
+`UniqueFunction` because supported macOS standard libraries do not yet
+consistently ship `std::move_only_function`; the boundary remains move-only
+rather than silently becoming copy-only on one platform. The M3 reflection
+layer will remain an isolated, severable C++26 module (see §5); its feasibility
+probe is not part of the stable runtime surface.
 
 ## 2. The Concurrency Architecture: Actor, Not Locks
 
@@ -87,11 +93,16 @@ stateDiagram-v2
     Queued --> Cancelled: cancel() before start (no I/O ever issued)
     AwaitingModel --> Streaming: first content event
     AwaitingModel --> Completed
+    AwaitingModel --> AwaitingTool: valid tool-use response
     AwaitingModel --> RetryWait: retryable failure before semantic output
     RetryWait --> AwaitingModel: retry wake
     RetryWait --> Failed: retry/elapsed cap reached
     RetryWait --> Cancelled: cancel()
     Streaming --> Completed
+    Streaming --> AwaitingTool: valid tool-use response
+    AwaitingTool --> AwaitingModel: all ordered results ready; resend
+    AwaitingTool --> Failed: framework tool-execution failure
+    AwaitingTool --> Cancelled: cancel()
     AwaitingModel --> Failed
     Streaming --> Failed
     AwaitingModel --> Cancelled
@@ -101,9 +112,21 @@ stateDiagram-v2
     Cancelled --> [*]
 ```
 
-This diagram is the M1 chat lifecycle. M2 extends the same machine with
-`AwaitingTool` and the tool-result transition; it does not replace the M1
-states.
+This is the implemented M2 lifecycle. `AwaitingTool` extends the original chat
+states: one valid assistant tool-call batch enters it, every result is retained
+in provider order, and the final result starts the next model request
+automatically. Tool-round limits and malformed batches fail before handlers are
+published. The worker admits every call in one response to the event queue as
+one atomic batch, so queue pressure can never expose a dispatchable prefix.
+Once the pump observes a fatal framework dispatch failure, it latches that
+terminal path and suppresses every later handler in the batch.
+
+The machine also carries the Conversation's remaining payload budget across
+the entire exchange. It reserves each assistant tool-call message, each tool
+result, and the final assistant message before dispatch, resend, or commit.
+Crossing the cumulative bound therefore fails the turn without partially
+committing history; resource errors retain the provider request ID that was
+available at the failing response boundary.
 
 While the Harness remains alive, exactly one observable terminal event is
 delivered per accepted turn — never zero, never two. Harness destruction is the
@@ -111,53 +134,80 @@ explicit exception: shutdown aborts work and discards undelivered events, so it
 does not expose teardown callbacks. The remaining lifecycle contracts, each of
 which is a numbered requirement:
 
-- **Conversation commits are transactional.** History is mutated only by the pump at terminal-event delivery: `Completed` commits the full exchange (user message, all tool rounds, final answer) atomically; `Failed`/`Cancelled` commit nothing. This makes chat-only resend mechanically clean, but does not make external side effects from tool handlers reversible or automatically idempotent.
+- **Conversation commits are transactional.** History is mutated only by the pump at terminal-event delivery: `Completed` commits the full exchange (user message, all tool rounds, final answer) atomically; `Failed`/`Cancelled` commit nothing. This keeps Conversation retry/resubmission mechanically clean, but does not make external handler side effects reversible or idempotent; side-effecting schemas need app-owned operation keys and reconciliation (DESIGN.md §8).
 - **Detach semantics.** Dropping the handle detaches: the turn runs to termination, the Conversation still commits on completion, and callbacks already registered in the Harness continue to receive events. Unclaimed buffered events may be discarded once no Turn handle remains; dropping loses future control and registration, not callbacks already registered.
 - **Late attachment.** While the handle remains attached, callbacks registered after events began arriving receive buffered prior events in order — no races, no missed deltas within configured buffer limits.
 - **Reentrancy.** Callbacks may call `send`, `cancel`, and registration APIs.
   Reentrant `update()` performs no work and reports
   `UpdateStats::reentrant_update_rejected`; it never recurses into callback
-  delivery. M1 registration mutates an inert registry only; beginning in M2,
-  accepted turns snapshot the registry, so later changes affect subsequent
-  turns rather than in-flight ones.
+  delivery. Accepted turns snapshot immutable registry records, so later or
+  reentrant changes affect subsequent turns rather than in-flight ones.
 - **Non-preemption.** The `update()` budget is a soft deadline checked *between* callbacks; an individual callback or tool handler is never preempted and may overrun the budget. The budget bounds Scry's scheduling, not user code.
 - **Callback exceptions** propagate out of `update()` with the harness valid and the event counted delivered (§1).
 - **Callback arguments are borrowed** for the invocation only; apps copy values or text views they retain.
 - **Shutdown.** `~Harness()` cancels all turns, aborts transfers, joins the worker within a bound set by transport-abort latency, and discards undelivered events. No callback ever fires after destruction begins.
 
+### Conversation persistence
+
+Persistence is a public serialization boundary, not a storage subsystem.
+`Conversation::to_json()` emits a canonical versioned document containing the
+system prompt and committed neutral messages; `Conversation::from_json()`
+strictly validates and restores it. Text, tool-call, and tool-result blocks
+round-trip without provider wire shapes or Glaze types. Busy state, callbacks,
+turn IDs, registry snapshots, and every uncommitted round are intentionally
+excluded. The app owns encryption, files/databases, retention, and migration
+between future document versions.
+
 ## 4. The Agentic Loop: Sans-I/O State Machine
 
-The loop engine — the heart of the library — is written **sans-I/O**: a pure state machine that consumes events (*provider replied with content or a tool call*, *tool result ready*, *stream ended*, *transport failed*) and emits commands (*issue this request*, *run this tool*, *deliver this to the app*), and performs **no I/O itself**. M1 lands the minimal chat/request lifecycle, retry, cancellation, and terminal-state machine; M2 extends that same machine with tool-await and multi-round states. The worker thread is a thin driver that feeds it transport events and executes its commands.
+The loop engine — the heart of the library — is written **sans-I/O**: a pure state machine that consumes events (*provider replied with content or a tool call*, *tool result ready*, *stream ended*, *transport failed*) and emits commands (*issue this request*, *run this tool*, *deliver this to the app*), and performs **no I/O itself**. The implemented machine covers chat, retry, cancellation, tool-await, and multi-round completion. The worker thread is a thin driver that feeds it transport events and executes its commands.
 
 Why this is the hill to defend:
 
 - **Testability without a network.** The full agentic loop — multi-round tool use, retries, cancellation mid-tool-call, malformed model output — is tested by feeding event sequences and asserting command sequences. Deterministic, sub-millisecond tests for the most complex logic in the system.
 - **Replayability.** A recorded event log reproduces any bug exactly. Given how nondeterministic LLM behavior is, deterministic *harness* behavior is the only debuggable posture.
-- **The state machine is explicit, not emergent.** States (queued, awaiting-model, streaming, retry-wait, and terminal; awaiting-tool joins in M2) are a variant/enum with a drawn transition diagram, not an implicit property of nested callbacks. An event that is illegal in the current state returns a diagnostic without mutating state or emitting commands, making integration failures observable without relying on debug-only assertions.
+- **The state machine is explicit, not emergent.** States (queued, awaiting-model, streaming, retry-wait, awaiting-tool, and terminal) are a variant/enum with the transition diagram above, not an implicit property of nested callbacks. An event that is illegal in the current state returns a diagnostic without mutating state or emitting commands, making integration failures observable without relying on debug-only assertions.
 
-Retry policy (backoff + jitter) lands with the M1 machine as state, driven by *time events* injected by the driver — the machine never sleeps, it requests "wake me at T." This keeps even timing testable with a fake clock.
+Retry policy (backoff + jitter) is machine state driven by *time events*
+injected by the driver — the machine never sleeps, it requests "wake me at
+T." Attempt and elapsed caps reset for each model request, while completion
+reports aggregate attempts and usage across the whole tool loop.
 
-## 5. Tool Registry: Type Erasure Below, Reflection Above
+## 5. Tool Registry: Type Erasure Below, Reflection Above in M3
 
 Two layers, one table (as settled in DESIGN.md §8):
 
 **Lower layer — type erasure.** A registered tool is a record: name, description, schema (JSON string), and a type-erased callable (`json → expected<json, error>` in spirit; Scry's `UniqueFunction` keeps captures move-only). This is the `std::function`-style erasure idiom: the registry is runtime-uniform, closed to no one, and has zero knowledge of reflection.
 
-The Registry is owned by its Harness. M1 validates and stores registrations as
-inert pump-side infrastructure. Beginning in M2, `send()` snapshots the table
-for the accepted turn, so registration during `update()` never mutates an
-in-flight turn and no registry state crosses the worker boundary.
+The Registry is owned by its Harness. `send()` snapshots its immutable shared
+records for the accepted turn, so registration during `update()` never mutates
+an in-flight turn and no registry record crosses the worker boundary. Only
+copied neutral schemas go to the worker. The public registry cannot be moved
+out of its Harness, and explicit schemas are parsed and canonicalized at
+registration. Mutation is additive-only: duplicate names are rejected, and
+replacement/removal remain absent until a real hot-reload contract defines
+their snapshot semantics.
 
-**Upper layer — consteval code generation.** The P2996 layer is a compile-time *code generator* targeting the lower layer: given an args struct, `consteval` functions walk its members to (a) build the schema as a compile-time string and (b) instantiate a deserializer + invoker lambda that gets erased into the table like any hand-written tool. Practices:
+**Upper layer — consteval code generation (M3).** The future P2996 layer is a compile-time *code generator* targeting the lower layer: given an args struct, `consteval` functions walk its members to (a) build the schema as a compile-time string and (b) instantiate a deserializer + invoker lambda that gets erased into the table like any hand-written tool. Practices:
 
-- The reflection code lives in its **own header, behind a feature macro**, and touches nothing else. Severability is a build-time property, not a promise: CI builds the library both with and without it.
-- **Concepts guard the gate.** The reflected-registration entry point is constrained to aggregate structs with supported member types, so misuse fails at the call site with a legible diagnostic, not in the guts of a `consteval` walk. Static asserts inside the walk carry human-readable messages ("member X of tool args must be string, number, bool, or reflected struct").
-- **Schemas are computed once, at compile time.** No runtime schema caching, no static registries, no macro tricks — the schema string is a `constexpr` artifact of the type.
-- Parameter descriptions use annotations (P3394) if the pinned toolchain has them, else a trait/customization-point specialization per args struct. The customization point follows the modern pattern (dedicated CPO / trait specialization), *not* ADL free functions, to keep lookup predictable.
+- The reflection code will live in its **own header, behind a feature macro**,
+  and touch nothing else. Severability will remain a build-time property: CI
+  will build the library both with and without the M3 surface.
+- **Concepts will guard the gate.** The reflected-registration entry point will
+  accept aggregate structs with supported member types, so misuse fails at the
+  call site with a legible diagnostic, not in the guts of a `consteval` walk.
+- **Schemas will be computed once, at compile time.** No runtime schema cache,
+  static registry, or macro tricks; the schema string will be a `constexpr`
+  artifact of the type.
+- Parameter descriptions will use P3394 annotations when supported, else a
+  trait/customization-point specialization per args struct.
 
 ## 6. Provider Adapters: Strategy at a Narrow Seam
 
-One of the two sanctioned virtual interfaces. The pattern is classic **Strategy**: a small internal interface — translate neutral request → wire request, parse wire stream events → neutral events — with one implementation per dialect (Anthropic; OpenAI-compatible).
+One of the two sanctioned virtual interfaces. The pattern is classic
+**Strategy**: a small internal interface — translate neutral request → wire
+request, parse wire stream events → neutral events. Anthropic is implemented;
+the OpenAI-compatible M4 adapter will implement the same seam.
 
 Discipline that keeps it clean:
 
@@ -194,7 +244,11 @@ The second sanctioned interface, existing for one reason: **dependency injection
 
 - **The test pyramid mirrors the architecture:** sans-I/O machine tests (majority, no network, no threads) → adapter golden-file tests → transport tests against a local mock HTTP/SSE server → a thin end-to-end smoke suite against a real local model (Ollama/llama.cpp in CI, nightly not per-commit).
 - Threaded code tested under **TSan and ASan in CI** from M0 — sanitizers are cheap the day the code is written and impossible to retrofit onto a flaky foundation. UBSan on the reflection layer especially.
-- CI matrix: GCC 16 with `-freflection` is the supported reflection leg; stable GCC/Clang build with reflection OFF to prove severability on Linux and macOS. clang-p2996 remains a non-gating experimental compatibility probe and never produces release artifacts. clang-format + clang-tidy configs are checked in at M0; formatting arguments end on day one.
+- CI matrix: GCC 16 with `-freflection` runs the reflection feasibility leg
+  and is the planned supported M3 toolchain; stable GCC/Clang build the current
+  reflection-OFF runtime on Linux and macOS. clang-p2996 remains a non-gating
+  experimental compatibility probe and never produces release artifacts.
+  clang-format + clang-tidy configs are checked in at M0.
 - **Warnings are errors** (`-Wall -Wextra -Wconversion`), from the first commit.
 
 ## 11. Evolution Register: Deliberate Simplifications and Their End States
@@ -210,7 +264,7 @@ Every "boring first" choice is recorded here with the condition that triggers ev
 | Trait/customization-point parameter descriptions | Pinned toolchain gains P3394 annotations | Annotations in the args struct become the primary path; trait remains as override |
 | No connection pooling beyond curl defaults | Measured connect/TLS overhead in streaming-heavy use | curl share/multi connection reuse, invisible above the transport seam |
 | Scry-owned `UniqueFunction` at callable boundaries | All supported macOS/Linux standard libraries ship a conforming `std::move_only_function` and a pre-1.0 API change is acceptable | Replace the small owned erasure with the standard facility after ABI and allocation benchmarks |
-| M1 ToolRegistry uses one mutable shared-state wrapper but never snapshots or shares it | M2 sends accepted-turn tool snapshots | Store immutable shared registration records; each accepted turn snapshots record ownership, and later registry mutation creates new records without changing in-flight views |
+| Additive-only ToolRegistry with immutable accepted-turn snapshots | A concrete hot-reload or dynamic-plugin use case needs mutation | Explicit replace/remove operations with documented snapshot and handler-lifetime semantics |
 | Linux + macOS only | Concrete Windows user demand | Windows reflection-OFF via clang; MSVC leg only if/when P2996 ships there |
 | Reflection-ON CI leg on Linux only (PORT-005) | A production-grade P2996 toolchain becomes practically distributable on macOS | Gating reflection legs on both platforms |
 | Serialized turns: M2 queued turns wait while the active turn awaits a main-thread tool | Serialized scheduling measurably limits a real app | Tool-await releases the slot under curl-multi multiplexing (same trigger as row 2) |
@@ -224,7 +278,7 @@ Every "boring first" choice is recorded here with the condition that triggers ev
 | Delivery | Single-threaded-by-construction pump with time budget |
 | In-flight turns | Move-only PImpl handle + shared cancel flag + weak pump registration route |
 | Agentic loop | Sans-I/O explicit state machine; time as injected events |
-| Tool registry | Type erasure (`UniqueFunction`) below; consteval codegen above; concepts at the gate |
+| Tool registry | Type erasure (`UniqueFunction`) now; M3 consteval codegen above it; concepts at the reflected gate |
 | Providers | Strategy at a narrow seam; stateless translators; golden-file tests |
 | Transport | RAII curl, C-callback trampolines, injectable seam; pure incremental SSE parser |
 | Errors | One categorized value type; expected before acceptance, one async error event after |

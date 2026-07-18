@@ -3,6 +3,7 @@
 #include "core/model.hpp"
 
 #include <cstddef>
+#include <memory>
 #include <scry/conversation.hpp>
 #include <scry/json.hpp>
 #include <scry/tool_registry.hpp>
@@ -18,16 +19,24 @@ struct ConversationState {
   bool busy{false};
 };
 
-struct RegistryEntry {
+struct RegisteredTool final {
   ToolDefinition definition{};
-  ToolHandler handler{};
+  std::shared_ptr<ToolHandler> handler{};
 };
+
+using ToolRegistrationPtr = std::shared_ptr<const RegisteredTool>;
+using ToolSnapshot = std::vector<ToolRegistrationPtr>;
 
 struct ToolRegistryState {
-  std::vector<RegistryEntry> entries{};
+  ToolSnapshot entries{};
 };
 
-[[nodiscard]] std::size_t message_payload_bytes(const Message& message) noexcept;
+[[nodiscard]] Status add_tool_registration(ToolRegistryState& state,
+                                           ToolDefinition definition,
+                                           ToolHandler handler);
+[[nodiscard]] ToolSnapshot snapshot_tools(const ToolRegistryState& state);
+[[nodiscard]] std::vector<ToolSchema> snapshot_schemas(const ToolSnapshot& snapshot);
+
 [[nodiscard]] std::string response_text(const ModelResponse& response);
 
 } // namespace scry::detail

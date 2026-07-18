@@ -9,9 +9,11 @@ namespace scry {
 
 class ToolRegistry::Impl final {
 public:
-  Impl() : state(std::make_shared<detail::ToolRegistryState>()) {}
+  [[nodiscard]] detail::ToolSnapshot snapshot() const {
+    return detail::snapshot_tools(state);
+  }
 
-  std::shared_ptr<detail::ToolRegistryState> state{};
+  detail::ToolRegistryState state{};
 };
 
 } // namespace scry

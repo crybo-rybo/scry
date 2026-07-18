@@ -26,6 +26,12 @@ EXCLUSION_TOKENS = (
     "coverage: ignore",
 )
 JUSTIFICATION_TOKEN = "SCRY-COVERAGE-JUSTIFICATION:"
+COMPONENT_BRANCH_FLOORS = {
+    "turn machine": ("src/machine/turn_machine.cpp",),
+    "SSE parser": ("src/protocol/sse.cpp",),
+    "retry classifier": ("src/core/retry.cpp",),
+}
+MINIMUM_COMPONENT_BRANCH_COVERAGE = 95.0
 
 
 def changed_lines(base_ref: str, repository: Path) -> dict[str, dict[int, str]]:
@@ -203,6 +209,49 @@ def compare_reports(base: dict[str, Any], head: dict[str, Any]) -> list[str]:
     return failures
 
 
+def component_branch_coverage(
+    report: dict[str, Any], paths: tuple[str, ...]
+) -> dict[str, float | int]:
+    """Return branch coverage aggregated across one required component."""
+
+    covered = 0
+    total = 0
+    coverage_files = report.get("coverage_files", {})
+    for path in paths:
+        file_coverage = coverage_files.get(path)
+        if file_coverage is None:
+            continue
+        for branches in file_coverage.get("branches", {}).values():
+            total += len(branches) * 2
+            covered += sum(true > 0 for true, _ in branches)
+            covered += sum(false > 0 for _, false in branches)
+    percent = 0.0 if total == 0 else 100.0 * covered / total
+    return {
+        "covered": covered,
+        "total": total,
+        "percent": round(percent, 3),
+    }
+
+
+def component_coverage_failures(report: dict[str, Any]) -> list[str]:
+    """Enforce the normative branch floor on each pure critical component."""
+
+    failures = []
+    for name, paths in COMPONENT_BRANCH_FLOORS.items():
+        coverage = component_branch_coverage(report, paths)
+        if coverage["total"] == 0:
+            failures.append(f"{name} has no measured branch coverage")
+        elif (
+            float(coverage["percent"]) + 1e-6
+            < MINIMUM_COMPONENT_BRANCH_COVERAGE
+        ):
+            failures.append(
+                f"{name} branch coverage is {coverage['percent']:.3f}%; "
+                f"minimum is {MINIMUM_COMPONENT_BRANCH_COVERAGE:.3f}%"
+            )
+    return failures
+
+
 def _print_report(report: dict[str, Any], label: str) -> None:
     metrics = report["metrics"]
     branch = metrics["branch_coverage"]
@@ -223,6 +272,7 @@ def gate(
     minimum_diff_coverage: float,
 ) -> list[str]:
     failures = compare_reports(base_report, head_report)
+    failures.extend(component_coverage_failures(head_report))
     maximum_crap = head_report["metrics"]["crap"]["maximum"]
     if maximum_crap > 30.0:
         failures.append(f"maximum CRAP score is {maximum_crap:.3f}; limit is 30")
@@ -258,6 +308,12 @@ def _gate_command(args: argparse.Namespace) -> int:
 
     _print_report(base, "base")
     _print_report(head, "head")
+    for name, paths in COMPONENT_BRANCH_FLOORS.items():
+        coverage = component_branch_coverage(head, paths)
+        print(
+            f"{name}: branch coverage {coverage['covered']}/{coverage['total']} "
+            f"({coverage['percent']:.3f}%)"
+        )
     if diff_report["total"]:
         print(
             "diff: branch-aware coverage "

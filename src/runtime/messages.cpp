@@ -1,26 +1,17 @@
 #include "runtime/messages.hpp"
 
+#include "runtime/state.hpp"
+
 #include <type_traits>
 
 namespace scry::detail {
 namespace {
 
-[[nodiscard]] std::size_t content_bytes(const ModelResponse& response) noexcept {
-  std::size_t total = response.provider_request_id.size();
-  for (const auto& block : response.content) {
-    std::visit(
-        [&total](const auto& value) {
-          using Block = std::decay_t<decltype(value)>;
-          if constexpr (std::is_same_v<Block, TextBlock>) {
-            total += value.text.size();
-          } else if constexpr (std::is_same_v<Block, ToolCallBlock>) {
-            total += value.id.size() + value.name.size() + value.arguments.text.size();
-          } else {
-            total +=
-                value.tool_call_id.size() + value.result.text.size() + sizeof(bool);
-          }
-        },
-        block);
+[[nodiscard]] std::size_t
+exchange_bytes(const std::vector<Message>& exchange) noexcept {
+  std::size_t total = 0;
+  for (const auto& message : exchange) {
+    total = saturating_payload_add(total, message_payload_bytes(message));
   }
   return total;
 }
@@ -37,11 +28,16 @@ std::size_t event_payload_bytes(const WorkerEvent& event) noexcept {
         using Event = std::decay_t<decltype(value)>;
         if constexpr (std::is_same_v<Event, TextDeltaEvent>) {
           return value.text.size();
+        } else if constexpr (std::is_same_v<Event, ToolCallEvent>) {
+          return content_payload_bytes(value.call);
         } else if constexpr (std::is_same_v<Event, CompletionEvent>) {
-          return content_bytes(value.response);
+          return saturating_payload_add(value.provider_request_id.size(),
+                                        exchange_bytes(value.exchange));
         } else if constexpr (std::is_same_v<Event, ErrorEvent>) {
-          return value.error.message.size() + value.error.provider_detail.size() +
-                 value.error.provider_request_id.size();
+          return saturating_payload_add(
+              saturating_payload_add(value.error.message.size(),
+                                     value.error.provider_detail.size()),
+              value.error.provider_request_id.size());
         } else {
           return 0;
         }

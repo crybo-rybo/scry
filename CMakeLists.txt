@@ -52,16 +52,20 @@ add_library(
   scry
   STATIC
     src/core/retry.cpp
+    src/core/json_codec.cpp
     src/runtime/config.cpp
     src/runtime/conversation.cpp
+    src/runtime/conversation_persistence.cpp
     src/runtime/harness.cpp
     src/runtime/messages.cpp
     src/runtime/pump.cpp
     src/runtime/queue.cpp
     src/runtime/state.cpp
     src/runtime/tool_registry.cpp
+    src/runtime/tool_dispatch.cpp
     src/runtime/turn.cpp
     src/runtime/worker.cpp
+    src/runtime/worker_publish.cpp
 )
 add_library(scry::scry ALIAS scry)
 set_target_properties(scry PROPERTIES EXPORT_NAME scry)
@@ -367,14 +371,26 @@ if(SCRY_BUILD_TESTS)
   add_executable(
     scry_runtime_tests
     tests/runtime/config_tests.cpp
+    tests/runtime/conversation_persistence_tests.cpp
     tests/runtime/pump_regression_tests.cpp
+    tests/runtime/queue_coverage_tests.cpp
     tests/runtime/runtime_coverage_tests.cpp
     tests/runtime/runtime_tests.cpp
+    tests/runtime/tool_dispatch_tests.cpp
+    tests/runtime/tool_registry_tests.cpp
   )
   target_include_directories(scry_runtime_tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
+  target_include_directories(
+    scry_runtime_tests
+    SYSTEM PRIVATE "${glaze_SOURCE_DIR}/include"
+  )
   target_link_libraries(
     scry_runtime_tests
-    PRIVATE Catch2::Catch2WithMain scry::scry scry_project_options
+    PRIVATE
+      Catch2::Catch2WithMain
+      glaze::glaze
+      scry::scry
+      scry_project_options
   )
   catch_discover_tests(scry_runtime_tests TEST_PREFIX "runtime.")
   add_subdirectory(tests/machine)

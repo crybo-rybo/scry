@@ -83,7 +83,7 @@ void start_message(AnthropicAdapter& adapter, ProviderDecodeState& state) {
   start_message(adapter, state);
   auto result = event(
       adapter, "content_block_start",
-      R"({"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"tool_1","name":"lookup"}})",
+      R"({"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"tool_1","name":"lookup","input":{}}})",
       state);
   REQUIRE(result);
   return state;
@@ -138,7 +138,8 @@ TEST_CASE("Anthropic content decoding covers text, tool, and rejection shapes") 
   REQUIRE(text);
   CHECK(std::get<TextBlock>(*text).text == "answer");
   auto streamed_tool = decode_anthropic_content(
-      wire("{\"type\":\"tool_use\",\"id\":\"id\",\"name\":\"lookup\"}"), true);
+      wire("{\"type\":\"tool_use\",\"id\":\"id\",\"name\":\"lookup\",\"input\":{}}"),
+      true);
   REQUIRE(streamed_tool);
   CHECK(std::get<ToolCallBlock>(*streamed_tool).arguments.text.empty());
   auto tool = decode_anthropic_content(

@@ -46,7 +46,8 @@ public:
 
   [[nodiscard]] explicit operator bool() const noexcept { return object_ != nullptr; }
 
-  Return operator()(Args... args) {
+  // The erased signature owns its by-value arguments exactly like std::function.
+  Return operator()(Args... args) { // NOLINT(performance-unnecessary-value-param)
     if (object_ == nullptr) {
       throw std::bad_function_call{};
     }

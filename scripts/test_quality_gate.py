@@ -5,7 +5,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.quality_gate import calculate_diff_coverage, compare_reports
+from scripts.quality_gate import (
+    calculate_diff_coverage,
+    compare_reports,
+    component_branch_coverage,
+    component_coverage_failures,
+)
 from scripts.quality_metrics import crap_score, load_coverage
 
 
@@ -57,6 +62,28 @@ class QualityGateTests(unittest.TestCase):
         self.assertEqual(result["covered"], 1)
         self.assertEqual(result["total"], 2)
         self.assertEqual(result["percent"], 50.0)
+
+    def test_component_coverage_enforces_each_required_floor(self) -> None:
+        head = {
+            "coverage_files": {
+                "src/machine/turn_machine.cpp": {
+                    "branches": {12: [(3, 1)]},
+                },
+                "src/protocol/sse.cpp": {
+                    "branches": {8: [(2, 1)]},
+                },
+                "src/core/retry.cpp": {
+                    "branches": {4: [(1, 0)]},
+                },
+            }
+        }
+        coverage = component_branch_coverage(
+            head, ("src/machine/turn_machine.cpp",)
+        )
+        self.assertEqual(coverage["percent"], 100.0)
+        failures = component_coverage_failures(head)
+        self.assertEqual(len(failures), 1)
+        self.assertIn("retry classifier", failures[0])
 
     def test_unmapped_changed_function_is_uncovered(self) -> None:
         changes = {"include/scry/new.hpp": {7: "return 42;"}}

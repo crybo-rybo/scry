@@ -227,6 +227,13 @@ handle_json_delta(const WireValue& delta, ContentBlock& block,
         make_provider_error(ErrorCategory::protocol,
                             "Anthropic input JSON delta targeted a non-tool block"));
   }
+  if (destination->arguments.text.size() > state.max_tool_arguments_bytes ||
+      partial->size() >
+          state.max_tool_arguments_bytes - destination->arguments.text.size()) {
+    return std::unexpected(make_provider_error(
+        ErrorCategory::resource_limit,
+        "Anthropic tool arguments exceed the configured byte limit"));
+  }
   destination->arguments.text.append(*partial);
   state.semantic_output_consumed = true;
   return std::vector<ProviderEvent>{};
@@ -275,6 +282,11 @@ handle_content_stop(const WireValue& root, ProviderDecodeState& state) {
                                 "Anthropic streamed tool input is not valid JSON");
   if (!parsed) {
     return std::unexpected(std::move(parsed.error()));
+  }
+  if (!parsed->is_object()) {
+    return std::unexpected(
+        make_provider_error(ErrorCategory::protocol,
+                            "Anthropic streamed tool input must be a JSON object"));
   }
   auto canonical =
       write_wire_json(*parsed, ErrorCategory::protocol,
