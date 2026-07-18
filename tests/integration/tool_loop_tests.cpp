@@ -371,6 +371,46 @@ TEST_CASE("cancellation before a queued tool call suppresses its handler") {
   CHECK(requests->requests().size() == 1);
 }
 
+TEST_CASE("oversized app-thread tool results fail before later calls run") {
+  auto fake = std::make_unique<scry::test::FakeTransport>();
+  auto* requests = fake.get();
+  fake->enqueue(scripted_exchange(two_tool_stream, "tool-request"));
+  auto config = test_config();
+  config.limits.max_tool_result_bytes = 1;
+  auto harness_result =
+      scry::detail::HarnessTestAccess::create(config, provider(), std::move(fake));
+  REQUIRE(harness_result);
+  auto harness = std::move(*harness_result);
+
+  std::size_t first_calls = 0;
+  std::size_t second_calls = 0;
+  REQUIRE(harness.tools().add(tool_definition("first_tool"),
+                              [&first_calls](scry::Json) -> scry::Result<scry::Json> {
+                                ++first_calls;
+                                return scry::Json{.text = "{}"};
+                              }));
+  REQUIRE(harness.tools().add(tool_definition("second_tool"),
+                              [&second_calls](scry::Json) -> scry::Result<scry::Json> {
+                                ++second_calls;
+                                return scry::Json{.text = "{}"};
+                              }));
+
+  auto conversation = scry::Conversation::create();
+  REQUIRE(conversation);
+  auto turn = harness.send(*conversation, "Enforce the tool result limit");
+  REQUIRE(turn);
+  std::optional<scry::Error> failure;
+  REQUIRE(turn->on_error([&failure](const scry::Error& error) { failure = error; }));
+
+  REQUIRE(pump_until(harness, [&failure] { return failure.has_value(); }));
+
+  CHECK(failure->category == scry::ErrorCategory::resource_limit);
+  CHECK(first_calls == 1);
+  CHECK(second_calls == 0);
+  CHECK(conversation->empty());
+  CHECK(requests->requests().size() == 1);
+}
+
 TEST_CASE("tool call batches fail atomically at the event queue boundary") {
   const std::string first_name(250, 'a');
   const std::string second_name(250, 'b');

@@ -81,6 +81,7 @@ TEST_CASE("Conversation persistence rejects malformed document structure") {
       R"({"messages":{},"system_prompt":"","version":1})",
       document("[null]"),
       document(R"([{"content":[],"role":"user"}])"),
+      document(R"([{"content":{},"role":"user"}])"),
       document(R"([{"content":[{"text":"x","type":"text"}],"role":0}])"),
       document(R"([{"content":[],"role":"system"}])"),
       document(R"([{"content":[],"role":"user","extra":0}])"),
@@ -100,6 +101,8 @@ TEST_CASE("Conversation persistence enforces tool block roles and shapes") {
   const std::vector<std::string> invalid{
       document(
           R"([{"content":[{"arguments":{},"id":"id","name":"tool","type":"tool_call"}],"role":"user"}])"),
+      document(
+          R"([{"content":[{"arguments":{},"extra":0,"id":"id","name":"tool","type":"tool_call"}],"role":"assistant"}])"),
       document(
           R"([{"content":[{"arguments":{},"id":"","name":"tool","type":"tool_call"}],"role":"assistant"}])"),
       document(

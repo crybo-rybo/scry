@@ -1,15 +1,22 @@
 from __future__ import annotations
 
+import io
 import json
+import subprocess
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from scripts.quality_gate import (
+    _run_test_binary_command,
     calculate_diff_coverage,
     compare_reports,
     component_branch_coverage,
     component_coverage_failures,
+    ctest_test_binaries,
 )
 from scripts.quality_metrics import crap_score, load_coverage
 
@@ -35,6 +42,105 @@ def report(branch_percent: float, **overrides: int) -> dict:
 
 
 class QualityGateTests(unittest.TestCase):
+    def test_ctest_binaries_preserve_working_directory_and_deduplicate(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first = root / "first"
+            second = root / "second"
+            first.touch()
+            second.touch()
+            document = {
+                "tests": [
+                    {
+                        "command": [str(second), "case two"],
+                        "properties": [
+                            {"name": "WORKING_DIRECTORY", "value": "/work/two"}
+                        ],
+                    },
+                    {
+                        "command": [str(first), "case one"],
+                        "properties": [
+                            {"name": "WORKING_DIRECTORY", "value": "/work/one"}
+                        ],
+                    },
+                    {
+                        "command": [str(first), "another case"],
+                        "properties": [
+                            {"name": "WORKING_DIRECTORY", "value": "/work/one"}
+                        ],
+                    },
+                ]
+            }
+
+            self.assertEqual(
+                ctest_test_binaries(document),
+                [
+                    (str(first.resolve()), "/work/one"),
+                    (str(second.resolve()), "/work/two"),
+                ],
+            )
+
+    def test_ctest_binary_rejects_inconsistent_working_directories(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            binary = Path(directory) / "test"
+            binary.touch()
+            document = {
+                "tests": [
+                    {
+                        "command": [str(binary), "first"],
+                        "properties": [
+                            {"name": "WORKING_DIRECTORY", "value": "/work/one"}
+                        ],
+                    },
+                    {
+                        "command": [str(binary), "second"],
+                        "properties": [
+                            {"name": "WORKING_DIRECTORY", "value": "/work/two"}
+                        ],
+                    },
+                ]
+            }
+
+            with self.assertRaisesRegex(ValueError, "inconsistent"):
+                ctest_test_binaries(document)
+
+    @patch("scripts.quality_gate.subprocess.run")
+    def test_direct_test_runner_applies_working_directory_and_timeout(
+        self, run: unittest.mock.Mock
+    ) -> None:
+        run.return_value.returncode = 0
+        arguments = SimpleNamespace(
+            test_command=["--", "/tmp/test", "--order", "lex"],
+            working_directory="/tmp/work",
+            timeout_seconds=300.0,
+        )
+
+        self.assertEqual(_run_test_binary_command(arguments), 0)
+        run.assert_called_once_with(
+            ["/tmp/test", "--order", "lex"],
+            cwd="/tmp/work",
+            timeout=300.0,
+            check=False,
+        )
+
+    @patch("scripts.quality_gate.subprocess.run")
+    def test_direct_test_runner_reports_timeout(
+        self, run: unittest.mock.Mock
+    ) -> None:
+        run.side_effect = subprocess.TimeoutExpired(["/tmp/test"], 300.0)
+        arguments = SimpleNamespace(
+            test_command=["/tmp/test"],
+            working_directory="/tmp/work",
+            timeout_seconds=300.0,
+        )
+        error = io.StringIO()
+
+        with redirect_stderr(error):
+            result = _run_test_binary_command(arguments)
+
+        self.assertEqual(result, 124)
+        self.assertIn("timed out after 300 seconds", error.getvalue())
+
     def test_crap_penalizes_complex_uncovered_code(self) -> None:
         self.assertEqual(crap_score(6, 0.0), 42.0)
         self.assertEqual(crap_score(6, 1.0), 6.0)

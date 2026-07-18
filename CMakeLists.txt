@@ -36,9 +36,6 @@ set_property(
 find_package(CURL 7.84 REQUIRED)
 find_package(Threads REQUIRED)
 
-if(SCRY_BUILD_REFLECTION_SPIKE)
-  set(glaze_ENABLE_REFLECTION26 ON CACHE BOOL "" FORCE)
-endif()
 FetchContent_Declare(
   glaze
   GIT_REPOSITORY https://github.com/stephenberry/glaze.git
@@ -283,6 +280,12 @@ if(SCRY_BUILD_REFLECTION_SPIKE)
   endif()
 
   add_executable(scry_reflection_spike spikes/reflection_glaze.cpp)
+  # Keep Glaze's C++26 reflection mode on the feasibility target. The C++23
+  # runtime also consumes Glaze internally and must remain reflection-free.
+  target_compile_definitions(
+    scry_reflection_spike
+    PRIVATE GLZ_REFLECTION26=1
+  )
   target_link_libraries(
     scry_reflection_spike
     PRIVATE scry::reflection glaze::glaze scry_project_options
