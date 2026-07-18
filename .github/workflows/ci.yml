@@ -200,7 +200,7 @@ jobs:
       - run: >
           sudo apt-get update &&
           sudo apt-get install -y
-          clang-18 libcurl4-openssl-dev ninja-build
+          clang-18 g++-14 libcurl4-openssl-dev ninja-build
       - run: |
           cmake --preset fuzz
           cmake --build build/fuzz --target scry_sse_fuzz scry_anthropic_fuzz

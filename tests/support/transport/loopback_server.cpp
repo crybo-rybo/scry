@@ -108,11 +108,10 @@ void send_all(const int client, const std::string_view response) {
       0) {
     throw std::runtime_error{"failed to configure loopback socket"};
   }
-  sockaddr_in address{
-      .sin_family = AF_INET,
-      .sin_port = 0,
-      .sin_addr = {.s_addr = htonl(INADDR_LOOPBACK)},
-  };
+  sockaddr_in address{};
+  address.sin_family = AF_INET;
+  address.sin_port = 0;
+  address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
   if (::bind(socket.get(), reinterpret_cast<const sockaddr*>(&address),
              sizeof(address)) != 0 ||
       ::listen(socket.get(), 1) != 0) {

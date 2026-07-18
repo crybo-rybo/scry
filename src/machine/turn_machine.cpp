@@ -80,7 +80,8 @@ TransitionResult TurnMachine::on_event(ModelTextDelta event) {
 TransitionResult TurnMachine::on_event(const ModelSemanticOutput /*event*/) {
   const auto* awaiting = std::get_if<AwaitingModelState>(&state_);
   if (awaiting != nullptr) {
-    state_.emplace<StreamingState>(awaiting->attempt);
+    const auto attempt = awaiting->attempt;
+    state_.emplace<StreamingState>(attempt);
     return {};
   }
   if (std::holds_alternative<StreamingState>(state_)) {

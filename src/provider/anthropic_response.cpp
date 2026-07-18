@@ -40,8 +40,12 @@ namespace {
   if (error == nullptr || !error->is_object()) {
     return {};
   }
-  const auto type = optional_wire_string(*error, "type");
-  return type && *type ? sanitize_anthropic_error_type(**type) : std::string{};
+  const auto parsed = optional_wire_string(*error, "type");
+  if (!parsed) {
+    return {};
+  }
+  const auto type = *parsed;
+  return type ? sanitize_anthropic_error_type(*type) : std::string{};
 }
 
 [[nodiscard]] std::string response_identifier(const WireValue& root,
@@ -49,9 +53,13 @@ namespace {
   if (!fallback.empty()) {
     return fallback;
   }
-  auto identifier = optional_wire_string(root, "request_id");
-  if (identifier && *identifier) {
-    return std::string{**identifier};
+  const auto parsed = optional_wire_string(root, "request_id");
+  if (!parsed) {
+    return fallback;
+  }
+  const auto identifier = *parsed;
+  if (identifier) {
+    return std::string{*identifier};
   }
   return fallback;
 }

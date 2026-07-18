@@ -443,8 +443,9 @@ CurlTransport::CurlTransport(CurlTransport&&) noexcept = default;
 CurlTransport& CurlTransport::operator=(CurlTransport&&) noexcept = default;
 
 Status CurlTransport::status() const {
-  if (impl_->startup_error()) {
-    return std::unexpected(*impl_->startup_error());
+  const auto& startup_error = impl_->startup_error();
+  if (startup_error) {
+    return std::unexpected(*startup_error);
   }
   return {};
 }

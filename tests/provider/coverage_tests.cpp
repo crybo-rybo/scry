@@ -266,7 +266,7 @@ TEST_CASE("Anthropic HTTP errors cover status, correlation, and detail fallbacks
       std::pair{599, ErrorCategory::network},
       std::pair{600, ErrorCategory::protocol},
   };
-  for (const auto [status, category] : statuses) {
+  for (const auto& [status, category] : statuses) {
     const auto result = adapter.parse_response(
         {.status_code = status},
         R"({"error":{"type":"safe_error"},"request_id":"body-id"})");
@@ -480,7 +480,7 @@ TEST_CASE("Anthropic stream envelopes and provider errors cover safe categories"
       std::pair{"api_error", ErrorCategory::network},
       std::pair{"other_error", ErrorCategory::protocol},
   };
-  for (const auto [type, category] : cases) {
+  for (const auto& [type, category] : cases) {
     const auto body = std::string{R"({"type":"error","error":{"type":")"} + type +
                       R"("},"request_id":"id"})";
     auto result = event(adapter, "error", body, state);

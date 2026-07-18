@@ -37,12 +37,13 @@ namespace {
   if (!index) {
     return std::unexpected(std::move(index.error()));
   }
-  if (!*index ||
-      **index > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
+  const auto parsed_index = *index;
+  if (!parsed_index || *parsed_index > static_cast<std::uint64_t>(
+                                           std::numeric_limits<std::size_t>::max())) {
     return std::unexpected(make_provider_error(
         ErrorCategory::protocol, "Anthropic content event has no usable block index"));
   }
-  return static_cast<std::size_t>(**index);
+  return static_cast<std::size_t>(*parsed_index);
 }
 
 [[nodiscard]] Result<const WireValue*> required_object(const WireValue& root,
@@ -57,9 +58,13 @@ namespace {
 }
 
 [[nodiscard]] std::string request_identifier(const WireValue& root) {
-  auto value = optional_wire_string(root, "request_id");
-  if (value && *value) {
-    return std::string{**value};
+  const auto parsed = optional_wire_string(root, "request_id");
+  if (!parsed) {
+    return {};
+  }
+  const auto value = *parsed;
+  if (value) {
+    return std::string{*value};
   }
   return {};
 }
@@ -329,8 +334,11 @@ handle_message_stop(ProviderDecodeState& state) {
   if (const auto* value = wire_field(root, "error");
       value != nullptr && value->is_object()) {
     auto parsed = optional_wire_string(*value, "type");
-    if (parsed && *parsed) {
-      type = sanitize_anthropic_error_type(**parsed);
+    if (parsed) {
+      const auto error_type = *parsed;
+      if (error_type) {
+        type = sanitize_anthropic_error_type(*error_type);
+      }
     }
   }
 
