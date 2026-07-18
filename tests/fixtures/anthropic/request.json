@@ -1,0 +1,19 @@
+{
+  "model": "claude-test",
+  "max_tokens": 64,
+  "temperature": 0.25,
+  "stream": false,
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "Hello"
+        }
+      ]
+    }
+  ],
+  "system": "Be concise",
+  "top_p": 0.9
+}
