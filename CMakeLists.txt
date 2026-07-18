@@ -51,6 +51,13 @@ add_library(
   scry
   STATIC
     src/core/retry.cpp
+    src/runtime/conversation.cpp
+    src/runtime/messages.cpp
+    src/runtime/pump.cpp
+    src/runtime/queue.cpp
+    src/runtime/state.cpp
+    src/runtime/tool_registry.cpp
+    src/runtime/turn.cpp
 )
 add_library(scry::scry ALIAS scry)
 set_target_properties(scry PROPERTIES EXPORT_NAME scry)
@@ -321,6 +328,14 @@ if(SCRY_BUILD_TESTS)
     PRIVATE Catch2::Catch2WithMain scry::scry scry_project_options
   )
   catch_discover_tests(scry_retry_tests TEST_PREFIX "core.")
+
+  add_executable(scry_runtime_tests tests/runtime/runtime_tests.cpp)
+  target_include_directories(scry_runtime_tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
+  target_link_libraries(
+    scry_runtime_tests
+    PRIVATE Catch2::Catch2WithMain scry::scry scry_project_options
+  )
+  catch_discover_tests(scry_runtime_tests TEST_PREFIX "runtime.")
 endif()
 
 if(SCRY_BUILD_CURL_SPIKE)
