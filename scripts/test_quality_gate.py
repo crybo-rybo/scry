@@ -1,11 +1,23 @@
 from __future__ import annotations
 
+import io
 import json
+import subprocess
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
-from scripts.quality_gate import calculate_diff_coverage, compare_reports
+from scripts.quality_gate import (
+    _run_test_binary_command,
+    calculate_diff_coverage,
+    compare_reports,
+    component_branch_coverage,
+    component_coverage_failures,
+    ctest_test_binaries,
+)
 from scripts.quality_metrics import crap_score, load_coverage
 
 
@@ -30,6 +42,105 @@ def report(branch_percent: float, **overrides: int) -> dict:
 
 
 class QualityGateTests(unittest.TestCase):
+    def test_ctest_binaries_preserve_working_directory_and_deduplicate(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first = root / "first"
+            second = root / "second"
+            first.touch()
+            second.touch()
+            document = {
+                "tests": [
+                    {
+                        "command": [str(second), "case two"],
+                        "properties": [
+                            {"name": "WORKING_DIRECTORY", "value": "/work/two"}
+                        ],
+                    },
+                    {
+                        "command": [str(first), "case one"],
+                        "properties": [
+                            {"name": "WORKING_DIRECTORY", "value": "/work/one"}
+                        ],
+                    },
+                    {
+                        "command": [str(first), "another case"],
+                        "properties": [
+                            {"name": "WORKING_DIRECTORY", "value": "/work/one"}
+                        ],
+                    },
+                ]
+            }
+
+            self.assertEqual(
+                ctest_test_binaries(document),
+                [
+                    (str(first.resolve()), "/work/one"),
+                    (str(second.resolve()), "/work/two"),
+                ],
+            )
+
+    def test_ctest_binary_rejects_inconsistent_working_directories(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            binary = Path(directory) / "test"
+            binary.touch()
+            document = {
+                "tests": [
+                    {
+                        "command": [str(binary), "first"],
+                        "properties": [
+                            {"name": "WORKING_DIRECTORY", "value": "/work/one"}
+                        ],
+                    },
+                    {
+                        "command": [str(binary), "second"],
+                        "properties": [
+                            {"name": "WORKING_DIRECTORY", "value": "/work/two"}
+                        ],
+                    },
+                ]
+            }
+
+            with self.assertRaisesRegex(ValueError, "inconsistent"):
+                ctest_test_binaries(document)
+
+    @patch("scripts.quality_gate.subprocess.run")
+    def test_direct_test_runner_applies_working_directory_and_timeout(
+        self, run: unittest.mock.Mock
+    ) -> None:
+        run.return_value.returncode = 0
+        arguments = SimpleNamespace(
+            test_command=["--", "/tmp/test", "--order", "lex"],
+            working_directory="/tmp/work",
+            timeout_seconds=300.0,
+        )
+
+        self.assertEqual(_run_test_binary_command(arguments), 0)
+        run.assert_called_once_with(
+            ["/tmp/test", "--order", "lex"],
+            cwd="/tmp/work",
+            timeout=300.0,
+            check=False,
+        )
+
+    @patch("scripts.quality_gate.subprocess.run")
+    def test_direct_test_runner_reports_timeout(
+        self, run: unittest.mock.Mock
+    ) -> None:
+        run.side_effect = subprocess.TimeoutExpired(["/tmp/test"], 300.0)
+        arguments = SimpleNamespace(
+            test_command=["/tmp/test"],
+            working_directory="/tmp/work",
+            timeout_seconds=300.0,
+        )
+        error = io.StringIO()
+
+        with redirect_stderr(error):
+            result = _run_test_binary_command(arguments)
+
+        self.assertEqual(result, 124)
+        self.assertIn("timed out after 300 seconds", error.getvalue())
+
     def test_crap_penalizes_complex_uncovered_code(self) -> None:
         self.assertEqual(crap_score(6, 0.0), 42.0)
         self.assertEqual(crap_score(6, 1.0), 6.0)
@@ -57,6 +168,28 @@ class QualityGateTests(unittest.TestCase):
         self.assertEqual(result["covered"], 1)
         self.assertEqual(result["total"], 2)
         self.assertEqual(result["percent"], 50.0)
+
+    def test_component_coverage_enforces_each_required_floor(self) -> None:
+        head = {
+            "coverage_files": {
+                "src/machine/turn_machine.cpp": {
+                    "branches": {12: [(3, 1)]},
+                },
+                "src/protocol/sse.cpp": {
+                    "branches": {8: [(2, 1)]},
+                },
+                "src/core/retry.cpp": {
+                    "branches": {4: [(1, 0)]},
+                },
+            }
+        }
+        coverage = component_branch_coverage(
+            head, ("src/machine/turn_machine.cpp",)
+        )
+        self.assertEqual(coverage["percent"], 100.0)
+        failures = component_coverage_failures(head)
+        self.assertEqual(len(failures), 1)
+        self.assertIn("retry classifier", failures[0])
 
     def test_unmapped_changed_function_is_uncovered(self) -> None:
         changes = {"include/scry/new.hpp": {7: "return 42;"}}

@@ -75,7 +75,7 @@ using namespace scry::detail;
 
 } // namespace
 
-TEST_CASE("provider factory exposes only the M1 Anthropic dialect") {
+TEST_CASE("provider factory exposes only implemented dialects") {
   auto anthropic = make_provider_adapter(ProviderDialect::anthropic);
   REQUIRE(anthropic.has_value());
   CHECK(*anthropic != nullptr);

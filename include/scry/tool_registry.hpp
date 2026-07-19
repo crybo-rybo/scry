@@ -20,10 +20,6 @@ using ToolHandler = UniqueFunction<Result<Json>(Json)>;
 class ToolRegistry final {
 public:
   ~ToolRegistry();
-  ToolRegistry(ToolRegistry&&) noexcept;
-  ToolRegistry& operator=(ToolRegistry&&) noexcept;
-  ToolRegistry(const ToolRegistry&) = delete;
-  ToolRegistry& operator=(const ToolRegistry&) = delete;
 
   [[nodiscard]] Status add(ToolDefinition definition, ToolHandler handler);
   [[nodiscard]] std::size_t size() const noexcept;
@@ -31,6 +27,11 @@ public:
 
 private:
   class Impl;
+
+  ToolRegistry(ToolRegistry&&) noexcept;
+  ToolRegistry& operator=(ToolRegistry&&) noexcept;
+  ToolRegistry(const ToolRegistry&) = delete;
+  ToolRegistry& operator=(const ToolRegistry&) = delete;
 
   explicit ToolRegistry(std::unique_ptr<Impl> impl) noexcept;
 

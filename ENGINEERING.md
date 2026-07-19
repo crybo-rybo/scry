@@ -50,6 +50,13 @@ Coverage is a **detector of untested code, not a target**. Chasing a global perc
 - **Diff coverage gate (the primary gate):** new/changed lines in a PR must meet a high branch-coverage bar (~90%). This is stricter than a global gate where it matters (the code being written now) and doesn't punish present work for past sins.
 - **Per-component floors, not one global number:** the sans-I/O machine, parsers, and classifiers are pure — they carry a near-total floor (95%+ branch). Transport/curl plumbing carries a lower floor with the gap covered by integration tests and sanitizers. One global number would let untested machine logic hide behind well-covered plumbing.
 - **Exclusions are visible and justified:** coverage-off pragmas require a comment and appear in review diffs. Silent exclusion is the metric's death.
+- **Collection is deterministic:** reliability repeats remain ordinary CTest
+  runs, while coverage repeats use fixed Catch2 ordering, profile names, and
+  atomic profile-counter updates for the worker/app-thread runtime. `llvm-cov`
+  exports against one whole-archive mapper built from the installed package,
+  avoiding lost concurrent counter updates and unstable or mismatched mappings
+  from a many-executable export without changing which production branches are
+  counted.
 
 ### CRAP gating — where coverage meets complexity
 

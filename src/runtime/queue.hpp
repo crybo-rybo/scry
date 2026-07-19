@@ -11,6 +11,7 @@
 #include <stop_token>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 namespace scry::detail {
 
@@ -80,6 +81,8 @@ using CommandQueue = BlockingQueue<WorkerCommand>;
 class EventQueue final {
 public:
   [[nodiscard]] bool push(WorkerEvent event, std::size_t max_bytes_per_turn);
+  [[nodiscard]] bool push_batch(std::vector<WorkerEvent> events,
+                                std::size_t max_bytes_per_turn);
   void push_terminal(WorkerEvent event);
   [[nodiscard]] bool push_terminal(WorkerEvent event, std::size_t max_bytes_per_turn);
   void discard(TurnId turn_id);

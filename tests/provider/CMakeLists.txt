@@ -3,6 +3,7 @@ add_executable(
   coverage_tests.cpp
   provider_tests.cpp
   stream_tests.cpp
+  tool_boundary_tests.cpp
 )
 target_include_directories(
   scry_provider_tests

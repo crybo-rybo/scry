@@ -28,7 +28,7 @@ private:
   [[nodiscard]] Status account_for_line(std::size_t line_bytes);
   void process_line(std::string_view line, std::vector<SseEvent>& events);
   void dispatch(std::vector<SseEvent>& events);
-  [[nodiscard]] Result<std::vector<SseEvent>>
+  [[nodiscard]] std::vector<SseEvent>
   process_complete_lines(bool accept_trailing_carriage_return = false);
   void reset_event() noexcept;
 

@@ -82,7 +82,8 @@ void install_synchronous_callbacks(Turn& turn, SynchronousTurnState& state) {
 class Harness::Impl final {
 public:
   Impl(Config config, std::unique_ptr<detail::ProviderAdapter> provider,
-       std::unique_ptr<detail::Transport> transport, ToolRegistry tools)
+       std::unique_ptr<detail::Transport> transport,
+       std::unique_ptr<ToolRegistry> tools)
       : config_(std::move(config)), commands_(std::make_shared<detail::CommandQueue>()),
         events_(std::make_shared<detail::EventQueue>()), pump_(events_),
         tools_(std::move(tools)),
@@ -107,8 +108,8 @@ public:
   Impl& operator=(const Impl&) = delete;
 
   [[nodiscard]] Result<std::shared_ptr<detail::TurnRoute>>
-  send(const std::shared_ptr<detail::ConversationState>& conversation,
-       std::string text) {
+  send(const std::shared_ptr<detail::ConversationState>& conversation, std::string text,
+       detail::ToolSnapshot tools) {
     if (text.empty()) {
       return std::unexpected(immediate_error(ErrorCategory::invalid_state,
                                              "user message must not be empty"));
@@ -134,16 +135,25 @@ public:
     }
 
     const auto turn_id = TurnId{.value = ++next_turn_id_};
+    const auto max_exchange_bytes = config_.limits.max_conversation_bytes -
+                                    conversation->payload_bytes - text.size();
     auto cancelled = std::make_shared<std::atomic<bool>>(false);
     auto messages = conversation->messages;
     messages.push_back(user_message(text));
+    auto schemas = detail::snapshot_schemas(tools);
     auto route = std::make_shared<detail::TurnRoute>(
         turn_id, cancelled, commands_, conversation, std::move(text),
-        config_.limits.max_conversation_bytes);
+        detail::TurnRouteOptions{
+            .tools = std::move(tools),
+            .max_tool_result_bytes = config_.limits.max_tool_result_bytes,
+            .max_exchange_bytes = max_exchange_bytes,
+            .max_conversation_bytes = config_.limits.max_conversation_bytes,
+        });
     detail::ModelRequest request{
         .model = config_.model,
         .system_prompt = conversation->config.system_prompt,
         .messages = std::move(messages),
+        .tools = std::move(schemas),
         .sampling = config_.sampling,
         .streaming = true,
     };
@@ -154,12 +164,13 @@ public:
         .turn_id = turn_id,
         .request = std::move(request),
         .cancelled = std::move(cancelled),
+        .max_exchange_bytes = max_exchange_bytes,
     });
     return route;
   }
 
-  [[nodiscard]] ToolRegistry& tools() noexcept { return tools_; }
-  [[nodiscard]] const ToolRegistry& tools() const noexcept { return tools_; }
+  [[nodiscard]] ToolRegistry& tools() noexcept { return *tools_; }
+  [[nodiscard]] const ToolRegistry& tools() const noexcept { return *tools_; }
   [[nodiscard]] UpdateStats update(const UpdateOptions options) {
     return pump_.update(options);
   }
@@ -173,7 +184,7 @@ private:
   std::shared_ptr<detail::CommandQueue> commands_{};
   std::shared_ptr<detail::EventQueue> events_{};
   detail::PumpState pump_;
-  ToolRegistry tools_;
+  std::unique_ptr<ToolRegistry> tools_{};
   std::jthread worker_{};
   std::uint64_t next_turn_id_{};
 };
@@ -184,8 +195,9 @@ Harness::~Harness() = default;
 Harness::Harness(Harness&&) noexcept = default;
 Harness& Harness::operator=(Harness&&) noexcept = default;
 
-ToolRegistry Harness::make_tool_registry() {
-  return ToolRegistry{std::make_unique<ToolRegistry::Impl>()};
+std::unique_ptr<ToolRegistry> Harness::make_tool_registry() {
+  return std::unique_ptr<ToolRegistry>{
+      new ToolRegistry{std::make_unique<ToolRegistry::Impl>()}};
 }
 
 Result<Harness> Harness::create(Config config) {
@@ -224,7 +236,9 @@ Result<Turn> Harness::send(Conversation& conversation, std::string user_message_
     return std::unexpected(immediate_error(
         ErrorCategory::invalid_state, "Harness and Conversation must both be active"));
   }
-  auto route = impl_->send(conversation.impl_->state, std::move(user_message_text));
+  auto tools = impl_->tools().impl_->snapshot();
+  auto route = impl_->send(conversation.impl_->state, std::move(user_message_text),
+                           std::move(tools));
   if (!route) {
     return std::unexpected(std::move(route.error()));
   }

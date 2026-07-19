@@ -3,11 +3,13 @@
 #include "core/model.hpp"
 
 #include <atomic>
+#include <limits>
 #include <memory>
 #include <scry/error.hpp>
 #include <scry/turn_id.hpp>
 #include <string>
 #include <variant>
+#include <vector>
 
 namespace scry::detail {
 
@@ -15,23 +17,39 @@ struct SendTurnCommand {
   TurnId turn_id{};
   ModelRequest request{};
   std::shared_ptr<std::atomic<bool>> cancelled{};
+  std::size_t max_exchange_bytes{std::numeric_limits<std::size_t>::max()};
 };
 
 struct CancelTurnCommand {
   TurnId turn_id{};
 };
 
-using WorkerCommand = std::variant<SendTurnCommand, CancelTurnCommand>;
+struct ToolResultCommand {
+  TurnId turn_id{};
+  Result<ToolResultBlock> result{};
+};
+
+using WorkerCommand =
+    std::variant<SendTurnCommand, CancelTurnCommand, ToolResultCommand>;
 
 struct TextDeltaEvent {
   TurnId turn_id{};
   std::string text{};
 };
 
+struct ToolCallEvent {
+  TurnId turn_id{};
+  ToolCallBlock call{};
+  std::size_t remaining_exchange_bytes{std::numeric_limits<std::size_t>::max()};
+};
+
 struct CompletionEvent {
   TurnId turn_id{};
-  ModelResponse response{};
+  std::vector<Message> exchange{};
+  FinishReason finish_reason{FinishReason::unknown};
+  Usage usage{};
   std::uint32_t attempt_count{};
+  std::string provider_request_id{};
 };
 
 struct ErrorEvent {
@@ -43,8 +61,8 @@ struct CancelledEvent {
   TurnId turn_id{};
 };
 
-using WorkerEvent =
-    std::variant<TextDeltaEvent, CompletionEvent, ErrorEvent, CancelledEvent>;
+using WorkerEvent = std::variant<TextDeltaEvent, ToolCallEvent, CompletionEvent,
+                                 ErrorEvent, CancelledEvent>;
 
 [[nodiscard]] TurnId event_turn_id(const WorkerEvent& event) noexcept;
 [[nodiscard]] std::size_t event_payload_bytes(const WorkerEvent& event) noexcept;

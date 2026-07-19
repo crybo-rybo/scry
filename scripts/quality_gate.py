@@ -26,6 +26,12 @@ EXCLUSION_TOKENS = (
     "coverage: ignore",
 )
 JUSTIFICATION_TOKEN = "SCRY-COVERAGE-JUSTIFICATION:"
+COMPONENT_BRANCH_FLOORS = {
+    "turn machine": ("src/machine/turn_machine.cpp",),
+    "SSE parser": ("src/protocol/sse.cpp",),
+    "retry classifier": ("src/core/retry.cpp",),
+}
+MINIMUM_COMPONENT_BRANCH_COVERAGE = 95.0
 
 
 def changed_lines(base_ref: str, repository: Path) -> dict[str, dict[int, str]]:
@@ -203,6 +209,49 @@ def compare_reports(base: dict[str, Any], head: dict[str, Any]) -> list[str]:
     return failures
 
 
+def component_branch_coverage(
+    report: dict[str, Any], paths: tuple[str, ...]
+) -> dict[str, float | int]:
+    """Return branch coverage aggregated across one required component."""
+
+    covered = 0
+    total = 0
+    coverage_files = report.get("coverage_files", {})
+    for path in paths:
+        file_coverage = coverage_files.get(path)
+        if file_coverage is None:
+            continue
+        for branches in file_coverage.get("branches", {}).values():
+            total += len(branches) * 2
+            covered += sum(true > 0 for true, _ in branches)
+            covered += sum(false > 0 for _, false in branches)
+    percent = 0.0 if total == 0 else 100.0 * covered / total
+    return {
+        "covered": covered,
+        "total": total,
+        "percent": round(percent, 3),
+    }
+
+
+def component_coverage_failures(report: dict[str, Any]) -> list[str]:
+    """Enforce the normative branch floor on each pure critical component."""
+
+    failures = []
+    for name, paths in COMPONENT_BRANCH_FLOORS.items():
+        coverage = component_branch_coverage(report, paths)
+        if coverage["total"] == 0:
+            failures.append(f"{name} has no measured branch coverage")
+        elif (
+            float(coverage["percent"]) + 1e-6
+            < MINIMUM_COMPONENT_BRANCH_COVERAGE
+        ):
+            failures.append(
+                f"{name} branch coverage is {coverage['percent']:.3f}%; "
+                f"minimum is {MINIMUM_COMPONENT_BRANCH_COVERAGE:.3f}%"
+            )
+    return failures
+
+
 def _print_report(report: dict[str, Any], label: str) -> None:
     metrics = report["metrics"]
     branch = metrics["branch_coverage"]
@@ -223,6 +272,7 @@ def gate(
     minimum_diff_coverage: float,
 ) -> list[str]:
     failures = compare_reports(base_report, head_report)
+    failures.extend(component_coverage_failures(head_report))
     maximum_crap = head_report["metrics"]["crap"]["maximum"]
     if maximum_crap > 30.0:
         failures.append(f"maximum CRAP score is {maximum_crap:.3f}; limit is 30")
@@ -258,6 +308,12 @@ def _gate_command(args: argparse.Namespace) -> int:
 
     _print_report(base, "base")
     _print_report(head, "head")
+    for name, paths in COMPONENT_BRANCH_FLOORS.items():
+        coverage = component_branch_coverage(head, paths)
+        print(
+            f"{name}: branch coverage {coverage['covered']}/{coverage['total']} "
+            f"({coverage['percent']:.3f}%)"
+        )
     if diff_report["total"]:
         print(
             "diff: branch-aware coverage "
@@ -291,18 +347,80 @@ def _gate_command(args: argparse.Namespace) -> int:
     return 0
 
 
-def _test_binaries_command(args: argparse.Namespace) -> int:
-    document = json.loads(Path(args.ctest_json).read_text(encoding="utf-8"))
-    seen = set()
+def ctest_test_binaries(document: dict[str, Any]) -> list[tuple[str, str]]:
+    """Return unique native test binaries and their CTest working directories."""
+
+    binaries: dict[str, str] = {}
     for test in document.get("tests", []):
         command = test.get("command", [])
         if not command:
             continue
         binary = str(Path(command[0]).resolve())
-        if binary not in seen and Path(binary).is_file():
-            seen.add(binary)
-            print(binary)
+        if not Path(binary).is_file():
+            continue
+        properties = {
+            item.get("name"): item.get("value")
+            for item in test.get("properties", [])
+        }
+        working_directory = properties.get("WORKING_DIRECTORY")
+        if not isinstance(working_directory, str) or not working_directory:
+            raise ValueError(f"{binary} has no CTest WORKING_DIRECTORY")
+        previous = binaries.setdefault(binary, working_directory)
+        if previous != working_directory:
+            raise ValueError(
+                f"{binary} has inconsistent CTest working directories: "
+                f"{previous} and {working_directory}"
+            )
+    return sorted(binaries.items())
+
+
+def _test_binaries_command(args: argparse.Namespace) -> int:
+    document = json.loads(Path(args.ctest_json).read_text(encoding="utf-8"))
+    try:
+        records = ctest_test_binaries(document)
+    except ValueError as error:
+        print(f"invalid CTest metadata: {error}", file=sys.stderr)
+        return 1
+    for binary, working_directory in records:
+        if any(
+            separator in value
+            for value in (binary, working_directory)
+            for separator in "\t\r\n"
+        ):
+            print("CTest paths may not contain tabs or newlines", file=sys.stderr)
+            return 1
+        print(binary, working_directory, sep="\t")
     return 0
+
+
+def _run_test_binary_command(args: argparse.Namespace) -> int:
+    command = args.test_command
+    if command and command[0] == "--":
+        command = command[1:]
+    if not command:
+        print("run-test-binary requires a command", file=sys.stderr)
+        return 2
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=args.working_directory,
+            timeout=args.timeout_seconds,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        print(
+            f"{command[0]} timed out after {args.timeout_seconds:g} seconds",
+            file=sys.stderr,
+        )
+        return 124
+    return completed.returncode
+
+
+def _positive_seconds(value: str) -> float:
+    seconds = float(value)
+    if seconds <= 0:
+        raise argparse.ArgumentTypeError("timeout must be greater than zero")
+    return seconds
 
 
 def parse_args() -> argparse.Namespace:
@@ -327,6 +445,12 @@ def parse_args() -> argparse.Namespace:
     binaries = subparsers.add_parser("test-binaries")
     binaries.add_argument("--ctest-json", required=True)
     binaries.set_defaults(handler=_test_binaries_command)
+
+    runner = subparsers.add_parser("run-test-binary")
+    runner.add_argument("--working-directory", required=True)
+    runner.add_argument("--timeout-seconds", type=_positive_seconds, required=True)
+    runner.add_argument("test_command", nargs=argparse.REMAINDER)
+    runner.set_defaults(handler=_run_test_binary_command)
     return parser.parse_args()
 
 

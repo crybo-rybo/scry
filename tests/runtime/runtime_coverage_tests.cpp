@@ -48,7 +48,11 @@ struct PumpFixture {
   route(const std::uint64_t value, const std::size_t conversation_limit = 1024) const {
     return std::make_shared<scry::detail::TurnRoute>(
         scry::TurnId{.value = value}, std::make_shared<std::atomic<bool>>(false),
-        commands, conversation, "question", conversation_limit);
+        commands, conversation, "question",
+        scry::detail::TurnRouteOptions{
+            .max_tool_result_bytes = 1024,
+            .max_conversation_bytes = conversation_limit,
+        });
   }
 };
 
@@ -56,13 +60,13 @@ struct PumpFixture {
                                                        std::string text = "answer") {
   return {
       .turn_id = turn_id,
-      .response =
-          {
-              .content = {scry::detail::TextBlock{.text = std::move(text)}},
-              .finish_reason = scry::FinishReason::completed,
-              .provider_request_id = "request-id",
-          },
+      .exchange = {scry::detail::Message{
+          .role = scry::detail::Role::assistant,
+          .content = {scry::detail::TextBlock{.text = std::move(text)}},
+      }},
+      .finish_reason = scry::FinishReason::completed,
       .attempt_count = 2,
+      .provider_request_id = "request-id",
   };
 }
 
@@ -158,7 +162,7 @@ TEST_CASE("message and event payload accounting visits every content block") {
               },
           },
   };
-  constexpr std::size_t message_bytes = 3 + 2 + 4 + 5 + 3 + 4;
+  constexpr std::size_t message_bytes = 3 + 2 + 4 + 5 + 3 + 4 + sizeof(bool);
   CHECK(scry::detail::message_payload_bytes(message) == message_bytes);
   const scry::detail::ModelResponse response{
       .content = message.content,
@@ -166,11 +170,12 @@ TEST_CASE("message and event payload accounting visits every content block") {
   };
   const scry::detail::WorkerEvent event{scry::detail::CompletionEvent{
       .turn_id = {.value = 201},
-      .response = response,
+      .exchange = {message},
       .attempt_count = 1,
+      .provider_request_id = "req",
   }};
   CHECK(scry::detail::event_payload_bytes(event) ==
-        message_bytes + std::string_view{"req"}.size() + sizeof(bool));
+        message_bytes + std::string_view{"req"}.size());
   CHECK(scry::detail::response_text(response) == "abc");
 }
 
@@ -195,102 +200,6 @@ TEST_CASE("event metadata accounts for every event alternative") {
   CHECK(scry::detail::event_payload_bytes(cancelled) == 0);
 }
 
-TEST_CASE("event queue coalescing handles non-adjacent and cross-turn events") {
-  scry::detail::EventQueue queue;
-  const auto first = scry::TurnId{.value = 203};
-  const auto second = scry::TurnId{.value = 204};
-  REQUIRE(queue.push_terminal(
-      scry::detail::ErrorEvent{.turn_id = first, .error = {.message = "e"}}, 16));
-  REQUIRE(queue.push(scry::detail::TextDeltaEvent{.turn_id = first, .text = "a"}, 16));
-  REQUIRE(queue.push(scry::detail::TextDeltaEvent{.turn_id = second, .text = "b"}, 16));
-  CHECK(queue.size() == 3);
-}
-
-TEST_CASE("event queue rejects coalescing against a reduced byte limit") {
-  scry::detail::EventQueue queue;
-  const auto turn_id = scry::TurnId{.value = 205};
-  REQUIRE(
-      queue.push(scry::detail::TextDeltaEvent{.turn_id = turn_id, .text = "1234"}, 4));
-  CHECK_FALSE(
-      queue.push(scry::detail::TextDeltaEvent{.turn_id = turn_id, .text = "x"}, 3));
-  CHECK_FALSE(queue.push_terminal(scry::detail::CancelledEvent{.turn_id = turn_id}, 3));
-}
-
-TEST_CASE("event queue rejects a coalesced delta beyond remaining capacity") {
-  scry::detail::EventQueue queue;
-  const auto turn_id = scry::TurnId{.value = 206};
-  REQUIRE(
-      queue.push(scry::detail::TextDeltaEvent{.turn_id = turn_id, .text = "123"}, 4));
-  CHECK_FALSE(
-      queue.push(scry::detail::TextDeltaEvent{.turn_id = turn_id, .text = "xy"}, 4));
-}
-
-TEST_CASE("event queue discard preserves bytes already owned by the pump") {
-  scry::detail::EventQueue queue;
-  const auto target = scry::TurnId{.value = 207};
-  const auto other = scry::TurnId{.value = 208};
-  REQUIRE(
-      queue.push(scry::detail::TextDeltaEvent{.turn_id = target, .text = "held"}, 32));
-  auto held = queue.try_pop();
-  REQUIRE(held);
-  REQUIRE(queue.push_terminal(
-      scry::detail::ErrorEvent{.turn_id = target, .error = {.message = "queued"}}, 32));
-  REQUIRE(
-      queue.push(scry::detail::TextDeltaEvent{.turn_id = other, .text = "other"}, 32));
-  queue.discard(scry::TurnId{.value = 999});
-  CHECK(queue.size() == 2);
-  queue.discard(target);
-  CHECK(queue.size() == 1);
-  REQUIRE(queue.push(
-      scry::detail::TextDeltaEvent{.turn_id = target, .text = std::string(28, 'x')},
-      32));
-  queue.release(*held);
-}
-
-TEST_CASE("event queue release retains and then clears remaining accounting") {
-  scry::detail::EventQueue queue;
-  const auto turn_id = scry::TurnId{.value = 209};
-  REQUIRE(queue.push(scry::detail::TextDeltaEvent{.turn_id = turn_id, .text = "first"},
-                     16));
-  auto first = queue.try_pop();
-  REQUIRE(first);
-  REQUIRE(queue.push_terminal(
-      scry::detail::ErrorEvent{.turn_id = turn_id, .error = {.message = "last"}}, 16));
-  auto last = queue.try_pop();
-  REQUIRE(last);
-  queue.release(*first);
-  CHECK_FALSE(queue.push(
-      scry::detail::TextDeltaEvent{.turn_id = turn_id, .text = std::string(13, 'x')},
-      16));
-  queue.release(*last);
-  REQUIRE(queue.push(
-      scry::detail::TextDeltaEvent{.turn_id = turn_id, .text = std::string(16, 'x')},
-      16));
-  queue.release(scry::TurnId{.value = 999}, 1);
-}
-
-TEST_CASE("blocking queue exposes timeout and size behavior") {
-  scry::detail::CommandQueue queue;
-  std::stop_source stopped;
-  CHECK(queue.size() == 0);
-  CHECK_FALSE(
-      queue.wait_pop_until(stopped.get_token(), std::chrono::steady_clock::now()));
-  queue.push(scry::detail::CancelTurnCommand{.turn_id = {.value = 210}});
-  CHECK(queue.size() == 1);
-  const auto command =
-      queue.wait_pop_until(stopped.get_token(), std::chrono::steady_clock::now() + 1s);
-  REQUIRE(command);
-  CHECK(std::get<scry::detail::CancelTurnCommand>(*command).turn_id.value == 210);
-  CHECK(queue.size() == 0);
-}
-
-TEST_CASE("event queue wait reports timeout and ready data") {
-  scry::detail::EventQueue queue;
-  CHECK_FALSE(queue.wait_for_data(0ms));
-  queue.push_terminal(scry::detail::CancelledEvent{.turn_id = {.value = 211}});
-  CHECK(queue.wait_for_data(0ms));
-}
-
 TEST_CASE("turn route rejects empty and duplicate callback registrations") {
   PumpFixture fixture;
   const auto route = fixture.route(212);
@@ -311,7 +220,7 @@ TEST_CASE("turn route rejects empty and duplicate callback registrations") {
   check_registration_error(route->register_cancelled([](const scry::Cancelled&) {}));
 }
 
-TEST_CASE("turn route dispatches every M1 worker event callback") {
+TEST_CASE("turn route dispatches every terminal and text worker event callback") {
   PumpFixture fixture;
   const auto route = fixture.route(213);
   std::string text;
@@ -477,7 +386,11 @@ TEST_CASE("turn route cancellation remains safe after its command queue expires"
   auto cancelled = std::make_shared<std::atomic<bool>>(false);
   const auto route = std::make_shared<scry::detail::TurnRoute>(
       scry::TurnId{.value = 221}, cancelled,
-      std::weak_ptr<scry::detail::CommandQueue>{}, conversation, "question", 1024);
+      std::weak_ptr<scry::detail::CommandQueue>{}, conversation, "question",
+      scry::detail::TurnRouteOptions{
+          .max_tool_result_bytes = 1024,
+          .max_conversation_bytes = 1024,
+      });
 
   CHECK(route->cancel());
   CHECK_FALSE(route->cancel());

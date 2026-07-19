@@ -47,6 +47,37 @@ bool EventQueue::push(WorkerEvent event, const std::size_t max_bytes_per_turn) {
   return true;
 }
 
+bool EventQueue::push_batch(std::vector<WorkerEvent> events,
+                            const std::size_t max_bytes_per_turn) {
+  if (events.empty()) {
+    return true;
+  }
+  {
+    const std::scoped_lock lock{mutex_};
+    const auto turn_id = event_turn_id(events.front());
+    std::size_t payload_bytes = 0;
+    for (const auto& event : events) {
+      const auto event_bytes = event_payload_bytes(event);
+      if (event_turn_id(event) != turn_id ||
+          event_bytes > max_bytes_per_turn - payload_bytes) {
+        return false;
+      }
+      payload_bytes += event_bytes;
+    }
+    const auto queued_bytes = bytes_by_turn_[turn_id];
+    if (queued_bytes > max_bytes_per_turn ||
+        payload_bytes > max_bytes_per_turn - queued_bytes) {
+      return false;
+    }
+    for (auto& event : events) {
+      values_.push_back(std::move(event));
+    }
+    bytes_by_turn_[turn_id] = queued_bytes + payload_bytes;
+  }
+  ready_.notify_one();
+  return true;
+}
+
 void EventQueue::push_terminal(WorkerEvent event) {
   static_cast<void>(
       push_terminal(std::move(event), std::numeric_limits<std::size_t>::max()));
@@ -85,7 +116,7 @@ void EventQueue::discard(const TurnId turn_id) {
     return;
   }
   found->second -= std::min(found->second, removed_bytes);
-  if (found != bytes_by_turn_.end() && found->second == 0) {
+  if (found->second == 0) {
     bytes_by_turn_.erase(found);
   }
 }

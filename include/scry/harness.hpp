@@ -38,7 +38,7 @@ public:
 private:
   class Impl;
 
-  [[nodiscard]] static ToolRegistry make_tool_registry();
+  [[nodiscard]] static std::unique_ptr<ToolRegistry> make_tool_registry();
 
   explicit Harness(std::unique_ptr<Impl> impl) noexcept;
 

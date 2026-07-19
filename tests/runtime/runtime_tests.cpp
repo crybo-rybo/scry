@@ -26,7 +26,11 @@ struct RouteFixture {
   route(const std::uint64_t id, std::string user = "question") const {
     return std::make_shared<scry::detail::TurnRoute>(
         scry::TurnId{.value = id}, std::make_shared<std::atomic<bool>>(false), commands,
-        conversation, std::move(user), 1024);
+        conversation, std::move(user),
+        scry::detail::TurnRouteOptions{
+            .max_tool_result_bytes = 1024,
+            .max_conversation_bytes = 1024,
+        });
   }
 };
 
@@ -34,13 +38,13 @@ struct RouteFixture {
                                                        std::string text) {
   return scry::detail::CompletionEvent{
       .turn_id = scry::TurnId{.value = id},
-      .response =
-          scry::detail::ModelResponse{
-              .content = {scry::detail::TextBlock{.text = std::move(text)}},
-              .finish_reason = scry::detail::FinishReason::completed,
-              .provider_request_id = "request-id",
-          },
+      .exchange = {scry::detail::Message{
+          .role = scry::detail::Role::assistant,
+          .content = {scry::detail::TextBlock{.text = std::move(text)}},
+      }},
+      .finish_reason = scry::detail::FinishReason::completed,
       .attempt_count = 1,
+      .provider_request_id = "request-id",
   };
 }
 

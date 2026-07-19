@@ -246,9 +246,7 @@ TEST_CASE("moved-from public runtime handles remain safely observable") {
   const auto& const_tools = std::as_const(harness).tools();
   CHECK(const_tools.empty());
   REQUIRE(harness.tools().add(tool(), handler()));
-  auto registry = std::move(harness.tools());
-  CHECK(harness.tools().empty());
-  CHECK(registry.size() == 1);
+  CHECK(const_tools.size() == 1);
 
   auto turn_result = harness.send(conversation, "question");
   REQUIRE(turn_result);
@@ -409,7 +407,7 @@ TEST_CASE("an oversized streamed delta terminates with a queue-limit error") {
   CHECK(conversation->empty());
 }
 
-TEST_CASE("M1 rejects tool content even with a completed finish reason") {
+TEST_CASE("tool content and finish reason must agree before dispatch") {
   auto harness = fake_harness(test_config(), scripted_exchange(tool_stream));
   auto conversation = scry::Conversation::create();
   REQUIRE(harness);
@@ -420,7 +418,7 @@ TEST_CASE("M1 rejects tool content even with a completed finish reason") {
   REQUIRE_FALSE(completion);
   CHECK(completion.error().category == scry::ErrorCategory::protocol);
   CHECK(completion.error().message ==
-        "provider requested tool execution, which begins in M2");
+        "tool-use finish reason and tool-call content are inconsistent");
   CHECK(conversation->empty());
 }
 

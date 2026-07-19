@@ -10,7 +10,9 @@ namespace scry {
 
 class Conversation::Impl final {
 public:
-  explicit Impl(ConversationConfig config)
+  // This is an intentional sink parameter: callers transfer the prompt into the state.
+  explicit Impl(
+      ConversationConfig config) // NOLINT(performance-unnecessary-value-param)
       : state(std::make_shared<detail::ConversationState>()) {
     state->payload_bytes = config.system_prompt.size();
     state->config = std::move(config);

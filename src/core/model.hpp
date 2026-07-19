@@ -1,6 +1,8 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <scry/config.hpp>
 #include <scry/events.hpp>
 #include <scry/json.hpp>
@@ -62,5 +64,45 @@ struct ModelResponse {
   Usage usage{};
   std::string provider_request_id{};
 };
+
+[[nodiscard]] inline std::size_t
+saturating_payload_add(const std::size_t left, const std::size_t right) noexcept {
+  constexpr auto maximum = std::numeric_limits<std::size_t>::max();
+  return right > maximum - left ? maximum : left + right;
+}
+
+[[nodiscard]] inline std::size_t
+content_payload_bytes(const TextBlock& block) noexcept {
+  return block.text.size();
+}
+
+[[nodiscard]] inline std::size_t
+content_payload_bytes(const ToolCallBlock& block) noexcept {
+  return saturating_payload_add(
+      saturating_payload_add(block.id.size(), block.name.size()),
+      block.arguments.text.size());
+}
+
+[[nodiscard]] inline std::size_t
+content_payload_bytes(const ToolResultBlock& block) noexcept {
+  return saturating_payload_add(
+      saturating_payload_add(block.tool_call_id.size(), block.result.text.size()),
+      sizeof(bool));
+}
+
+[[nodiscard]] inline std::size_t
+content_payload_bytes(const ContentBlock& block) noexcept {
+  return std::visit([](const auto& value) { return content_payload_bytes(value); },
+                    block);
+}
+
+[[nodiscard]] inline std::size_t
+message_payload_bytes(const Message& message) noexcept {
+  std::size_t total = 0;
+  for (const auto& block : message.content) {
+    total = saturating_payload_add(total, content_payload_bytes(block));
+  }
+  return total;
+}
 
 } // namespace scry::detail

@@ -107,7 +107,7 @@ Status validate_config(const Config& config) {
     return status;
   }
   if (config.dialect != ProviderDialect::anthropic) {
-    return invalid("the configured provider dialect is not available in M1");
+    return invalid("the configured provider dialect is not available");
   }
   if (auto status = validate_sampling(config.sampling); !status) {
     return status;

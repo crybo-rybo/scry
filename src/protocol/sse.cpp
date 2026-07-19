@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <iterator>
-#include <limits>
 #include <utility>
 
 namespace scry::detail {
@@ -29,8 +28,9 @@ namespace {
 
 [[nodiscard]] std::size_t terminator_size(const std::string& input,
                                           const std::size_t position) noexcept {
-  if (input[position] == '\r' && position + 1 < input.size() &&
-      input[position + 1] == '\n') {
+  // push() processes a trailing carriage return before appending more input.
+  // Therefore the only byte that can coexist after one here is its LF pair.
+  if (input[position] == '\r' && position + 1 < input.size()) {
     return 2;
   }
   return 1;
@@ -51,11 +51,8 @@ Result<std::vector<SseEvent>> SseParser::push(const std::string_view bytes) {
         remaining.remove_prefix(1);
       }
       auto parsed = process_complete_lines(true);
-      if (!parsed) {
-        return std::unexpected(std::move(parsed.error()));
-      }
-      events.insert(events.end(), std::make_move_iterator(parsed->begin()),
-                    std::make_move_iterator(parsed->end()));
+      events.insert(events.end(), std::make_move_iterator(parsed.begin()),
+                    std::make_move_iterator(parsed.end()));
       continue;
     }
 
@@ -68,30 +65,24 @@ Result<std::vector<SseEvent>> SseParser::push(const std::string_view bytes) {
     remaining.remove_prefix(count);
 
     auto parsed = process_complete_lines();
-    if (!parsed) {
-      return std::unexpected(std::move(parsed.error()));
-    }
-    events.insert(events.end(), std::make_move_iterator(parsed->begin()),
-                  std::make_move_iterator(parsed->end()));
+    events.insert(events.end(), std::make_move_iterator(parsed.begin()),
+                  std::make_move_iterator(parsed.end()));
   }
   return events;
 }
 
 Result<std::vector<SseEvent>> SseParser::finish() {
   auto events = process_complete_lines(true);
-  if (!events) {
-    return std::unexpected(std::move(events.error()));
-  }
 
   if (!input_buffer_.empty()) {
     auto status = account_for_line(input_buffer_.size());
     if (!status) {
       return std::unexpected(std::move(status.error()));
     }
-    process_line(input_buffer_, *events);
+    process_line(input_buffer_, events);
     input_buffer_.clear();
   }
-  dispatch(*events);
+  dispatch(events);
   return events;
 }
 
@@ -101,8 +92,9 @@ std::size_t SseParser::buffered_bytes() const noexcept {
 
 Status SseParser::account_for_line(const std::size_t line_bytes) {
   constexpr auto terminator_bytes = std::size_t{1};
-  if (exceeds(line_bytes, terminator_bytes, std::numeric_limits<std::size_t>::max()) ||
-      exceeds(event_bytes_, line_bytes + terminator_bytes, max_event_bytes_)) {
+  // line_bytes comes from std::string::size(), whose max_size() leaves room
+  // for the implicit SSE line terminator accounted here.
+  if (exceeds(event_bytes_, line_bytes + terminator_bytes, max_event_bytes_)) {
     return std::unexpected(size_error());
   }
   event_bytes_ += line_bytes + terminator_bytes;
@@ -148,7 +140,7 @@ void SseParser::dispatch(std::vector<SseEvent>& events) {
   reset_event();
 }
 
-Result<std::vector<SseEvent>>
+std::vector<SseEvent>
 SseParser::process_complete_lines(const bool accept_trailing_carriage_return) {
   std::vector<SseEvent> events{};
   std::size_t consumed{};
@@ -162,10 +154,10 @@ SseParser::process_complete_lines(const bool accept_trailing_carriage_return) {
       break;
     }
 
-    auto status = account_for_line(ending - consumed);
-    if (!status) {
-      return std::unexpected(std::move(status.error()));
-    }
+    // push() bounds event_bytes_ + input_buffer_.size() before appending.
+    // A complete line's implicit terminator is already present in that buffer,
+    // so accounting it cannot exceed the configured event limit.
+    event_bytes_ += ending - consumed + 1;
     process_line(std::string_view{input_buffer_}.substr(consumed, ending - consumed),
                  events);
     consumed = ending + terminator_size(input_buffer_, ending);

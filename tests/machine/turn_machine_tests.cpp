@@ -13,6 +13,26 @@ using namespace scry::detail::machine_test;
 static_assert(std::is_move_constructible_v<scry::detail::MachineEvent>);
 static_assert(std::is_move_constructible_v<scry::detail::MachineCommand>);
 
+namespace {
+
+void check_illegal_transition(scry::detail::TurnMachine& machine,
+                              const scry::detail::MachineEventKind kind) {
+  const auto original_phase = machine.phase();
+  const auto original_attempts = machine.attempt_count();
+  const auto result = machine.apply(event_for(kind));
+  REQUIRE(result.status == scry::detail::TransitionStatus::illegal_transition);
+  REQUIRE(result.commands.empty());
+  REQUIRE(result.diagnostic.has_value());
+  CHECK(result.diagnostic->phase == original_phase);
+  CHECK(result.diagnostic->event == kind);
+  CHECK(result.diagnostic->reason ==
+        scry::detail::TransitionDiagnosticReason::event_not_allowed);
+  CHECK(machine.phase() == original_phase);
+  CHECK(machine.attempt_count() == original_attempts);
+}
+
+} // namespace
+
 TEST_CASE("queued turn issues its first model attempt") {
   auto machine = make_machine();
 
@@ -47,8 +67,13 @@ TEST_CASE("non-streaming completion emits one transactional commit intent") {
 
   CHECK(command.turn_id == turn_id);
   CHECK(command.attempt_count == 1);
-  CHECK(command.response.provider_request_id == "provider-id");
-  CHECK(command.response.usage.input_tokens == 4);
+  CHECK(command.provider_request_id == "provider-id");
+  CHECK(command.usage.input_tokens == 4);
+  REQUIRE(command.exchange.size() == 1);
+  CHECK(command.exchange.front().role == scry::detail::Role::assistant);
+  REQUIRE(command.exchange.front().content.size() == 1);
+  CHECK(std::get<scry::detail::TextBlock>(command.exchange.front().content.front())
+            .text == "answer");
   CHECK(machine.phase() == scry::detail::MachinePhase::terminal);
   CHECK(machine.terminal_kind() == scry::detail::MachineTerminalKind::completed);
 }
@@ -206,6 +231,16 @@ TEST_CASE("semantic output prevents automatic retry") {
   CHECK(machine.phase() == scry::detail::MachinePhase::terminal);
 }
 
+TEST_CASE("repeated semantic output remains in streaming") {
+  auto machine = make_machine();
+  enter_streaming(machine);
+
+  const auto observed = machine.apply(scry::detail::ModelSemanticOutput{});
+  CHECK(observed.status == scry::detail::TransitionStatus::applied);
+  CHECK(observed.commands.empty());
+  CHECK(machine.phase() == scry::detail::MachinePhase::streaming);
+}
+
 TEST_CASE("non-retryable categories terminate without a wake") {
   using scry::ErrorCategory;
   const std::array categories{
@@ -302,62 +337,73 @@ TEST_CASE("cancellation terminates every live phase without I/O") {
     const auto result = machine.apply(scry::detail::CancelTurn{});
     static_cast<void>(only_command<scry::detail::PublishCancelled>(result));
   }
+
+  SECTION("awaiting tool") {
+    auto machine = make_machine();
+    enter_awaiting_tool(machine);
+    const auto result = machine.apply(scry::detail::CancelTurn{});
+    static_cast<void>(only_command<scry::detail::PublishCancelled>(result));
+  }
 }
 
-TEST_CASE("illegal transitions are diagnosed without mutating the machine") {
+TEST_CASE("request phases diagnose illegal transitions without mutation") {
   using scry::detail::MachineEventKind;
-  using scry::detail::MachinePhase;
-
-  const auto check_illegal = [](scry::detail::TurnMachine& machine,
-                                const MachineEventKind kind) {
-    const auto original_phase = machine.phase();
-    const auto original_attempts = machine.attempt_count();
-    const auto result = machine.apply(event_for(kind));
-    REQUIRE(result.status == scry::detail::TransitionStatus::illegal_transition);
-    REQUIRE(result.commands.empty());
-    REQUIRE(result.diagnostic.has_value());
-    CHECK(result.diagnostic->phase == original_phase);
-    CHECK(result.diagnostic->event == kind);
-    CHECK(result.diagnostic->reason ==
-          scry::detail::TransitionDiagnosticReason::event_not_allowed);
-    CHECK(machine.phase() == original_phase);
-    CHECK(machine.attempt_count() == original_attempts);
-  };
 
   SECTION("queued accepts only begin or cancel") {
     for (const auto kind :
          {MachineEventKind::text_delta, MachineEventKind::semantic_output,
           MachineEventKind::completed, MachineEventKind::attempt_failed,
-          MachineEventKind::retry_wake}) {
+          MachineEventKind::retry_wake, MachineEventKind::tool_result_ready,
+          MachineEventKind::tool_execution_failed}) {
       auto machine = make_machine();
-      check_illegal(machine, kind);
+      check_illegal_transition(machine, kind);
     }
   }
 
-  SECTION("awaiting model rejects begin and wake") {
-    for (const auto kind : {MachineEventKind::begin, MachineEventKind::retry_wake}) {
+  SECTION("awaiting model rejects begin, wake, and tool result") {
+    for (const auto kind : {MachineEventKind::begin, MachineEventKind::retry_wake,
+                            MachineEventKind::tool_result_ready,
+                            MachineEventKind::tool_execution_failed}) {
       auto machine = make_machine();
       begin(machine);
-      check_illegal(machine, kind);
+      check_illegal_transition(machine, kind);
     }
   }
 
-  SECTION("streaming rejects begin and wake") {
-    for (const auto kind : {MachineEventKind::begin, MachineEventKind::retry_wake}) {
+  SECTION("streaming rejects begin, wake, and tool result") {
+    for (const auto kind : {MachineEventKind::begin, MachineEventKind::retry_wake,
+                            MachineEventKind::tool_result_ready,
+                            MachineEventKind::tool_execution_failed}) {
       auto machine = make_machine();
       enter_streaming(machine);
-      check_illegal(machine, kind);
+      check_illegal_transition(machine, kind);
     }
   }
+}
+
+TEST_CASE("waiting phases diagnose illegal transitions without mutation") {
+  using scry::detail::MachineEventKind;
 
   SECTION("retry wait accepts only wake or cancel") {
     for (const auto kind :
          {MachineEventKind::begin, MachineEventKind::text_delta,
           MachineEventKind::semantic_output, MachineEventKind::completed,
-          MachineEventKind::attempt_failed}) {
+          MachineEventKind::attempt_failed, MachineEventKind::tool_result_ready,
+          MachineEventKind::tool_execution_failed}) {
       auto machine = make_machine();
       enter_retry_wait(machine);
-      check_illegal(machine, kind);
+      check_illegal_transition(machine, kind);
+    }
+  }
+
+  SECTION("awaiting tool accepts only a tool result or cancel") {
+    for (const auto kind :
+         {MachineEventKind::begin, MachineEventKind::text_delta,
+          MachineEventKind::semantic_output, MachineEventKind::completed,
+          MachineEventKind::attempt_failed, MachineEventKind::retry_wake}) {
+      auto machine = make_machine();
+      enter_awaiting_tool(machine);
+      check_illegal_transition(machine, kind);
     }
   }
 }
@@ -391,6 +437,7 @@ TEST_CASE("injected time is monotonic and retry wakes cannot arrive early") {
 }
 
 TEST_CASE("terminal state is idempotent across event orderings") {
+  using scry::detail::MachineEventKind;
   for (std::uint32_t seed = 0; seed < 64; ++seed) {
     auto machine = make_machine();
     begin(machine);
@@ -414,5 +461,17 @@ TEST_CASE("terminal state is idempotent across event orderings") {
 
     CHECK(terminal_commands == 1);
     CHECK(machine.phase() == scry::detail::MachinePhase::terminal);
+
+    for (const auto kind :
+         {MachineEventKind::begin, MachineEventKind::text_delta,
+          MachineEventKind::semantic_output, MachineEventKind::completed,
+          MachineEventKind::attempt_failed, MachineEventKind::retry_wake,
+          MachineEventKind::tool_result_ready, MachineEventKind::tool_execution_failed,
+          MachineEventKind::cancel}) {
+      const auto ignored = machine.apply(event_for(kind));
+      CHECK(ignored.status == scry::detail::TransitionStatus::ignored_terminal);
+      CHECK(ignored.commands.empty());
+      CHECK_FALSE(ignored.diagnostic.has_value());
+    }
   }
 }

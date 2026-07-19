@@ -1,5 +1,7 @@
 #include "runtime/pump.hpp"
 
+#include "runtime/tool_dispatch.hpp"
+
 #include <algorithm>
 #include <cassert>
 #include <type_traits>
@@ -59,16 +61,32 @@ update_deadline(const std::chrono::steady_clock::time_point started,
                   std::chrono::duration_cast<std::chrono::microseconds>(capacity));
 }
 
+[[nodiscard]] std::string completion_text(const CompletionEvent& event) {
+  if (event.exchange.empty()) {
+    return {};
+  }
+  const auto& final_message = event.exchange.back();
+  std::string text;
+  for (const auto& block : final_message.content) {
+    if (const auto* value = std::get_if<TextBlock>(&block)) {
+      text += value->text;
+    }
+  }
+  return text;
+}
+
 } // namespace
 
 TurnRoute::TurnRoute(const TurnId turn_id, std::shared_ptr<std::atomic<bool>> cancelled,
                      std::weak_ptr<CommandQueue> commands,
                      std::shared_ptr<ConversationState> conversation,
-                     std::string user_message, const std::size_t max_conversation_bytes)
+                     std::string user_message, TurnRouteOptions options)
     : turn_id_(turn_id), cancelled_(std::move(cancelled)),
       commands_(std::move(commands)), conversation_(std::move(conversation)),
-      user_message_(std::move(user_message)),
-      max_conversation_bytes_(max_conversation_bytes) {}
+      user_message_(std::move(user_message)), tools_(std::move(options.tools)),
+      max_tool_result_bytes_(options.max_tool_result_bytes),
+      remaining_exchange_bytes_(options.max_exchange_bytes),
+      max_conversation_bytes_(options.max_conversation_bytes) {}
 
 TurnId TurnRoute::id() const noexcept { return turn_id_; }
 
@@ -120,6 +138,8 @@ bool TurnRoute::has_callback(const WorkerEvent& event) const noexcept {
         using Event = std::decay_t<decltype(value)>;
         if constexpr (std::is_same_v<Event, TextDeltaEvent>) {
           return static_cast<bool>(on_text_);
+        } else if constexpr (std::is_same_v<Event, ToolCallEvent>) {
+          return !terminal_ && !tool_dispatch_failed_;
         } else if constexpr (std::is_same_v<Event, CompletionEvent>) {
           return static_cast<bool>(on_completion_);
         } else if constexpr (std::is_same_v<Event, ErrorEvent>) {
@@ -137,14 +157,16 @@ void TurnRoute::invoke(const WorkerEvent& event) {
         using Event = std::decay_t<decltype(value)>;
         if constexpr (std::is_same_v<Event, TextDeltaEvent>) {
           on_text_(value.text);
+        } else if constexpr (std::is_same_v<Event, ToolCallEvent>) {
+          dispatch(value);
         } else if constexpr (std::is_same_v<Event, CompletionEvent>) {
           const Completion completion{
               .turn_id = value.turn_id,
-              .text = response_text(value.response),
-              .finish_reason = value.response.finish_reason,
-              .usage = value.response.usage,
+              .text = completion_text(value),
+              .finish_reason = value.finish_reason,
+              .usage = value.usage,
               .attempt_count = value.attempt_count,
-              .provider_request_id = value.response.provider_request_id,
+              .provider_request_id = value.provider_request_id,
           };
           on_completion_(completion);
         } else if constexpr (std::is_same_v<Event, ErrorEvent>) {
@@ -154,6 +176,47 @@ void TurnRoute::invoke(const WorkerEvent& event) {
         }
       },
       event);
+}
+
+void TurnRoute::dispatch(const ToolCallEvent& event) {
+  if (cancelled_->load(std::memory_order_acquire)) {
+    return;
+  }
+  remaining_exchange_bytes_ =
+      std::min(remaining_exchange_bytes_, event.remaining_exchange_bytes);
+  auto result = dispatch_tool(tools_, event.call, max_tool_result_bytes_);
+  if (result) {
+    const auto result_bytes = content_payload_bytes(*result);
+    if (result_bytes > remaining_exchange_bytes_) {
+      result = std::unexpected(Error{
+          .category = ErrorCategory::resource_limit,
+          .message = "tool results exceed the remaining Conversation byte limit",
+      });
+    } else {
+      remaining_exchange_bytes_ -= result_bytes;
+    }
+  }
+  if (!result) {
+    tool_dispatch_failed_ = true;
+  }
+  if (cancelled_->load(std::memory_order_acquire)) {
+    return;
+  }
+  const auto result_ready = result.has_value();
+  if (const auto commands = commands_.lock()) {
+    commands->push(ToolResultCommand{
+        .turn_id = turn_id_,
+        .result = std::move(result),
+    });
+  }
+  if (result_ready && on_tool_) {
+    on_tool_(ToolCall{
+        .turn_id = turn_id_,
+        .id = event.call.id,
+        .name = event.call.name,
+        .arguments = event.call.arguments,
+    });
+  }
 }
 
 const std::shared_ptr<ConversationState>& TurnRoute::conversation() const noexcept {
@@ -308,7 +371,7 @@ void PumpState::apply_terminal(TurnRoute& route, WorkerEvent& event) {
                   .message = "completion exceeds the Conversation byte limit",
                   .turn_id = completion->turn_id,
                   .attempt = completion->attempt_count,
-                  .provider_request_id = completion->response.provider_request_id,
+                  .provider_request_id = completion->provider_request_id,
               },
       };
     } else {
@@ -325,16 +388,20 @@ void PumpState::apply_terminal(TurnRoute& route, WorkerEvent& event) {
 
 bool PumpState::conversation_limit_exceeded(
     const TurnRoute& route, const CompletionEvent& event) const noexcept {
-  const auto user_bytes = route.user_message().size();
-  std::size_t assistant_bytes = 0;
-  for (const auto& block : event.response.content) {
-    assistant_bytes +=
-        message_payload_bytes(Message{.role = Role::assistant, .content = {block}});
-  }
   const auto current = route.conversation()->payload_bytes;
   const auto limit = route.max_conversation_bytes();
-  return current > limit || user_bytes > limit - current ||
-         assistant_bytes > limit - current - user_bytes;
+  if (current > limit || route.user_message().size() > limit - current) {
+    return true;
+  }
+  auto remaining = limit - current - route.user_message().size();
+  for (const auto& message : event.exchange) {
+    const auto bytes = message_payload_bytes(message);
+    if (bytes > remaining) {
+      return true;
+    }
+    remaining -= bytes;
+  }
+  return false;
 }
 
 void PumpState::commit_completion(TurnRoute& route, const CompletionEvent& event) {
@@ -343,14 +410,12 @@ void PumpState::commit_completion(TurnRoute& route, const CompletionEvent& event
       .role = Role::user,
       .content = {TextBlock{.text = route.user_message()}},
   };
-  Message assistant{
-      .role = Role::assistant,
-      .content = event.response.content,
-  };
-  conversation.payload_bytes +=
-      message_payload_bytes(user) + message_payload_bytes(assistant);
+  conversation.payload_bytes += message_payload_bytes(user);
   conversation.messages.push_back(std::move(user));
-  conversation.messages.push_back(std::move(assistant));
+  for (const auto& message : event.exchange) {
+    conversation.payload_bytes += message_payload_bytes(message);
+    conversation.messages.push_back(message);
+  }
 }
 
 bool PumpState::deliver_one(std::size_t& callbacks_delivered) {
@@ -381,8 +446,11 @@ bool PumpState::has_deliverable() const noexcept {
 void PumpState::release_discarded() {
   std::erase_if(pending_callbacks_, [this](const auto& event) {
     const auto route = find_route(event_turn_id(event.event));
-    const auto discard =
-        !route || (!route->attached() && !route->has_callback(event.event));
+    const auto obsolete_tool_call =
+        route && std::holds_alternative<ToolCallEvent>(event.event) &&
+        !route->has_callback(event.event);
+    const auto discard = !route || obsolete_tool_call ||
+                         (!route->attached() && !route->has_callback(event.event));
     if (discard) {
       events_->release(event_turn_id(event.event), event.accounted_bytes);
     }
