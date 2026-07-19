@@ -30,6 +30,8 @@ std::size_t event_payload_bytes(const WorkerEvent& event) noexcept {
           return value.text.size();
         } else if constexpr (std::is_same_v<Event, ToolCallEvent>) {
           return content_payload_bytes(value.call);
+        } else if constexpr (std::is_same_v<Event, WorkerToolAcceptedEvent>) {
+          return value.tool_call_id.size();
         } else if constexpr (std::is_same_v<Event, CompletionEvent>) {
           return saturating_payload_add(value.provider_request_id.size(),
                                         exchange_bytes(value.exchange));

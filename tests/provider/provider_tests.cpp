@@ -75,15 +75,14 @@ using namespace scry::detail;
 
 } // namespace
 
-TEST_CASE("provider factory exposes only implemented dialects") {
+TEST_CASE("provider factory exposes both supported dialects") {
   auto anthropic = make_provider_adapter(ProviderDialect::anthropic);
   REQUIRE(anthropic.has_value());
   CHECK(*anthropic != nullptr);
 
-  auto deferred = make_provider_adapter(ProviderDialect::openai_compatible);
-  REQUIRE_FALSE(deferred.has_value());
-  CHECK(deferred.error().category == ErrorCategory::invalid_config);
-  CHECK(deferred.error().message.find("M4") != std::string::npos);
+  auto openai = make_provider_adapter(ProviderDialect::openai_compatible);
+  REQUIRE(openai.has_value());
+  CHECK(*openai != nullptr);
 }
 
 TEST_CASE("Anthropic request encoding matches the sanitized golden fixture") {

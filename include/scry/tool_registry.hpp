@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <scry/error.hpp>
 #include <scry/json.hpp>
@@ -17,11 +18,22 @@ struct ToolDefinition {
 
 using ToolHandler = UniqueFunction<Result<Json>(Json)>;
 
+enum class ToolExecution : std::uint8_t {
+  app_thread,
+  worker_thread,
+};
+
+struct ToolRegistrationOptions {
+  ToolExecution execution{ToolExecution::app_thread};
+};
+
 class ToolRegistry final {
 public:
   ~ToolRegistry();
 
   [[nodiscard]] Status add(ToolDefinition definition, ToolHandler handler);
+  [[nodiscard]] Status add(ToolDefinition definition, ToolHandler handler,
+                           ToolRegistrationOptions options);
   [[nodiscard]] std::size_t size() const noexcept;
   [[nodiscard]] bool empty() const noexcept;
 

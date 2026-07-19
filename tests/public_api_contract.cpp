@@ -10,7 +10,10 @@
 static_assert(std::is_aggregate_v<scry::Config>);
 static_assert(std::is_aggregate_v<scry::Error>);
 static_assert(std::is_aggregate_v<scry::Json>);
+static_assert(std::is_aggregate_v<scry::ToolRegistrationOptions>);
 static_assert(std::is_aggregate_v<scry::UpdateOptions>);
+static_assert(scry::ToolRegistrationOptions{}.execution ==
+              scry::ToolExecution::app_thread);
 
 static_assert(std::is_move_constructible_v<scry::Conversation>);
 static_assert(!std::is_copy_constructible_v<scry::Conversation>);

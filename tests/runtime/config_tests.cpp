@@ -3,6 +3,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <chrono>
+#include <cstdint>
 #include <limits>
 #include <new>
 #include <scry/config.hpp>
@@ -55,9 +56,22 @@ TEST_CASE("configuration rejects missing endpoint and model") {
   CHECK_FALSE(scry::detail::validate_config(config));
 }
 
-TEST_CASE("configuration rejects the M4 provider dialect") {
+TEST_CASE("OpenAI-compatible configuration accepts local servers without auth") {
   auto config = valid_config();
   config.dialect = scry::ProviderDialect::openai_compatible;
+  config.api_key.clear();
+  config.sampling.temperature = 2.0;
+  config.sampling.top_p = 0.0;
+  CHECK(scry::detail::validate_config(config));
+
+  config.api_key = "unsafe\r\nheader";
+  CHECK_FALSE(scry::detail::validate_config(config));
+}
+
+TEST_CASE("configuration rejects unknown provider dialects") {
+  auto config = valid_config();
+  config.dialect =
+      static_cast<scry::ProviderDialect>(std::numeric_limits<std::uint8_t>::max());
   const auto result = scry::detail::validate_config(config);
   REQUIRE_FALSE(result);
   CHECK(result.error().category == scry::ErrorCategory::invalid_config);
@@ -91,6 +105,48 @@ TEST_CASE("configuration validates sampling and retries") {
   config = valid_config();
   config.retry.initial_backoff =
       config.retry.max_backoff + std::chrono::milliseconds{1};
+  CHECK_FALSE(scry::detail::validate_config(config));
+}
+
+TEST_CASE("configuration applies provider-specific sampling bounds") {
+  auto config = valid_config();
+  config.sampling.temperature = 1.5;
+  CHECK_FALSE(scry::detail::validate_config(config));
+
+  config.dialect = scry::ProviderDialect::openai_compatible;
+  CHECK(scry::detail::validate_config(config));
+
+  config.sampling.temperature = 2.01;
+  CHECK_FALSE(scry::detail::validate_config(config));
+
+  config.sampling.temperature = 1.0;
+  config.sampling.top_p = 0.0;
+  CHECK(scry::detail::validate_config(config));
+
+  config.sampling.top_p = -0.01;
+  CHECK_FALSE(scry::detail::validate_config(config));
+}
+
+TEST_CASE("OpenAI-compatible sampling rejects every invalid numeric shape") {
+  auto config = valid_config();
+  config.dialect = scry::ProviderDialect::openai_compatible;
+
+  for (const auto temperature :
+       {std::numeric_limits<double>::quiet_NaN(), -0.01, 2.01}) {
+    config.sampling.temperature = temperature;
+    CHECK_FALSE(scry::detail::validate_config(config));
+  }
+
+  config.sampling.temperature = 1.0;
+  for (const auto top_p : {std::numeric_limits<double>::quiet_NaN(), -0.01, 1.01}) {
+    config.sampling.top_p = top_p;
+    CHECK_FALSE(scry::detail::validate_config(config));
+  }
+
+  config.sampling.top_p = 0.5;
+  config.sampling.max_tokens.reset();
+  CHECK_FALSE(scry::detail::validate_config(config));
+  config.sampling.max_tokens = 0;
   CHECK_FALSE(scry::detail::validate_config(config));
 }
 

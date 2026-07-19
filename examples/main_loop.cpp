@@ -64,6 +64,9 @@ int main() {
         // This tool is read-only. Side-effecting tools need an app-owned
         // idempotency key and reconciliation policy; see DESIGN.md section 8.
         return scry::Json{.text = app.status_json()};
+      },
+      scry::ToolRegistrationOptions{
+          .execution = scry::ToolExecution::app_thread,
       });
   if (!registration) {
     std::cerr << registration.error().message << '\n';

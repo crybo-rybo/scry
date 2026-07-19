@@ -8,7 +8,7 @@ namespace {
 [[nodiscard]] Error field_error(const std::string_view name,
                                 const std::string_view expected) {
   return make_provider_error(ErrorCategory::protocol,
-                             "Anthropic payload field '" + std::string{name} +
+                             "Provider payload field '" + std::string{name} +
                                  "' must be " + std::string{expected});
 }
 

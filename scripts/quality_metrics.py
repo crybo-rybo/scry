@@ -14,8 +14,24 @@ PRODUCTION_PREFIXES = ("include/", "src/")
 CPP_SUFFIXES = {".cpp", ".cc", ".cxx", ".hpp", ".hh", ".hxx", ".h"}
 
 
-def _is_production(path: str) -> bool:
-    return path.startswith(PRODUCTION_PREFIXES)
+def is_reflection_component_path(path: str) -> bool:
+    """Return whether one path belongs to the optional GCC/P2996 component."""
+
+    return (
+        path == "include/scry/reflection.hpp"
+        or path.startswith("include/scry/detail/reflection_")
+        or path.startswith("include/scry/detail/reflection/")
+        or path.startswith("src/reflection/")
+        or path.startswith("tests/reflection/")
+        or path.startswith("tests/package_consumer_reflection/")
+        or path == "examples/reflection_tools.cpp"
+    )
+
+
+def is_core_production_path(path: str) -> bool:
+    """Return whether the stable C++23 quality domain owns one source path."""
+
+    return path.startswith(PRODUCTION_PREFIXES) and not is_reflection_component_path(path)
 
 
 def _relative_path(filename: str, source_root: Path) -> str | None:
@@ -29,7 +45,7 @@ def _load_file_record(
     record: dict[str, Any], source_root: Path
 ) -> tuple[str, dict[str, Any]] | None:
     path = _relative_path(record["filename"], source_root)
-    if path is None or not _is_production(path):
+    if path is None or not is_core_production_path(path):
         return None
 
     lines: dict[int, bool] = defaultdict(bool)
@@ -71,7 +87,7 @@ def _load_function_records(
         if file_id >= len(filenames):
             continue
         path = _relative_path(filenames[file_id], source_root)
-        if path is None or not _is_production(path):
+        if path is None or not is_core_production_path(path):
             continue
         branch_total, branch_covered = _branch_counts(
             branches_by_file.get(file_id, [])
@@ -165,6 +181,9 @@ def _source_files(source_root: Path) -> list[Path]:
         for root_name in roots
         for path in (source_root / root_name).rglob("*")
         if path.is_file() and path.suffix in CPP_SUFFIXES
+        and not is_reflection_component_path(
+            path.relative_to(source_root).as_posix()
+        )
     )
 
 
@@ -228,8 +247,15 @@ def build_report(
 
     coverage = load_coverage(coverage_path, source_root)
     lizard_functions = load_lizard(lizard_path)
+    core_lizard_functions = [
+        function
+        for function in lizard_functions
+        if not is_reflection_component_path(function["path"])
+    ]
     production_functions = [
-        function for function in lizard_functions if _is_production(function["path"])
+        function
+        for function in core_lizard_functions
+        if is_core_production_path(function["path"])
     ]
     function_reports = _build_function_reports(
         production_functions, coverage["functions"]
@@ -260,7 +286,7 @@ def build_report(
                     function["crap"] > 30.0 for function in function_reports
                 ),
             },
-            "complexity": _complexity_metrics(lizard_functions, source_files),
+            "complexity": _complexity_metrics(core_lizard_functions, source_files),
             "unlinked_todos": _unlinked_todo_count(source_files),
         },
         "functions": function_reports,

@@ -6,4 +6,34 @@ find_dependency(Threads)
 
 include("${CMAKE_CURRENT_LIST_DIR}/scryTargets.cmake")
 
+set(scry_reflection_FOUND FALSE)
+foreach(scry_component IN LISTS scry_FIND_COMPONENTS)
+  if(scry_component STREQUAL "reflection")
+    if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+      set(
+        scry_NOT_FOUND_MESSAGE
+        "The scry reflection component requires GCC 16 or newer"
+      )
+    elseif(CMAKE_CXX_COMPILER_VERSION VERSION_LESS 16)
+      set(
+        scry_NOT_FOUND_MESSAGE
+        "The scry reflection component requires GCC 16 or newer"
+      )
+    elseif(
+      EXISTS "${CMAKE_CURRENT_LIST_DIR}/scryReflectionTargets.cmake"
+    )
+      include("${CMAKE_CURRENT_LIST_DIR}/scryReflectionTargets.cmake")
+      set(scry_reflection_FOUND TRUE)
+    else()
+      set(
+        scry_NOT_FOUND_MESSAGE
+        "This scry package was built without the reflection component"
+      )
+    endif()
+  else()
+    set("scry_${scry_component}_FOUND" FALSE)
+    set(scry_NOT_FOUND_MESSAGE "Unsupported scry component: ${scry_component}")
+  endif()
+endforeach()
+
 check_required_components(scry)

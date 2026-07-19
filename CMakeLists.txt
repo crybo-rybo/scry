@@ -17,10 +17,19 @@ option(SCRY_ENABLE_FORMAT_CHECK "Create clang-format check and fix targets" OFF)
 option(SCRY_ENABLE_CLANG_TIDY "Run clang-tidy while compiling" OFF)
 option(SCRY_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ${PROJECT_IS_TOP_LEVEL})
 option(SCRY_USE_LIBCXX "Use libc++ with a Clang-family compiler" OFF)
-option(SCRY_ENABLE_REFLECTION "Enable the experimental C++26 reflection surface" OFF)
-option(SCRY_BUILD_REFLECTION_SPIKE "Build the Glaze/P2996 feasibility spike" OFF)
+option(SCRY_ENABLE_REFLECTION "Build the supported GCC 16+ reflection component" OFF)
 option(SCRY_BUILD_CURL_SPIKE "Build the libcurl/SSE feasibility spike" OFF)
 option(SCRY_BUILD_FUZZERS "Build short protocol fuzz targets" OFF)
+option(
+  SCRY_BUILD_IMGUI_SHOWCASE
+  "Build the opt-in Dear ImGui and grid-NPC showcase"
+  OFF
+)
+option(
+  SCRY_BUILD_LOCAL_MODEL_SMOKE
+  "Build the nightly public-API local-model smoke executable"
+  OFF
+)
 
 set(
   SCRY_SANITIZER
@@ -56,6 +65,7 @@ add_library(
     src/runtime/harness.cpp
     src/runtime/messages.cpp
     src/runtime/pump.cpp
+    src/runtime/pump_state.cpp
     src/runtime/queue.cpp
     src/runtime/state.cpp
     src/runtime/tool_registry.cpp
@@ -152,20 +162,27 @@ if(SCRY_ENABLE_CLANG_TIDY)
 endif()
 
 set(
-  SCRY_PUBLIC_HEADERS
+  SCRY_CORE_PUBLIC_HEADERS
   include/scry/config.hpp
   include/scry/conversation.hpp
   include/scry/error.hpp
   include/scry/events.hpp
   include/scry/harness.hpp
   include/scry/json.hpp
-  include/scry/reflection.hpp
   include/scry/scry.hpp
   include/scry/tool_registry.hpp
   include/scry/turn.hpp
   include/scry/turn_id.hpp
   include/scry/unique_function.hpp
   include/scry/version.hpp
+)
+target_sources(
+  scry
+  PUBLIC
+    FILE_SET scry_core_headers
+    TYPE HEADERS
+    BASE_DIRS "${PROJECT_SOURCE_DIR}/include"
+    FILES ${SCRY_CORE_PUBLIC_HEADERS}
 )
 
 add_custom_target(
@@ -212,35 +229,17 @@ if(SCRY_ENABLE_FORMAT_CHECK)
 endif()
 
 if(SCRY_ENABLE_REFLECTION)
-  if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-    if(CMAKE_CXX_COMPILER_VERSION VERSION_LESS 16)
-      message(FATAL_ERROR "Scry reflection requires GCC 16 or newer")
-    endif()
-    set(SCRY_REFLECTION_COMPILE_OPTIONS -freflection)
-  elseif(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-    message(
-      WARNING
-        "clang-p2996 is a non-production compatibility target; do not ship its artifacts"
-    )
-    set(
-      SCRY_REFLECTION_COMPILE_OPTIONS
-      -freflection
-      -fexpansion-statements
-      -stdlib=libc++
-    )
-  else()
-    message(FATAL_ERROR "No supported C++26 reflection toolchain was detected")
+  if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    message(FATAL_ERROR "Scry reflection is supported only with GCC 16 or newer")
+  endif()
+  if(CMAKE_CXX_COMPILER_VERSION VERSION_LESS 16)
+    message(FATAL_ERROR "Scry reflection requires GCC 16 or newer")
   endif()
 
   include(CheckCXXSourceCompiles)
-  string(
-    JOIN " "
-    SCRY_REFLECTION_REQUIRED_FLAGS
-    -std=c++26
-    ${SCRY_REFLECTION_COMPILE_OPTIONS}
-  )
   set(SCRY_SAVED_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS}")
-  set(CMAKE_REQUIRED_FLAGS "${SCRY_REFLECTION_REQUIRED_FLAGS}")
+  set(CMAKE_REQUIRED_FLAGS "-std=c++26 -freflection")
+  unset(SCRY_COMPILER_HAS_P2996 CACHE)
   check_cxx_source_compiles(
     "
       #include <meta>
@@ -256,46 +255,73 @@ if(SCRY_ENABLE_REFLECTION)
     message(FATAL_ERROR "The selected compiler cannot compile the P2996 surface")
   endif()
 
-  add_library(scry_reflection INTERFACE)
+  file(
+    GLOB_RECURSE
+    SCRY_REFLECTION_DETAIL_HEADERS
+    CONFIGURE_DEPENDS
+    "${PROJECT_SOURCE_DIR}/include/scry/detail/reflection*.hpp"
+    "${PROJECT_SOURCE_DIR}/include/scry/detail/reflection/*.hpp"
+  )
+  set(
+    SCRY_REFLECTION_PUBLIC_HEADERS
+    include/scry/reflection.hpp
+    ${SCRY_REFLECTION_DETAIL_HEADERS}
+  )
+
+  add_library(scry_reflection STATIC src/reflection/json_bridge.cpp)
   add_library(scry::reflection ALIAS scry_reflection)
-  set_target_properties(scry_reflection PROPERTIES EXPORT_NAME reflection)
-  target_link_libraries(scry_reflection INTERFACE scry)
-  target_compile_features(scry_reflection INTERFACE cxx_std_26)
-  target_compile_definitions(scry_reflection INTERFACE SCRY_ENABLE_REFLECTION=1)
+  set_target_properties(
+    scry_reflection
+    PROPERTIES
+      CXX_EXTENSIONS OFF
+      CXX_STANDARD 26
+      CXX_STANDARD_REQUIRED ON
+      EXPORT_NAME reflection
+  )
+  target_sources(
+    scry_reflection
+    PUBLIC
+      FILE_SET scry_reflection_headers
+      TYPE HEADERS
+      BASE_DIRS "${PROJECT_SOURCE_DIR}/include"
+      FILES ${SCRY_REFLECTION_PUBLIC_HEADERS}
+  )
+  target_compile_features(scry_reflection PUBLIC cxx_std_26)
+  target_compile_definitions(scry_reflection PUBLIC SCRY_ENABLE_REFLECTION=1)
   target_compile_options(
     scry_reflection
-    INTERFACE ${SCRY_REFLECTION_COMPILE_OPTIONS}
+    PUBLIC -std=c++26 -freflection
   )
-  if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-    target_link_options(scry_reflection INTERFACE -stdlib=libc++)
-  endif()
-endif()
-
-if(SCRY_BUILD_REFLECTION_SPIKE)
-  if(NOT SCRY_ENABLE_REFLECTION)
-    message(
-      FATAL_ERROR
-        "SCRY_BUILD_REFLECTION_SPIKE requires SCRY_ENABLE_REFLECTION=ON"
-    )
-  endif()
-
-  add_executable(scry_reflection_spike spikes/reflection_glaze.cpp)
-  # Keep Glaze's C++26 reflection mode on the feasibility target. The C++23
-  # runtime also consumes Glaze internally and must remain reflection-free.
-  target_compile_definitions(
-    scry_reflection_spike
-    PRIVATE GLZ_REFLECTION26=1
+  target_include_directories(
+    scry_reflection
+    PUBLIC
+      "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>"
+      "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
+    PRIVATE "${PROJECT_SOURCE_DIR}/src"
+  )
+  target_include_directories(
+    scry_reflection
+    SYSTEM PRIVATE "${glaze_SOURCE_DIR}/include"
   )
   target_link_libraries(
-    scry_reflection_spike
-    PRIVATE scry::reflection glaze::glaze scry_project_options
+    scry_reflection
+    PUBLIC scry::scry
+    PRIVATE "$<BUILD_INTERFACE:scry_project_options>"
   )
+
 endif()
 
-if(SCRY_BUILD_EXAMPLES)
-  add_executable(scry_canonical_example examples/main_loop.cpp)
+if(SCRY_BUILD_EXAMPLES OR SCRY_BUILD_IMGUI_SHOWCASE)
+  add_subdirectory(examples)
+endif()
+
+if(SCRY_BUILD_LOCAL_MODEL_SMOKE)
+  add_executable(
+    scry_local_model_smoke
+    tests/nightly/local_model_smoke.cpp
+  )
   target_link_libraries(
-    scry_canonical_example
+    scry_local_model_smoke
     PRIVATE scry::scry scry_project_options
   )
 endif()
@@ -320,10 +346,7 @@ if(SCRY_BUILD_TESTS)
   include(Catch)
 
   file(MAKE_DIRECTORY "${PROJECT_BINARY_DIR}/generated/header_checks")
-  foreach(SCRY_HEADER IN LISTS SCRY_PUBLIC_HEADERS)
-    if(SCRY_HEADER MATCHES "/reflection.hpp$")
-      continue()
-    endif()
+  foreach(SCRY_HEADER IN LISTS SCRY_CORE_PUBLIC_HEADERS)
     get_filename_component(SCRY_HEADER_NAME "${SCRY_HEADER}" NAME_WE)
     string(REGEX REPLACE "^include/" "" SCRY_HEADER_INCLUDE "${SCRY_HEADER}")
     set(
@@ -345,6 +368,26 @@ if(SCRY_BUILD_TESTS)
       PRIVATE scry::scry scry_project_options
     )
   endforeach()
+  if(SCRY_ENABLE_REFLECTION)
+    set(
+      SCRY_REFLECTION_HEADER_CHECK_SOURCE
+      "${PROJECT_BINARY_DIR}/generated/header_checks/reflection.cpp"
+    )
+    file(
+      GENERATE
+      OUTPUT "${SCRY_REFLECTION_HEADER_CHECK_SOURCE}"
+      CONTENT "#include <scry/reflection.hpp>\n"
+    )
+    add_library(
+      scry_header_reflection
+      OBJECT
+      "${SCRY_REFLECTION_HEADER_CHECK_SOURCE}"
+    )
+    target_link_libraries(
+      scry_header_reflection
+      PRIVATE scry::reflection scry_project_options
+    )
+  endif()
 
   add_executable(scry_public_api_contract tests/public_api_contract.cpp)
   target_link_libraries(
@@ -375,11 +418,13 @@ if(SCRY_BUILD_TESTS)
     scry_runtime_tests
     tests/runtime/config_tests.cpp
     tests/runtime/conversation_persistence_tests.cpp
+    tests/runtime/pump_branch_tests.cpp
     tests/runtime/pump_regression_tests.cpp
     tests/runtime/queue_coverage_tests.cpp
     tests/runtime/runtime_coverage_tests.cpp
     tests/runtime/runtime_tests.cpp
     tests/runtime/tool_dispatch_tests.cpp
+    tests/runtime/tool_pump_tests.cpp
     tests/runtime/tool_registry_tests.cpp
   )
   target_include_directories(scry_runtime_tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
@@ -401,6 +446,89 @@ if(SCRY_BUILD_TESTS)
   add_subdirectory(tests/provider)
   add_subdirectory(tests/transport)
   add_subdirectory(tests/integration)
+  if(SCRY_BUILD_IMGUI_SHOWCASE)
+    add_subdirectory(tests/showcase)
+  endif()
+
+  if(SCRY_ENABLE_REFLECTION)
+    file(
+      GLOB
+      SCRY_REFLECTION_TEST_SOURCES
+      CONFIGURE_DEPENDS
+      "${PROJECT_SOURCE_DIR}/tests/reflection/*.cpp"
+    )
+    if(SCRY_REFLECTION_TEST_SOURCES)
+      add_executable(
+        scry_reflection_tests
+        ${SCRY_REFLECTION_TEST_SOURCES}
+      )
+      target_link_libraries(
+        scry_reflection_tests
+        PRIVATE
+          Catch2::Catch2WithMain
+          scry::reflection
+          scry_project_options
+      )
+      catch_discover_tests(
+        scry_reflection_tests
+        TEST_PREFIX "reflection."
+        PROPERTIES LABELS reflection
+      )
+    endif()
+
+    function(
+      scry_add_reflection_compile_fail_test
+      TEST_NAME
+      SOURCE_NAME
+      EXPECTED_SUBSTRING
+    )
+      set(
+        SCRY_COMPILE_FAIL_TEST_NAME
+        "reflection.compile-fail.${TEST_NAME}"
+      )
+      add_test(
+        NAME "${SCRY_COMPILE_FAIL_TEST_NAME}"
+        COMMAND
+          "${CMAKE_COMMAND}"
+          "-DCXX_COMPILER=${CMAKE_CXX_COMPILER}"
+          "-DSOURCE_FILE=${PROJECT_SOURCE_DIR}/tests/reflection/compile_fail/${SOURCE_NAME}"
+          "-DPROJECT_INCLUDE_DIR=${PROJECT_SOURCE_DIR}/include"
+          "-DEXPECTED_SUBSTRING=${EXPECTED_SUBSTRING}"
+          "-DOUTPUT_DIRECTORY=${PROJECT_BINARY_DIR}/reflection-compile-fail"
+          -P "${PROJECT_SOURCE_DIR}/cmake/ExpectCompileFailure.cmake"
+      )
+      set_tests_properties(
+        "${SCRY_COMPILE_FAIL_TEST_NAME}"
+        PROPERTIES LABELS reflection
+      )
+    endfunction()
+
+    scry_add_reflection_compile_fail_test(
+      unsupported-arguments
+      unsupported_arguments.cpp
+      "ToolArguments"
+    )
+    scry_add_reflection_compile_fail_test(
+      void-handler
+      void_handler.cpp
+      "ToolHandlerFor"
+    )
+    scry_add_reflection_compile_fail_test(
+      raw-json-handler
+      raw_json_handler.cpp
+      "ToolHandlerFor"
+    )
+    scry_add_reflection_compile_fail_test(
+      unknown-description
+      unknown_description.cpp
+      "naming distinct reflected members"
+    )
+    scry_add_reflection_compile_fail_test(
+      duplicate-description
+      duplicate_description.cpp
+      "naming distinct reflected members"
+    )
+  endif()
 endif()
 
 if(SCRY_BUILD_CURL_SPIKE)
@@ -430,17 +558,23 @@ write_basic_package_version_file(
 install(
   TARGETS scry
   EXPORT scryTargets
+  FILE_SET scry_core_headers
+    DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
 )
 if(TARGET scry_reflection)
   install(
     TARGETS scry_reflection
-    EXPORT scryTargets
+    EXPORT scryReflectionTargets
+    FILE_SET scry_reflection_headers
+      DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
+  )
+  install(
+    EXPORT scryReflectionTargets
+    FILE scryReflectionTargets.cmake
+    NAMESPACE scry::
+    DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/scry"
   )
 endif()
-install(
-  DIRECTORY include/
-  DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
-)
 install(
   EXPORT scryTargets
   FILE scryTargets.cmake

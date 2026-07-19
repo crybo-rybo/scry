@@ -9,6 +9,7 @@
 #include <deque>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <scry/events.hpp>
 #include <scry/unique_function.hpp>
 #include <string>
@@ -46,6 +47,8 @@ public:
   [[nodiscard]] Status register_cancelled(CancelledCallback callback);
 
   [[nodiscard]] bool has_callback(const WorkerEvent& event) const noexcept;
+  [[nodiscard]] bool should_retain(const WorkerEvent& event) const noexcept;
+  [[nodiscard]] bool should_discard(const WorkerEvent& event) const noexcept;
   void invoke(const WorkerEvent& event);
 
   [[nodiscard]] const std::shared_ptr<ConversationState>& conversation() const noexcept;
@@ -54,6 +57,10 @@ public:
 
 private:
   void dispatch(const ToolCallEvent& event);
+  void dispatch_on_app(const ToolCallEvent& event);
+  void dispatch_on_worker(const ToolCallEvent& event);
+  void accept_worker_tool(const WorkerToolAcceptedEvent& event);
+  void notify_tool_observer(const ToolCallBlock& call);
 
   TurnId turn_id_{};
   std::shared_ptr<std::atomic<bool>> cancelled_{};
@@ -67,6 +74,7 @@ private:
   bool attached_{true};
   bool terminal_{false};
   bool tool_dispatch_failed_{false};
+  std::optional<ToolCallBlock> pending_worker_tool_{};
   TextDeltaCallback on_text_{};
   ToolCallCallback on_tool_{};
   CompletionCallback on_completion_{};

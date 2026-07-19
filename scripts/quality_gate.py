@@ -14,9 +14,9 @@ from pathlib import Path
 from typing import Any
 
 try:
-    from scripts.quality_metrics import build_report
+    from scripts.quality_metrics import build_report, is_core_production_path
 except ModuleNotFoundError:
-    from quality_metrics import build_report
+    from quality_metrics import build_report, is_core_production_path
 
 
 EXCLUSION_TOKENS = (
@@ -32,6 +32,32 @@ COMPONENT_BRANCH_FLOORS = {
     "retry classifier": ("src/core/retry.cpp",),
 }
 MINIMUM_COMPONENT_BRANCH_COVERAGE = 95.0
+
+
+def _untracked_changed_lines(repository: Path) -> dict[str, dict[int, str]]:
+    untracked = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repository),
+            "ls-files",
+            "--others",
+            "--exclude-standard",
+            "--",
+            "include",
+            "src",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+    result = {}
+    for path in untracked:
+        if not is_core_production_path(path):
+            continue
+        contents = (repository / path).read_text(encoding="utf-8").splitlines()
+        result[path] = dict(enumerate(contents, start=1))
+    return result
 
 
 def changed_lines(base_ref: str, repository: Path) -> dict[str, dict[int, str]]:
@@ -59,7 +85,10 @@ def changed_lines(base_ref: str, repository: Path) -> dict[str, dict[int, str]]:
     new_line = 0
     for line in diff:
         if line.startswith("+++ b/"):
-            current_path = line[6:]
+            candidate = line[6:]
+            current_path = (
+                candidate if is_core_production_path(candidate) else None
+            )
             continue
         if line.startswith("@@"):
             match = re.search(r"\+(\d+)(?:,\d+)?", line)
@@ -74,25 +103,8 @@ def changed_lines(base_ref: str, repository: Path) -> dict[str, dict[int, str]]:
         elif not line.startswith("-"):
             new_line += 1
 
-    untracked = subprocess.run(
-        [
-            "git",
-            "-C",
-            str(repository),
-            "ls-files",
-            "--others",
-            "--exclude-standard",
-            "--",
-            "include",
-            "src",
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.splitlines()
-    for path in untracked:
-        contents = (repository / path).read_text(encoding="utf-8").splitlines()
-        result[path].update(enumerate(contents, start=1))
+    for path, lines in _untracked_changed_lines(repository).items():
+        result[path].update(lines)
     return dict(result)
 
 
@@ -147,6 +159,8 @@ def calculate_diff_coverage(
     exclusions: list[str] = []
     uncovered: list[str] = []
     for path, lines in changes.items():
+        if not is_core_production_path(path):
+            continue
         file_coverage = _normalized_file_coverage(report["coverage_files"], path)
         for line_number, content in lines.items():
             if any(token in content for token in EXCLUSION_TOKENS):

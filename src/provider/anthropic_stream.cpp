@@ -18,6 +18,20 @@ namespace {
          name == "ping";
 }
 
+[[nodiscard]] Result<AnthropicProviderDecodeState*>
+anthropic_decode_state(ProviderDecodeState& state) {
+  if (std::holds_alternative<std::monostate>(state.dialect)) {
+    state.dialect.emplace<AnthropicProviderDecodeState>();
+  }
+  auto* decode = std::get_if<AnthropicProviderDecodeState>(&state.dialect);
+  if (decode == nullptr) {
+    return std::unexpected(make_provider_error(
+        ErrorCategory::protocol,
+        "Anthropic stream received decode state owned by another dialect"));
+  }
+  return decode;
+}
+
 [[nodiscard]] Result<std::string_view> event_type(const std::string_view event_name,
                                                   const WireValue& root) {
   auto type = required_wire_string(root, "type");
@@ -93,7 +107,8 @@ decode_initial_content(const WireValue& message, ProviderDecodeState& state) {
 }
 
 [[nodiscard]] Status apply_initial_finish(const WireValue& message,
-                                          ProviderDecodeState& state) {
+                                          ProviderDecodeState& state,
+                                          AnthropicProviderDecodeState& decode) {
   auto reason = optional_wire_string(message, "stop_reason");
   if (!reason) {
     return std::unexpected(std::move(reason.error()));
@@ -103,13 +118,14 @@ decode_initial_content(const WireValue& message, ProviderDecodeState& state) {
     return std::unexpected(std::move(finish.error()));
   }
   state.response.finish_reason = *finish;
-  state.finish_observed = reason->has_value();
+  decode.finish_observed = reason->has_value();
   return {};
 }
 
 [[nodiscard]] Result<std::vector<ProviderEvent>>
-handle_message_start(const WireValue& root, ProviderDecodeState& state) {
-  if (state.message_started) {
+handle_message_start(const WireValue& root, ProviderDecodeState& state,
+                     AnthropicProviderDecodeState& decode) {
+  if (decode.message_started) {
     return std::unexpected(
         make_provider_error(ErrorCategory::protocol,
                             "Anthropic stream emitted more than one message_start"));
@@ -132,17 +148,19 @@ handle_message_start(const WireValue& root, ProviderDecodeState& state) {
   if (!usage) {
     return std::unexpected(std::move(usage.error()));
   }
-  auto finish = apply_initial_finish(**message, state);
+  auto finish = apply_initial_finish(**message, state, decode);
   if (!finish) {
     return std::unexpected(std::move(finish.error()));
   }
-  state.message_started = true;
+  decode.message_started = true;
   return decode_initial_content(**message, state);
 }
 
 [[nodiscard]] Result<std::vector<ProviderEvent>>
-handle_content_start(const WireValue& root, ProviderDecodeState& state) {
-  if (!state.message_started || state.active_content_index || state.finish_observed) {
+handle_content_start(const WireValue& root, ProviderDecodeState& state,
+                     AnthropicProviderDecodeState& decode) {
+  if (!decode.message_started || decode.active_content_index ||
+      decode.finish_observed) {
     return std::unexpected(make_provider_error(
         ErrorCategory::protocol,
         "Anthropic content block began outside the message lifecycle"));
@@ -172,12 +190,13 @@ handle_content_start(const WireValue& root, ProviderDecodeState& state) {
     events.push_back(ProviderTextDelta{.text = text->text});
   }
   state.response.content.push_back(std::move(*block));
-  state.active_content_index = *index;
+  decode.active_content_index = *index;
   return events;
 }
 
-[[nodiscard]] Result<ContentBlock*> indexed_block(const WireValue& root,
-                                                  ProviderDecodeState& state) {
+[[nodiscard]] Result<ContentBlock*>
+indexed_block(const WireValue& root, ProviderDecodeState& state,
+              AnthropicProviderDecodeState& decode) {
   auto index = content_index(root);
   if (!index) {
     return std::unexpected(std::move(index.error()));
@@ -187,7 +206,7 @@ handle_content_start(const WireValue& root, ProviderDecodeState& state) {
         make_provider_error(ErrorCategory::protocol,
                             "Anthropic content event referenced an unknown block"));
   }
-  if (state.active_content_index != *index) {
+  if (decode.active_content_index != *index) {
     return std::unexpected(make_provider_error(
         ErrorCategory::protocol,
         "Anthropic content event targeted a block that is not active"));
@@ -240,8 +259,9 @@ handle_json_delta(const WireValue& delta, ContentBlock& block,
 }
 
 [[nodiscard]] Result<std::vector<ProviderEvent>>
-handle_content_delta(const WireValue& root, ProviderDecodeState& state) {
-  auto block = indexed_block(root, state);
+handle_content_delta(const WireValue& root, ProviderDecodeState& state,
+                     AnthropicProviderDecodeState& decode) {
+  auto block = indexed_block(root, state, decode);
   if (!block) {
     return std::unexpected(std::move(block.error()));
   }
@@ -265,14 +285,15 @@ handle_content_delta(const WireValue& root, ProviderDecodeState& state) {
 }
 
 [[nodiscard]] Result<std::vector<ProviderEvent>>
-handle_content_stop(const WireValue& root, ProviderDecodeState& state) {
-  auto block = indexed_block(root, state);
+handle_content_stop(const WireValue& root, ProviderDecodeState& state,
+                    AnthropicProviderDecodeState& decode) {
+  auto block = indexed_block(root, state, decode);
   if (!block) {
     return std::unexpected(std::move(block.error()));
   }
   auto* tool = std::get_if<ToolCallBlock>(*block);
   if (tool == nullptr) {
-    state.active_content_index.reset();
+    decode.active_content_index.reset();
     return std::vector<ProviderEvent>{};
   }
   if (tool->arguments.text.empty()) {
@@ -295,13 +316,15 @@ handle_content_stop(const WireValue& root, ProviderDecodeState& state) {
     return std::unexpected(std::move(canonical.error()));
   }
   tool->arguments.text = std::move(*canonical);
-  state.active_content_index.reset();
+  decode.active_content_index.reset();
   return std::vector<ProviderEvent>{};
 }
 
 [[nodiscard]] Result<std::vector<ProviderEvent>>
-handle_message_delta(const WireValue& root, ProviderDecodeState& state) {
-  if (!state.message_started || state.active_content_index || state.finish_observed) {
+handle_message_delta(const WireValue& root, ProviderDecodeState& state,
+                     AnthropicProviderDecodeState& decode) {
+  if (!decode.message_started || decode.active_content_index ||
+      decode.finish_observed) {
     return std::unexpected(
         make_provider_error(ErrorCategory::protocol,
                             "Anthropic message_delta violated the message lifecycle"));
@@ -319,7 +342,7 @@ handle_message_delta(const WireValue& root, ProviderDecodeState& state) {
     return std::unexpected(std::move(finish.error()));
   }
   state.response.finish_reason = *finish;
-  state.finish_observed = reason->has_value();
+  decode.finish_observed = reason->has_value();
   auto usage = apply_anthropic_usage(root, state.response.usage);
   if (!usage) {
     return std::unexpected(std::move(usage.error()));
@@ -328,9 +351,10 @@ handle_message_delta(const WireValue& root, ProviderDecodeState& state) {
 }
 
 [[nodiscard]] Result<std::vector<ProviderEvent>>
-handle_message_stop(ProviderDecodeState& state) {
-  if (!state.message_started || state.active_content_index || !state.finish_observed ||
-      state.completed) {
+handle_message_stop(ProviderDecodeState& state,
+                    const AnthropicProviderDecodeState& decode) {
+  if (!decode.message_started || decode.active_content_index ||
+      !decode.finish_observed || state.completed) {
     return std::unexpected(
         make_provider_error(ErrorCategory::protocol,
                             "Anthropic message_stop violated the message lifecycle"));
@@ -374,24 +398,24 @@ handle_message_stop(ProviderDecodeState& state) {
 
 [[nodiscard]] Result<std::vector<ProviderEvent>>
 dispatch_event(const std::string_view type, const WireValue& root,
-               ProviderDecodeState& state) {
+               ProviderDecodeState& state, AnthropicProviderDecodeState& decode) {
   if (type == "message_start") {
-    return handle_message_start(root, state);
+    return handle_message_start(root, state, decode);
   }
   if (type == "content_block_start") {
-    return handle_content_start(root, state);
+    return handle_content_start(root, state, decode);
   }
   if (type == "content_block_delta") {
-    return handle_content_delta(root, state);
+    return handle_content_delta(root, state, decode);
   }
   if (type == "content_block_stop") {
-    return handle_content_stop(root, state);
+    return handle_content_stop(root, state, decode);
   }
   if (type == "message_delta") {
-    return handle_message_delta(root, state);
+    return handle_message_delta(root, state, decode);
   }
   if (type == "message_stop") {
-    return handle_message_stop(state);
+    return handle_message_stop(state, decode);
   }
   if (type == "error") {
     return std::unexpected(stream_error(root));
@@ -415,6 +439,10 @@ AnthropicAdapter::parse_stream_event(const std::string_view event_name,
         make_provider_error(ErrorCategory::protocol,
                             "Anthropic stream emitted data after its terminal event"));
   }
+  auto decode = anthropic_decode_state(state);
+  if (!decode) {
+    return std::unexpected(std::move(decode.error()));
+  }
   if (event_name != "message" && !known_event(event_name)) {
     return std::vector<ProviderEvent>{ProviderIgnoredEvent{
         .name = std::string{event_name},
@@ -435,7 +463,7 @@ AnthropicAdapter::parse_stream_event(const std::string_view event_name,
         .name = std::string{*type},
     }};
   }
-  return dispatch_event(*type, *root, state);
+  return dispatch_event(*type, *root, state, **decode);
 }
 
 } // namespace scry::detail

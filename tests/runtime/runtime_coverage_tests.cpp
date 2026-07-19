@@ -194,10 +194,16 @@ TEST_CASE("event metadata accounts for every event alternative") {
   }};
   const scry::detail::WorkerEvent cancelled{
       scry::detail::CancelledEvent{.turn_id = turn_id}};
+  const scry::detail::WorkerEvent worker_accepted{scry::detail::WorkerToolAcceptedEvent{
+      .turn_id = turn_id,
+      .tool_call_id = "call-id",
+      .result_payload_bytes = 42,
+  }};
   CHECK(scry::detail::event_turn_id(text) == turn_id);
   CHECK(scry::detail::event_payload_bytes(text) == 4);
   CHECK(scry::detail::event_payload_bytes(error) == 20);
   CHECK(scry::detail::event_payload_bytes(cancelled) == 0);
+  CHECK(scry::detail::event_payload_bytes(worker_accepted) == 7);
 }
 
 TEST_CASE("turn route rejects empty and duplicate callback registrations") {

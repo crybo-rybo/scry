@@ -119,6 +119,24 @@ Status WorkerActor::publish_tool_batch(PublishToolCall first,
   return {};
 }
 
+void WorkerActor::publish_worker_tool_accepted(const TurnId turn_id,
+                                               std::string tool_call_id,
+                                               const std::size_t result_payload_bytes) {
+  const auto payload_limit =
+      config_.limits.max_queued_event_bytes_per_turn - terminal_event_reserve;
+  const auto published = events_->push(
+      WorkerToolAcceptedEvent{
+          .turn_id = turn_id,
+          .tool_call_id = std::move(tool_call_id),
+          .result_payload_bytes = result_payload_bytes,
+      },
+      payload_limit);
+  // Pump delivery releases the larger ToolCallEvent before posting execution.
+  // With one worker producer, this smaller acknowledgement must therefore fit.
+  static_cast<void>(published);
+  assert(published);
+}
+
 Status WorkerActor::publish_command(const MachineCommand& command) {
   const auto payload_limit =
       config_.limits.max_queued_event_bytes_per_turn - terminal_event_reserve;

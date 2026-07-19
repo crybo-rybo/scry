@@ -37,18 +37,10 @@ namespace {
   };
 }
 
-[[nodiscard]] ToolRegistrationPtr find_tool(const ToolSnapshot& snapshot,
-                                            const std::string_view name) {
-  const auto found = std::ranges::find_if(snapshot, [name](const auto& registration) {
-    return registration->definition.name == name;
-  });
-  return found == snapshot.end() ? nullptr : *found;
-}
-
-[[nodiscard]] Result<Json> invoke_handler(const RegisteredTool& registration,
+[[nodiscard]] Result<Json> invoke_handler(ToolHandler& handler,
                                           const ToolCallBlock& call) noexcept {
   try {
-    return (*registration.handler)(call.arguments);
+    return handler(call.arguments);
   } catch (...) {
     return std::unexpected(
         dispatch_error(ErrorCategory::tool, "tool handler threw an exception"));
@@ -81,22 +73,38 @@ successful_result(const ToolCallBlock& call, const Json& value,
 
 } // namespace
 
-Result<ToolResultBlock> dispatch_tool(const ToolSnapshot& snapshot,
-                                      const ToolCallBlock& call,
-                                      const std::size_t max_result_bytes) {
-  const auto registration = find_tool(snapshot, call.name);
-  if (!registration) {
-    return error_result(call, "model requested an unknown tool", max_result_bytes);
-  }
-  if (!registration->handler || !*registration->handler) {
+ToolRegistrationPtr find_tool_registration(const ToolSnapshot& snapshot,
+                                           const std::string_view name) {
+  const auto found = std::ranges::find_if(snapshot, [name](const auto& registration) {
+    return registration->definition.name == name;
+  });
+  return found == snapshot.end() ? nullptr : *found;
+}
+
+Result<ToolResultBlock> dispatch_tool_handler(ToolHandler& handler,
+                                              const ToolCallBlock& call,
+                                              const std::size_t max_result_bytes) {
+  if (!handler) {
     return error_result(call, "tool handler is unavailable", max_result_bytes);
   }
-
-  auto invoked = invoke_handler(*registration, call);
+  auto invoked = invoke_handler(handler, call);
   if (!invoked) {
     return error_result(call, "tool handler returned an error", max_result_bytes);
   }
   return successful_result(call, *invoked, max_result_bytes);
+}
+
+Result<ToolResultBlock> dispatch_tool(const ToolSnapshot& snapshot,
+                                      const ToolCallBlock& call,
+                                      const std::size_t max_result_bytes) {
+  const auto registration = find_tool_registration(snapshot, call.name);
+  if (!registration) {
+    return error_result(call, "model requested an unknown tool", max_result_bytes);
+  }
+  if (!registration->handler) {
+    return error_result(call, "tool handler is unavailable", max_result_bytes);
+  }
+  return dispatch_tool_handler(*registration->handler, call, max_result_bytes);
 }
 
 } // namespace scry::detail
