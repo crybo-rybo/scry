@@ -27,7 +27,7 @@ provider order, app-thread observer delivery, accepted-turn snapshots,
 transactional resend and commit, cancellation semantics, and exclusive handler
 ownership.
 
-M4's deterministic closure passes 276/276 development tests and 47/47 provider
+M4's deterministic closure passes 277/277 development tests and 48/48 provider
 tests. It includes exact OpenAI request/stream cases, a checked corpus
 and short `scry_openai_fuzz` target, a fragmented transactional OpenAI tool
 round, concurrent Anthropic/OpenAI isolation, a public Curl path/header/SSE

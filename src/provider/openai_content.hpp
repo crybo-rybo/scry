@@ -13,8 +13,6 @@ namespace scry::detail {
 [[nodiscard]] Result<std::string>
 canonical_openai_arguments(std::string_view arguments);
 
-[[nodiscard]] Result<ToolCallBlock> decode_openai_tool_call(const WireValue& value);
-
 [[nodiscard]] Result<FinishReason>
 decode_openai_finish(std::optional<std::string_view> reason);
 

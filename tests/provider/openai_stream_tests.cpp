@@ -1,9 +1,11 @@
 #include "core/model.hpp"
 #include "provider/openai.hpp"
 
+#include <array>
 #include <catch2/catch_test_macros.hpp>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -360,4 +362,47 @@ TEST_CASE("OpenAI stream maps errors and isolates dialect state") {
   foreign.dialect.emplace<AnthropicProviderDecodeState>();
   require_protocol(
       event(adapter, foreign, chunk(R"({"index":0,"delta":{},"finish_reason":null})")));
+}
+
+TEST_CASE("OpenAI stream error descriptors map recognized, fallback, and unsafe "
+          "tokens") {
+  OpenAiAdapter adapter;
+  constexpr std::array recognized{
+      std::pair{"authentication_error", ErrorCategory::authentication},
+      std::pair{"permission_error", ErrorCategory::authentication},
+      std::pair{"invalid_api_key", ErrorCategory::authentication},
+      std::pair{"rate_limit_error", ErrorCategory::rate_limit},
+      std::pair{"insufficient_quota", ErrorCategory::rate_limit},
+      std::pair{"server_error", ErrorCategory::network},
+      std::pair{"api_error", ErrorCategory::network},
+  };
+  for (const auto& [token, category] : recognized) {
+    INFO(token);
+    ProviderDecodeState state{};
+    const auto result =
+        event(adapter, state, std::string{R"({"error":{"type":")"} + token + R"("}})",
+              "error");
+    REQUIRE_FALSE(result);
+    CHECK(result.error().category == category);
+    CHECK(result.error().provider_detail == std::string{"openai:"} + token);
+    CHECK(result.error().retryable == (category != ErrorCategory::authentication));
+  }
+
+  constexpr std::array fallback{
+      std::pair{R"({"error":{"type":"future_error"}})", "openai:future_error"},
+      std::pair{R"({"error":{"code":"future_code"}})", "openai:future_code"},
+      std::pair{R"({"error":{"code":404}})", "openai:404"},
+      std::pair{R"({"error":{"type":"unsafe-token"}})", "openai:unknown_error"},
+      std::pair{R"({"error":{}})", "openai:unknown_error"},
+      std::pair{R"({"error":[]})", "openai:unknown_error"},
+  };
+  for (const auto& [body, detail] : fallback) {
+    INFO(body);
+    ProviderDecodeState state{};
+    const auto result = event(adapter, state, body, "error");
+    REQUIRE_FALSE(result);
+    CHECK(result.error().category == ErrorCategory::protocol);
+    CHECK_FALSE(result.error().retryable);
+    CHECK(result.error().provider_detail == detail);
+  }
 }
