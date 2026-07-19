@@ -27,12 +27,14 @@ provider order, app-thread observer delivery, accepted-turn snapshots,
 transactional resend and commit, cancellation semantics, and exclusive handler
 ownership.
 
-M4's deterministic closure passes 288/288 development tests and 60/60 provider
-tests. It includes exact OpenAI request/response/stream cases, a checked corpus
+M4's deterministic closure passes 276/276 development tests and 47/47 provider
+tests. It includes exact OpenAI request/stream cases, a checked corpus
 and short `scry_openai_fuzz` target, a fragmented transactional OpenAI tool
 round, concurrent Anthropic/OpenAI isolation, a public Curl path/header/SSE
 round, and worker-mode mixed/all-worker ordering, thread-ID, snapshot,
 cancellation, detached-turn, budget, and cooperating-shutdown coverage. The
+provider seam is streaming-only: the dead non-streaming decode path was
+removed (ARCHITECTURE.md §11 records the reintroduction condition). The
 absolute quality gates ([ADR 0011](docs/adr/0011-absolute-quality-gates.md))
 pass from a single instrumented build: 93.322% diff branch coverage against
 the 90% floor, the 95% component floors, the 88% aggregate branch-coverage

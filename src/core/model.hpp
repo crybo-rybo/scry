@@ -52,7 +52,6 @@ struct ModelRequest {
   std::vector<Message> messages{};
   std::vector<ToolSchema> tools{};
   SamplingConfig sampling{};
-  bool streaming{true};
 };
 
 using ::scry::FinishReason;

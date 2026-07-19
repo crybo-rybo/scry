@@ -87,8 +87,8 @@ ID scheme: `SCRY-<AREA>-NNN`, abbreviated to `<AREA>-NNN` in the tables below. I
 | ID | Level | Requirement | Milestone | Verification |
 |---|---|---|---|---|
 | PROV-001 | MUST | An internal neutral message model (roles + content blocks incl. tool call/result) isolates all wire-format knowledge inside adapters. | M1 | **Live:** neutral model/request/response component suites; wire JSON remains confined to `src/provider/` |
-| PROV-002 | MUST | Anthropic Messages adapter. | M1 | **Live:** sanitized request golden fixture, non-streaming response fixture, streaming lifecycle suite, and public Curl walking skeleton |
-| PROV-003 | MUST | An OpenAI-compatible Chat Completions adapter implements the common subset in ADR 0008 for OpenAI, vLLM, Ollama, llama.cpp server, and LM Studio. This is a tested compatibility subset, not complete parity with every server extension or model/chat template. | M4 | **Live:** 60/60 `scry_provider_tests`; `OpenAI-compatible config drives a fragmented transactional tool round`; `public Harness completes an OpenAI-compatible SSE turn through Curl`; `scry_openai_fuzz` with checked corpus; scheduled/manual pinned-Ollama local-model pipeline (no completed hosted run claimed yet) |
+| PROV-002 | MUST | Anthropic Messages adapter. | M1 | **Live:** sanitized request golden fixture, streaming lifecycle suite, and public Curl walking skeleton |
+| PROV-003 | MUST | An OpenAI-compatible Chat Completions adapter implements the common subset in ADR 0008 for OpenAI, vLLM, Ollama, llama.cpp server, and LM Studio. This is a tested compatibility subset, not complete parity with every server extension or model/chat template. | M4 | **Live:** 47/47 `scry_provider_tests`; `OpenAI-compatible config drives a fragmented transactional tool round`; `public Harness completes an OpenAI-compatible SSE turn through Curl`; `scry_openai_fuzz` with checked corpus; scheduled/manual pinned-Ollama local-model pipeline (no completed hosted run claimed yet) |
 | PROV-004 | MUST | Streaming (SSE) is supported on all adapters; the SSE parser is a pure incremental function tolerant of arbitrary chunk splits. | M1 | **Live:** every-split and fixed-seed random partition suites; direct no-I/O SSE target; `scry_sse_fuzz` and `scry_anthropic_fuzz` |
 | PROV-005 | MUST | Adapter selection is config-driven (dialect enum + factory); no public plugin API until a concrete third-party need exists (evolution register). | M4 | **Live:** `OpenAI-compatible config drives a fragmented transactional tool round`; `concurrent Harnesses keep Anthropic and OpenAI dialect state isolated`; factory/source boundary review |
 | PROV-006 | SHOULD | Adapters are stateless translators; stream-parse state lives in per-turn parser objects. | M1 | **Live:** adapter state-shape review; independent concurrent Harness/provider integration |
@@ -247,3 +247,10 @@ Amendment log:
   reflection-enabled install; local preflight repeats consolidated on TSan;
   DESIGN/ARCHITECTURE prose and ADR 0007's gate mechanics were aligned with
   ADR 0011.
+- **2026-07, streaming-only provider seam:** the production-dead non-streaming
+  response path was removed — `ProviderAdapter::parse_response`, both response
+  decoders, and the request-level streaming toggle. The runtime has always
+  hard-coded streaming; adapters now encode `stream: true` unconditionally and
+  all responses decode through the gated stream path. PROV-002/003
+  verification cells updated; the evolution register records the
+  reintroduction condition.

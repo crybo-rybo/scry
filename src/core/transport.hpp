@@ -22,7 +22,6 @@ struct TransportRequest {
   std::string url{};
   std::vector<HttpHeader> headers{};
   std::string body{};
-  bool streaming{false};
   bool tls_verify_peer{true};
   TransportTimeouts timeouts{};
   ResourceLimits limits{};

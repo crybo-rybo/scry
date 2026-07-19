@@ -3,11 +3,9 @@ target_sources(
   PRIVATE
     anthropic_content.cpp
     anthropic_request.cpp
-    anthropic_response.cpp
     anthropic_stream.cpp
     openai_content.cpp
     openai_request.cpp
-    openai_response.cpp
     openai_stream.cpp
     provider.cpp
     wire_json.cpp
