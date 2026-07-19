@@ -1,11 +1,12 @@
 # Per-commit CI ring (ENGINEERING.md §6, ring 1).
 #
 # Live gates: format (pinned clang-format-18), core build matrix with
-# warnings-as-errors (QA-006/PORT-001/PORT-005), lizard complexity + contract
-# tests + install/package-consumer via ci-local.sh, diff branch coverage + CRAP
-# + quality ratchets (QA-001/003/007), ASan/UBSan/TSan (QA-005), clang-tidy
-# (QA-004 cognitive), gating GCC 16 reflection leg (PORT-002), libcurl
-# runtime integration (PORT-006), short protocol fuzzing (NET-004), and the
+# warnings-as-errors (QA-006/PORT-001/PORT-005) plus the libcurl runtime
+# integration spike on the GCC leg (PORT-006), lizard complexity + contract
+# tests + install/package-consumer via ci-local.sh, absolute diff branch
+# coverage + component floors + CRAP gates (QA-001/003/007, ADR 0011),
+# ASan/UBSan/TSan (QA-005), clang-tidy (QA-004 cognitive), gating GCC 16
+# reflection leg (PORT-002), short protocol fuzzing (NET-004), and the
 # opt-in M5 showcase contract (SHOW-001–004).
 #
 # Toolchains are pinned deliberately (ENGINEERING.md §7): compiler drift on
@@ -50,18 +51,23 @@ jobs:
             cxx: g++-14
             libcxx: false
             packages: g++-14 libcurl4-openssl-dev
+            # The GCC leg also owns the libcurl runtime integration spike
+            # (PORT-006); it needs no dedicated runner.
+            extra_flags: -DSCRY_BUILD_CURL_SPIKE=ON
           - name: Linux Clang 18
             os: ubuntu-24.04
             cc: clang-18
             cxx: clang++-18
             libcxx: true
             packages: clang-18 libc++-dev libc++abi-dev libcurl4-openssl-dev
+            extra_flags: ""
           - name: macOS AppleClang
             os: macos-15
             cc: clang
             cxx: clang++
             libcxx: false
             packages: ""
+            extra_flags: ""
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     env:
@@ -83,15 +89,20 @@ jobs:
       - name: Install complexity checker
         run: python3 -m pip install --user --break-system-packages lizard==1.22.1
       - name: Run local-equivalent CI
-        run: ./scripts/ci-local.sh -DSCRY_USE_LIBCXX=${{ matrix.libcxx }}
+        run: >
+          ./scripts/ci-local.sh
+          -DSCRY_USE_LIBCXX=${{ matrix.libcxx }}
+          ${{ matrix.extra_flags }}
 
   quality:
-    name: Coverage + CRAP ratchet
+    name: Coverage + CRAP gate
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
       CC: clang-18
       CXX: clang++-18
+      # The merge-base is only used to identify changed lines for diff
+      # coverage; the gates themselves are absolute (ADR 0011).
       SCRY_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before || 'origin/main' }}
     steps:
       - uses: actions/checkout@v7.0.0
@@ -104,7 +115,7 @@ jobs:
           clang-18 llvm-18 libc++-dev libc++abi-dev libcurl4-openssl-dev ninja-build
       - name: Install pinned complexity checker
         run: python3 -m pip install --user --break-system-packages lizard==1.22.1
-      - name: Compare branch quality to main
+      - name: Enforce absolute coverage and CRAP gates
         run: ./scripts/quality-gate.sh
 
   static-analysis:
@@ -143,12 +154,16 @@ jobs:
             cxx: g++-14
             packages: g++-14 libcurl4-openssl-dev ninja-build
             use_libcxx: false
+            ctest_flags: ""
           - name: TSan
             preset: tsan
             cc: clang-18
             cxx: clang++-18
             packages: clang-18 libc++-dev libc++abi-dev libcurl4-openssl-dev ninja-build
             use_libcxx: true
+            # TSan is where nondeterminism shows up; the repeat runs live here
+            # (QA-008) instead of on every leg.
+            ctest_flags: --repeat until-fail:3
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
@@ -170,7 +185,8 @@ jobs:
           cmake --preset ${{ matrix.preset }} \
             -DSCRY_USE_LIBCXX=${{ matrix.use_libcxx }}
           cmake --build build/${{ matrix.preset }}
-          ctest --test-dir build/${{ matrix.preset }} --output-on-failure
+          ctest --test-dir build/${{ matrix.preset }} --output-on-failure \
+            ${{ matrix.ctest_flags }}
 
   reflection:
     name: GCC 16 supported reflection component
@@ -189,18 +205,6 @@ jobs:
         run: python3 -m pip install --user --break-system-packages gcovr==8.6
       - name: Build, test, install, consume, and cover reflection component
         run: ./scripts/ci-reflection.sh
-
-  curl:
-    name: libcurl runtime integration
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v7.0.0
-      - run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev ninja-build
-      - run: |
-          cmake --preset curl
-          cmake --build build/curl
-          ctest --test-dir build/curl --output-on-failure
 
   fuzz:
     name: Short protocol fuzzing

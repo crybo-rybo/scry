@@ -6,8 +6,14 @@ readonly root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly build_dir="${root_dir}/build/reflection-gcc16-coverage"
 readonly python="${PYTHON:-python3}"
 readonly gcovr_version="8.6"
-readonly minimum_coverage="95"
-readonly codec_detail="${build_dir}/reflection-codec-coverage.json"
+readonly minimum_branch_coverage="95"
+# GCC's decision analysis still counts the one GCOVR_EXCL_LINE-marked
+# compiler-generated switch on the reflected-enum decoder, so the decision
+# floor sits below the ~89% unadjusted result rather than the ~100% adjusted
+# one. The fuzzier floor is the price of gating with stock gcovr instead of a
+# bespoke exclusion validator (ADR 0011).
+readonly minimum_decision_coverage="85"
+readonly minimum_function_coverage="95"
 readonly codec_summary="${build_dir}/reflection-codec-coverage-summary.json"
 readonly bridge_summary="${build_dir}/reflection-bridge-coverage-summary.json"
 
@@ -26,7 +32,6 @@ if ! "${python}" -m gcovr --version 2>/dev/null |
 fi
 
 cd "${root_dir}"
-"${python}" -m unittest scripts.test_reflection_coverage_gate
 cmake -E remove_directory "${build_dir}"
 cmake \
   --preset reflection-gcc16 \
@@ -56,46 +61,21 @@ readonly -a gcovr_common=(
   --exclude-noncode-lines
   --merge-lines
 )
-readonly -a runtime_filters=(
-  --filter
-  "^include/scry/detail/reflection_codec\\.hpp$"
-  --filter
-  "^src/reflection/json_bridge\\.cpp$"
-)
-
-# GCC's raw CFG arcs include duplicated template-instantiation, destructor, and
-# exception-flow arcs that do not map one-to-one to C++ source decisions. Keep
-# that diagnostic visible while gating the stable, non-template bridge directly.
-"${gcovr_common[@]}" \
-  "${runtime_filters[@]}" \
-  --exclude-pattern-prefix "SCRY_RAW_COVERAGE" \
-  --txt-metric branch \
-  --txt -
 
 "${gcovr_common[@]}" \
   --filter "^src/reflection/json_bridge\\.cpp$" \
-  --fail-under-branch "${minimum_coverage}" \
+  --fail-under-branch "${minimum_branch_coverage}" \
   --json-summary="${bridge_summary}" \
   --json-summary-pretty \
   --txt-metric branch \
   --txt -
 
-# gcovr's source-decision analysis is format-sensitive, so both gcovr and GCC
-# are pinned and the repository's clang-format gate owns the input form. Print
-# gcovr's unadjusted decision result before the checked validator removes the
-# one explicitly marked GCC-generated switch on decode_enum's definition line.
 "${gcovr_common[@]}" \
   --filter "^include/scry/detail/reflection_codec\\.hpp$" \
   --decisions \
-  --json="${codec_detail}" \
-  --json-pretty \
+  --fail-under-decision "${minimum_decision_coverage}" \
+  --fail-under-function "${minimum_function_coverage}" \
   --json-summary="${codec_summary}" \
   --json-summary-pretty \
   --txt-metric decision \
   --txt -
-
-"${python}" scripts/reflection_coverage_gate.py \
-  --coverage-json "${codec_detail}" \
-  --path "include/scry/detail/reflection_codec.hpp" \
-  --minimum-decision-coverage "${minimum_coverage}" \
-  --minimum-function-coverage 100

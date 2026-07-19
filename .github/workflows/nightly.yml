@@ -87,6 +87,9 @@ jobs:
 
   mutation:
     name: Mull machine, SSE, and retry
+    # Mutation reports are non-gating and nobody is required to read a nightly
+    # one; run this per-milestone on demand instead of every night (ADR 0011).
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
@@ -132,8 +135,6 @@ jobs:
       SCRY_LOCAL_MODEL_BASE_URL: http://127.0.0.1:11434/v1
       SCRY_LOCAL_MODEL_HEALTH_URL: http://127.0.0.1:11434/api/version
       SCRY_LOCAL_MODEL_MODEL: qwen3:1.7b-q4_K_M
-      SCRY_LOCAL_MODEL_MANIFEST_DIGEST: >-
-        sha256:8f68893c685c3ddff2aa3fffce2aa60a30bb2da65ca488b61fff134a4d1730e7
       SCRY_LOCAL_MODEL_HEALTH_TIMEOUT_SECONDS: "60"
       SCRY_LOCAL_MODEL_TIMEOUT_SECONDS: "180"
     steps:
@@ -191,33 +192,11 @@ jobs:
             exit 1
           fi
 
+          # The pulled model tag is not digest-pinned: an upstream repush
+          # should not break the nightly, and the deterministic fake-transport
+          # suites — not this smoke — gate protocol correctness (ADR 0011).
           timeout 900 ollama pull "${SCRY_LOCAL_MODEL_MODEL}" \
             2>&1 | tee build/nightly-local-model-artifacts/ollama-pull.log
-          actual_digest="sha256:$(
-            curl --silent --show-error --fail --max-time 10 \
-              http://127.0.0.1:11434/api/tags \
-              | python3 -c '
-          import json
-          import os
-          import sys
-
-          name = os.environ["SCRY_LOCAL_MODEL_MODEL"]
-          models = json.load(sys.stdin).get("models", [])
-          print(next(
-              item["digest"]
-              for item in models
-              if item.get("name") == name or item.get("model") == name
-          ))
-          '
-          )"
-          printf '%s\n' \
-            "expected=${SCRY_LOCAL_MODEL_MANIFEST_DIGEST}" \
-            "actual=${actual_digest}" \
-            | tee build/nightly-local-model-artifacts/model-manifest-digest.log
-          if [[ "${actual_digest}" != "${SCRY_LOCAL_MODEL_MANIFEST_DIGEST}" ]]; then
-            echo "Pulled model manifest digest does not match the pinned digest." >&2
-            exit 1
-          fi
           ./scripts/ci-local-model.sh
       - name: Upload local-model logs
         if: always()

@@ -33,21 +33,20 @@ and short `scry_openai_fuzz` target, a fragmented transactional OpenAI tool
 round, concurrent Anthropic/OpenAI isolation, a public Curl path/header/SSE
 round, and worker-mode mixed/all-worker ordering, thread-ID, snapshot,
 cancellation, detached-turn, budget, and cooperating-shutdown coverage. The
-correct-base quality ratchet passes with 89.622% head branch coverage versus
-89.043% at the base, 93.322% diff branch coverage, maximum CRAP 13.125, and no
-complexity, long-function, or long-file debt.
+absolute quality gates ([ADR 0011](docs/adr/0011-absolute-quality-gates.md))
+pass from a single instrumented build: 93.322% diff branch coverage against
+the 90% floor, the 95% component floors, and a maximum CRAP of 13.125 against
+the limit of 30.
 
 The scheduled/manual M4 nightly pipeline is also implemented: CodeQL, long
-SSE/Anthropic/OpenAI fuzzing, Mull mutation reports, and a bounded
-OpenAI-compatible smoke using checksum-pinned Ollama v0.32.1 and a
-manifest-pinned `qwen3:1.7b-q4_K_M`. This records a live pipeline, not a claim
-that a hosted nightly execution has already completed. Separately,
-`scripts/ci-local-model.sh` passed locally through the public OpenAI-compatible
-chat and required-tool paths using Ollama 0.22.1 and the exact
-`qwen3:1.7b-q4_K_M` manifest
-`sha256:8f68893c685c3ddff2aa3fffce2aa60a30bb2da65ca488b61fff134a4d1730e7`;
-the checksum-pinned Ollama v0.32.1 hosted nightly remains unexecuted and
-unclaimed.
+SSE/Anthropic/OpenAI fuzzing, an on-demand Mull mutation job, and a bounded
+OpenAI-compatible smoke using checksum-pinned Ollama v0.32.1 pulling
+`qwen3:1.7b-q4_K_M`. This records a live pipeline, not a claim that a hosted
+nightly execution has already completed. Separately,
+`scripts/ci-local-model.sh` passed locally through the public
+OpenAI-compatible chat and required-tool paths using Ollama 0.22.1 and
+`qwen3:1.7b-q4_K_M`; the checksum-pinned Ollama v0.32.1 hosted nightly
+remains unexecuted and unclaimed.
 
 The M3 reflection component remains complete. Typed P2996 schema generation,
 strict marshalling, and the optional reflection package component are
@@ -58,13 +57,12 @@ bridge, registration, and compile-fail tests, audits a clean component install,
 runs a downstream
 `find_package(scry CONFIG REQUIRED COMPONENTS reflection)` consumer, and
 repeats the reflection suite under ASan+UBSan. Its pinned coverage leg gates
-the codec's adjusted source decisions at 95% and functions at 100%, plus the
-compiled bridge's GCC/gcovr CFG branches at 95%. The current gated results are
-32/32 decisions, 62/62 functions, and 97/97 bridge branches. One
-inline-justified GCC-generated switch artifact is excluded by a validator that
-requires exactly that exclusion; unadjusted codec decisions and combined CFG
-arcs remain visible diagnostics. The reflection-OFF install and consumer
-remain clean C++23 surfaces with no reflection artifacts.
+the codec's source decisions at 85% and functions at 95% with stock gcovr
+thresholds, plus the compiled bridge's GCC/gcovr CFG branches at 95%
+([ADR 0011](docs/adr/0011-absolute-quality-gates.md)); the decision floor
+allows for the one inline-justified GCC-generated switch artifact that
+gcovr's decision analysis still counts. The reflection-OFF install and
+consumer remain clean C++23 surfaces with no reflection artifacts.
 
 ## Build and preflight
 
@@ -86,8 +84,9 @@ Before handing off a pull request, run the complete local preflight:
 ./scripts/preflight.sh
 ```
 
-That one command adds the live branch-coverage/CRAP ratchet, clang-tidy,
-sanitizers, short protocol fuzzing, and host-specific curl/reflection legs. It
+That one command adds the absolute coverage/CRAP quality gate, clang-tidy,
+sanitizers, short protocol fuzzing, the curl runtime spike on the core leg,
+and the host-specific reflection leg. It
 runs all available legs and reports host-specific toolchains that are
 unavailable locally; hosted CI is authoritative for those environments.
 The M4 OpenAI/worker gates and M3 reflection gate are live through that same
@@ -116,18 +115,19 @@ retained low-level feasibility probe.
 |---|---|
 | [DESIGN.md](DESIGN.md) | High-level design: vision, goals/non-goals, the five core public concepts, interaction and threading model (with diagrams), implemented explicit-schema and reflected-tool ergonomics, provider abstraction, open questions, and roadmap (M0–M5). **Start here.** |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | How the code is shaped: the C++ patterns and idioms each piece commits to — actor-model concurrency, sans-I/O state machine, type erasure, optional consteval codegen and JSON bridge, PImpl, error-as-value — plus the evolution register documenting every deliberate simplification and its intended end state. |
-| [ENGINEERING.md](ENGINEERING.md) | How we work: testing plan and pyramid, coverage and CRAP/complexity gating, static and dynamic analysis (sanitizers, fuzzing, mutation testing), CI shape, workflow, and the ratchet philosophy — metrics never regress. |
+| [ENGINEERING.md](ENGINEERING.md) | How we work: testing plan and pyramid, coverage and CRAP/complexity gating, static and dynamic analysis (sanitizers, fuzzing, mutation testing), CI shape, workflow, and the absolute-gates philosophy — fixed floors, visible drift. |
 | [REQUIREMENTS.md](REQUIREMENTS.md) | **The normative register.** Every binding requirement as a numbered RFC-2119 row with milestone and verification method. When prose elsewhere conflicts with the register, the register wins. |
 | [ADR 0001](docs/adr/0001-public-object-graph-and-lifetimes.md) | Accepted public ownership, registry snapshot, Turn detach, and callback-lifetime decisions. |
 | [ADR 0002](docs/adr/0002-build-and-dependency-foundation.md) | Build, package, dependency-acquisition, and initial test-harness decisions. |
 | [ADR 0003](docs/adr/0003-test-framework-deferred.md) | Historical M0 decision deferring the test framework until M1. |
-| [ADR 0004](docs/adr/0004-live-quality-ratchet.md) | Live merge-base quality comparison for diff branch coverage, CRAP, and ratcheted debt metrics. |
+| [ADR 0004](docs/adr/0004-live-quality-ratchet.md) | Historical merge-base quality ratchet; superseded by ADR 0011. |
 | [ADR 0005](docs/adr/0005-m1-runtime-and-test-foundation.md) | Compiled M1 runtime, pinned dependencies, internal contracts, and chat-only milestone boundary. |
 | [ADR 0006](docs/adr/0006-m2-agentic-tool-loop.md) | M2 registry snapshots, agentic tool rounds, app-thread dispatch, retry accounting, transactional commit, and Conversation persistence. |
 | [ADR 0007](docs/adr/0007-m3-reflection-contract.md) | Accepted M3 schema/type mapping, strict marshalling, description precedence, optional package component, and no-Glaze public boundary. |
 | [ADR 0008](docs/adr/0008-m4-openai-compatible-contract.md) | Accepted M4 endpoint, authentication, common request/response, streaming, error, and per-dialect state contract for OpenAI-compatible Chat Completions. |
 | [ADR 0009](docs/adr/0009-m4-worker-tool-execution.md) | Accepted M4 per-tool execution policy, handler ownership, ordered control flow, cancellation, observer, and teardown contract. |
 | [ADR 0010](docs/adr/0010-m5-showcase-contract.md) | Accepted M5 showcase-only boundary, host-owned ImGui lifecycle, deterministic NPC tools, pinned build-only dependency, and acceptance gates. |
+| [ADR 0011](docs/adr/0011-absolute-quality-gates.md) | Absolute quality gates from a single build replace the merge-base ratchet, bespoke reflection coverage validator, nightly mutation schedule, and model manifest pin. |
 
 ## Reading order
 

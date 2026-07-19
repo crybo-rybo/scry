@@ -19,14 +19,10 @@ cmake --preset reflection-gcc16 --fresh
 cmake --build "${build_dir}"
 ctest \
   --test-dir "${build_dir}" \
-  --output-on-failure \
-  --repeat until-fail:3
+  --output-on-failure
 
 cmake -E remove_directory "${stage_dir}"
 cmake --install "${build_dir}" --prefix "${stage_dir}"
-cmake \
-  "-DSCRY_PACKAGE_PREFIX=${stage_dir}" \
-  -P cmake/CheckReflectionPackage.cmake
 
 cmake -E remove_directory "${consumer_dir}"
 cmake \

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-"""Generate and compare Scry's coverage and complexity quality metrics."""
+"""Enforce Scry's absolute coverage and CRAP quality gates."""
 
 from __future__ import annotations
 
@@ -32,6 +32,7 @@ COMPONENT_BRANCH_FLOORS = {
     "retry classifier": ("src/core/retry.cpp",),
 }
 MINIMUM_COMPONENT_BRANCH_COVERAGE = 95.0
+MAXIMUM_CRAP = 30.0
 
 
 def _untracked_changed_lines(repository: Path) -> dict[str, dict[int, str]]:
@@ -185,44 +186,6 @@ def calculate_diff_coverage(
     }
 
 
-def compare_reports(base: dict[str, Any], head: dict[str, Any]) -> list[str]:
-    """Return quality-ratchet regressions."""
-
-    failures = []
-    base_metrics = base["metrics"]
-    head_metrics = head["metrics"]
-
-    if (
-        head_metrics["branch_coverage"]["percent"] + 1e-6
-        < base_metrics["branch_coverage"]["percent"]
-    ):
-        failures.append(
-            "total branch coverage regressed "
-            f"({base_metrics['branch_coverage']['percent']:.3f}% -> "
-            f"{head_metrics['branch_coverage']['percent']:.3f}%)"
-        )
-
-    lower_is_better = (
-        ("CRAP violations", ("crap", "violations")),
-        ("complexity warnings", ("complexity", "warnings")),
-        ("long functions", ("complexity", "long_functions")),
-        ("long files", ("complexity", "long_files")),
-    )
-    for label, (group, metric) in lower_is_better:
-        before = base_metrics[group][metric]
-        after = head_metrics[group][metric]
-        if after > before:
-            failures.append(f"{label} regressed ({before} -> {after})")
-
-    if head_metrics["unlinked_todos"] > base_metrics["unlinked_todos"]:
-        failures.append(
-            "unlinked TODO count regressed "
-            f"({base_metrics['unlinked_todos']} -> "
-            f"{head_metrics['unlinked_todos']})"
-        )
-    return failures
-
-
 def component_branch_coverage(
     report: dict[str, Any], paths: tuple[str, ...]
 ) -> dict[str, float | int]:
@@ -266,30 +229,17 @@ def component_coverage_failures(report: dict[str, Any]) -> list[str]:
     return failures
 
 
-def _print_report(report: dict[str, Any], label: str) -> None:
-    metrics = report["metrics"]
-    branch = metrics["branch_coverage"]
-    print(
-        f"{label}: branch coverage {branch['covered']}/{branch['total']} "
-        f"({branch['percent']:.3f}%), max CRAP {metrics['crap']['maximum']:.3f}, "
-        f"complexity warnings {metrics['complexity']['warnings']}, "
-        f"long functions {metrics['complexity']['long_functions']}, "
-        f"long files {metrics['complexity']['long_files']}, "
-        f"unlinked TODOs {metrics['unlinked_todos']}"
-    )
-
-
 def gate(
-    base_report: dict[str, Any],
     head_report: dict[str, Any],
     diff_report: dict[str, Any],
     minimum_diff_coverage: float,
 ) -> list[str]:
-    failures = compare_reports(base_report, head_report)
-    failures.extend(component_coverage_failures(head_report))
+    failures = component_coverage_failures(head_report)
     maximum_crap = head_report["metrics"]["crap"]["maximum"]
-    if maximum_crap > 30.0:
-        failures.append(f"maximum CRAP score is {maximum_crap:.3f}; limit is 30")
+    if maximum_crap > MAXIMUM_CRAP:
+        failures.append(
+            f"maximum CRAP score is {maximum_crap:.3f}; limit is {MAXIMUM_CRAP:g}"
+        )
     if diff_report["percent"] + 1e-6 < minimum_diff_coverage:
         failures.append(
             f"diff branch coverage is {diff_report['percent']:.3f}%; "
@@ -315,13 +265,16 @@ def _analyze_command(args: argparse.Namespace) -> int:
 
 
 def _gate_command(args: argparse.Namespace) -> int:
-    base = json.loads(Path(args.base_report).read_text(encoding="utf-8"))
     head = json.loads(Path(args.head_report).read_text(encoding="utf-8"))
     changes = changed_lines(args.base_ref, Path(args.repository))
     diff_report = calculate_diff_coverage(changes, head)
 
-    _print_report(base, "base")
-    _print_report(head, "head")
+    branch = head["metrics"]["branch_coverage"]
+    print(
+        f"head: branch coverage {branch['covered']}/{branch['total']} "
+        f"({branch['percent']:.3f}%), "
+        f"max CRAP {head['metrics']['crap']['maximum']:.3f}"
+    )
     for name, paths in COMPONENT_BRANCH_FLOORS.items():
         coverage = component_branch_coverage(head, paths)
         print(
@@ -344,7 +297,7 @@ def _gate_command(args: argparse.Namespace) -> int:
             f"{function['start_line']}  {function['name']}"
         )
 
-    failures = gate(base, head, diff_report, args.minimum_diff_coverage)
+    failures = gate(head, diff_report, args.minimum_diff_coverage)
     if failures:
         print("quality gate failed:", file=sys.stderr)
         for failure in failures:
@@ -451,7 +404,6 @@ def parse_args() -> argparse.Namespace:
     gate_parser = subparsers.add_parser("gate")
     gate_parser.add_argument("--repository", required=True)
     gate_parser.add_argument("--base-ref", required=True)
-    gate_parser.add_argument("--base-report", required=True)
     gate_parser.add_argument("--head-report", required=True)
     gate_parser.add_argument("--minimum-diff-coverage", type=float, default=90.0)
     gate_parser.set_defaults(handler=_gate_command)
