@@ -377,11 +377,12 @@ therefore remains libcurl plus internal Glaze.
   cumulative budgets, failures, cancellation, detached execution, cooperating
   teardown, and observer affinity under TSan.
 - The scheduled/manual nightly pipeline is implemented with CodeQL, long
-  SSE/Anthropic/OpenAI fuzz runs, Mull mutation reports, and a bounded local
-  OpenAI-compatible chat/tool smoke. Ollama v0.32.1 is checksum-pinned and the
-  `qwen3:1.7b-q4_K_M` manifest digest is verified before the smoke runs. This
-  documents the live pipeline; no completed hosted nightly execution is
-  claimed yet.
+  SSE/Anthropic/OpenAI fuzz runs, and a bounded local OpenAI-compatible
+  chat/tool smoke; Mull mutation reports run on demand via `workflow_dispatch`
+  at milestone boundaries (ADR 0011). Ollama v0.32.1 is checksum-pinned as an
+  executable; the pulled `qwen3:1.7b-q4_K_M` model tag is not digest-pinned,
+  so routine upstream repushes cannot break the nightly. This documents the
+  live pipeline; no completed hosted nightly execution is claimed yet.
 - M5's live acceptance gate covers deterministic NPC domain/registration cases,
   fake-controller panel send/stream/complete/error/cancel/lifetime cases, a
   warnings-as-errors compile/link against the pinned real Dear ImGui sources,
@@ -391,15 +392,17 @@ therefore remains libcurl plus internal Glaze.
   component toolchain. The live `scripts/ci-reflection.sh` gate performs a
   fresh P2996-probed build, the reflection header audit, the 27-test schema,
   codec, bridge, registration, and compile-fail suite, a clean component
-  install audit, and a downstream
-  `find_package(scry CONFIG REQUIRED COMPONENTS reflection)` consumer. A
+  install audit, a downstream
+  `find_package(scry CONFIG REQUIRED COMPONENTS reflection)` consumer, and a
+  core-only C++23 consumer compiled with non-reflection GCC 14 against the
+  same reflection-enabled installation — the compiled proof that the core
+  surface stays C++23 and reflection never leaks unrequested (TOOL-003). A
   separate GCC 16 ASan+UBSan build reruns all 27 reflection-labelled tests.
-  `scripts/reflection-coverage.sh` gates the runtime codec's adjusted source
-  decisions at 95% and functions at 100%, plus GCC/gcovr CFG branches at 95%
-  on the compiled bridge. Exactly one inline-justified GCC-generated enum
-  switch artifact is excluded by a validator that rejects any missing or
-  broadened exclusion; unadjusted codec decisions and combined CFG arcs remain
-  visible diagnostics. Stable GCC/Clang continue to build, test, install, and
+  `scripts/reflection-coverage.sh` gates with stock gcovr thresholds
+  (ADR 0011): runtime-codec source decisions at 85% and functions at 95%,
+  plus GCC/gcovr CFG branches at 95% on the compiled bridge; the codec floor
+  accommodates the one inline-justified GCC-generated enum switch that
+  gcovr's decision analysis still counts. Stable GCC/Clang continue to build, test, install, and
   consume the
   reflection-OFF C++23 core on Linux and macOS; its clean-install audit rejects
   every reflection header, detail directory, library, or export. clang-p2996

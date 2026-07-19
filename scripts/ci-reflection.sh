@@ -6,10 +6,16 @@ readonly root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly build_dir="${root_dir}/build/reflection-gcc16"
 readonly stage_dir="${root_dir}/build/stage-reflection"
 readonly consumer_dir="${root_dir}/build/package-consumer-reflection"
+readonly core_consumer_dir="${root_dir}/build/package-consumer-core-on-reflection"
 readonly sanitizer_build_dir="${root_dir}/build/reflection-gcc16-asan-ubsan"
 
 if ! command -v g++-16 >/dev/null 2>&1; then
   echo "g++-16 is required for the supported reflection component" >&2
+  exit 1
+fi
+if ! command -v g++-14 >/dev/null 2>&1; then
+  echo "g++-14 is required to prove the core surface of the reflection-enabled \
+package stays C++23 (TOOL-003)" >&2
   exit 1
 fi
 
@@ -34,6 +40,21 @@ cmake \
   -DCMAKE_PREFIX_PATH="${stage_dir}"
 cmake --build "${consumer_dir}"
 "${consumer_dir}/scry_reflection_package_consumer"
+
+# TOOL-003: the same reflection-enabled installation must present a pure C++23
+# surface to a core-only consumer. Compiling with a non-reflection compiler
+# proves it — any -std=c++26/-freflection or Glaze leak into scry::scry fails
+# this build, and the consumer itself rejects a leaked reflection component.
+cmake -E remove_directory "${core_consumer_dir}"
+cmake \
+  -S tests/package_consumer \
+  -B "${core_consumer_dir}" \
+  -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_CXX_COMPILER=g++-14 \
+  -DCMAKE_PREFIX_PATH="${stage_dir}"
+cmake --build "${core_consumer_dir}"
+"${core_consumer_dir}/scry_package_consumer"
 
 cmake \
   --preset reflection-gcc16 \

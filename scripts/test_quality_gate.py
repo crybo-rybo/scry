@@ -10,6 +10,7 @@ from scripts.quality_gate import (
     component_branch_coverage,
     component_coverage_failures,
     ctest_test_binaries,
+    gate,
 )
 from scripts.quality_metrics import (
     crap_score,
@@ -19,7 +20,44 @@ from scripts.quality_metrics import (
 )
 
 
+def _head_report(total_branch_percent: float) -> dict:
+    return {
+        "metrics": {
+            "branch_coverage": {
+                "covered": 9,
+                "total": 10,
+                "percent": total_branch_percent,
+            },
+            "crap": {"maximum": 2.0},
+        },
+        "functions": [],
+        "top_crap": [],
+        "coverage_files": {
+            "src/machine/turn_machine.cpp": {"branches": {12: [(3, 1)]}},
+            "src/protocol/sse.cpp": {"branches": {8: [(2, 1)]}},
+            "src/core/retry.cpp": {"branches": {4: [(1, 1)]}},
+        },
+    }
+
+
+def _empty_diff() -> dict:
+    return {
+        "covered": 0,
+        "total": 0,
+        "percent": 100.0,
+        "uncovered": [],
+        "unjustified_exclusions": [],
+    }
+
+
 class QualityGateTests(unittest.TestCase):
+    def test_gate_enforces_the_total_branch_coverage_floor(self) -> None:
+        self.assertEqual(gate(_head_report(95.0), _empty_diff(), 90.0), [])
+
+        failures = gate(_head_report(50.0), _empty_diff(), 90.0)
+
+        self.assertEqual(len(failures), 1)
+        self.assertIn("total branch coverage", failures[0])
     def test_ctest_binaries_preserve_working_directory_and_deduplicate(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

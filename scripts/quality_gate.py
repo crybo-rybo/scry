@@ -32,7 +32,12 @@ COMPONENT_BRANCH_FLOORS = {
     "retry classifier": ("src/core/retry.cpp",),
 }
 MINIMUM_COMPONENT_BRANCH_COVERAGE = 95.0
+# A coarse absolute backstop against erosion in files no component floor
+# lists; raised deliberately as coverage grows, never lowered silently
+# (ADR 0011).
+MINIMUM_TOTAL_BRANCH_COVERAGE = 88.0
 MAXIMUM_CRAP = 30.0
+COMPLEXITY_WARNING_CCN = 10
 
 
 def _untracked_changed_lines(repository: Path) -> dict[str, dict[int, str]]:
@@ -235,6 +240,12 @@ def gate(
     minimum_diff_coverage: float,
 ) -> list[str]:
     failures = component_coverage_failures(head_report)
+    total_branch = head_report["metrics"]["branch_coverage"]
+    if total_branch["percent"] + 1e-6 < MINIMUM_TOTAL_BRANCH_COVERAGE:
+        failures.append(
+            f"total branch coverage is {total_branch['percent']:.3f}%; "
+            f"minimum is {MINIMUM_TOTAL_BRANCH_COVERAGE:.3f}%"
+        )
     maximum_crap = head_report["metrics"]["crap"]["maximum"]
     if maximum_crap > MAXIMUM_CRAP:
         failures.append(
@@ -294,6 +305,24 @@ def _gate_command(args: argparse.Namespace) -> int:
     for function in head["top_crap"]:
         print(
             f"  {function['crap']:7.3f}  {function['path']}:"
+            f"{function['start_line']}  {function['name']}"
+        )
+
+    complexity_warnings = sorted(
+        (
+            function
+            for function in head["functions"]
+            if function["ccn"] > COMPLEXITY_WARNING_CCN
+        ),
+        key=lambda function: (-function["ccn"], function["path"]),
+    )
+    print(
+        f"production functions over CCN {COMPLEXITY_WARNING_CCN} "
+        f"(warn-only, QA-004): {len(complexity_warnings)}"
+    )
+    for function in complexity_warnings:
+        print(
+            f"  CCN {function['ccn']:3d}  {function['path']}:"
             f"{function['start_line']}  {function['name']}"
         )
 

@@ -15,15 +15,16 @@ Third of three: [DESIGN.md](DESIGN.md) says what we're building, [ARCHITECTURE.m
 **Main is always green, always releasable.** Trunk-based development, short-lived branches, no long-running feature branches. Anything not ready to be on main hides behind a build flag (as the reflection layer already must).
 
 **Absolute gates, not ratchets.** Every gated metric has a fixed floor or
-ceiling — diff coverage, component coverage floors, CRAP, cyclomatic
-complexity, sanitizer cleanliness — enforced on the candidate tree alone.
-The earlier merge-base ratchet (build both sides, forbid any counter from
-ticking up) was demoted under §8 and [ADR 0011](docs/adr/0011-absolute-quality-gates.md):
+ceiling — diff coverage, component coverage floors, an 88% aggregate
+branch-coverage backstop, CRAP, cyclomatic complexity, sanitizer cleanliness —
+enforced on the candidate tree alone. The earlier merge-base ratchet (build
+both sides, forbid any counter from ticking up) was demoted under §8 and
+[ADR 0011](docs/adr/0011-absolute-quality-gates.md):
 it doubled every quality run to defend against baseline tampering that a solo
 project cannot suffer, and its debt counters duplicated the absolute limits.
-Metrics without a gate (total branch coverage, top CRAP scores) are printed
-on every run so drift stays visible; a floor is raised deliberately, not
-mechanically.
+Metrics without a gate (the exact total, top CRAP scores, the CCN>10 warning
+list) are printed on every run so drift stays visible; a floor is raised
+deliberately, not mechanically.
 
 ## 2. Testing Plan
 
@@ -60,7 +61,7 @@ Coverage is a **detector of untested code, not a target**. Chasing a global perc
 
 - **Instrumentation:** llvm-cov / gcov, *branch* coverage not just line — branch coverage is what catches the untested error path, and error paths are half this library.
 - **Diff coverage gate (the primary gate):** new/changed lines in a PR must meet a high branch-coverage bar (~90%). This is stricter than a global gate where it matters (the code being written now) and doesn't punish present work for past sins.
-- **Per-component floors, not one global number:** the sans-I/O machine, parsers, and classifiers are pure — they carry a near-total floor (95%+ branch). Transport/curl plumbing carries a lower floor with the gap covered by integration tests and sanitizers. One global number would let untested machine logic hide behind well-covered plumbing.
+- **Per-component floors first, one coarse global backstop:** the sans-I/O machine, parsers, and classifiers are pure — they carry a near-total floor (95%+ branch), because one global number would let untested machine logic hide behind well-covered plumbing. A deliberately loose aggregate floor (88% branch) backstops erosion in files no component floor lists; it sits below the measured total so honest deletions of well-covered code don't block, and it is raised deliberately as coverage grows (ADR 0011).
 - **Exclusions are visible and justified:** coverage-off pragmas require a comment and appear in review diffs. Silent exclusion is the metric's death.
 - **Collection is deterministic:** each test binary runs one coverage pass
   with fixed Catch2 ordering, stable profile names, and atomic
@@ -188,10 +189,11 @@ non-cooperating user handler remains outside Scry's enforceable shutdown bound
 and is documented rather than represented by a hanging test.
 
 The quality gate enforces its absolute floors — diff branch coverage, the
-component floors, and CRAP — from a single instrumented build of the
-candidate tree (ADR 0011); the most recent full run measured 93.322% branch
-coverage on changed lines and a maximum CRAP of 13.125, both printed alongside
-total branch coverage on every run. The scheduled/manual
+component floors, the 88% aggregate backstop, and CRAP — from a single
+instrumented build of the candidate tree (ADR 0011); the most recent full run
+measured 93.322% branch coverage on changed lines and a maximum CRAP of
+13.125, printed alongside total branch coverage and the QA-004 CCN warning
+list on every run. The scheduled/manual
 `.github/workflows/nightly.yml` pipeline is implemented with CodeQL v4, long
 SSE/Anthropic/OpenAI fuzz jobs, an on-demand checksum-pinned Mull 0.34.0
 mutation job, and a bounded OpenAI-compatible smoke using checksum-pinned

@@ -37,19 +37,24 @@ paying for itself.
 - **Absolute gates, not ratchets.** The quality gate builds and measures only
   the candidate tree and enforces fixed floors: diff branch coverage ≥ 90% on
   changed production lines, ≥ 95% branch coverage on the turn machine, SSE
-  parser, and retry classifier, no function with CRAP > 30, cyclomatic
-  complexity ≤ 15, and zero unlinked TODOs (now a simple absolute check in
-  `ci-local.sh`). The merge-base is used only to identify changed lines.
-- **The debt-counter ratchets are deleted.** Total branch coverage and the
-  top CRAP scores remain printed on every run as visibility, not gates.
-  Function/file length is a smell, reported by lizard locally, not a gate —
-  resolving the prior inconsistency where ENGINEERING.md called length a
-  warning while `ci-local.sh` hard-failed on it.
+  parser, and retry classifier, total branch coverage ≥ 88% as a coarse
+  backstop against erosion in files no component floor lists, no function
+  with CRAP > 30, cyclomatic complexity ≤ 15, and zero unlinked TODOs (now a
+  simple absolute check in `ci-local.sh`). The merge-base is used only to
+  identify changed lines. The aggregate floor deliberately sits below the
+  measured ~89.9% so that honest deletions of well-covered dead code do not
+  block; it is raised deliberately as coverage grows, never lowered silently.
+- **The debt-counter ratchets are deleted.** The top CRAP scores and the
+  QA-004 warn-only list of production functions over CCN 10 remain printed on
+  every run as visibility, not gates. Function/file length is a smell,
+  reported by lizard locally, not a gate — resolving the prior inconsistency
+  where ENGINEERING.md called length a warning while `ci-local.sh`
+  hard-failed on it.
 - **Coverage runs once.** Each test binary runs a single deterministic pass
   (fixed Catch2 ordering, atomic profile counters) for profile collection.
-  Repeat-run flake detection (`--repeat until-fail:3`) moves to the hosted
-  TSan leg, where nondeterminism actually surfaces, instead of running the
-  suite ~20 times per PR across legs.
+  Repeat-run flake detection (`--repeat until-fail:3`) moves to the TSan leg
+  — hosted and in local preflight — where nondeterminism actually surfaces,
+  instead of running the suite ~20 times per PR across legs.
 - **The reflection codec is gated with stock gcovr.**
   `--fail-under-decision 85 --fail-under-function 95` on the codec header and
   the existing `--fail-under-branch 95` on the compiled bridge replace the
@@ -64,8 +69,12 @@ paying for itself.
   whose upstream repushes are routine). Protocol correctness is gated by the
   deterministic fake-transport suites, not the smoke.
 - `cmake/CheckReflectionPackage.cmake` is deleted: it string-matched CMake's
-  generated export files — not a stable format — to prove properties the
-  compiled downstream `find_package` consumer already proves.
+  generated export files — not a stable format. Its core-isolation property
+  (TOOL-003) is instead proven by compilation: `scripts/ci-reflection.sh`
+  builds the core-only C++23 `tests/package_consumer` with non-reflection
+  GCC 14 against the reflection-enabled installation, so any leaked
+  `-std=c++26`/`-freflection` flag, Glaze include, or unrequested reflection
+  component fails the build rather than a grep.
 - The libcurl runtime spike folds into the core GCC CI leg instead of
   occupying a dedicated runner.
 
@@ -74,8 +83,9 @@ paying for itself.
 The quality job halves in wall time (one build, one suite pass), the Python
 tooling and its meta-tests shrink by roughly half, and the exact-format
 couplings to lizard/gcovr internals that forced version pins are reduced to
-the documented gcovr 8.6 pin for decision analysis. A regression in total
-branch coverage that stays above every absolute floor now lands without
-blocking; the printed per-run summary keeps it visible, and any floor can be
-raised deliberately if drift is observed. Mutation reports arrive only when
-requested, so their value depends on actually being run at milestones.
+the documented gcovr 8.6 pin for decision analysis. A total-coverage
+regression that stays above the 88% aggregate floor and every component floor
+lands without blocking; the printed per-run summary keeps the exact number
+and the CCN warning list visible, and any floor can be raised deliberately if
+drift is observed. Mutation reports arrive only when requested, so their
+value depends on actually being run at milestones.

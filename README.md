@@ -35,8 +35,8 @@ round, and worker-mode mixed/all-worker ordering, thread-ID, snapshot,
 cancellation, detached-turn, budget, and cooperating-shutdown coverage. The
 absolute quality gates ([ADR 0011](docs/adr/0011-absolute-quality-gates.md))
 pass from a single instrumented build: 93.322% diff branch coverage against
-the 90% floor, the 95% component floors, and a maximum CRAP of 13.125 against
-the limit of 30.
+the 90% floor, the 95% component floors, the 88% aggregate branch-coverage
+backstop, and a maximum CRAP of 13.125 against the limit of 30.
 
 The scheduled/manual M4 nightly pipeline is also implemented: CodeQL, long
 SSE/Anthropic/OpenAI fuzzing, an on-demand Mull mutation job, and a bounded

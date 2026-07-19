@@ -194,11 +194,11 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7.0.0
-      - name: Install GCC 16
+      - name: Install GCC 16 (and GCC 14 for the core-surface proof)
         run: |
           sudo add-apt-repository --yes ppa:ubuntu-toolchain-r/test
           sudo apt-get update
-          sudo apt-get install -y g++-16 libcurl4-openssl-dev ninja-build
+          sudo apt-get install -y g++-14 g++-16 libcurl4-openssl-dev ninja-build
       - name: Lower ASLR entropy for sanitizers
         run: sudo sysctl vm.mmap_rnd_bits=28
       - name: Install pinned reflection coverage tool

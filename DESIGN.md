@@ -385,16 +385,15 @@ types; compiled implementation reaches Glaze through a Scry-owned JSON bridge.
 The live M3 verification path runs 27 reflection-labelled tests: 22 runtime,
 schema, codec, bridge, and registration cases plus five stable-diagnostic
 compile failures. `scripts/reflection-coverage.sh` pins GCC/gcov 16 and gcovr
-8.6, requires at least 95% adjusted source decisions and 100% functions in the
-runtime codec, and requires at least 95% GCC/gcovr CFG branches in the compiled
-JSON bridge. The current gated result is 32/32 codec decisions, 62/62 codec
-functions, and 97/97 bridge branches. The adjustment excludes exactly one
-inline-justified GCC-generated switch artifact, and its validator rejects a
-missing, malformed, or widened exclusion. Unadjusted codec decisions
-(33/37) and combined GCC/gcovr CFG arcs (405/462 after the standard exclusions
-and line merging) remain visible diagnostics rather than being mislabeled as
-source decisions. Consteval paths stay covered by the positive/negative compile
-matrix; no reflection property/fuzz or manual Clang result is claimed.
+8.6 and gates with stock gcovr thresholds
+([ADR 0011](docs/adr/0011-absolute-quality-gates.md)): at least 85% source
+decisions and 95% functions in the runtime codec, and at least 95% GCC/gcovr
+CFG branches in the compiled JSON bridge. The codec decision floor
+accommodates the one inline-justified GCC-generated switch on the
+reflected-enum decoder that gcovr's decision analysis still counts; the
+earlier bespoke exclusion validator is retired. Consteval paths stay covered
+by the positive/negative compile matrix; no reflection property/fuzz or
+manual Clang result is claimed.
 
 ## 9. Provider Abstraction
 
