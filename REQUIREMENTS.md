@@ -13,9 +13,9 @@ ID scheme: `SCRY-<AREA>-NNN`, abbreviated to `<AREA>-NNN` in the tables below. I
 | API-001 | MUST | The public API is centered on five core concepts (Config, Conversation, ToolRegistry, Turn, Harness); no public type is designed for inheritance. | M0 | Header review; no virtual/protected in public headers (grep gate) |
 | API-002 | MUST | No third-party types or headers (curl, Glaze) appear in the public include path. The four stateful handles (Conversation, ToolRegistry, Turn, Harness) use PImpl; configuration, errors, options, enums, event payloads, and the Scry-owned JSON boundary type are plain value types. | M0 | Include audit + header review |
 | API-003 | MUST | Scry-originated semantic and operational failures surface via `std::expected` before acceptance or the error callback after acceptance, never by throw. Allocation failure is excluded, and exceptions thrown by app callbacks propagate synchronously from `update()` per THR-020. | M1 | **Live:** `construction and synchronous admission failures are immediate`, `accepted failure uses one async error channel and commits nothing`, `worker exceptions are contained and reported through the turn`; ASan/UBSan suite |
-| API-004 | MUST | Server/model configuration (base URL, auth, model, sampling params, dialect) is a plain `Config` value aggregate; switching providers or local servers requires no code changes. | M1 (shape); M4 (second dialect proves it) | **Live (M1):** `public-api-contract` plus Anthropic request/config suites; **M4 planned:** config-only two-dialect integration |
+| API-004 | MUST | Server/model configuration (base URL, auth, model, sampling params, dialect) is a plain `Config` value aggregate; switching between Anthropic and the OpenAI-compatible common subset, including a local server with no API key, requires no code changes. | M1 (shape); M4 (second dialect proves it) | **Live:** `public-api-contract`; Anthropic request/config suites; `OpenAI endpoint normalization accepts only the documented base forms`; `OpenAI authentication is optional and rejects header injection`; `OpenAI-compatible config drives a fragmented transactional tool round` |
 | API-005 | MUST | The library never owns `main()`, never spins an event loop the app must join, and imposes no lifecycle on the host. | M0 | Design invariant; example apps demonstrate integration into pre-existing loops |
-| API-006 | MUST | Multiple Harness instances in one process work independently; no singletons or mutable globals beyond the ref-counted curl-global guard. Different configured dialects share the same isolation guarantee once the second dialect lands. | M1 (instance isolation); M4 (cross-dialect proof) | **Live (M1):** `two Harness workers can overlap independent transfers`, `two Harness instances keep provider and worker state isolated`; **M4 planned:** concurrent different dialects |
+| API-006 | MUST | Multiple Harness instances in one process work independently; no singletons or mutable globals beyond the ref-counted curl-global guard. Different configured dialects share the same isolation guarantee once the second dialect lands. | M1 (instance isolation); M4 (cross-dialect proof) | **Live:** `two Harness workers can overlap independent transfers`; `two Harness instances keep provider and worker state isolated`; `concurrent Harnesses keep Anthropic and OpenAI dialect state isolated` |
 | API-007 | SHOULD | Conversation history is serializable/deserializable for app-side persistence. | M2 | **Live:** `Conversation persistence uses a canonical versioned document`, `Conversation persistence rejects malformed document structure`, `Conversation persistence enforces tool block roles and shapes`, and `Conversation persistence excludes busy and uncommitted turn state` |
 | API-008 | MUST | A synchronous send-and-wait convenience exists, implemented on top of the async path (not a second code path). | M1 | **Live:** `send-and-wait layers over the async path`; implementation delegates to `send()` + `update()` |
 | API-009 | MUST NOT | The library does not provide prompt-template/chain DSLs and is not an inference engine. | — | Scope gate at review |
@@ -44,11 +44,11 @@ ID scheme: `SCRY-<AREA>-NNN`, abbreviated to `<AREA>-NNN` in the tables below. I
 | THR-014 | MUST | A `send()` on a Conversation that already has a turn queued or in flight fails immediately with a distinct error category; the Conversation is untouched. | M1 | **Live:** `busy conversations and queued cancellation issue no second transfer` |
 | THR-015 | MUST | Cancelling a still-queued turn removes it before any I/O is issued; its terminal event is Cancelled. | M1 | **Live:** machine queued cancellation plus `busy conversations and queued cancellation issue no second transfer` |
 | THR-016 | MUST | While the active turn awaits a main-thread tool result it retains the serialized turn slot; queued turns wait. | M2 | **Live:** `a queued turn waits for the active turn's tool round` |
-| THR-017 | MUST | Harness destruction cancels all turns, aborts transfers, joins the worker within configured transport/shutdown bounds, and discards undelivered events; no callback fires after destruction begins. Resolver behavior and every blocking curl phase MUST be covered by those bounds. | M1 | **Live:** timed held-transfer destruction under ASan/TSan; Curl progress-signal tests; `curl runtime rejects capabilities that cannot honor host shutdown`; source review of asynchronous DNS, Curl connect/total timeouts, and shutdown-bounded multi polling. Deliberately no nondeterministic DNS-blackhole test |
+| THR-017 | MUST | Harness destruction cancels all turns, aborts Scry-owned transfers, joins the worker within configured transport/shutdown bounds while only Scry-owned blocking work is active, and discards undelivered events; no callback fires after destruction begins. Resolver behavior and every blocking curl phase MUST be covered by those bounds. An application handler opted into worker execution is non-preemptive and governed by THR-021; its execution time is excluded from the Scry-owned shutdown bound. | M1/M4 | **Live:** timed held-transfer destruction under ASan/TSan; Curl progress-signal tests; `curl runtime rejects capabilities that cannot honor host shutdown`; source review of asynchronous DNS, Curl connect/total timeouts, and shutdown-bounded multi polling; `destruction joins a cooperating worker handler without callbacks`. Deliberately no nondeterministic DNS-blackhole or non-cooperating-handler test |
 | THR-018 | MUST | The `update()` budget is a soft deadline checked between callbacks; an individual callback or tool handler is never preempted and may overrun it. | M1 | **Live:** `pump budget is a soft deadline between callbacks` with a deliberately overrunning fake clock callback |
 | THR-019 | MUST | Callbacks may reentrantly call `send`, `cancel`, and tool registration; reentrant `update()` is forbidden and diagnosed. M1 registration mutates only the inert registry foundation. Beginning in M2, such changes affect subsequent accepted turns only. | M1 (safe mutation); M2 (turn effect) | **Live:** M1 reentrancy/nested-wait suite; M2 later and handler-reentrant registration isolation in `two-tool turn snapshots tools, resends results, and commits atomically` |
 | THR-020 | MUST | An exception escaping a user callback propagates out of `update()`; the harness remains valid and the event counts as delivered. Callbacks SHOULD NOT throw. | M1 | **Live:** `callback exceptions consume the event and leave the pump valid` |
-| THR-021 | MUST | Per-tool opt-in moves a handler to the worker thread (for thread-safe, slow handlers). | M4 | Thread-ID assertions per mode |
+| THR-021 | MUST | `ToolRegistrationOptions` selects app-thread or worker-thread execution per tool and defaults to app-thread behavior. Worker mode begins only after `update()` delivers the call, preserves provider order and app-thread observer delivery, and uses the same machine/dispatch/result rules. Worker handlers are non-preemptive: cancellation suppresses the result after return, and an application relying on bounded teardown MUST ensure each opted-in handler returns within its required shutdown bound. | M4 | **Live:** `public-api-contract`; `mixed worker and app tools preserve provider order and observer threads`; `all-worker tools contain handler exceptions and preserve provider order`; `an accepted turn does not consult later worker registrations`; `cancellation during a worker handler suppresses its batch and result`; `a queued turn remains serialized while a worker handler is held`; `detached worker tools execute, resend, and commit without observers`; `destruction joins a cooperating worker handler without callbacks`; TSan suite |
 
 ## Agentic Loop (SCRY-LOOP)
 
@@ -80,6 +80,7 @@ ID scheme: `SCRY-<AREA>-NNN`, abbreviated to `<AREA>-NNN` in the tables below. I
 | TOOL-011 | MUST | Generated schemas use Scry's closed provider-neutral JSON Schema 2020-12 subset from ADR 0007: closed inline objects; the keywords `additionalProperties`, `anyOf`, `description`, `enum`, `items`, `maxItems`, `minItems`, `minimum`, `maximum`, `properties`, `required`, and `type`; minified JSON; lexicographically sorted object/property keys and `required` names; and enum declaration order. Generated schemas omit `$schema`, references/definitions, `title`, and `default`. This subset does not restrict explicit TOOL-001 schemas. | M3 | **Live:** exact `PresenceArguments`, `AllTypesArguments`, and `NumericArguments` compile-time schema goldens plus installed-consumer schema assertion |
 | TOOL-012 | MUST | Reflected decoding is strict and recursive: it rejects a non-object root, unknown fields, missing required fields, wrong JSON kinds (including a lexical number such as `1.0` for an integral member), disallowed null, numeric sign/range/non-finite errors, unknown enum names, and fixed-array length errors. The canonical parsed JSON value is authoritative, so duplicate lexical object keys are not separately observable at M3 dispatch. Decode failures become bounded model-visible tool errors; configured payload-limit failures remain fatal `resource_limit` errors. | M3 | **Live:** strict root/member/type test; numeric, enum, fixed-array, non-finite, and unnamed-value boundary tests; typed-handler error test; existing exact tool argument/result resource-limit tests |
 | TOOL-013 | MUST | `scry::reflection::add<Args>(ToolRegistry&, ToolMetadata, Handler&&)` invokes the handler with `std::move(args)`, preserves move-only captures, and lowers the typed wrapper and `input_schema_v<Args>` through the existing additive registry. | M3 | **Live:** `reflected erased handlers retain move-only captures and typed errors`; `reflected registration lowers into the additive registry`; compiled reflection example and installed consumer |
+| TOOL-014 | MUST | Explicit and reflected registration accept the same `ToolRegistrationOptions`; reflection forwards the policy to TOOL-001 and does not create a worker-only registry, handler wrapper, or dispatch path. | M4 | **Live:** `scry_canonical_example` and `scry_reflection_example` both compile with `ToolRegistrationOptions`; `worker registration transfers its handler through the command queue`; `reflected registration lowers into the additive registry` |
 
 ## Provider & Protocol (SCRY-PROV)
 
@@ -87,13 +88,15 @@ ID scheme: `SCRY-<AREA>-NNN`, abbreviated to `<AREA>-NNN` in the tables below. I
 |---|---|---|---|---|
 | PROV-001 | MUST | An internal neutral message model (roles + content blocks incl. tool call/result) isolates all wire-format knowledge inside adapters. | M1 | **Live:** neutral model/request/response component suites; wire JSON remains confined to `src/provider/` |
 | PROV-002 | MUST | Anthropic Messages adapter. | M1 | **Live:** sanitized request golden fixture, non-streaming response fixture, streaming lifecycle suite, and public Curl walking skeleton |
-| PROV-003 | MUST | OpenAI-compatible Chat Completions adapter (covers vLLM, Ollama, llama.cpp server, LM Studio). | M4 | Golden-file tests + e2e against local model |
+| PROV-003 | MUST | An OpenAI-compatible Chat Completions adapter implements the common subset in ADR 0008 for OpenAI, vLLM, Ollama, llama.cpp server, and LM Studio. This is a tested compatibility subset, not complete parity with every server extension or model/chat template. | M4 | **Live:** 60/60 `scry_provider_tests`; `OpenAI-compatible config drives a fragmented transactional tool round`; `public Harness completes an OpenAI-compatible SSE turn through Curl`; `scry_openai_fuzz` with checked corpus; scheduled/manual pinned-Ollama local-model pipeline (no completed hosted run claimed yet) |
 | PROV-004 | MUST | Streaming (SSE) is supported on all adapters; the SSE parser is a pure incremental function tolerant of arbitrary chunk splits. | M1 | **Live:** every-split and fixed-seed random partition suites; direct no-I/O SSE target; `scry_sse_fuzz` and `scry_anthropic_fuzz` |
-| PROV-005 | MUST | Adapter selection is config-driven (dialect enum + factory); no public plugin API until a concrete third-party need exists (evolution register). | M4 | Config-only switch test (API-004) |
+| PROV-005 | MUST | Adapter selection is config-driven (dialect enum + factory); no public plugin API until a concrete third-party need exists (evolution register). | M4 | **Live:** `OpenAI-compatible config drives a fragmented transactional tool round`; `concurrent Harnesses keep Anthropic and OpenAI dialect state isolated`; factory/source boundary review |
 | PROV-006 | SHOULD | Adapters are stateless translators; stream-parse state lives in per-turn parser objects. | M1 | **Live:** adapter state-shape review; independent concurrent Harness/provider integration |
 | PROV-007 | MUST | The neutral model carries multiple tool calls per assistant message with stable tool-call IDs, and accumulates partially-streamed JSON tool arguments before dispatch. | M2 | **Live:** `Anthropic stream preserves multiple independently fragmented tool calls`, `Anthropic request serializes multiple schemas and tool results in order`, and `tool response publishes every call once in provider order` |
 | PROV-008 | MUST | Unknown/unmappable *optional* stream events are skipped and represented by an internal debug-observable provider event; the M1 worker intentionally consumes that marker because no public logging surface exists. Unmappable *required* content (e.g., an unrecognized block the turn depends on) fails the turn with a protocol error — never silently discarded. | M1 | **Live:** `Anthropic stream decoder observes optional unknown events` asserts the marker/name at the provider seam; required content/delta rejection matrix |
 | PROV-009 | SHOULD | Usage/token counts, finish reasons, and provider request IDs are surfaced on the completed turn. | M1 | **Live:** provider fixture suites plus `public Harness completes an Anthropic SSE turn through Curl` |
+| PROV-010 | MUST | OpenAI-compatible requests normalize an origin, `/v1` base, or full `/v1/chat/completions` endpoint; omit authorization for an empty key; use bearer auth for a safe nonempty key; encode system/text/function tools; and expand every neutral tool result into a separate ordered `role:"tool"` message. Sampling is validated per dialect. | M4 | **Live:** `OpenAI request maps the common text and tool contract`; `OpenAI endpoint normalization accepts only the documented base forms`; `OpenAI authentication is optional and rejects header injection`; `OpenAI request validation covers every documented numeric boundary`; `OpenAI-compatible config drives a fragmented transactional tool round`; `public Harness completes an OpenAI-compatible SSE turn through Curl` |
+| PROV-011 | MUST | OpenAI-compatible streaming accepts arbitrary SSE chunk splits, accumulates bounded tool-call fragments by numeric index, requires contiguous complete function calls at finish, permits a trailing usage-only chunk, and emits exactly one completion only when `[DONE]` follows a finish reason. Missing/duplicate/early terminal markers and content after finish are protocol errors. | M4 | **Live:** `OpenAI stream preserves interleaved tool fragments in index order`; `OpenAI streamed argument limit rejects before appending`; `OpenAI stream enforces finish and terminal lifecycle`; `OpenAI stream maps errors and isolates dialect state`; one-byte fragmentation in `OpenAI-compatible config drives a fragmented transactional tool round`; `scry_openai_fuzz` with `tests/fuzz/corpus/openai` |
 
 ## Transport & Robustness (SCRY-NET)
 
@@ -130,6 +133,15 @@ ID scheme: `SCRY-<AREA>-NNN`, abbreviated to `<AREA>-NNN` in the tables below. I
 | PORT-006 | MUST | libcurl ≥ 7.84.0; `CURL_VERSION_THREADSAFE` is verified at first initialization (host threads may exist before the first Harness). | M1 | **Live:** CMake 7.84 floor; first-lease runtime capability validation and rejection matrix; `curl` CI leg |
 | PORT-007 | MUST | Pre-1.0: no API/ABI stability promises, breaking changes allowed with changelog notice. From 1.0: semver, inline-namespace ABI versioning. | M0 (documented) | Release checklist |
 
+## Showcase Integrations (SCRY-SHOW)
+
+| ID | Level | Requirement | Milestone | Verification |
+|---|---|---|---|---|
+| SHOW-001 | MUST | An opt-in C++23 Dear ImGui chat-panel example consumes only the public `scry::scry` target and demonstrates non-blocking send, streamed text, completion, error, and cancellation. The host owns and outlives the Harness and Conversation, calls `update()`, and owns the ImGui context, platform/renderer backends, window, and main loop. Panel destruction requests cancellation and MUST NOT block. | M5 | **Live:** `scry_showcase_tests` fake-controller send/stream/terminal/cancel/stale-callback/destruction cases; `showcase.imgui-headless-frame`; source-boundary review; shared local/hosted showcase gate |
+| SHOW-002 | MUST | The NPC showcase is a deterministic, ephemeral 5-by-5 in-memory grid with explicit-schema zero-argument `look`, `move_north`, `move_south`, `move_east`, and `move_west` tools. The tools execute on the app thread, reject nonempty arguments, return canonical JSON, leave blocked boundary moves unchanged, and rely on application-owned idempotency or reconciliation for any durable adaptation. | M5 | **Live:** `scry_showcase_tests` NPC cases cover initial observation, deterministic move order, every direction, boundaries, argument rejection, canonical results, and explicit app-thread registration; fake-transport dispatch/resend proof; example build/run seam |
+| SHOW-003 | MUST | M5 adds no Scry public API, installed header, package target, export, or runtime dependency. Dear ImGui is a showcase-only MIT build dependency, pinned to `v1.92.8` commit `8936b58fe26e8c3da834b8f60b06511d537b4c63`, compiled only when `SCRY_BUILD_IMGUI_SHOWCASE=ON` (default `OFF`), and includes no window-system or renderer backend. A normal core build MUST NOT fetch or discover it. | M5 | **Live:** default-OFF configure audit; pinned-source check; public-header/target review; clean install and downstream `find_package(scry)` artifact-absence audit; shared local/hosted showcase gate |
+| SHOW-004 | MUST | The showcase gate builds with the repository warnings-as-errors policy and runs deterministic NPC tests, fake-controller panel behavior tests, a real Dear ImGui compile/link/headless-frame smoke, and the clean-package audit. It MUST be callable locally and by hosted CI before M5 is complete. | M5 | **Live:** `scripts/ci-showcase.sh` passes directly, through `scripts/preflight.sh`, and in the hosted `showcase` job |
+
 ## Quality Gates (SCRY-QA) — binding form of ENGINEERING.md
 
 | ID | Level | Requirement | Milestone | Verification |
@@ -143,17 +155,21 @@ ID scheme: `SCRY-<AREA>-NNN`, abbreviated to `<AREA>-NNN` in the tables below. I
 | QA-007 | MUST | All quality metrics ratchet: compared against main, they may hold or improve, never regress. | M0 | **Live:** candidate and merge-base are rebuilt with one toolchain by `scripts/quality-gate.sh`; ADR 0004 defines ratcheted metrics |
 | QA-008 | MUST | Unit/machine tests are deterministic: no real time, sleeps, or network. Flaky tests are fixed or deleted immediately. | M0 | **Live:** core and coverage suites use CTest `--repeat until-fail:3`; sanctioned-seam review remains required |
 | QA-009 | MUST | Every bug fix lands with a regression test (machine-level replay where applicable). | M1+ | **Live:** regression-test item in `.github/pull_request_template.md` |
-| QA-010 | SHOULD | Nightly: mutation testing on machine/parsers, long fuzz runs, deep static analysis, e2e against a real local model. | M4+ | Nightly pipeline |
+| QA-010 | SHOULD | Nightly: mutation testing on machine/parsers, long fuzz runs, deep static analysis, e2e against a real local model. | M4+ | **Live pipeline:** scheduled/manual `.github/workflows/nightly.yml` runs CodeQL v4, long `scry_sse_fuzz`/`scry_anthropic_fuzz`/`scry_openai_fuzz`, checksum-pinned Mull 0.34.0 on machine/SSE/retry, and a bounded Ollama v0.32.1 + manifest-pinned `qwen3:1.7b-q4_K_M` chat/tool smoke. **Local evidence:** `scripts/ci-local-model.sh` passed the public OpenAI-compatible chat and required-tool paths on Ollama 0.22.1 against manifest `sha256:8f68893c685c3ddff2aa3fffce2aa60a30bb2da65ca488b61fff134a4d1730e7`. The checksum-pinned Ollama v0.32.1 hosted nightly remains unexecuted and unclaimed |
 | QA-011 | SHOULD | Everything CI enforces is runnable locally with one command. | M0/M3 | **Live:** `scripts/preflight.sh` calls the same `scripts/ci-reflection.sh` used by hosted CI and reports unavailable host toolchains; `just ci` remains the optional wrapper |
 | QA-012 | MUST | Definition of Done includes updating the four load-bearing docs — including this register — when behavior or a decision changes. | M0 | PR checklist gate |
 
 ## Unratified / Known Gaps
 
-New gaps land here, not in prose. There are no known M0, M1, M2, or M3 design
-requirement gaps. The live M3 feature, diagnostic, packaging, sanitizer, and
-runtime coverage evidence is named above. Randomized reflection property/fuzz
-testing and manual Clang compatibility remain unclaimed future hardening, not
-M3 completion evidence.
+New gaps land here, not in prose. There are no known M0, M1, M2, M3, M4, or M5
+design requirement gaps. M5 implementation and verification are live under
+SHOW-001–004 and ADR 0010 through the shared local/hosted showcase gate. M4
+implementation and deterministic verification are live; the scheduled nightly
+pipeline is present, but no completed hosted nightly execution is claimed yet.
+The live M3 feature,
+diagnostic, packaging, sanitizer, and runtime coverage evidence is named above.
+Randomized reflection property/fuzz testing and manual Clang compatibility
+remain unclaimed future hardening, not M3 completion evidence.
 
 Amendment log:
 
@@ -190,3 +206,29 @@ Amendment log:
   runtime coverage gate separately enforces adjusted codec source decisions,
   codec functions, and compiled-bridge GCC/gcovr CFG branches while consteval
   paths use the compile-time matrix.
+- **2026-07, M4 contract closure:** ratified the OpenAI-compatible common
+  Chat Completions subset, endpoint/auth/sampling policy, request and stream
+  lifecycle, config-only adapter proof, per-tool execution options, worker
+  handler ownership/order/cancellation, app-thread observers, and the honest
+  non-preemptive teardown boundary (API-004/006, THR-017/021, TOOL-014,
+  PROV-003/005/010/011; ADR 0008 and ADR 0009). Verification was intentionally
+  deferred until implementation.
+- **2026-07, M4 implementation closure:** the config-selected
+  OpenAI-compatible request/response/stream adapter, dialect-isolated decode
+  state, ordered worker execution policy, explicit/reflected registration
+  options, deterministic fake-transport and Curl integration, checked-corpus
+  short fuzzing, TSan worker coverage, and correct-base quality ratchet are
+  live. The scheduled/manual CodeQL, long-fuzz, Mull, and checksum-pinned
+  Ollama/model smoke pipeline is implemented; a completed hosted nightly run
+  is not yet claimed.
+- **2026-07, M5 contract closure:** ratified the showcase-only public/package
+  boundary, host-owned ImGui lifecycle, non-blocking panel behavior,
+  deterministic app-thread NPC tools, ephemeral side-effect policy,
+  build-only pinned Dear ImGui dependency, and the local/hosted acceptance gate
+  (SHOW-001–004; ADR 0010). Verification is intentionally deferred until
+  implementation.
+- **2026-07, M5 implementation closure:** the host-owned ImGui panel,
+  deterministic NPC world and explicit registrations, pinned/default-OFF
+  showcase build, 20-test deterministic suite, real headless frame, clean
+  package/consumer audit, and shared preflight/hosted entry point are
+  implemented and pass locally and in hosted CI. SHOW-001–004 and M5 are live.

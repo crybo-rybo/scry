@@ -60,7 +60,8 @@ run_fuzz() {
   else
     cmake --preset fuzz || return
   fi
-  cmake --build "${build_dir}" --target scry_sse_fuzz scry_anthropic_fuzz &&
+  cmake --build "${build_dir}" \
+    --target scry_sse_fuzz scry_anthropic_fuzz scry_openai_fuzz &&
     ctest \
       --test-dir "${build_dir}" \
       --output-on-failure \
@@ -84,6 +85,7 @@ run_gate "ASan + UBSan" run_preset asan
 run_gate "TSan" run_preset tsan
 run_gate "libcurl runtime" run_preset curl
 run_gate "short protocol fuzzing" run_fuzz
+run_gate "opt-in showcase" ./scripts/ci-showcase.sh
 run_gate "GCC 16 supported reflection component" run_reflection
 
 if [[ "${failures}" -ne 0 ]]; then

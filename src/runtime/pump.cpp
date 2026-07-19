@@ -32,35 +32,6 @@ template <typename Callback>
   return {};
 }
 
-class UpdateGuard final {
-public:
-  explicit UpdateGuard(bool& updating) noexcept : updating_(updating) {
-    updating_ = true;
-  }
-  ~UpdateGuard() { updating_ = false; }
-
-  UpdateGuard(const UpdateGuard&) = delete;
-  UpdateGuard& operator=(const UpdateGuard&) = delete;
-
-private:
-  bool& updating_;
-};
-
-[[nodiscard]] std::chrono::steady_clock::time_point
-update_deadline(const std::chrono::steady_clock::time_point started,
-                const std::optional<std::chrono::microseconds> time_budget) {
-  if (!time_budget) {
-    return std::chrono::steady_clock::time_point::max();
-  }
-  if (*time_budget <= std::chrono::microseconds{0}) {
-    return started;
-  }
-  const auto capacity = std::chrono::steady_clock::time_point::max() - started;
-  return started +
-         std::min(*time_budget,
-                  std::chrono::duration_cast<std::chrono::microseconds>(capacity));
-}
-
 [[nodiscard]] std::string completion_text(const CompletionEvent& event) {
   if (event.exchange.empty()) {
     return {};
@@ -139,16 +110,38 @@ bool TurnRoute::has_callback(const WorkerEvent& event) const noexcept {
         if constexpr (std::is_same_v<Event, TextDeltaEvent>) {
           return static_cast<bool>(on_text_);
         } else if constexpr (std::is_same_v<Event, ToolCallEvent>) {
-          return !terminal_ && !tool_dispatch_failed_;
+          return !terminal_ && !tool_dispatch_failed_ && !pending_worker_tool_;
+        } else if constexpr (std::is_same_v<Event, WorkerToolAcceptedEvent>) {
+          return pending_worker_tool_ && pending_worker_tool_->id == value.tool_call_id;
         } else if constexpr (std::is_same_v<Event, CompletionEvent>) {
           return static_cast<bool>(on_completion_);
         } else if constexpr (std::is_same_v<Event, ErrorEvent>) {
           return static_cast<bool>(on_error_);
-        } else {
+        } else if constexpr (std::is_same_v<Event, CancelledEvent>) {
           return static_cast<bool>(on_cancelled_);
         }
       },
       event);
+}
+
+bool TurnRoute::should_retain(const WorkerEvent& event) const noexcept {
+  if (std::holds_alternative<ToolCallEvent>(event)) {
+    return !terminal_ && !tool_dispatch_failed_;
+  }
+  if (const auto* accepted = std::get_if<WorkerToolAcceptedEvent>(&event)) {
+    return pending_worker_tool_ && pending_worker_tool_->id == accepted->tool_call_id;
+  }
+  return has_callback(event);
+}
+
+bool TurnRoute::should_discard(const WorkerEvent& event) const noexcept {
+  if (std::holds_alternative<ToolCallEvent>(event)) {
+    return terminal_ || tool_dispatch_failed_;
+  }
+  if (const auto* accepted = std::get_if<WorkerToolAcceptedEvent>(&event)) {
+    return !pending_worker_tool_ || pending_worker_tool_->id != accepted->tool_call_id;
+  }
+  return false;
 }
 
 void TurnRoute::invoke(const WorkerEvent& event) {
@@ -159,6 +152,8 @@ void TurnRoute::invoke(const WorkerEvent& event) {
           on_text_(value.text);
         } else if constexpr (std::is_same_v<Event, ToolCallEvent>) {
           dispatch(value);
+        } else if constexpr (std::is_same_v<Event, WorkerToolAcceptedEvent>) {
+          accept_worker_tool(value);
         } else if constexpr (std::is_same_v<Event, CompletionEvent>) {
           const Completion completion{
               .turn_id = value.turn_id,
@@ -171,7 +166,7 @@ void TurnRoute::invoke(const WorkerEvent& event) {
           on_completion_(completion);
         } else if constexpr (std::is_same_v<Event, ErrorEvent>) {
           on_error_(value.error);
-        } else {
+        } else if constexpr (std::is_same_v<Event, CancelledEvent>) {
           on_cancelled_(Cancelled{.turn_id = value.turn_id});
         }
       },
@@ -184,6 +179,15 @@ void TurnRoute::dispatch(const ToolCallEvent& event) {
   }
   remaining_exchange_bytes_ =
       std::min(remaining_exchange_bytes_, event.remaining_exchange_bytes);
+  const auto registration = find_tool_registration(tools_, event.call.name);
+  if (registration && registration->execution == ToolExecution::worker_thread) {
+    dispatch_on_worker(event);
+    return;
+  }
+  dispatch_on_app(event);
+}
+
+void TurnRoute::dispatch_on_app(const ToolCallEvent& event) {
   auto result = dispatch_tool(tools_, event.call, max_tool_result_bytes_);
   if (result) {
     const auto result_bytes = content_payload_bytes(*result);
@@ -210,13 +214,44 @@ void TurnRoute::dispatch(const ToolCallEvent& event) {
     });
   }
   if (result_ready && on_tool_) {
-    on_tool_(ToolCall{
-        .turn_id = turn_id_,
-        .id = event.call.id,
-        .name = event.call.name,
-        .arguments = event.call.arguments,
-    });
+    notify_tool_observer(event.call);
   }
+}
+
+void TurnRoute::dispatch_on_worker(const ToolCallEvent& event) {
+  const auto commands = commands_.lock();
+  if (!commands) {
+    tool_dispatch_failed_ = true;
+    return;
+  }
+  pending_worker_tool_ = event.call;
+  commands->push(ExecuteWorkerToolCommand{
+      .turn_id = turn_id_,
+      .call = event.call,
+  });
+}
+
+void TurnRoute::accept_worker_tool(const WorkerToolAcceptedEvent& event) {
+  if (!pending_worker_tool_ || pending_worker_tool_->id != event.tool_call_id) {
+    return;
+  }
+  assert(event.result_payload_bytes <= remaining_exchange_bytes_);
+  remaining_exchange_bytes_ -=
+      std::min(event.result_payload_bytes, remaining_exchange_bytes_);
+  auto call = std::move(*pending_worker_tool_);
+  pending_worker_tool_.reset();
+  if (on_tool_) {
+    notify_tool_observer(call);
+  }
+}
+
+void TurnRoute::notify_tool_observer(const ToolCallBlock& call) {
+  on_tool_(ToolCall{
+      .turn_id = turn_id_,
+      .id = call.id,
+      .name = call.name,
+      .arguments = call.arguments,
+  });
 }
 
 const std::shared_ptr<ConversationState>& TurnRoute::conversation() const noexcept {
@@ -227,247 +262,6 @@ const std::string& TurnRoute::user_message() const noexcept { return user_messag
 
 std::size_t TurnRoute::max_conversation_bytes() const noexcept {
   return max_conversation_bytes_;
-}
-
-PumpState::PumpState(std::shared_ptr<EventQueue> events, PumpClock clock)
-    : events_(std::move(events)), clock_(std::move(clock)) {
-  if (!clock_) {
-    clock_ = [] { return std::chrono::steady_clock::now(); };
-  }
-}
-
-void PumpState::add_route(std::shared_ptr<TurnRoute> route) {
-  routes_.emplace(route->id(), std::move(route));
-}
-
-std::shared_ptr<TurnRoute> PumpState::find_route(const TurnId turn_id) const {
-  const auto found = routes_.find(turn_id);
-  return found == routes_.end() ? nullptr : found->second;
-}
-
-std::size_t PumpState::route_count() const noexcept { return routes_.size(); }
-
-std::size_t PumpState::live_route_count() const noexcept {
-  return static_cast<std::size_t>(std::ranges::count_if(
-      routes_, [](const auto& entry) { return !entry.second->terminal(); }));
-}
-
-bool PumpState::updating() const noexcept { return updating_; }
-
-UpdateStats PumpState::update(const UpdateOptions options) {
-  if (updating_) {
-    return UpdateStats{
-        .events_remaining = pending_callbacks_.size() + events_->size(),
-        .budget_exhausted = true,
-        .reentrant_update_rejected = true,
-    };
-  }
-  UpdateGuard guard{updating_};
-  const auto started = clock_();
-  const auto deadline = update_deadline(started, options.time_budget);
-  std::size_t delivered = 0;
-  bool exhausted = ingest_events(deadline);
-  while (delivered < options.max_callbacks && has_deliverable()) {
-    if (clock_() >= deadline) {
-      exhausted = true;
-      break;
-    }
-    if (!deliver_one(delivered)) {
-      break;
-    }
-  }
-  if (!exhausted) {
-    release_discarded();
-    clean_routes();
-  }
-  const auto remaining = pending_callbacks_.size() + events_->size();
-  exhausted = exhausted || (delivered == options.max_callbacks && has_deliverable());
-  return UpdateStats{
-      .callbacks_delivered = delivered,
-      .events_remaining = remaining,
-      .budget_exhausted = exhausted,
-  };
-}
-
-void PumpState::shutdown() noexcept {
-  for (auto& [turn_id, route] : routes_) {
-    static_cast<void>(turn_id);
-    route->conversation()->busy = false;
-  }
-  for (const auto& event : pending_callbacks_) {
-    events_->release(event_turn_id(event.event), event.accounted_bytes);
-  }
-  pending_callbacks_.clear();
-  while (auto event = events_->try_pop()) {
-    events_->release(*event);
-  }
-  routes_.clear();
-}
-
-bool PumpState::ingest_events(const std::chrono::steady_clock::time_point deadline) {
-  while (events_->size() != 0) {
-    if (clock_() >= deadline) {
-      return true;
-    }
-    auto event = events_->try_pop();
-    if (!event) {
-      return false;
-    }
-    accept_event(std::move(*event));
-  }
-  return false;
-}
-
-void PumpState::accept_event(WorkerEvent event) {
-  const auto accounted_bytes = event_payload_bytes(event);
-  const auto route = find_route(event_turn_id(event));
-  if (!route) {
-    events_->release(event);
-    return;
-  }
-  if (route->terminal()) {
-    events_->release(event);
-    return;
-  }
-
-  apply_terminal(*route, event);
-  if (route->attached() || route->has_callback(event)) {
-    if (const auto* delta = std::get_if<TextDeltaEvent>(&event);
-        delta != nullptr && coalesce_pending_delta(*delta, accounted_bytes)) {
-      return;
-    }
-    pending_callbacks_.push_back(PendingCallback{
-        .event = std::move(event),
-        .accounted_bytes = accounted_bytes,
-    });
-  } else {
-    events_->release(event);
-  }
-}
-
-bool PumpState::coalesce_pending_delta(const TextDeltaEvent& event,
-                                       const std::size_t accounted_bytes) {
-  const auto found =
-      std::ranges::find_if(pending_callbacks_, [&event](const auto& pending) {
-        const auto* delta = std::get_if<TextDeltaEvent>(&pending.event);
-        return delta != nullptr && delta->turn_id == event.turn_id;
-      });
-  if (found == pending_callbacks_.end()) {
-    return false;
-  }
-  std::get<TextDeltaEvent>(found->event).text += event.text;
-  found->accounted_bytes += accounted_bytes;
-  return true;
-}
-
-void PumpState::apply_terminal(TurnRoute& route, WorkerEvent& event) {
-  if (const auto* completion = std::get_if<CompletionEvent>(&event)) {
-    if (conversation_limit_exceeded(route, *completion)) {
-      event = ErrorEvent{
-          .turn_id = completion->turn_id,
-          .error =
-              Error{
-                  .category = ErrorCategory::resource_limit,
-                  .message = "completion exceeds the Conversation byte limit",
-                  .turn_id = completion->turn_id,
-                  .attempt = completion->attempt_count,
-                  .provider_request_id = completion->provider_request_id,
-              },
-      };
-    } else {
-      commit_completion(route, *completion);
-    }
-  }
-  if (std::holds_alternative<CompletionEvent>(event) ||
-      std::holds_alternative<ErrorEvent>(event) ||
-      std::holds_alternative<CancelledEvent>(event)) {
-    route.conversation()->busy = false;
-    route.mark_terminal();
-  }
-}
-
-bool PumpState::conversation_limit_exceeded(
-    const TurnRoute& route, const CompletionEvent& event) const noexcept {
-  const auto current = route.conversation()->payload_bytes;
-  const auto limit = route.max_conversation_bytes();
-  if (current > limit || route.user_message().size() > limit - current) {
-    return true;
-  }
-  auto remaining = limit - current - route.user_message().size();
-  for (const auto& message : event.exchange) {
-    const auto bytes = message_payload_bytes(message);
-    if (bytes > remaining) {
-      return true;
-    }
-    remaining -= bytes;
-  }
-  return false;
-}
-
-void PumpState::commit_completion(TurnRoute& route, const CompletionEvent& event) {
-  auto& conversation = *route.conversation();
-  Message user{
-      .role = Role::user,
-      .content = {TextBlock{.text = route.user_message()}},
-  };
-  conversation.payload_bytes += message_payload_bytes(user);
-  conversation.messages.push_back(std::move(user));
-  for (const auto& message : event.exchange) {
-    conversation.payload_bytes += message_payload_bytes(message);
-    conversation.messages.push_back(message);
-  }
-}
-
-bool PumpState::deliver_one(std::size_t& callbacks_delivered) {
-  const auto found = std::find_if(
-      pending_callbacks_.begin(), pending_callbacks_.end(), [this](const auto& event) {
-        const auto route = find_route(event_turn_id(event.event));
-        return route && route->has_callback(event.event);
-      });
-  if (found == pending_callbacks_.end()) {
-    return false;
-  }
-  auto pending = std::move(*found);
-  pending_callbacks_.erase(found);
-  const auto route = find_route(event_turn_id(pending.event));
-  events_->release(event_turn_id(pending.event), pending.accounted_bytes);
-  ++callbacks_delivered;
-  route->invoke(pending.event);
-  return true;
-}
-
-bool PumpState::has_deliverable() const noexcept {
-  return std::ranges::any_of(pending_callbacks_, [this](const auto& event) {
-    const auto route = find_route(event_turn_id(event.event));
-    return route && route->has_callback(event.event);
-  });
-}
-
-void PumpState::release_discarded() {
-  std::erase_if(pending_callbacks_, [this](const auto& event) {
-    const auto route = find_route(event_turn_id(event.event));
-    const auto obsolete_tool_call =
-        route && std::holds_alternative<ToolCallEvent>(event.event) &&
-        !route->has_callback(event.event);
-    const auto discard = !route || obsolete_tool_call ||
-                         (!route->attached() && !route->has_callback(event.event));
-    if (discard) {
-      events_->release(event_turn_id(event.event), event.accounted_bytes);
-    }
-    return discard;
-  });
-}
-
-void PumpState::clean_routes() {
-  std::erase_if(routes_, [this](const auto& entry) {
-    const auto& [turn_id, route] = entry;
-    if (!route->terminal() || route->attached()) {
-      return false;
-    }
-    return std::ranges::none_of(pending_callbacks_, [turn_id](const auto& event) {
-      return event_turn_id(event.event) == turn_id;
-    });
-  });
 }
 
 } // namespace scry::detail

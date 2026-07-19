@@ -1,6 +1,7 @@
 #include "core/provider.hpp"
 
 #include "provider/anthropic.hpp"
+#include "provider/openai.hpp"
 #include "provider/wire_json.hpp"
 
 #include <memory>
@@ -13,9 +14,7 @@ make_provider_adapter(const ProviderDialect dialect) {
   case ProviderDialect::anthropic:
     return std::make_unique<AnthropicAdapter>();
   case ProviderDialect::openai_compatible:
-    return std::unexpected(
-        make_provider_error(ErrorCategory::invalid_config,
-                            "OpenAI-compatible providers are not available until M4"));
+    return std::make_unique<OpenAiAdapter>();
   }
   return std::unexpected(
       make_provider_error(ErrorCategory::invalid_config, "Unknown provider dialect"));

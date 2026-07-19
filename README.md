@@ -12,14 +12,46 @@ consulting an oracle (the LLM).
 
 Built for the apps that live in C++ — games, GUI tools, simulators — where you can't block a frame, can't shell out to Python, and want tool use, not just chat.
 
-**Status:** M3 reflection complete. The C++23 runtime snapshots explicit-schema
-registrations per accepted turn, serializes them to Anthropic Messages,
-executes ordered tool batches inside the app's `update()` call, and
-automatically resends ordered results until a final answer. Tool rounds remain
-transactional, bounded, cancellable, and persistable through the versioned
-`Conversation::to_json()` / `Conversation::from_json()` boundary. Typed P2996
-schema generation, strict marshalling, and the optional reflection package
-component are implemented under
+**Status:** M4 breadth and the M5 showcase are complete. M5 is implemented under
+[ADR 0010](docs/adr/0010-m5-showcase-contract.md) with opt-in C++23 examples for
+a host-owned Dear ImGui chat panel and a deterministic grid NPC driven through
+explicit tools. These examples consume only `scry::scry`: they add no public
+API, installed artifact, or runtime dependency. The shared showcase gate passes
+locally and in hosted CI.
+
+The C++23 runtime selects Anthropic Messages or the strict OpenAI-compatible
+Chat Completions subset from `Config`, including local servers with no API key.
+Explicit and reflected tools accept `ToolRegistrationOptions`: app-thread
+execution remains the default, while an explicit worker-thread opt-in preserves
+provider order, app-thread observer delivery, accepted-turn snapshots,
+transactional resend and commit, cancellation semantics, and exclusive handler
+ownership.
+
+M4's deterministic closure passes 288/288 development tests and 60/60 provider
+tests. It includes exact OpenAI request/response/stream cases, a checked corpus
+and short `scry_openai_fuzz` target, a fragmented transactional OpenAI tool
+round, concurrent Anthropic/OpenAI isolation, a public Curl path/header/SSE
+round, and worker-mode mixed/all-worker ordering, thread-ID, snapshot,
+cancellation, detached-turn, budget, and cooperating-shutdown coverage. The
+correct-base quality ratchet passes with 89.622% head branch coverage versus
+89.043% at the base, 93.322% diff branch coverage, maximum CRAP 13.125, and no
+complexity, long-function, or long-file debt.
+
+The scheduled/manual M4 nightly pipeline is also implemented: CodeQL, long
+SSE/Anthropic/OpenAI fuzzing, Mull mutation reports, and a bounded
+OpenAI-compatible smoke using checksum-pinned Ollama v0.32.1 and a
+manifest-pinned `qwen3:1.7b-q4_K_M`. This records a live pipeline, not a claim
+that a hosted nightly execution has already completed. Separately,
+`scripts/ci-local-model.sh` passed locally through the public OpenAI-compatible
+chat and required-tool paths using Ollama 0.22.1 and the exact
+`qwen3:1.7b-q4_K_M` manifest
+`sha256:8f68893c685c3ddff2aa3fffce2aa60a30bb2da65ca488b61fff134a4d1730e7`;
+the checksum-pinned Ollama v0.32.1 hosted nightly remains unexecuted and
+unclaimed.
+
+The M3 reflection component remains complete. Typed P2996 schema generation,
+strict marshalling, and the optional reflection package component are
+implemented under
 [ADR 0007](docs/adr/0007-m3-reflection-contract.md). The supported GCC 16 gate
 builds the reflected example and standalone header, runs 27 schema, codec,
 bridge, registration, and compile-fail tests, audits a clean component install,
@@ -58,7 +90,12 @@ That one command adds the live branch-coverage/CRAP ratchet, clang-tidy,
 sanitizers, short protocol fuzzing, and host-specific curl/reflection legs. It
 runs all available legs and reports host-specific toolchains that are
 unavailable locally; hosted CI is authoritative for those environments.
-The M3 reflection gate is live through that same preflight entry point.
+The M4 OpenAI/worker gates and M3 reflection gate are live through that same
+preflight entry point.
+The M5 showcase gate is also wired through this entry point and passes locally:
+it runs 20 deterministic tests three times, compiles and executes a real
+headless Dear ImGui frame, and audits the default-OFF package plus a downstream
+consumer. Hosted CI runs and passes the same gate.
 `just ci` is the optional convenience wrapper.
 
 The reflection-OFF surface targets stable C++23 compilers. The accepted M3
@@ -88,6 +125,9 @@ retained low-level feasibility probe.
 | [ADR 0005](docs/adr/0005-m1-runtime-and-test-foundation.md) | Compiled M1 runtime, pinned dependencies, internal contracts, and chat-only milestone boundary. |
 | [ADR 0006](docs/adr/0006-m2-agentic-tool-loop.md) | M2 registry snapshots, agentic tool rounds, app-thread dispatch, retry accounting, transactional commit, and Conversation persistence. |
 | [ADR 0007](docs/adr/0007-m3-reflection-contract.md) | Accepted M3 schema/type mapping, strict marshalling, description precedence, optional package component, and no-Glaze public boundary. |
+| [ADR 0008](docs/adr/0008-m4-openai-compatible-contract.md) | Accepted M4 endpoint, authentication, common request/response, streaming, error, and per-dialect state contract for OpenAI-compatible Chat Completions. |
+| [ADR 0009](docs/adr/0009-m4-worker-tool-execution.md) | Accepted M4 per-tool execution policy, handler ownership, ordered control flow, cancellation, observer, and teardown contract. |
+| [ADR 0010](docs/adr/0010-m5-showcase-contract.md) | Accepted M5 showcase-only boundary, host-owned ImGui lifecycle, deterministic NPC tools, pinned build-only dependency, and acceptance gates. |
 
 ## Reading order
 

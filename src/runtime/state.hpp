@@ -21,6 +21,7 @@ struct ConversationState {
 
 struct RegisteredTool final {
   ToolDefinition definition{};
+  ToolExecution execution{ToolExecution::app_thread};
   std::shared_ptr<ToolHandler> handler{};
 };
 
@@ -31,11 +32,10 @@ struct ToolRegistryState {
   ToolSnapshot entries{};
 };
 
-[[nodiscard]] Status add_tool_registration(ToolRegistryState& state,
-                                           ToolDefinition definition,
-                                           ToolHandler handler);
 [[nodiscard]] ToolSnapshot snapshot_tools(const ToolRegistryState& state);
 [[nodiscard]] std::vector<ToolSchema> snapshot_schemas(const ToolSnapshot& snapshot);
+[[nodiscard]] std::vector<std::string>
+snapshot_worker_tool_names(const ToolSnapshot& snapshot);
 
 [[nodiscard]] std::string response_text(const ModelResponse& response);
 

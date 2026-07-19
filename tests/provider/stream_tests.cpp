@@ -96,6 +96,18 @@ TEST_CASE("Anthropic stream decoder observes optional unknown events") {
   CHECK(std::get<ProviderIgnoredEvent>(event->front()).name == "future_optional");
 }
 
+TEST_CASE("Anthropic stream rejects decode state owned by another dialect") {
+  auto adapter = make_provider_adapter(ProviderDialect::anthropic);
+  REQUIRE(adapter.has_value());
+  ProviderDecodeState state{};
+  state.dialect.emplace<OpenAiProviderDecodeState>();
+
+  const auto event =
+      (*adapter)->parse_stream_event("future_optional", "not-json", state);
+  REQUIRE_FALSE(event);
+  CHECK(event.error().category == ErrorCategory::protocol);
+}
+
 TEST_CASE("Anthropic stream decoder rejects malformed required events") {
   auto adapter = make_provider_adapter(ProviderDialect::anthropic);
   REQUIRE(adapter.has_value());
@@ -223,4 +235,47 @@ TEST_CASE("Anthropic stream decoder rejects content after the finish event") {
 
   REQUIRE_FALSE(late_content);
   CHECK(late_content.error().category == ErrorCategory::protocol);
+}
+
+TEST_CASE("Anthropic stream decoder enforces active block lifecycle boundaries") {
+  auto adapter = make_provider_adapter(ProviderDialect::anthropic);
+  REQUIRE(adapter.has_value());
+  ProviderDecodeState state{};
+
+  REQUIRE((*adapter)->parse_stream_event(
+      "message_start",
+      R"({"type":"message_start","message":{"type":"message","content":[],"stop_reason":null}})",
+      state));
+  REQUIRE((*adapter)->parse_stream_event(
+      "content_block_start",
+      R"({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}})",
+      state));
+
+  auto event = (*adapter)->parse_stream_event(
+      "message_delta", R"({"type":"message_delta","delta":{"stop_reason":"end_turn"}})",
+      state);
+  REQUIRE_FALSE(event);
+  CHECK(event.error().category == ErrorCategory::protocol);
+  event = (*adapter)->parse_stream_event("message_stop", R"({"type":"message_stop"})",
+                                         state);
+  REQUIRE_FALSE(event);
+  CHECK(event.error().category == ErrorCategory::protocol);
+
+  REQUIRE((*adapter)->parse_stream_event(
+      "content_block_stop", R"({"type":"content_block_stop","index":0})", state));
+  event = (*adapter)->parse_stream_event(
+      "content_block_delta",
+      R"({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"late"}})",
+      state);
+  REQUIRE_FALSE(event);
+  CHECK(event.error().category == ErrorCategory::protocol);
+
+  REQUIRE((*adapter)->parse_stream_event(
+      "message_delta", R"({"type":"message_delta","delta":{"stop_reason":"end_turn"}})",
+      state));
+  event = (*adapter)->parse_stream_event(
+      "message_delta", R"({"type":"message_delta","delta":{"stop_reason":"end_turn"}})",
+      state);
+  REQUIRE_FALSE(event);
+  CHECK(event.error().category == ErrorCategory::protocol);
 }

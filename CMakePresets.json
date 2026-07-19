@@ -14,6 +14,7 @@
       "cacheVariables": {
         "CMAKE_EXPORT_COMPILE_COMMANDS": true,
         "SCRY_BUILD_EXAMPLES": true,
+        "SCRY_BUILD_IMGUI_SHOWCASE": false,
         "SCRY_BUILD_TESTS": true,
         "SCRY_ENABLE_FORMAT_CHECK": true,
         "SCRY_ENABLE_REFLECTION": false,
@@ -84,6 +85,28 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
         "SCRY_BUILD_FUZZERS": true,
+        "SCRY_ENABLE_FORMAT_CHECK": false
+      }
+    },
+    {
+      "name": "nightly-local-model",
+      "displayName": "Nightly public-API local-model smoke",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "SCRY_BUILD_EXAMPLES": false,
+        "SCRY_BUILD_LOCAL_MODEL_SMOKE": true,
+        "SCRY_BUILD_TESTS": false,
+        "SCRY_ENABLE_FORMAT_CHECK": false
+      }
+    },
+    {
+      "name": "showcase",
+      "displayName": "Opt-in Dear ImGui and grid-NPC showcase",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "SCRY_BUILD_IMGUI_SHOWCASE": true,
         "SCRY_ENABLE_FORMAT_CHECK": false
       }
     }

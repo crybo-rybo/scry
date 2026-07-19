@@ -20,6 +20,7 @@
 #include <string>
 #include <thread>
 #include <utility>
+#include <vector>
 
 namespace scry {
 namespace {
@@ -35,6 +36,20 @@ namespace {
   return detail::Message{
       .role = detail::Role::user,
       .content = {detail::TextBlock{.text = std::move(text)}},
+  };
+}
+
+[[nodiscard]] detail::ModelRequest
+make_request(const Config& config, const detail::ConversationState& conversation,
+             std::vector<detail::Message> messages,
+             std::vector<detail::ToolSchema> schemas) {
+  return detail::ModelRequest{
+      .model = config.model,
+      .system_prompt = conversation.config.system_prompt,
+      .messages = std::move(messages),
+      .tools = std::move(schemas),
+      .sampling = config.sampling,
+      .streaming = true,
   };
 }
 
@@ -94,7 +109,9 @@ public:
                                     std::move(transport), std::move(commands),
                                     std::move(events)};
           actor.run(stopped);
-        }) {}
+        }) {
+    tools_->impl_->bind_command_queue(commands_);
+  }
 
   ~Impl() {
     worker_.request_stop();
@@ -141,6 +158,7 @@ public:
     auto messages = conversation->messages;
     messages.push_back(user_message(text));
     auto schemas = detail::snapshot_schemas(tools);
+    auto worker_tool_names = detail::snapshot_worker_tool_names(tools);
     auto route = std::make_shared<detail::TurnRoute>(
         turn_id, cancelled, commands_, conversation, std::move(text),
         detail::TurnRouteOptions{
@@ -149,20 +167,15 @@ public:
             .max_exchange_bytes = max_exchange_bytes,
             .max_conversation_bytes = config_.limits.max_conversation_bytes,
         });
-    detail::ModelRequest request{
-        .model = config_.model,
-        .system_prompt = conversation->config.system_prompt,
-        .messages = std::move(messages),
-        .tools = std::move(schemas),
-        .sampling = config_.sampling,
-        .streaming = true,
-    };
+    auto request =
+        make_request(config_, *conversation, std::move(messages), std::move(schemas));
 
     conversation->busy = true;
     pump_.add_route(route);
     commands_->push(detail::SendTurnCommand{
         .turn_id = turn_id,
         .request = std::move(request),
+        .worker_tool_names = std::move(worker_tool_names),
         .cancelled = std::move(cancelled),
         .max_exchange_bytes = max_exchange_bytes,
     });

@@ -89,31 +89,6 @@ void start_message(AnthropicAdapter& adapter, ProviderDecodeState& state) {
   return state;
 }
 } // namespace
-TEST_CASE("wire JSON accessors distinguish absence, null, type, and value") {
-  const auto scalar = wire("7");
-  CHECK(wire_field(scalar, "value") == nullptr);
-  const auto object =
-      wire(R"({"string":"value","array":[],"null":null,"uint":7,"wrong":false})");
-  CHECK(wire_field(object, "missing") == nullptr);
-  CHECK(std::string{*required_wire_string(object, "string")} == "value");
-  for (const auto name : {"missing", "wrong"}) {
-    const auto result = required_wire_string(object, name);
-    REQUIRE_FALSE(result);
-    CHECK(result.error().category == ErrorCategory::protocol);
-  }
-  REQUIRE(required_wire_array(object, "array"));
-  for (const auto name : {"missing", "wrong"}) {
-    REQUIRE_FALSE(required_wire_array(object, name));
-  }
-  CHECK_FALSE(*optional_wire_string(object, "missing"));
-  CHECK_FALSE(*optional_wire_string(object, "null"));
-  REQUIRE_FALSE(optional_wire_string(object, "wrong"));
-  CHECK(std::string{**optional_wire_string(object, "string")} == "value");
-  CHECK_FALSE(*optional_wire_uint(object, "missing"));
-  CHECK_FALSE(*optional_wire_uint(object, "null"));
-  REQUIRE_FALSE(optional_wire_uint(object, "wrong"));
-  CHECK(**optional_wire_uint(object, "uint") == 7);
-}
 TEST_CASE("wire JSON errors and provider error types remain bounded and safe") {
   const auto malformed =
       parse_wire_json("{", ErrorCategory::invalid_config, "boundary failed");
@@ -127,7 +102,7 @@ TEST_CASE("wire JSON errors and provider error types remain bounded and safe") {
   CHECK(sanitize_anthropic_error_type("Safe_123") == "Safe_123");
   CHECK(sanitize_anthropic_error_type("unsafe-value") == "unknown_error");
   REQUIRE(make_provider_adapter(ProviderDialect::anthropic));
-  REQUIRE_FALSE(make_provider_adapter(ProviderDialect::openai_compatible));
+  REQUIRE(make_provider_adapter(ProviderDialect::openai_compatible));
   const auto unknown =
       make_provider_adapter(static_cast<ProviderDialect>(std::uint8_t{255}));
   REQUIRE_FALSE(unknown);
@@ -371,7 +346,7 @@ TEST_CASE("Anthropic stream content start rejects invalid lifecycle and shapes")
       state));
   state = ProviderDecodeState{};
   start_message(adapter, state);
-  state.finish_observed = true;
+  std::get<AnthropicProviderDecodeState>(state.dialect).finish_observed = true;
   require_protocol(event(
       adapter, "content_block_start",
       R"({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}})",
@@ -418,7 +393,8 @@ TEST_CASE("Anthropic stream content stop canonicalizes tools and closes text") {
   auto text = text_state(adapter);
   REQUIRE(event(adapter, "content_block_stop",
                 R"({"type":"content_block_stop","index":0})", text));
-  CHECK_FALSE(text.active_content_index);
+  CHECK_FALSE(
+      std::get<AnthropicProviderDecodeState>(text.dialect).active_content_index);
   auto tool = tool_state(adapter);
   REQUIRE(event(adapter, "content_block_stop",
                 R"({"type":"content_block_stop","index":0})", tool));

@@ -45,3 +45,9 @@ curl:
 
 reflection:
     ./scripts/ci-reflection.sh
+
+nightly-local-model:
+    ./scripts/ci-local-model.sh
+
+showcase:
+    ./scripts/ci-showcase.sh

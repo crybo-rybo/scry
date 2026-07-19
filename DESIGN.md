@@ -31,16 +31,21 @@ Scry lets an existing C++ application add LLM capabilities — chat *and* tool u
   schema generation and argument marshalling derived from plain structs at
   compile time, lowering to the implemented C++23 registry.
 - The harness owns the agentic loop entirely: model requests tool → harness executes it → result appended → resend → repeat until final answer.
-- Provider abstraction at the message level, not the HTTP level: Anthropic is
-  implemented; M4 adds an OpenAI-compatible adapter for vLLM, Ollama, and
-  llama.cpp server as a config-only switch.
+- Provider abstraction at the message level, not the HTTP level: Anthropic and
+  the ADR 0008 OpenAI-compatible common subset for vLLM, Ollama, llama.cpp
+  server, and LM Studio are implemented behind a config-only switch.
 - Server/model configuration (base URL, auth, model, sampling params) as simple declarative config.
 - Streaming, cancellation, and retries handled internally with clear thread guarantees.
+- M5 examples that prove the public C++23 surface embeds in a real immediate-mode
+  GUI and a small stateful game loop without expanding Scry's API or lifecycle.
 
 **Non-Goals**
 
 - Not an inference engine. Scry talks to servers; it does not load weights.
 - Not a framework. Scry never owns `main()`, never spins an event loop the app must join, never demands ownership of app lifecycle.
+- Not a GUI or game engine. Showcase views and world objects remain
+  example-local; applications keep their window, rendering, input, state, and
+  update-loop ownership.
 - No prompt-template/chain DSL (LangChain-style). Apps compose in C++.
 - MSVC support is deferred (no public P2996 support as of mid-2026 — see §9).
 
@@ -137,7 +142,7 @@ graph LR
         REG["ToolRegistry<br/>(explicit schemas;<br/>P2996 lowering in M3)"]
         LOOP["Agentic loop engine"]
         Q["Event queue<br/>(worker → main)"]
-        PROV["Provider adapter<br/>Anthropic<br/>(OpenAI-compat in M4)"]
+        PROV["Provider adapters<br/>Anthropic · OpenAI-compatible"]
         NET["Worker thread<br/>HTTP + SSE streaming"]
     end
 
@@ -200,20 +205,36 @@ graph TB
     AL --> EQ --> U --> CB
 ```
 
-**Tool execution policy.** Tools touch app state, so tool handlers run on the
-main thread inside `update()` — the worker posts a tool-call event and waits.
-M4 will add a per-tool worker-thread opt-in for handlers that are thread-safe
-and slow (disk, DB); that future mode will use the same registration table and
-agent loop.
+**Tool execution policy.** App-thread execution inside `update()` remains the
+default: it is the safe mode for handlers that touch host state. M4 implements
+ADR 0009's `ToolExecution::app_thread` / `ToolExecution::worker_thread` through
+`ToolRegistrationOptions`; execution policy stays separate from
+provider-visible `ToolDefinition` metadata, and reflected registration
+forwards the same option.
+
+Worker mode does not create a pool or a second agent loop. An app-thread
+handler remains in the pump-side accepted-turn snapshot. A
+worker-thread handler moves once, through FIFO registration, into a
+worker-owned table; subsequent accepted turns cross the boundary with neutral
+schemas, execution modes, and worker tool names, never a shared callable. The
+complete provider batch is still admitted atomically. `update()` dispatches
+calls in provider order, posts an opted-in call to the worker, and pauses later
+calls until the worker applies the canonical result to the same machine and
+the pump receives an accepted-result acknowledgement. Tool observers still run
+only in `update()` after that acceptance.
 
 **Frame budget.** `update()` accepts an optional time budget; excess events roll to the next tick. The budget is a soft deadline checked between callbacks. Scry never preempts user code, so one slow callback or tool handler can overrun it.
 
 **Cancellation.** `Turn::cancel()` sets an atomic flag; the worker aborts the HTTP transfer at the next opportunity and posts a `Cancelled` event. Cancelling a still-queued turn removes it before any I/O is issued. `Turn` handles are safe to drop (detach semantics); dropping does not join, block, or cancel.
 
-M2 tool handlers are non-preemptive. Cancellation observed before dispatch
-skips the handler. Cancellation requested while a handler is running takes
-effect when it returns: Scry suppresses that result and the remaining calls,
-does not resend to the model, and terminates the turn as cancelled.
+Tool handlers are non-preemptive in either mode. Cancellation observed before
+dispatch skips the handler. Cancellation requested while one runs takes effect
+when it returns: Scry suppresses that result and the remaining calls, does not
+resend to the model, and terminates the turn as cancelled. Scry can bound its
+own transport shutdown, but cannot safely terminate arbitrary C++ user code.
+Opting into worker execution therefore requires the application handler to
+return within the application's teardown bound; the configured Scry-owned
+shutdown bound excludes time spent inside that handler.
 
 **Batch and payload atomicity.** All tool calls from one assistant response are
 admitted to the worker-to-pump event queue as one batch. If the whole batch
@@ -230,8 +251,11 @@ dispatch, resend, or commit. It is not a per-message limit.
 there is no Conversation-local or process-global registry. `send()` snapshots
 immutable registrations into the accepted turn, so later or reentrant
 registration remains safe and affects only subsequently accepted turns. The
-public surface cannot move the Harness-owned registry out. Explicit schemas
-are parsed when registered, must be JSON objects, and are stored canonically.
+public surface cannot move the Harness-owned registry out. In the M4
+implementation, definitions and execution modes are snapshotted; app handlers
+remain pump-owned while worker handlers remain in the worker table installed
+before the send by FIFO command order. Explicit schemas are parsed when
+registered, must be JSON objects, and are stored canonically.
 
 **Runtime configuration defaults.** Limits count payload bytes (not allocator
 overhead); implementations may reject earlier when a provider's own limit is
@@ -377,13 +401,32 @@ matrix; no reflection property/fuzz or manual Clang result is claimed.
 Neutral internal model: `Message { role, vector<ContentBlock> }` where `ContentBlock` is text, tool call, or tool result. Adapters translate to wire formats:
 
 - **Anthropic Messages API** — content blocks, `tool_use`/`tool_result`.
-- **OpenAI-compatible Chat Completions (M4)** — will cover OpenAI plus vLLM,
-  Ollama, llama.cpp server, and LM Studio through one adapter.
+- **OpenAI-compatible Chat Completions (M4, implemented)** — OpenAI plus the
+  common vLLM, Ollama, llama.cpp server, and LM Studio subset from ADR 0008.
 
 Adapter differences (schema envelope, streaming event shapes, stop reasons)
-are contained entirely in the adapter. After the M4 adapter lands, switching
-between supported dialects or pointing at a local model is a `Harness` config
-change.
+remain entirely inside the adapter. The M4 endpoint rule accepts an origin or
+path, `/v1`, or the full `/v1/chat/completions` endpoint and normalizes it
+without Azure inference. Authentication is optional for local servers; a
+nonempty CR/LF-free key becomes one Bearer header. Requests send only model,
+messages, finite `temperature` in `[0,2]`, optional `top_p`, positive legacy
+`max_tokens`, `stream`, streaming `include_usage`, and function tools. System
+text becomes a system message, assistant tool calls retain stable IDs, and
+each neutral tool result expands into one ordered `role: "tool"` message.
+
+Non-streaming responses require a `chat.completion` object with exactly one
+choice at index zero. Text may be a string or null; function calls require IDs,
+names, and object arguments. `prompt_tokens`/`completion_tokens` replace the
+neutral usage totals. Finish reasons map `stop` to completed, `length` to
+length, `tool_calls` to tool use, and `content_filter` or an unknown future
+string to unknown. Streaming requires a stable nonempty chunk ID and accepts
+one indexed choice or a usage-only chunk, accumulates interleaved tool
+fragments by index, and requires a finish reason before the sole successful
+terminal marker, `[DONE]`. Conflicting metadata, sparse calls, deprecated
+`function_call`, nonempty structured refusals, malformed required content, or
+illegal lifecycle transitions are protocol errors. Per-turn decode state is a
+dialect-specific variant, so Anthropic and OpenAI-compatible Harnesses cannot
+contaminate one another. Switching dialects is only a `Harness` config change.
 
 **Toolchain and package reality (mid-2026):** P2996 is in C++26.
 [GCC 16 provides P2996R13](https://gcc.gnu.org/projects/cxx-status.html) behind
@@ -421,8 +464,37 @@ ARCHITECTURE.md §7). Remaining:
 | **M1 — Chat (complete)** | Config + Conversation + Harness + Turn; worker actor + update() pump; minimal sans-I/O request/turn machine including retries; Anthropic adapter; blocking + streaming text. ToolRegistry validation/storage is inert infrastructure only. |
 | **M2 — Tools (complete)** | Snapshot and serialize explicit-schema registrations; multi-round tool states in the sans-I/O machine; main-thread ordered dispatch and automatic resend; transactional tool history and versioned Conversation persistence. |
 | **M3 — Reflection (complete)** | Optional GCC 16 `scry::reflection` component; P2996 lexical schema generation and strict typed marshalling; `scry::reflection::add<Args>()`; annotation/trait descriptions; package consumer and docs demo. |
-| **M4 — Breadth** | OpenAI-compatible adapter (vLLM/Ollama/llama.cpp), retries/backoff polish, cancellation hardening, worker-thread tools. |
-| **M5 — Showcase** | Example integrations: ImGui chat panel; a small game where the LLM drives an NPC via tools. |
+| **M4 — Breadth (complete)** | ADR 0008 OpenAI-compatible Chat Completions subset and ADR 0009 ordered per-tool worker execution; retries/backoff polish, cancellation hardening, and their deterministic, fuzz, sanitizer, Curl, and scheduled bounded local-model gates. |
+| **M5 — Showcase (complete)** | ADR 0010 examples: an opt-in Dear ImGui chat panel and a deterministic grid world where the LLM drives an NPC through explicit tools, with no new public/package surface. |
+
+### M5 showcase contract
+
+The showcase is an integration proof, not a new framework layer. Its ImGui
+panel consumes only `scry::scry`; the host creates and outlives the Harness and
+Conversation, calls `update()` in its own loop, and owns the ImGui context,
+window, renderer, and platform backend. The panel demonstrates asynchronous
+submit, streamed text, complete/error/cancel states, and an explicit Cancel
+control. It may use an example-private controller to make those transitions
+deterministic in tests. Destroying the panel requests cancellation but never
+blocks.
+
+The NPC example uses explicit closed-empty-object schemas for `look` and four
+cardinal move tools. A fixed 5-by-5 in-memory grid makes observations,
+successful movement, and blocked boundaries reproducible. Those handlers stay
+on the app thread because they touch host state. The world is deliberately
+ephemeral: it demonstrates the tool loop, not transactionality for game state.
+Applications adapting the example to durable effects remain responsible for
+idempotency or reconciliation across failed, cancelled, or resubmitted turns.
+
+Dear ImGui is build-only showcase material, default OFF, pinned to `v1.92.8`
+commit `8936b58fe26e8c3da834b8f60b06511d537b4c63` under its MIT license.
+No platform or renderer backend is selected. No ImGui type, source, target, or
+dependency may enter Scry's public headers, install, exports, or normal runtime
+dependency set. SHOW-001–004 and ADR 0010 define the acceptance boundary; M5 is
+not complete until the deterministic panel/NPC tests, real headless ImGui frame,
+warnings-as-errors build, package audit, and shared local/hosted gate pass.
+Those checks pass locally through `scripts/ci-showcase.sh` and the complete
+preflight and in hosted CI through the same script. M5 is complete.
 
 M1 and M2 precede M3 on purpose: reflection is the flashy layer, but it now
 has a complete, tested C++23 agentic runtime to lower onto.

@@ -5,7 +5,8 @@
 # tests + install/package-consumer via ci-local.sh, diff branch coverage + CRAP
 # + quality ratchets (QA-001/003/007), ASan/UBSan/TSan (QA-005), clang-tidy
 # (QA-004 cognitive), gating GCC 16 reflection leg (PORT-002), libcurl
-# runtime integration (PORT-006) and short protocol fuzzing (NET-004).
+# runtime integration (PORT-006), short protocol fuzzing (NET-004), and the
+# opt-in M5 showcase contract (SHOW-001–004).
 #
 # Toolchains are pinned deliberately (ENGINEERING.md §7): compiler drift on
 # experimental legs is a first-class risk.
@@ -226,5 +227,23 @@ jobs:
             libfuzzer-21-dev ninja-build
       - run: |
           cmake --preset fuzz
-          cmake --build build/fuzz --target scry_sse_fuzz scry_anthropic_fuzz
+          cmake --build build/fuzz --target \
+            scry_sse_fuzz scry_anthropic_fuzz scry_openai_fuzz
           ctest --test-dir build/fuzz --output-on-failure -R 'fuzz'
+
+  showcase:
+    name: Opt-in Dear ImGui + grid-NPC showcase
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      CC: gcc-14
+      CXX: g++-14
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - name: Install showcase toolchain
+        run: >
+          sudo apt-get update &&
+          sudo apt-get install -y
+          g++-14 libcurl4-openssl-dev ninja-build
+      - name: Build, test, render a headless frame, and audit packaging
+        run: ./scripts/ci-showcase.sh

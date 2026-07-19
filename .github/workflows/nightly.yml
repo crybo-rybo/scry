@@ -1,0 +1,229 @@
+name: Nightly quality
+
+on:
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-quality-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  codeql:
+    name: CodeQL C/C++ security and quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      security-events: write
+    env:
+      CC: gcc-14
+      CXX: g++-14
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            g++-14 libcurl4-openssl-dev ninja-build
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: c-cpp
+          build-mode: manual
+          queries: security-and-quality
+      - name: Build analyzed C++
+        run: |
+          cmake --preset ci \
+            -B build/codeql \
+            -DSCRY_ENABLE_FORMAT_CHECK=OFF
+          cmake --build build/codeql
+      - name: Analyze
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:c-cpp/nightly
+
+  long-fuzz:
+    name: Long fuzz (${{ matrix.target }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - sse
+          - anthropic
+          - openai
+    env:
+      CC: clang-21
+      CXX: clang++-21
+      SCRY_NIGHTLY_FUZZ_SECONDS: "1200"
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - name: Install pinned fuzz toolchain
+        run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
+            | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
+          echo "deb https://apt.llvm.org/noble/ llvm-toolchain-noble-21 main" \
+            | sudo tee /etc/apt/sources.list.d/llvm-21.list
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang-21 g++-14 libclang-rt-21-dev libcurl4-openssl-dev \
+            libfuzzer-21-dev ninja-build
+      - name: Run long fuzz target
+        run: ./scripts/ci-nightly-fuzz.sh "${{ matrix.target }}"
+      - name: Upload fuzz artifacts
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: nightly-fuzz-${{ matrix.target }}
+          path: build/nightly-fuzz-artifacts/${{ matrix.target }}
+          if-no-files-found: error
+          retention-days: 14
+
+  mutation:
+    name: Mull machine, SSE, and retry
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - name: Install LLVM 18 build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang-18 curl libc++-18-dev libc++abi-18-dev \
+            libcurl4-openssl-dev ninja-build
+      - name: Install pinned Mull 0.34.0 package
+        env:
+          MULL_URL: >-
+            https://github.com/mull-project/mull/releases/download/0.34.0/Mull-18-0.34.0-LLVM-18.1.3-ubuntu-amd64-24.04.deb
+          MULL_SHA256: >-
+            d2491551b2a9d5b28f896c75278e891f748284b4a2523795c62b5315ad7a9e73
+        run: |
+          curl --fail --location --retry 3 \
+            --output mull-0.34.0-llvm18.deb "${MULL_URL}"
+          echo "${MULL_SHA256}  mull-0.34.0-llvm18.deb" | sha256sum --check
+          sudo apt-get install -y ./mull-0.34.0-llvm18.deb
+          mull-runner-18 --version
+      - name: Run mutation reports
+        run: ./scripts/ci-nightly-mutation.sh
+      - name: Upload mutation reports
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: nightly-mull-reports
+          path: build/nightly-mutation-reports
+          if-no-files-found: error
+          retention-days: 30
+
+  local-model:
+    name: Ollama OpenAI-compatible smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CC: gcc-14
+      CXX: g++-14
+      OLLAMA_HOST: 127.0.0.1:11434
+      OLLAMA_NOHISTORY: "1"
+      SCRY_LOCAL_MODEL_BASE_URL: http://127.0.0.1:11434/v1
+      SCRY_LOCAL_MODEL_HEALTH_URL: http://127.0.0.1:11434/api/version
+      SCRY_LOCAL_MODEL_MODEL: qwen3:1.7b-q4_K_M
+      SCRY_LOCAL_MODEL_MANIFEST_DIGEST: >-
+        sha256:8f68893c685c3ddff2aa3fffce2aa60a30bb2da65ca488b61fff134a4d1730e7
+      SCRY_LOCAL_MODEL_HEALTH_TIMEOUT_SECONDS: "60"
+      SCRY_LOCAL_MODEL_TIMEOUT_SECONDS: "180"
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - name: Install build and extraction dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            curl g++-14 libcurl4-openssl-dev ninja-build zstd
+      - name: Download and verify Ollama v0.32.1
+        env:
+          OLLAMA_URL: >-
+            https://github.com/ollama/ollama/releases/download/v0.32.1/ollama-linux-amd64.tar.zst
+          OLLAMA_SHA256: >-
+            83b1f22841eb7f6c4900c6797f960ebaa09466874442ea5b8ae3da6980d3914c
+        run: |
+          mkdir -p build/ollama build/nightly-local-model-artifacts
+          curl --fail --location --retry 3 --max-time 900 \
+            --output build/ollama-linux-amd64.tar.zst "${OLLAMA_URL}"
+          echo "${OLLAMA_SHA256}  build/ollama-linux-amd64.tar.zst" \
+            | tee build/nightly-local-model-artifacts/ollama-sha256.log \
+            | sha256sum --check
+          tar --use-compress-program=unzstd \
+            -xf build/ollama-linux-amd64.tar.zst \
+            -C build/ollama
+      - name: Start Ollama, pull the model, and run the smoke
+        shell: bash
+        env:
+          OLLAMA_MODELS: ${{ runner.temp }}/ollama-models
+        run: |
+          set -euo pipefail
+          export PATH="${PWD}/build/ollama/bin:${PATH}"
+          export LD_LIBRARY_PATH="${PWD}/build/ollama/lib/ollama:${LD_LIBRARY_PATH:-}"
+          ollama serve \
+            >build/nightly-local-model-artifacts/ollama-server.log 2>&1 &
+          ollama_pid=$!
+          cleanup() {
+            kill "${ollama_pid}" 2>/dev/null || true
+            wait "${ollama_pid}" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          ready=0
+          for _ in $(seq 1 60); do
+            if curl --silent --show-error --fail --max-time 2 \
+              "${SCRY_LOCAL_MODEL_HEALTH_URL}" \
+              >>build/nightly-local-model-artifacts/ollama-health.log 2>&1; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [[ "${ready}" -ne 1 ]]; then
+            echo "Ollama did not become healthy within 60 seconds." >&2
+            exit 1
+          fi
+
+          timeout 900 ollama pull "${SCRY_LOCAL_MODEL_MODEL}" \
+            2>&1 | tee build/nightly-local-model-artifacts/ollama-pull.log
+          actual_digest="sha256:$(
+            curl --silent --show-error --fail --max-time 10 \
+              http://127.0.0.1:11434/api/tags \
+              | python3 -c '
+          import json
+          import os
+          import sys
+
+          name = os.environ["SCRY_LOCAL_MODEL_MODEL"]
+          models = json.load(sys.stdin).get("models", [])
+          print(next(
+              item["digest"]
+              for item in models
+              if item.get("name") == name or item.get("model") == name
+          ))
+          '
+          )"
+          printf '%s\n' \
+            "expected=${SCRY_LOCAL_MODEL_MANIFEST_DIGEST}" \
+            "actual=${actual_digest}" \
+            | tee build/nightly-local-model-artifacts/model-manifest-digest.log
+          if [[ "${actual_digest}" != "${SCRY_LOCAL_MODEL_MANIFEST_DIGEST}" ]]; then
+            echo "Pulled model manifest digest does not match the pinned digest." >&2
+            exit 1
+          fi
+          ./scripts/ci-local-model.sh
+      - name: Upload local-model logs
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: nightly-local-model-logs
+          path: build/nightly-local-model-artifacts
+          if-no-files-found: error
+          retention-days: 14
