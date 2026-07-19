@@ -12,13 +12,20 @@ consulting an oracle (the LLM).
 
 Built for the apps that live in C++ — games, GUI tools, simulators — where you can't block a frame, can't shell out to Python, and want tool use, not just chat.
 
-**Status:** M4 breadth complete; M5 showcase is next. The C++23 runtime now
-selects Anthropic Messages or the strict OpenAI-compatible Chat Completions
-subset from `Config`, including local servers with no API key. Explicit and
-reflected tools accept `ToolRegistrationOptions`: app-thread execution remains
-the default, while an explicit worker-thread opt-in preserves provider order,
-app-thread observer delivery, accepted-turn snapshots, transactional resend
-and commit, cancellation semantics, and exclusive handler ownership.
+**Status:** M4 breadth and the M5 showcase are complete. M5 is implemented under
+[ADR 0010](docs/adr/0010-m5-showcase-contract.md) with opt-in C++23 examples for
+a host-owned Dear ImGui chat panel and a deterministic grid NPC driven through
+explicit tools. These examples consume only `scry::scry`: they add no public
+API, installed artifact, or runtime dependency. The shared showcase gate passes
+locally and in hosted CI.
+
+The C++23 runtime selects Anthropic Messages or the strict OpenAI-compatible
+Chat Completions subset from `Config`, including local servers with no API key.
+Explicit and reflected tools accept `ToolRegistrationOptions`: app-thread
+execution remains the default, while an explicit worker-thread opt-in preserves
+provider order, app-thread observer delivery, accepted-turn snapshots,
+transactional resend and commit, cancellation semantics, and exclusive handler
+ownership.
 
 M4's deterministic closure passes 288/288 development tests and 60/60 provider
 tests. It includes exact OpenAI request/response/stream cases, a checked corpus
@@ -85,6 +92,10 @@ runs all available legs and reports host-specific toolchains that are
 unavailable locally; hosted CI is authoritative for those environments.
 The M4 OpenAI/worker gates and M3 reflection gate are live through that same
 preflight entry point.
+The M5 showcase gate is also wired through this entry point and passes locally:
+it runs 20 deterministic tests three times, compiles and executes a real
+headless Dear ImGui frame, and audits the default-OFF package plus a downstream
+consumer. Hosted CI runs and passes the same gate.
 `just ci` is the optional convenience wrapper.
 
 The reflection-OFF surface targets stable C++23 compilers. The accepted M3
@@ -116,6 +127,7 @@ retained low-level feasibility probe.
 | [ADR 0007](docs/adr/0007-m3-reflection-contract.md) | Accepted M3 schema/type mapping, strict marshalling, description precedence, optional package component, and no-Glaze public boundary. |
 | [ADR 0008](docs/adr/0008-m4-openai-compatible-contract.md) | Accepted M4 endpoint, authentication, common request/response, streaming, error, and per-dialect state contract for OpenAI-compatible Chat Completions. |
 | [ADR 0009](docs/adr/0009-m4-worker-tool-execution.md) | Accepted M4 per-tool execution policy, handler ownership, ordered control flow, cancellation, observer, and teardown contract. |
+| [ADR 0010](docs/adr/0010-m5-showcase-contract.md) | Accepted M5 showcase-only boundary, host-owned ImGui lifecycle, deterministic NPC tools, pinned build-only dependency, and acceptance gates. |
 
 ## Reading order
 

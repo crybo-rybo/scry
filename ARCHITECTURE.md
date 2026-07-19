@@ -337,6 +337,34 @@ The second sanctioned interface, existing for one reason: **dependency injection
   Glaze target.
 - Dependency bar is high: curl, Glaze, and test frameworks. Each new dependency needs a written justification in this doc. Header hygiene enforced (IWYU in CI) so the PImpl firewall stays real.
 
+**M5 showcase boundary (ADR 0010).** Showcase code depends inward on the
+installed/public `scry::scry` surface; the library never depends back on a
+showcase. The ImGui panel, its controller seam, and the NPC world live outside
+namespace `scry` and are not installed or exported. The host owns the Harness,
+Conversation, update cadence, ImGui context/backends/window/loop, and world
+lifetime. The panel retains only the active public Turn plus example-local
+callback state. Weak callback capture and a submission generation prevent
+late events from touching a destroyed panel or replacing newer state;
+destruction requests cancellation without waiting.
+
+The deterministic NPC's explicit-schema handlers execute on the app thread and
+close over host-owned in-memory state. This is the sanctioned seam for state a
+main loop already owns; it does not create an engine abstraction or a second
+agent loop. The example's mutations are ephemeral. Durable adaptations require
+application-owned idempotency or reconciliation because failed/cancelled turns
+do not roll back external state.
+
+**Dear ImGui justification.** Dear ImGui is required to compile the real widget
+and execute a headless frame rather than validating a look-alike facade. It is
+MIT licensed and pinned to `v1.92.8` commit
+`8936b58fe26e8c3da834b8f60b06511d537b4c63`. It is a build-only dependency of
+the opt-in `SCRY_BUILD_IMGUI_SHOWCASE` path, which defaults OFF. Only core ImGui
+sources are permitted: Scry does not select or acquire a window-system or
+renderer backend. A normal build never fetches ImGui, and no ImGui header,
+type, target, source, option, or transitive requirement may appear in the
+public/install/exported package surface. The core runtime dependency set
+therefore remains libcurl plus internal Glaze.
+
 ## 10. Testing & Tooling Practices
 
 - **The test pyramid mirrors the architecture:** sans-I/O machine tests (majority, no network, no threads) → adapter golden-file tests → transport tests against a local mock HTTP/SSE server → a thin end-to-end smoke suite against a real local model (Ollama/llama.cpp in CI, nightly not per-commit).
@@ -354,6 +382,11 @@ The second sanctioned interface, existing for one reason: **dependency injection
   `qwen3:1.7b-q4_K_M` manifest digest is verified before the smoke runs. This
   documents the live pipeline; no completed hosted nightly execution is
   claimed yet.
+- M5's live acceptance gate covers deterministic NPC domain/registration cases,
+  fake-controller panel send/stream/complete/error/cancel/lifetime cases, a
+  warnings-as-errors compile/link against the pinned real Dear ImGui sources,
+  one headless ImGui frame, and a clean-package absence audit. The shared
+  showcase script passes locally and in hosted CI.
 - CI matrix: GCC 16 with `-std=c++26 -freflection` is the supported M3
   component toolchain. The live `scripts/ci-reflection.sh` gate performs a
   fresh P2996-probed build, the reflection header audit, the 27-test schema,
@@ -394,6 +427,7 @@ Every "boring first" choice is recorded here with the condition that triggers ev
 | Reflection-ON CI leg on Linux only (PORT-005) | A production-grade P2996 toolchain becomes practically distributable on macOS | Gating reflection legs on both platforms |
 | Serialized turns: M2 queued turns wait while the active turn awaits a main-thread tool | Serialized scheduling measurably limits a real app | Tool-await releases the slot under curl-multi multiplexing (same trigger as row 2) |
 | One serialized worker-mode handler with no injected stop token | A real handler needs cooperative cancellation or parallel execution | Ratify a stop-aware or async handler boundary plus explicit pool, ordering, resource, and teardown policy |
+| M5 ImGui panel has no platform/renderer backend and the NPC world is ephemeral | A maintained standalone demo or durable game integration becomes a real deliverable | Ratify its platform matrix and lifecycle separately; keep any backend, persistence, rollback, or idempotency machinery outside the Scry package |
 
 ## 12. Pattern Summary
 
@@ -408,4 +442,5 @@ Every "boring first" choice is recorded here with the condition that triggers ev
 | Providers | Config-selected Strategy at a narrow seam; stateless adapters with per-turn dialect state and golden-file tests |
 | Transport | RAII curl, C-callback trampolines, injectable seam; pure incremental SSE parser |
 | Errors | One categorized value type; expected before acceptance, one async error event after |
+| Showcases | Outermost application adapters over public `scry::scry`; host-owned lifecycle and state; no install/export path |
 | Extensibility | Callables and config, not inheritance; YAGNI on plugin machinery |

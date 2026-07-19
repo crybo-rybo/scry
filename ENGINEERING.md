@@ -31,6 +31,7 @@ reported rather than frozen at M0's unusually small maximum.
 | Component tests | SSE parser, retry classifier, reflected schema/codec, queue, pump budget | Pure or single-threaded; property-based where inputs are adversarial | Most of the rest |
 | Adapter golden tests | Captured real wire payloads ↔ neutral model round-trips | Data-driven; payloads are checked-in fixtures | Thin |
 | Integration tests | Real threads + fake transport; full harness against a local mock SSE server | The only tests where threading is real | Thin |
+| Showcase contract tests | Deterministic NPC world and fake-controller panel behavior; real ImGui headless frame and package audit | Network-free, fixed state; the real dependency is compiled only in its opt-in leg | Thin |
 | End-to-end smoke | Real local model (Ollama / llama.cpp server) in CI | Nightly, not per-commit; flakiness quarantined by design | Thinnest |
 
 ### Principles
@@ -139,7 +140,10 @@ Three rings, ordered by feedback speed; a failure in an inner ring stops the out
    gates. The M3 reflection leg also installs to a clean prefix and builds/runs
    a downstream `find_package(scry CONFIG REQUIRED COMPONENTS reflection)`
    consumer. clang-p2996 is manual, non-gating compatibility work and never
-   builds installable or release artifacts.
+   builds installable or release artifacts. The M5 showcase contract requires
+   a separate default-OFF leg that enables the examples, builds them with
+   warnings as errors, runs deterministic NPC and fake-panel cases, executes a
+   real Dear ImGui headless frame, and repeats the core package-absence audit.
 2. **Per-merge to main:** publish retained integration and coverage reports and perform release-oriented packaging checks.
 3. **Nightly:** a bounded end-to-end smoke against a pinned local
    OpenAI-compatible server/model, long fuzz, deep static analysis, and
@@ -199,6 +203,14 @@ and required-tool paths using Ollama 0.22.1 against the exact
 `sha256:8f68893c685c3ddff2aa3fffce2aa60a30bb2da65ca488b61fff134a4d1730e7`.
 That local pass does not claim execution of the checksum-pinned Ollama v0.32.1
 hosted job.
+
+M5 is live under ADR 0010. `scripts/ci-showcase.sh` is the single local/hosted
+entry point: it runs 20 deterministic NPC, registration, and fake-controller
+panel tests three times; compiles and executes one headless frame with the
+pinned Dear ImGui sources under warnings-as-errors; and audits a clean
+reflection-OFF install plus downstream consumer to prove that no showcase
+artifact or dependency leaks into the package. `scripts/preflight.sh` and the
+hosted `showcase` job both call and pass that shared gate.
 
 ## 7. Workflow & Change Hygiene
 
