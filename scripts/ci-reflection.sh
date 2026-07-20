@@ -44,7 +44,9 @@ cmake --build "${consumer_dir}"
 # TOOL-003: the same reflection-enabled installation must present a pure C++23
 # surface to a core-only consumer. Compiling with a non-reflection compiler
 # proves it — any -std=c++26/-freflection or Glaze leak into scry::scry fails
-# this build, and the consumer itself rejects a leaked reflection component.
+# this compile, and the consumer's configure rejects a leaked reflection
+# component. Compile-only: linking the GCC 16-built archive needs GCC 16's
+# libstdc++ whatever the package exposes, so a link step adds no evidence.
 cmake -E remove_directory "${core_consumer_dir}"
 cmake \
   -S tests/package_consumer \
@@ -52,9 +54,9 @@ cmake \
   -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_CXX_COMPILER=g++-14 \
-  -DCMAKE_PREFIX_PATH="${stage_dir}"
+  -DCMAKE_PREFIX_PATH="${stage_dir}" \
+  -DSCRY_CONSUMER_COMPILE_ONLY=ON
 cmake --build "${core_consumer_dir}"
-"${core_consumer_dir}/scry_package_consumer"
 
 cmake \
   --preset reflection-gcc16 \
