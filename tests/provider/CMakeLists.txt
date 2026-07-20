@@ -2,7 +2,6 @@ add_executable(
   scry_provider_tests
   coverage_tests.cpp
   openai_request_tests.cpp
-  openai_response_tests.cpp
   openai_stream_tests.cpp
   provider_tests.cpp
   stream_tests.cpp
@@ -36,11 +35,9 @@ if(SCRY_BUILD_FUZZERS)
     scry_provider_fuzz_sources
     "${PROJECT_SOURCE_DIR}/src/provider/anthropic_content.cpp"
     "${PROJECT_SOURCE_DIR}/src/provider/anthropic_request.cpp"
-    "${PROJECT_SOURCE_DIR}/src/provider/anthropic_response.cpp"
     "${PROJECT_SOURCE_DIR}/src/provider/anthropic_stream.cpp"
     "${PROJECT_SOURCE_DIR}/src/provider/openai_content.cpp"
     "${PROJECT_SOURCE_DIR}/src/provider/openai_request.cpp"
-    "${PROJECT_SOURCE_DIR}/src/provider/openai_response.cpp"
     "${PROJECT_SOURCE_DIR}/src/provider/openai_stream.cpp"
     "${PROJECT_SOURCE_DIR}/src/provider/provider.cpp"
     "${PROJECT_SOURCE_DIR}/src/provider/wire_json.cpp"

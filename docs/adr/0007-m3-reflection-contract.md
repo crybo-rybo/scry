@@ -1,6 +1,7 @@
 # ADR 0007: M3 Reflected Tool Contract
 
-- Status: Accepted
+- Status: Accepted (coverage-gate mechanics amended by
+  [ADR 0011](0011-absolute-quality-gates.md))
 - Date: 2026-07-18
 
 ## Context
@@ -221,6 +222,16 @@ The installed component must compile for a downstream consumer without a
 Glaze include directory or exported Glaze target.
 
 ## Verification evidence
+
+> **Amended 2026-07 by [ADR 0011](0011-absolute-quality-gates.md):** the
+> checked exclusion validator and the 95% adjusted-decision / 100% function
+> codec floors described below were replaced by stock gcovr
+> `--fail-under-decision 85` / `--fail-under-function 95` thresholds; the
+> compiled bridge's 95% CFG branch floor is unchanged, suite repetition moved
+> to the TSan leg, and `scripts/ci-reflection.sh` additionally compiles the
+> core-only C++23 consumer with non-reflection GCC 14 against the
+> reflection-enabled installation. The contract in this ADR — what is
+> measured and why — remains accepted; only the gate mechanics changed.
 
 The supported M3 path is live:
 

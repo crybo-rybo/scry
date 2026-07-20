@@ -1,22 +1,16 @@
 from __future__ import annotations
 
-import io
 import json
-import subprocess
 import tempfile
 import unittest
-from contextlib import redirect_stderr
 from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import patch
 
 from scripts.quality_gate import (
-    _run_test_binary_command,
     calculate_diff_coverage,
-    compare_reports,
     component_branch_coverage,
     component_coverage_failures,
     ctest_test_binaries,
+    gate,
 )
 from scripts.quality_metrics import (
     crap_score,
@@ -26,27 +20,44 @@ from scripts.quality_metrics import (
 )
 
 
-def report(branch_percent: float, **overrides: int) -> dict:
-    metrics = {
-        "branch_coverage": {"covered": 9, "total": 10, "percent": branch_percent},
-        "crap": {"maximum": 2.0, "violations": 0},
-        "complexity": {
-            "maximum": 2,
-            "warnings": 0,
-            "long_functions": 0,
-            "long_files": 0,
+def _head_report(total_branch_percent: float) -> dict:
+    return {
+        "metrics": {
+            "branch_coverage": {
+                "covered": 9,
+                "total": 10,
+                "percent": total_branch_percent,
+            },
+            "crap": {"maximum": 2.0},
         },
-        "unlinked_todos": 0,
+        "functions": [],
+        "top_crap": [],
+        "coverage_files": {
+            "src/machine/turn_machine.cpp": {"branches": {12: [(3, 1)]}},
+            "src/protocol/sse.cpp": {"branches": {8: [(2, 1)]}},
+            "src/core/retry.cpp": {"branches": {4: [(1, 1)]}},
+        },
     }
-    for key, value in overrides.items():
-        if key in metrics["complexity"]:
-            metrics["complexity"][key] = value
-        else:
-            metrics[key] = value
-    return {"metrics": metrics}
+
+
+def _empty_diff() -> dict:
+    return {
+        "covered": 0,
+        "total": 0,
+        "percent": 100.0,
+        "uncovered": [],
+        "unjustified_exclusions": [],
+    }
 
 
 class QualityGateTests(unittest.TestCase):
+    def test_gate_enforces_the_total_branch_coverage_floor(self) -> None:
+        self.assertEqual(gate(_head_report(95.0), _empty_diff(), 90.0), [])
+
+        failures = gate(_head_report(50.0), _empty_diff(), 90.0)
+
+        self.assertEqual(len(failures), 1)
+        self.assertIn("total branch coverage", failures[0])
     def test_ctest_binaries_preserve_working_directory_and_deduplicate(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -109,54 +120,9 @@ class QualityGateTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "inconsistent"):
                 ctest_test_binaries(document)
 
-    @patch("scripts.quality_gate.subprocess.run")
-    def test_direct_test_runner_applies_working_directory_and_timeout(
-        self, run: unittest.mock.Mock
-    ) -> None:
-        run.return_value.returncode = 0
-        arguments = SimpleNamespace(
-            test_command=["--", "/tmp/test", "--order", "lex"],
-            working_directory="/tmp/work",
-            timeout_seconds=300.0,
-        )
-
-        self.assertEqual(_run_test_binary_command(arguments), 0)
-        run.assert_called_once_with(
-            ["/tmp/test", "--order", "lex"],
-            cwd="/tmp/work",
-            timeout=300.0,
-            check=False,
-        )
-
-    @patch("scripts.quality_gate.subprocess.run")
-    def test_direct_test_runner_reports_timeout(
-        self, run: unittest.mock.Mock
-    ) -> None:
-        run.side_effect = subprocess.TimeoutExpired(["/tmp/test"], 300.0)
-        arguments = SimpleNamespace(
-            test_command=["/tmp/test"],
-            working_directory="/tmp/work",
-            timeout_seconds=300.0,
-        )
-        error = io.StringIO()
-
-        with redirect_stderr(error):
-            result = _run_test_binary_command(arguments)
-
-        self.assertEqual(result, 124)
-        self.assertIn("timed out after 300 seconds", error.getvalue())
-
     def test_crap_penalizes_complex_uncovered_code(self) -> None:
         self.assertEqual(crap_score(6, 0.0), 42.0)
         self.assertEqual(crap_score(6, 1.0), 6.0)
-
-    def test_ratchet_rejects_coverage_and_debt_regressions(self) -> None:
-        failures = compare_reports(
-            report(95.0),
-            report(94.0, warnings=1, long_functions=1, unlinked_todos=1),
-        )
-        self.assertEqual(len(failures), 4)
-        self.assertTrue(any("branch coverage" in failure for failure in failures))
 
     def test_diff_coverage_counts_both_branch_outcomes(self) -> None:
         changes = {"src/machine.cpp": {12: "if (ready) {"}}

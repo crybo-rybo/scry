@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-07-18
+- Amended: 2026-07-19 — the production provider seam is streaming-only
 
 ## Context
 
@@ -36,8 +37,8 @@ schemes.
 `api_key` is optional for this dialect because local servers commonly run
 without authentication. A nonempty key must contain no CR or LF and produces
 `Authorization: Bearer <key>`; an empty key produces no authorization header.
-Requests always send JSON content type and select JSON or event-stream accept
-headers from the request mode.
+Requests always send JSON content type and the event-stream accept header. The
+provider seam has no request-mode toggle.
 
 OpenAI-compatible sampling accepts finite `temperature` in `[0, 2]`, optional
 finite `top_p` in `[0, 1]`, and a present positive `max_tokens`. Anthropic keeps
@@ -49,8 +50,9 @@ fields are outside this compatibility contract.
 
 The adapter sends only the common subset:
 
-- model, messages, temperature, optional top-p, positive max-tokens, and stream;
-- `stream_options: {"include_usage": true}` for a streaming request; and
+- model, messages, temperature, optional top-p, positive max-tokens, and
+  `stream: true`;
+- `stream_options: {"include_usage": true}`; and
 - optional function tools with name, description, and parameters.
 
 Scry does not send `n`, `strict`, `parallel_tool_calls`, `tool_choice`, response
@@ -70,15 +72,14 @@ OpenAI Chat Completions has no portable `is_error` field. Scry does not add a
 nonstandard extension; Scry-generated errors remain visible because their
 canonical result is already an error JSON object.
 
-### Non-streaming response mapping
+### Streaming-only response scope
 
-A successful response must be a `chat.completion` object with exactly one
-choice at index zero, an assistant message, and a supported finish reason.
-Content may be a string or `null`. Function tool calls require a nonempty ID
-and name, and their argument strings must parse and canonicalize as JSON
-objects. Deprecated `function_call`, nonempty structured refusals, multiple
-choices, and malformed required fields are protocol errors. Optional metadata
-that does not alter content is ignored.
+The production adapter accepts only Chat Completions SSE responses and does not
+expose or maintain a parser for JSON `chat.completion` responses. Reintroducing
+a non-streaming decoder requires the evolution-register trigger: a supported
+deployment that cannot serve SSE or a concrete consumer requirement, together
+with a runtime mode that exercises the decoder and its golden and fuzz
+coverage.
 
 Finish reasons map as follows:
 
@@ -90,12 +91,12 @@ Finish reasons map as follows:
 | `content_filter` or an unknown future string | `unknown` |
 | deprecated `function_call` | protocol error |
 
-`prompt_tokens` and `completion_tokens` map to Scry input and output usage.
-Each usage object is a total and replaces prior totals; missing usage remains
-zero. Detailed token breakdowns and `total_tokens` are not required. The
-completion object's `chatcmpl-*` ID is not an HTTP request identifier and does
-not populate `provider_request_id`; the transport's sanitized response header
-remains authoritative.
+`prompt_tokens` and `completion_tokens` from a streaming usage chunk map to Scry
+input and output usage. Each usage object is a total and replaces prior totals;
+missing usage remains zero. Detailed token breakdowns and `total_tokens` are
+not required. A chunk's `chatcmpl-*` ID is not an HTTP request identifier and
+does not populate `provider_request_id`; the transport's sanitized response
+header remains authoritative.
 
 ### Streaming lifecycle
 
@@ -149,11 +150,10 @@ M4 verification includes:
 
 - exact request goldens for endpoint, headers, auth, sampling, system/text,
   tools, tool calls, and expanded tool-result messages;
-- non-streaming response fixtures for text, tools, usage, finish reasons,
-  errors, rejected legacy fields, and malformed choice shapes;
-- streaming fixtures for role/text/usage, `[DONE]`, fragmented and interleaved
-  tool calls, exact byte limits, metadata conflicts, sparse indices, malformed
-  arguments, error objects, and illegal lifecycle transitions;
+- streaming fixtures for role/text/usage, finish-reason mapping, `[DONE]`,
+  fragmented and interleaved tool calls, exact byte limits, metadata conflicts,
+  sparse indices, malformed arguments, error objects, rejected legacy fields,
+  malformed chunk shapes, and illegal lifecycle transitions;
 - arbitrary-split and short fuzz coverage at the OpenAI wire boundary;
 - a public config-only dialect switch, concurrent cross-dialect Harnesses, a
   full OpenAI-compatible tool round, and a Curl loopback path/header/SSE test;
@@ -167,6 +167,10 @@ The adapter supports a documented compatibility subset, not every OpenAI or
 local-server extension. Adding Responses API, Azure endpoint shapes, reasoning
 model token fields, structured outputs, or provider-specific tool controls
 requires a new contract rather than silent wire drift.
+
+Supported deployments must expose Chat Completions SSE. A target that genuinely
+cannot serve SSE triggers the explicit evolution path above; it does not add an
+untested parallel decoder to the existing adapter seam.
 
 The internal provider factory remains config-keyed. A public adapter plugin
 surface is still deferred until a concrete third-party provider cannot be

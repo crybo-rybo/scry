@@ -266,27 +266,23 @@ encode_tools(const std::vector<ToolSchema>& tools) {
   root["messages"] = *messages;
   root["temperature"] = request.sampling.temperature;
   root["max_tokens"] = request.sampling.max_tokens.value_or(0);
-  root["stream"] = request.streaming;
+  root["stream"] = true;
   if (request.sampling.top_p) {
     root["top_p"] = *request.sampling.top_p;
   }
-  if (request.streaming) {
-    WireValue stream_options{};
-    stream_options["include_usage"] = true;
-    root["stream_options"] = std::move(stream_options);
-  }
+  WireValue stream_options{};
+  stream_options["include_usage"] = true;
+  root["stream_options"] = std::move(stream_options);
   if (!tools->empty()) {
     root["tools"] = *tools;
   }
   return root;
 }
 
-[[nodiscard]] std::vector<HttpHeader> request_headers(const Config& config,
-                                                      const bool streaming) {
+[[nodiscard]] std::vector<HttpHeader> request_headers(const Config& config) {
   std::vector<HttpHeader> headers{
       HttpHeader{.name = "content-type", .value = "application/json"},
-      HttpHeader{.name = "accept",
-                 .value = streaming ? "text/event-stream" : "application/json"},
+      HttpHeader{.name = "accept", .value = "text/event-stream"},
   };
   if (!config.api_key.empty()) {
     headers.push_back(HttpHeader{
@@ -316,9 +312,8 @@ OpenAiAdapter::make_request(const Config& config, const ModelRequest& request) c
   }
   return TransportRequest{
       .url = endpoint(config.base_url),
-      .headers = request_headers(config, request.streaming),
+      .headers = request_headers(config),
       .body = std::move(*encoded),
-      .streaming = request.streaming,
       .tls_verify_peer = config.tls_verify_peer,
       .timeouts = config.timeouts,
       .limits = config.limits,

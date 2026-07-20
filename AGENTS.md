@@ -43,10 +43,11 @@ Run the complete local preflight before a PR handoff:
 ./scripts/preflight.sh
 ```
 
-This adds the branch-coverage/CRAP ratchet, clang-tidy, sanitizers, short
-protocol fuzzing, curl, and reflection feasibility. It runs every leg and
-reports unavailable host toolchains explicitly; hosted CI remains authoritative
-for those legs. `just ci` is an optional equivalent.
+This adds the absolute coverage/CRAP quality gate, clang-tidy, sanitizers,
+short protocol fuzzing, the curl runtime spike (on the core leg), and
+reflection feasibility. It runs every leg and reports unavailable host
+toolchains explicitly; hosted CI remains authoritative for those legs.
+`just ci` is an optional equivalent.
 
 For a normal edit/build loop:
 

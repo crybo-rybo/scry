@@ -39,12 +39,13 @@ run_tidy() {
 
 run_preset() {
   local preset="$1"
+  shift
   cmake --preset "${preset}" &&
     cmake --build "build/${preset}" &&
     ctest \
       --test-dir "build/${preset}" \
       --output-on-failure \
-      --repeat until-fail:3
+      "$@"
 }
 
 run_fuzz() {
@@ -78,12 +79,12 @@ run_reflection() {
 }
 
 cd "${root_dir}"
-run_gate "core" ./scripts/ci-local.sh
-run_gate "quality ratchet" ./scripts/quality-gate.sh
+run_gate "core (with libcurl runtime)" ./scripts/ci-local.sh -DSCRY_BUILD_CURL_SPIKE=ON
+run_gate "quality gate" ./scripts/quality-gate.sh
 run_gate "clang-tidy" run_tidy
 run_gate "ASan + UBSan" run_preset asan
-run_gate "TSan" run_preset tsan
-run_gate "libcurl runtime" run_preset curl
+# TSan is where nondeterminism surfaces; the repeat runs live here (QA-008).
+run_gate "TSan" run_preset tsan --repeat until-fail:3
 run_gate "short protocol fuzzing" run_fuzz
 run_gate "opt-in showcase" ./scripts/ci-showcase.sh
 run_gate "GCC 16 supported reflection component" run_reflection

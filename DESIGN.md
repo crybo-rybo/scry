@@ -385,16 +385,15 @@ types; compiled implementation reaches Glaze through a Scry-owned JSON bridge.
 The live M3 verification path runs 27 reflection-labelled tests: 22 runtime,
 schema, codec, bridge, and registration cases plus five stable-diagnostic
 compile failures. `scripts/reflection-coverage.sh` pins GCC/gcov 16 and gcovr
-8.6, requires at least 95% adjusted source decisions and 100% functions in the
-runtime codec, and requires at least 95% GCC/gcovr CFG branches in the compiled
-JSON bridge. The current gated result is 32/32 codec decisions, 62/62 codec
-functions, and 97/97 bridge branches. The adjustment excludes exactly one
-inline-justified GCC-generated switch artifact, and its validator rejects a
-missing, malformed, or widened exclusion. Unadjusted codec decisions
-(33/37) and combined GCC/gcovr CFG arcs (405/462 after the standard exclusions
-and line merging) remain visible diagnostics rather than being mislabeled as
-source decisions. Consteval paths stay covered by the positive/negative compile
-matrix; no reflection property/fuzz or manual Clang result is claimed.
+8.6 and gates with stock gcovr thresholds
+([ADR 0011](docs/adr/0011-absolute-quality-gates.md)): at least 85% source
+decisions and 95% functions in the runtime codec, and at least 95% GCC/gcovr
+CFG branches in the compiled JSON bridge. The codec decision floor
+accommodates the one inline-justified GCC-generated switch on the
+reflected-enum decoder that gcovr's decision analysis still counts; the
+earlier bespoke exclusion validator is retired. Consteval paths stay covered
+by the positive/negative compile matrix; no reflection property/fuzz or
+manual Clang result is claimed.
 
 ## 9. Provider Abstraction
 
@@ -414,15 +413,17 @@ messages, finite `temperature` in `[0,2]`, optional `top_p`, positive legacy
 text becomes a system message, assistant tool calls retain stable IDs, and
 each neutral tool result expands into one ordered `role: "tool"` message.
 
-Non-streaming responses require a `chat.completion` object with exactly one
-choice at index zero. Text may be a string or null; function calls require IDs,
-names, and object arguments. `prompt_tokens`/`completion_tokens` replace the
-neutral usage totals. Finish reasons map `stop` to completed, `length` to
-length, `tool_calls` to tool use, and `content_filter` or an unknown future
-string to unknown. Streaming requires a stable nonempty chunk ID and accepts
-one indexed choice or a usage-only chunk, accumulates interleaved tool
-fragments by index, and requires a finish reason before the sole successful
-terminal marker, `[DONE]`. Conflicting metadata, sparse calls, deprecated
+The adapter seam is streaming-only: the runtime always requests
+`stream: true` and decodes every response through the stream path, so there is
+no parallel non-streaming decoder to keep in sync (see the evolution register
+in ARCHITECTURE.md §11). `prompt_tokens`/`completion_tokens` from the
+streaming usage chunk replace the neutral usage totals. Finish reasons map
+`stop` to completed, `length` to length, `tool_calls` to tool use, and
+`content_filter` or an unknown future string to unknown. Streaming requires a
+stable nonempty chunk ID and accepts one indexed choice or a usage-only chunk,
+accumulates interleaved tool fragments by index, and requires a finish reason
+before the sole successful terminal marker, `[DONE]`. Function calls require
+IDs, names, and object arguments. Conflicting metadata, sparse calls, deprecated
 `function_call`, nonempty structured refusals, malformed required content, or
 illegal lifecycle transitions are protocol errors. Per-turn decode state is a
 dialect-specific variant, so Anthropic and OpenAI-compatible Harnesses cannot

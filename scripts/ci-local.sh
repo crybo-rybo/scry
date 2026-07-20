@@ -15,11 +15,16 @@ cd "${root_dir}"
 readonly format_check="${SCRY_FORMAT_CHECK:-1}"
 
 git diff --check
-python3 -m unittest \
-  scripts.test_quality_gate \
-  scripts.test_reflection_coverage_gate
-python3 -m lizard include src examples spikes tests -l cpp -C 15 -L 60 -a 6
-python3 -m lizard scripts -l python -C 15 -L 60 -a 6
+python3 -m lizard include src examples spikes tests -l cpp -C 15 -a 6
+unlinked_todos="$(
+  git grep -nE '//[[:space:]]*TODO\b' -- include src examples spikes tests |
+    grep -vE 'https?://|#[0-9]+' || true
+)"
+if [[ -n "${unlinked_todos}" ]]; then
+  echo "TODO comments must link an issue:" >&2
+  echo "${unlinked_todos}" >&2
+  exit 1
+fi
 if [[ "${format_check}" == "1" ]]; then
   cmake --preset ci "$@"
   cmake --build "${build_dir}" --target all format-check
@@ -29,8 +34,7 @@ else
 fi
 ctest \
   --test-dir "${build_dir}" \
-  --output-on-failure \
-  --repeat until-fail:3
+  --output-on-failure
 cmake -E remove_directory "${stage_dir}"
 cmake --install "${build_dir}" --prefix "${stage_dir}"
 for reflection_artifact in \

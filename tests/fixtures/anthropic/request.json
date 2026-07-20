@@ -2,7 +2,7 @@
   "model": "claude-test",
   "max_tokens": 64,
   "temperature": 0.25,
-  "stream": false,
+  "stream": true,
   "messages": [
     {
       "role": "user",

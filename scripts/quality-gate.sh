@@ -6,7 +6,7 @@ readonly root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly analyzer="${root_dir}/scripts/quality_gate.py"
 readonly python="${PYTHON:-python3}"
 readonly base_ref="${SCRY_BASE_REF:-origin/main}"
-readonly head_output="${root_dir}/build/quality"
+readonly output_dir="${root_dir}/build/quality"
 readonly coverage_flags="-fprofile-instr-generate -fcoverage-mapping -fprofile-update=atomic"
 readonly direct_test_timeout_seconds=300
 
@@ -43,133 +43,110 @@ fi
 "${python}" -m unittest scripts.test_quality_gate
 
 readonly base_commit="$(git -C "${root_dir}" merge-base "${base_ref}" HEAD)"
-readonly temporary_dir="$(mktemp -d "${TMPDIR:-/tmp}/scry-quality.XXXXXX")"
-trap 'rm -rf "${temporary_dir}"' EXIT
 
-mkdir -p "${temporary_dir}/base"
-git -C "${root_dir}" archive "${base_commit}" | tar -x -C "${temporary_dir}/base"
+readonly build_dir="${output_dir}/build"
+readonly profile_dir="${output_dir}/profiles"
+readonly install_dir="${output_dir}/install"
+readonly mapper_build_dir="${output_dir}/coverage-mapper"
+readonly mapper="${mapper_build_dir}/scry_quality_coverage_mapper"
+readonly ctest_json="${output_dir}/ctest.json"
+readonly profile_data="${output_dir}/coverage.profdata"
+readonly coverage_json="${output_dir}/coverage.json"
+readonly lizard_csv="${output_dir}/lizard.csv"
+readonly report_json="${output_dir}/report.json"
 
-collect_report() {
-  local source_dir="$1"
-  local output_dir="$2"
-  local build_dir="${output_dir}/build"
-  local profile_dir="${output_dir}/profiles"
-  local install_dir="${output_dir}/install"
-  local mapper_build_dir="${output_dir}/coverage-mapper"
-  local mapper="${mapper_build_dir}/scry_quality_coverage_mapper"
-  local ctest_json="${output_dir}/ctest.json"
-  local profile_data="${output_dir}/coverage.profdata"
-  local coverage_json="${output_dir}/coverage.json"
-  local lizard_csv="${output_dir}/lizard.csv"
-  local report_json="${output_dir}/report.json"
-  local canonical_build_dir
-  local -a test_binaries=()
-  local -a test_working_directories=()
+cmake -E remove_directory "${output_dir}"
+mkdir -p "${profile_dir}"
+CC="${CC:-clang}" CXX="${CXX:-clang++}" cmake \
+  -S "${root_dir}" \
+  -B "${build_dir}" \
+  -G Ninja \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_CXX_FLAGS="${coverage_flags}" \
+  -DCMAKE_EXE_LINKER_FLAGS="-fprofile-instr-generate -fcoverage-mapping" \
+  -DSCRY_BUILD_EXAMPLES=ON \
+  -DSCRY_BUILD_TESTS=ON \
+  -DSCRY_ENABLE_FORMAT_CHECK=OFF \
+  -DSCRY_USE_LIBCXX=ON \
+  -DSCRY_WARNINGS_AS_ERRORS=ON
+cmake --build "${build_dir}"
+ctest \
+  --test-dir "${build_dir}" \
+  --output-on-failure
+ctest --test-dir "${build_dir}" --show-only=json-v1 >"${ctest_json}"
+cmake --install "${build_dir}" --prefix "${install_dir}"
+CC="${CC:-clang}" CXX="${CXX:-clang++}" cmake \
+  -S "${root_dir}/scripts/quality_coverage_mapper" \
+  -B "${mapper_build_dir}" \
+  -G Ninja \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_CXX_FLAGS="${coverage_flags}" \
+  -DCMAKE_EXE_LINKER_FLAGS="-fprofile-instr-generate -fcoverage-mapping" \
+  -DCMAKE_PREFIX_PATH="${install_dir}" \
+  -DSCRY_SOURCE_ROOT="${root_dir}"
+cmake --build "${mapper_build_dir}"
 
-  cmake -E remove_directory "${output_dir}"
-  mkdir -p "${profile_dir}"
-  CC="${CC:-clang}" CXX="${CXX:-clang++}" cmake \
-    -S "${source_dir}" \
-    -B "${build_dir}" \
-    -G Ninja \
-    -DCMAKE_BUILD_TYPE=Debug \
-    -DCMAKE_CXX_FLAGS="${coverage_flags}" \
-    -DCMAKE_EXE_LINKER_FLAGS="-fprofile-instr-generate -fcoverage-mapping" \
-    -DSCRY_BUILD_EXAMPLES=ON \
-    -DSCRY_BUILD_TESTS=ON \
-    -DSCRY_ENABLE_FORMAT_CHECK=OFF \
-    -DSCRY_USE_LIBCXX=ON \
-    -DSCRY_WARNINGS_AS_ERRORS=ON
-  cmake --build "${build_dir}"
+canonical_build_dir="$(cd "${build_dir}" && pwd -P)"
+test_binaries=()
+test_working_directories=()
+while IFS=$'\t' read -r binary working_directory; do
+  if [[ "${binary}" == "${canonical_build_dir}/"* ]]; then
+    test_binaries+=("${binary}")
+    test_working_directories+=("${working_directory}")
+  fi
+done < <(
+  "${python}" "${analyzer}" test-binaries --ctest-json "${ctest_json}" |
+    LC_ALL=C sort
+)
+if [[ "${#test_binaries[@]}" -eq 0 ]]; then
+  echo "No native CTest executables were found for coverage" >&2
+  exit 1
+fi
+
+index=0
+for binary in "${test_binaries[@]}"; do
+  printf -v prefix "%03d" "${index}"
+  if [[ "$(basename "${binary}")" == "scry_public_api_contract" ]]; then
+    LLVM_PROFILE_FILE="${profile_dir}/${prefix}-%m-%p.profraw" \
+      "${python}" "${analyzer}" run-test-binary \
+        --working-directory "${test_working_directories[index]}" \
+        --timeout-seconds "${direct_test_timeout_seconds}" \
+        -- "${binary}"
+  else
+    LLVM_PROFILE_FILE="${profile_dir}/${prefix}-%m-%p.profraw" \
+      "${python}" "${analyzer}" run-test-binary \
+        --working-directory "${test_working_directories[index]}" \
+        --timeout-seconds "${direct_test_timeout_seconds}" \
+        -- "${binary}" --order lex --rng-seed 1
+  fi
+  index=$((index + 1))
+done
+
+printf -v prefix "%03d" "${index}"
+LLVM_PROFILE_FILE="${profile_dir}/${prefix}-%m-%p.profraw" \
   ctest \
     --test-dir "${build_dir}" \
     --output-on-failure \
-    --repeat until-fail:3
-  ctest --test-dir "${build_dir}" --show-only=json-v1 >"${ctest_json}"
-  cmake --install "${build_dir}" --prefix "${install_dir}"
-  CC="${CC:-clang}" CXX="${CXX:-clang++}" cmake \
-    -S "${root_dir}/scripts/quality_coverage_mapper" \
-    -B "${mapper_build_dir}" \
-    -G Ninja \
-    -DCMAKE_BUILD_TYPE=Debug \
-    -DCMAKE_CXX_FLAGS="${coverage_flags}" \
-    -DCMAKE_EXE_LINKER_FLAGS="-fprofile-instr-generate -fcoverage-mapping" \
-    -DCMAKE_PREFIX_PATH="${install_dir}" \
-    -DSCRY_SOURCE_ROOT="${source_dir}"
-  cmake --build "${mapper_build_dir}"
+    -R "^integration\\.self-signed TLS is rejected unless explicitly disabled$"
+LLVM_PROFILE_FILE="${profile_dir}/999-%m-%p.profraw" "${mapper}"
 
-  canonical_build_dir="$(cd "${build_dir}" && pwd -P)"
-  while IFS=$'\t' read -r binary working_directory; do
-    if [[ "${binary}" == "${canonical_build_dir}/"* ]]; then
-      test_binaries+=("${binary}")
-      test_working_directories+=("${working_directory}")
-    fi
-  done < <(
-    "${python}" "${analyzer}" test-binaries --ctest-json "${ctest_json}" |
-      LC_ALL=C sort
-  )
-  if [[ "${#test_binaries[@]}" -eq 0 ]]; then
-    echo "No native CTest executables were found for coverage" >&2
-    return 1
-  fi
+"${llvm_profdata}" merge -sparse "${profile_dir}"/*.profraw -o "${profile_data}"
+"${llvm_cov}" export \
+  "${mapper}" \
+  -instr-profile="${profile_data}" >"${coverage_json}"
 
-  cmake -E remove_directory "${profile_dir}"
-  mkdir -p "${profile_dir}"
-  local index=0
-  local prefix
-  local repeat
-  for binary in "${test_binaries[@]}"; do
-    printf -v prefix "%03d" "${index}"
-    for repeat in 0 1 2; do
-      if [[ "$(basename "${binary}")" == "scry_public_api_contract" ]]; then
-        LLVM_PROFILE_FILE="${profile_dir}/${prefix}-${repeat}-%m-%p.profraw" \
-          "${python}" "${analyzer}" run-test-binary \
-            --working-directory "${test_working_directories[index]}" \
-            --timeout-seconds "${direct_test_timeout_seconds}" \
-            -- "${binary}"
-      else
-        LLVM_PROFILE_FILE="${profile_dir}/${prefix}-${repeat}-%m-%p.profraw" \
-          "${python}" "${analyzer}" run-test-binary \
-            --working-directory "${test_working_directories[index]}" \
-            --timeout-seconds "${direct_test_timeout_seconds}" \
-            -- "${binary}" --order lex --rng-seed 1
-      fi
-    done
-    index=$((index + 1))
-  done
-
-  printf -v prefix "%03d" "${index}"
-  for repeat in 0 1 2; do
-    LLVM_PROFILE_FILE="${profile_dir}/${prefix}-${repeat}-%m-%p.profraw" \
-      ctest \
-        --test-dir "${build_dir}" \
-        --output-on-failure \
-        -R "^integration\\.self-signed TLS is rejected unless explicitly disabled$"
-  done
-  LLVM_PROFILE_FILE="${profile_dir}/999-%m-%p.profraw" "${mapper}"
-
-  "${llvm_profdata}" merge -sparse "${profile_dir}"/*.profraw -o "${profile_data}"
-  "${llvm_cov}" export \
-    "${mapper}" \
-    -instr-profile="${profile_data}" >"${coverage_json}"
-
-  (
-    cd "${source_dir}"
-    "${python}" -m lizard include src examples spikes tests -l cpp --csv
-  ) >"${lizard_csv}"
-  "${python}" "${analyzer}" analyze \
-    --source-root "${source_dir}" \
-    --coverage-json "${coverage_json}" \
-    --lizard-csv "${lizard_csv}" \
-    --output "${report_json}"
-}
-
-collect_report "${temporary_dir}/base" "${temporary_dir}/base-output"
-collect_report "${root_dir}" "${head_output}"
+(
+  cd "${root_dir}"
+  "${python}" -m lizard include src examples spikes tests -l cpp --csv
+) >"${lizard_csv}"
+"${python}" "${analyzer}" analyze \
+  --source-root "${root_dir}" \
+  --coverage-json "${coverage_json}" \
+  --lizard-csv "${lizard_csv}" \
+  --output "${report_json}"
 
 "${python}" "${analyzer}" gate \
   --repository "${root_dir}" \
   --base-ref "${base_commit}" \
-  --base-report "${temporary_dir}/base-output/report.json" \
-  --head-report "${head_output}/report.json" \
+  --head-report "${report_json}" \
   --minimum-diff-coverage 90

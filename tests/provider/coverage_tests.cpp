@@ -198,7 +198,6 @@ TEST_CASE("Anthropic request encoding preserves optional and tool branches") {
   value_request.model.clear();
   value_request.system_prompt = "system";
   value_request.sampling.top_p = 0.8;
-  value_request.streaming = true;
   value_request.tools.push_back({.name = "lookup",
                                  .description = "lookup",
                                  .input_schema = {.text = R"({"type":"object"})"}});
@@ -234,59 +233,6 @@ TEST_CASE("Anthropic request encoding propagates invalid boundary JSON") {
   value.tools.push_back(
       {.name = "tool", .description = "tool", .input_schema = {.text = "{"}});
   require_request_error(adapter, config(), value);
-}
-TEST_CASE("Anthropic HTTP errors cover status, correlation, and detail fallbacks") {
-  AnthropicAdapter adapter;
-  constexpr std::array statuses{
-      std::pair{199, ErrorCategory::protocol},
-      std::pair{599, ErrorCategory::network},
-      std::pair{600, ErrorCategory::protocol},
-  };
-  for (const auto& [status, category] : statuses) {
-    const auto result = adapter.parse_response(
-        {.status_code = status},
-        R"({"error":{"type":"safe_error"},"request_id":"body-id"})");
-    REQUIRE_FALSE(result);
-    CHECK(result.error().category == category);
-    CHECK(result.error().provider_request_id == "body-id");
-    CHECK(result.error().provider_detail == "anthropic:safe_error");
-  }
-  auto result = adapter.parse_response(
-      {.status_code = 400, .provider_request_id = "header-id"}, "{");
-  REQUIRE_FALSE(result);
-  CHECK(result.error().provider_request_id == "header-id");
-  CHECK(result.error().provider_detail.empty());
-  for (const auto body : {R"({})", R"({"error":[]})", R"({"error":{}})",
-                          R"({"error":{"type":null}})", R"({"error":{"type":7}})"}) {
-    result = adapter.parse_response({.status_code = 400}, body);
-    REQUIRE_FALSE(result);
-    CHECK(result.error().provider_detail.empty());
-  }
-}
-TEST_CASE("Anthropic successful responses reject malformed required shapes") {
-  AnthropicAdapter adapter;
-  constexpr std::array invalid{
-      "{",
-      R"({})",
-      R"({"type":7})",
-      R"({"type":"future","content":[]})",
-      R"({"type":"message"})",
-      R"({"type":"message","content":{}})",
-      R"({"type":"message","content":[{"type":"future"}]})",
-      R"({"type":"message","content":[],"stop_reason":7})",
-      R"({"type":"message","content":[],"usage":[]})",
-  };
-  for (const auto body : invalid) {
-    const auto result = adapter.parse_response({.status_code = 200}, body);
-    REQUIRE_FALSE(result);
-    CHECK(result.error().category == ErrorCategory::protocol);
-  }
-  const auto response = adapter.parse_response(
-      {.status_code = 299},
-      R"({"type":"message","request_id":"body-id","content":[{"type":"tool_use","id":"id","name":"lookup","input":{"x":1}}],"stop_reason":"tool_use","usage":{"input_tokens":4}})");
-  REQUIRE(response);
-  CHECK(response->finish_reason == FinishReason::tool_use);
-  CHECK(response->provider_request_id == "body-id");
 }
 TEST_CASE("Anthropic stream start handles initial content and rejects bad envelopes") {
   AnthropicAdapter adapter;

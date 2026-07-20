@@ -168,12 +168,6 @@ public:
     });
   }
 
-  [[nodiscard]] scry::Result<scry::detail::ModelResponse>
-  parse_response(const scry::detail::TransportResult&,
-                 std::string_view) const override {
-    return {};
-  }
-
   [[nodiscard]] scry::Result<std::vector<scry::detail::ProviderEvent>>
   parse_stream_event(std::string_view, std::string_view,
                      scry::detail::ProviderDecodeState&) const override {
@@ -188,17 +182,10 @@ public:
                const scry::detail::ModelRequest&) const override {
     return scry::detail::TransportRequest{
         .url = config.base_url,
-        .streaming = true,
         .tls_verify_peer = config.tls_verify_peer,
         .timeouts = config.timeouts,
         .limits = config.limits,
     };
-  }
-
-  [[nodiscard]] scry::Result<scry::detail::ModelResponse>
-  parse_response(const scry::detail::TransportResult&,
-                 std::string_view) const override {
-    return {};
   }
 
   [[nodiscard]] scry::Result<std::vector<scry::detail::ProviderEvent>>

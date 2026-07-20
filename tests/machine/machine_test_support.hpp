@@ -31,7 +31,6 @@ inline constexpr TurnId turn_id{42};
                   .content = {TextBlock{.text = "Hello"}},
               },
           },
-      .streaming = true,
   };
 }
 

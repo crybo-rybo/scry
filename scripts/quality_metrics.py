@@ -4,14 +4,12 @@ from __future__ import annotations
 
 import csv
 import json
-import re
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
 
 PRODUCTION_PREFIXES = ("include/", "src/")
-CPP_SUFFIXES = {".cpp", ".cc", ".cxx", ".hpp", ".hh", ".hxx", ".h"}
 
 
 def is_reflection_component_path(path: str) -> bool:
@@ -174,19 +172,6 @@ def crap_score(ccn: int, coverage: float) -> float:
     return (ccn**2) * ((1.0 - coverage) ** 3) + ccn
 
 
-def _source_files(source_root: Path) -> list[Path]:
-    roots = ("include", "src", "examples", "spikes", "tests")
-    return sorted(
-        path
-        for root_name in roots
-        for path in (source_root / root_name).rglob("*")
-        if path.is_file() and path.suffix in CPP_SUFFIXES
-        and not is_reflection_component_path(
-            path.relative_to(source_root).as_posix()
-        )
-    )
-
-
 def _build_function_reports(
     functions: list[dict[str, Any]], coverage_functions: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
@@ -215,53 +200,21 @@ def _branch_totals(files: dict[str, dict[str, Any]]) -> tuple[int, int]:
     return branch_total, branch_covered
 
 
-def _unlinked_todo_count(source_files: list[Path]) -> int:
-    unlinked_todos = 0
-    for path in source_files:
-        for line in path.read_text(encoding="utf-8").splitlines():
-            if re.search(r"//\s*TODO\b", line) and not re.search(
-                r"(https?://|#[0-9]+)", line
-            ):
-                unlinked_todos += 1
-    return unlinked_todos
-
-
-def _complexity_metrics(
-    functions: list[dict[str, Any]], source_files: list[Path]
-) -> dict[str, int]:
-    return {
-        "maximum": max((function["ccn"] for function in functions), default=0),
-        "warnings": sum(function["ccn"] > 10 for function in functions),
-        "long_functions": sum(function["length"] > 60 for function in functions),
-        "long_files": sum(
-            len(path.read_text(encoding="utf-8").splitlines()) > 500
-            for path in source_files
-        ),
-    }
-
-
 def build_report(
     source_root: Path, coverage_path: Path, lizard_path: Path
 ) -> dict[str, Any]:
     """Build the machine-readable quality report."""
 
     coverage = load_coverage(coverage_path, source_root)
-    lizard_functions = load_lizard(lizard_path)
-    core_lizard_functions = [
-        function
-        for function in lizard_functions
-        if not is_reflection_component_path(function["path"])
-    ]
     production_functions = [
         function
-        for function in core_lizard_functions
+        for function in load_lizard(lizard_path)
         if is_core_production_path(function["path"])
     ]
     function_reports = _build_function_reports(
         production_functions, coverage["functions"]
     )
     branch_total, branch_covered = _branch_totals(coverage["files"])
-    source_files = _source_files(source_root)
     top_crap = sorted(
         function_reports,
         key=lambda function: (-function["crap"], function["path"], function["start_line"]),
@@ -271,7 +224,7 @@ def build_report(
     )
 
     return {
-        "schema": 1,
+        "schema": 2,
         "metrics": {
             "branch_coverage": {
                 "covered": branch_covered,
@@ -282,12 +235,7 @@ def build_report(
                 "maximum": max(
                     (function["crap"] for function in function_reports), default=0.0
                 ),
-                "violations": sum(
-                    function["crap"] > 30.0 for function in function_reports
-                ),
             },
-            "complexity": _complexity_metrics(core_lizard_functions, source_files),
-            "unlinked_todos": _unlinked_todo_count(source_files),
         },
         "functions": function_reports,
         "top_crap": top_crap,

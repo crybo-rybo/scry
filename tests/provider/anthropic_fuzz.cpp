@@ -28,9 +28,6 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data,
     return 0;
   }
 
-  const scry::detail::TransportResult result{.status_code = 200};
-  static_cast<void>((*adapter)->parse_response(result, input));
-
   parse_stream_payload(**adapter, input, {});
   scry::detail::ProviderDecodeState message_started{};
   auto& anthropic =

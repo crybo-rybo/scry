@@ -1,6 +1,6 @@
 # ADR 0004: Live Quality Ratchet
 
-- Status: Accepted
+- Status: Superseded by [ADR 0011](0011-absolute-quality-gates.md)
 - Date: 2026-07-17
 
 ## Context

@@ -100,7 +100,6 @@ using namespace scry::detail;
               .top_p = 0.0,
               .max_tokens = 64,
           },
-      .streaming = true,
   };
 }
 
@@ -119,7 +118,6 @@ TEST_CASE("OpenAI request maps the common text and tool contract") {
   const auto encoded = adapter.make_request(config(), request());
   REQUIRE(encoded);
   CHECK(encoded->url == "https://api.openai.test/v1/chat/completions");
-  CHECK(encoded->streaming);
   CHECK(header(*encoded, "content-type") == "application/json");
   CHECK(header(*encoded, "accept") == "text/event-stream");
   CHECK(header(*encoded, "authorization") == "Bearer sanitized-key");
@@ -146,15 +144,13 @@ TEST_CASE("OpenAI endpoint normalization accepts only the documented base forms"
       std::pair{"https://example.test/chat/completions",
                 "https://example.test/chat/completions/v1/chat/completions"},
   };
-  auto model_request = request();
-  model_request.streaming = false;
+  const auto model_request = request();
   for (const auto& [base, expected] : cases) {
     INFO(base);
     const auto encoded = adapter.make_request(config(base), model_request);
     REQUIRE(encoded);
     CHECK(encoded->url == expected);
-    CHECK(header(*encoded, "accept") == "application/json");
-    CHECK(encoded->body.find("stream_options") == std::string::npos);
+    CHECK(header(*encoded, "accept") == "text/event-stream");
   }
 }
 
@@ -256,7 +252,6 @@ TEST_CASE("OpenAI request preserves assistant text-only and tool-only shapes") {
   };
   model_request.tools.clear();
   model_request.sampling.top_p.reset();
-  model_request.streaming = false;
 
   const auto encoded = adapter.make_request(config(), model_request);
   REQUIRE(encoded);
