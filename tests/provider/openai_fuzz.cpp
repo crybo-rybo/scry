@@ -30,10 +30,6 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data,
     return 0;
   }
 
-  static_cast<void>((*adapter)->parse_response(
-      scry::detail::TransportResult{.status_code = 200}, input));
-  static_cast<void>((*adapter)->parse_response(
-      scry::detail::TransportResult{.status_code = 400}, input));
   parse_stream_payload(**adapter, "message", input, {});
   parse_stream_payload(**adapter, "error", input, {});
   parse_stream_payload(**adapter, "future_optional", input, {});

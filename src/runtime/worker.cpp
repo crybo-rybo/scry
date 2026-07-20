@@ -270,7 +270,6 @@ WorkerActor::perform_attempt(TurnMachine& machine, const IssueModelRequest& issu
                           config_.api_key);
   }
 
-  assert(request->streaming);
   AttemptState state{AttemptLimits{
       .maximum_event_bytes = config_.limits.max_sse_event_bytes,
       .maximum_tool_arguments_bytes = config_.limits.max_tool_arguments_bytes,

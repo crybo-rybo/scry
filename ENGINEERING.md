@@ -173,12 +173,14 @@ clean reflection-OFF install and downstream consumer. M3 evidence does not
 claim a manual clang-p2996 run, randomized reflection property generation, or
 a reflection fuzz target.
 
-M4's per-commit evidence is live. The current development suite passes 288/288
-tests, including exact OpenAI request/non-stream/stream cases; endpoint, auth,
+M4's per-commit evidence is live. The current development suite passes 277/277
+tests, including exact OpenAI request/stream cases; endpoint, auth,
 sampling, usage, error, lifecycle, fragmentation, and byte-limit matrices; the
 fragmented transactional tool round; concurrent cross-dialect isolation; and
-the public Curl path/header/SSE case. The provider slice passes 60/60 tests,
-and `scry_openai_fuzz` joins the existing checked-corpus short fuzz ring.
+the public Curl path/header/SSE case. The provider slice passes 48/48 tests,
+and `scry_openai_fuzz` joins the existing checked-corpus short fuzz ring. The
+provider seam is streaming-only: the dead non-streaming decode path was
+removed with its tests (see the evolution register in ARCHITECTURE.md §11).
 
 ADR 0009 verification covers default and opted-in thread IDs, FIFO registration
 and accepted-turn snapshots, all-worker and mixed batches, result

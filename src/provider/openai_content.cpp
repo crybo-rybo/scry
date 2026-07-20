@@ -10,17 +10,6 @@
 namespace scry::detail {
 namespace {
 
-[[nodiscard]] Result<const WireValue*> required_object(const WireValue& owner,
-                                                       const std::string_view name) {
-  const auto* value = wire_field(owner, name);
-  if (value == nullptr || !value->is_object()) {
-    return std::unexpected(make_provider_error(
-        ErrorCategory::protocol,
-        "OpenAI payload field '" + std::string{name} + "' must be an object"));
-  }
-  return value;
-}
-
 [[nodiscard]] Status assign_usage_count(const WireValue& usage,
                                         const std::string_view field,
                                         std::uint64_t& destination) {
@@ -150,43 +139,6 @@ Result<std::string> canonical_openai_arguments(const std::string_view arguments)
   }
   return write_wire_json(*parsed, ErrorCategory::protocol,
                          "OpenAI tool arguments could not be preserved");
-}
-
-Result<ToolCallBlock> decode_openai_tool_call(const WireValue& value) {
-  auto id = required_wire_string(value, "id");
-  if (!id) {
-    return std::unexpected(std::move(id.error()));
-  }
-  auto type = required_wire_string(value, "type");
-  if (!type) {
-    return std::unexpected(std::move(type.error()));
-  }
-  auto function = required_object(value, "function");
-  if (!function) {
-    return std::unexpected(std::move(function.error()));
-  }
-  auto name = required_wire_string(**function, "name");
-  if (!name) {
-    return std::unexpected(std::move(name.error()));
-  }
-  auto arguments = required_wire_string(**function, "arguments");
-  if (!arguments) {
-    return std::unexpected(std::move(arguments.error()));
-  }
-  if (id->empty() || name->empty() || *type != "function") {
-    return std::unexpected(make_provider_error(
-        ErrorCategory::protocol,
-        "OpenAI tool calls require a nonempty ID, name, and function type"));
-  }
-  auto canonical = canonical_openai_arguments(*arguments);
-  if (!canonical) {
-    return std::unexpected(std::move(canonical.error()));
-  }
-  return ToolCallBlock{
-      .id = std::string{*id},
-      .name = std::string{*name},
-      .arguments = Json{.text = std::move(*canonical)},
-  };
 }
 
 Result<FinishReason>

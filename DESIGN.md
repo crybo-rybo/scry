@@ -413,15 +413,17 @@ messages, finite `temperature` in `[0,2]`, optional `top_p`, positive legacy
 text becomes a system message, assistant tool calls retain stable IDs, and
 each neutral tool result expands into one ordered `role: "tool"` message.
 
-Non-streaming responses require a `chat.completion` object with exactly one
-choice at index zero. Text may be a string or null; function calls require IDs,
-names, and object arguments. `prompt_tokens`/`completion_tokens` replace the
-neutral usage totals. Finish reasons map `stop` to completed, `length` to
-length, `tool_calls` to tool use, and `content_filter` or an unknown future
-string to unknown. Streaming requires a stable nonempty chunk ID and accepts
-one indexed choice or a usage-only chunk, accumulates interleaved tool
-fragments by index, and requires a finish reason before the sole successful
-terminal marker, `[DONE]`. Conflicting metadata, sparse calls, deprecated
+The adapter seam is streaming-only: the runtime always requests
+`stream: true` and decodes every response through the stream path, so there is
+no parallel non-streaming decoder to keep in sync (see the evolution register
+in ARCHITECTURE.md §11). `prompt_tokens`/`completion_tokens` from the
+streaming usage chunk replace the neutral usage totals. Finish reasons map
+`stop` to completed, `length` to length, `tool_calls` to tool use, and
+`content_filter` or an unknown future string to unknown. Streaming requires a
+stable nonempty chunk ID and accepts one indexed choice or a usage-only chunk,
+accumulates interleaved tool fragments by index, and requires a finish reason
+before the sole successful terminal marker, `[DONE]`. Function calls require
+IDs, names, and object arguments. Conflicting metadata, sparse calls, deprecated
 `function_call`, nonempty structured refusals, malformed required content, or
 illegal lifecycle transitions are protocol errors. Per-turn decode state is a
 dialect-specific variant, so Anthropic and OpenAI-compatible Harnesses cannot

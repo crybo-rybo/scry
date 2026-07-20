@@ -184,7 +184,7 @@ encode_tools(const std::vector<ToolSchema>& tools) {
   root["model"] = request.model.empty() ? config.model : request.model;
   root["max_tokens"] = request.sampling.max_tokens.value_or(0);
   root["temperature"] = request.sampling.temperature;
-  root["stream"] = request.streaming;
+  root["stream"] = true;
   root["messages"] = *messages;
   if (!request.system_prompt.empty()) {
     root["system"] = request.system_prompt;
@@ -224,12 +224,9 @@ AnthropicAdapter::make_request(const Config& config,
               HttpHeader{.name = "content-type", .value = "application/json"},
               HttpHeader{.name = "x-api-key", .value = config.api_key},
               HttpHeader{.name = "anthropic-version", .value = "2023-06-01"},
-              HttpHeader{.name = "accept",
-                         .value = request.streaming ? "text/event-stream"
-                                                    : "application/json"},
+              HttpHeader{.name = "accept", .value = "text/event-stream"},
           },
       .body = std::move(*encoded),
-      .streaming = request.streaming,
       .tls_verify_peer = config.tls_verify_peer,
       .timeouts = config.timeouts,
       .limits = config.limits,

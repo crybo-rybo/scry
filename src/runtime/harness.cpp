@@ -49,7 +49,6 @@ make_request(const Config& config, const detail::ConversationState& conversation
       .messages = std::move(messages),
       .tools = std::move(schemas),
       .sampling = config.sampling,
-      .streaming = true,
   };
 }
 

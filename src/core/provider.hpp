@@ -70,9 +70,6 @@ public:
   [[nodiscard]] virtual Result<TransportRequest>
   make_request(const Config& config, const ModelRequest& request) const = 0;
 
-  [[nodiscard]] virtual Result<ModelResponse>
-  parse_response(const TransportResult& result, std::string_view body) const = 0;
-
   [[nodiscard]] virtual Result<std::vector<ProviderEvent>>
   parse_stream_event(std::string_view event_name, std::string_view data,
                      ProviderDecodeState& state) const = 0;
