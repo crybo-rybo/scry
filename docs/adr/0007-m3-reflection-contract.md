@@ -232,6 +232,13 @@ Glaze include directory or exported Glaze target.
 > core-only C++23 consumer with non-reflection GCC 14 against the
 > reflection-enabled installation. The contract in this ADR — what is
 > measured and why — remains accepted; only the gate mechanics changed.
+>
+> **Amended 2026-07 by
+> [ADR 0012](0012-release-infrastructure-simplification.md):** the
+> `scripts/reflection-coverage.sh` gcovr coverage leg described below was
+> retired at the v0.0.1 release posture. The build, 27-test suite, install
+> audit, downstream component consumer, core-surface proof, and ASan+UBSan
+> rerun in `scripts/ci-reflection.sh` remain the live gate.
 
 The supported M3 path is live:
 

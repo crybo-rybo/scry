@@ -18,7 +18,6 @@ option(SCRY_ENABLE_CLANG_TIDY "Run clang-tidy while compiling" OFF)
 option(SCRY_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ${PROJECT_IS_TOP_LEVEL})
 option(SCRY_USE_LIBCXX "Use libc++ with a Clang-family compiler" OFF)
 option(SCRY_ENABLE_REFLECTION "Build the supported GCC 16+ reflection component" OFF)
-option(SCRY_BUILD_CURL_SPIKE "Build the libcurl/SSE feasibility spike" OFF)
 option(SCRY_BUILD_FUZZERS "Build short protocol fuzz targets" OFF)
 option(
   SCRY_BUILD_IMGUI_SHOWCASE
@@ -203,7 +202,6 @@ if(SCRY_ENABLE_FORMAT_CHECK)
     CONFIGURE_DEPENDS
       "${PROJECT_SOURCE_DIR}/examples/*.cpp"
       "${PROJECT_SOURCE_DIR}/include/*.hpp"
-      "${PROJECT_SOURCE_DIR}/spikes/*.cpp"
       "${PROJECT_SOURCE_DIR}/src/*.cpp"
       "${PROJECT_SOURCE_DIR}/src/*.hpp"
       "${PROJECT_SOURCE_DIR}/tests/*.cpp"
@@ -528,19 +526,6 @@ if(SCRY_BUILD_TESTS)
       duplicate_description.cpp
       "naming distinct reflected members"
     )
-  endif()
-endif()
-
-if(SCRY_BUILD_CURL_SPIKE)
-  find_package(CURL 7.84 REQUIRED)
-  add_executable(scry_curl_sse_spike spikes/curl_sse.cpp)
-  target_compile_features(scry_curl_sse_spike PRIVATE cxx_std_23)
-  target_link_libraries(
-    scry_curl_sse_spike
-    PRIVATE CURL::libcurl scry_project_options
-  )
-  if(SCRY_BUILD_TESTS)
-    add_test(NAME curl-sse-feasibility COMMAND scry_curl_sse_spike)
   endif()
 endif()
 

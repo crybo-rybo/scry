@@ -384,14 +384,11 @@ types; compiled implementation reaches Glaze through a Scry-owned JSON bridge.
 
 The live M3 verification path runs 27 reflection-labelled tests: 22 runtime,
 schema, codec, bridge, and registration cases plus five stable-diagnostic
-compile failures. `scripts/reflection-coverage.sh` pins GCC/gcov 16 and gcovr
-8.6 and gates with stock gcovr thresholds
-([ADR 0011](docs/adr/0011-absolute-quality-gates.md)): at least 85% source
-decisions and 95% functions in the runtime codec, and at least 95% GCC/gcovr
-CFG branches in the compiled JSON bridge. The codec decision floor
-accommodates the one inline-justified GCC-generated switch on the
-reflected-enum decoder that gcovr's decision analysis still counts; the
-earlier bespoke exclusion validator is retired. Consteval paths stay covered
+compile failures, repeated under a separate GCC 16 ASan+UBSan build. The
+milestone-era gcovr coverage floors on the codec and bridge were retired at
+the release posture
+([ADR 0012](docs/adr/0012-release-infrastructure-simplification.md)); the
+suites they demanded remain. Consteval paths stay covered
 by the positive/negative compile matrix; no reflection property/fuzz or
 manual Clang result is claimed.
 

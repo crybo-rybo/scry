@@ -1,13 +1,10 @@
-# Per-commit CI ring (ENGINEERING.md §6, ring 1).
+# Per-commit CI ring (ENGINEERING.md §6, ADR 0012 release posture).
 #
 # Live gates: format (pinned clang-format-18), core build matrix with
-# warnings-as-errors (QA-006/PORT-001/PORT-005) plus the libcurl runtime
-# integration spike on the GCC leg (PORT-006), lizard complexity + contract
-# tests + install/package-consumer via ci-local.sh, absolute diff branch
-# coverage + component floors + CRAP gates (QA-001/003/007, ADR 0011),
-# ASan/UBSan/TSan (QA-005), clang-tidy (QA-004 cognitive), gating GCC 16
-# reflection leg (PORT-002), short protocol fuzzing (NET-004), and the
-# opt-in M5 showcase contract (SHOW-001–004).
+# warnings-as-errors plus complexity, contract tests, and the
+# install/package-consumer audit via ci-local.sh, ASan/UBSan/TSan,
+# clang-tidy, and the gating GCC 16 reflection leg. Fuzzing, the showcase,
+# and the local-model smoke live in nightly.yml.
 #
 # Toolchains are pinned deliberately (ENGINEERING.md §7): compiler drift on
 # experimental legs is a first-class risk.
@@ -51,23 +48,18 @@ jobs:
             cxx: g++-14
             libcxx: false
             packages: g++-14 libcurl4-openssl-dev
-            # The GCC leg also owns the libcurl runtime integration spike
-            # (PORT-006); it needs no dedicated runner.
-            extra_flags: -DSCRY_BUILD_CURL_SPIKE=ON
           - name: Linux Clang 18
             os: ubuntu-24.04
             cc: clang-18
             cxx: clang++-18
             libcxx: true
             packages: clang-18 libc++-dev libc++abi-dev libcurl4-openssl-dev
-            extra_flags: ""
           - name: macOS AppleClang
             os: macos-15
             cc: clang
             cxx: clang++
             libcxx: false
             packages: ""
-            extra_flags: ""
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     env:
@@ -92,31 +84,6 @@ jobs:
         run: >
           ./scripts/ci-local.sh
           -DSCRY_USE_LIBCXX=${{ matrix.libcxx }}
-          ${{ matrix.extra_flags }}
-
-  quality:
-    name: Coverage + CRAP gate
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    env:
-      CC: clang-18
-      CXX: clang++-18
-      # The merge-base is only used to identify changed lines for diff
-      # coverage; the gates themselves are absolute (ADR 0011).
-      SCRY_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before || 'origin/main' }}
-    steps:
-      - uses: actions/checkout@v7.0.0
-        with:
-          fetch-depth: 0
-      - name: Install pinned quality tools
-        run: >-
-          sudo apt-get update &&
-          sudo apt-get install -y
-          clang-18 llvm-18 libc++-dev libc++abi-dev libcurl4-openssl-dev ninja-build
-      - name: Install pinned complexity checker
-        run: python3 -m pip install --user --break-system-packages lizard==1.22.1
-      - name: Enforce absolute coverage and CRAP gates
-        run: ./scripts/quality-gate.sh
 
   static-analysis:
     name: clang-tidy
@@ -201,53 +168,5 @@ jobs:
           sudo apt-get install -y g++-14 g++-16 libcurl4-openssl-dev ninja-build
       - name: Lower ASLR entropy for sanitizers
         run: sudo sysctl vm.mmap_rnd_bits=28
-      - name: Install pinned reflection coverage tool
-        run: python3 -m pip install --user --break-system-packages gcovr==8.6
-      - name: Build, test, install, consume, and cover reflection component
+      - name: Build, test, install, and consume reflection component
         run: ./scripts/ci-reflection.sh
-
-  fuzz:
-    name: Short protocol fuzzing
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    env:
-      # Clang 18 advertises the pre-DR concepts feature level, so GCC 14
-      # intentionally withholds C++23 std::expected. LLVM 21 keeps the fuzz
-      # target on libstdc++ (matching its packaged libFuzzer runtime) while
-      # the Clang 18/libc++ core leg remains the portability authority.
-      CC: clang-21
-      CXX: clang++-21
-    steps:
-      - uses: actions/checkout@v7.0.0
-      - name: Install the pinned fuzz toolchain
-        run: |
-          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
-            | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
-          echo "deb https://apt.llvm.org/noble/ llvm-toolchain-noble-21 main" \
-            | sudo tee /etc/apt/sources.list.d/llvm-21.list
-          sudo apt-get update
-          sudo apt-get install -y \
-            clang-21 g++-14 libclang-rt-21-dev libcurl4-openssl-dev \
-            libfuzzer-21-dev ninja-build
-      - run: |
-          cmake --preset fuzz
-          cmake --build build/fuzz --target \
-            scry_sse_fuzz scry_anthropic_fuzz scry_openai_fuzz
-          ctest --test-dir build/fuzz --output-on-failure -R 'fuzz'
-
-  showcase:
-    name: Opt-in Dear ImGui + grid-NPC showcase
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    env:
-      CC: gcc-14
-      CXX: g++-14
-    steps:
-      - uses: actions/checkout@v7.0.0
-      - name: Install showcase toolchain
-        run: >
-          sudo apt-get update &&
-          sudo apt-get install -y
-          g++-14 libcurl4-openssl-dev ninja-build
-      - name: Build, test, render a headless frame, and audit packaging
-        run: ./scripts/ci-showcase.sh

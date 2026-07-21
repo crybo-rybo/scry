@@ -43,11 +43,12 @@ Run the complete local preflight before a PR handoff:
 ./scripts/preflight.sh
 ```
 
-This adds the absolute coverage/CRAP quality gate, clang-tidy, sanitizers,
-short protocol fuzzing, the curl runtime spike (on the core leg), and
-reflection feasibility. It runs every leg and reports unavailable host
+This adds clang-tidy, the ASan/UBSan and TSan suites, and the GCC 16
+reflection leg — the same set the hosted per-commit CI ring enforces
+(ADR 0012). It runs every leg and reports unavailable host
 toolchains explicitly; hosted CI remains authoritative for those legs.
-`just ci` is an optional equivalent.
+`just ci` is an optional equivalent. Fuzzing and the showcase gate run in
+the scheduled nightly workflow; `just showcase` runs the latter locally.
 
 For a normal edit/build loop:
 
@@ -56,10 +57,6 @@ cmake --preset dev
 cmake --build build/dev
 ctest --test-dir build/dev --output-on-failure
 ```
-
-Use `$scry-preflight` before a PR handoff or when asked for release/readiness
-validation. It owns the extended clang-tidy, sanitizer, feasibility, and diff
-review workflow.
 
 ## Engineering guardrails
 

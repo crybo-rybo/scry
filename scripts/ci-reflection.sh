@@ -68,5 +68,3 @@ ctest \
   --test-dir "${sanitizer_build_dir}" \
   --output-on-failure \
   --label-regex reflection
-
-"${root_dir}/scripts/reflection-coverage.sh"

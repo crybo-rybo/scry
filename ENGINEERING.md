@@ -14,17 +14,20 @@ Third of three: [DESIGN.md](DESIGN.md) says what we're building, [ARCHITECTURE.m
 
 **Main is always green, always releasable.** Trunk-based development, short-lived branches, no long-running feature branches. Anything not ready to be on main hides behind a build flag (as the reflection layer already must).
 
-**Absolute gates, not ratchets.** Every gated metric has a fixed floor or
-ceiling — diff coverage, component coverage floors, an 88% aggregate
-branch-coverage backstop, CRAP, cyclomatic complexity, sanitizer cleanliness —
-enforced on the candidate tree alone. The earlier merge-base ratchet (build
-both sides, forbid any counter from ticking up) was demoted under §8 and
-[ADR 0011](docs/adr/0011-absolute-quality-gates.md):
-it doubled every quality run to defend against baseline tampering that a solo
-project cannot suffer, and its debt counters duplicated the absolute limits.
-Metrics without a gate (the exact total, top CRAP scores, the CCN>10 warning
-list) are printed on every run so drift stays visible; a floor is raised
-deliberately, not mechanically.
+**Gates are behavioral, not actuarial.** What gates every commit is the
+physics: the compiler matrix with warnings-as-errors, the deterministic test
+suites, ASan/UBSan/TSan, clang-tidy, cyclomatic complexity, and the
+install/package-consumer audits. The earlier metrics apparatus — diff branch
+coverage, per-component coverage floors, an aggregate backstop, and CRAP
+scoring, enforced by a bespoke ~1,100-line analyzer with its own unit tests —
+was retired at the v0.0.1 release posture under §8 and
+[ADR 0012](docs/adr/0012-release-infrastructure-simplification.md). It was
+built so unattended agent-driven development could prove its work without a
+human reviewer; with a human maintainer reading every diff, red/green on real
+tests carries the same information at a fraction of the maintenance surface.
+(The merge-base ratchet that preceded it was demoted earlier, under
+[ADR 0011](docs/adr/0011-absolute-quality-gates.md).) The test suites written
+under those gates remain in full — the gates went, not the tests.
 
 ## 2. Testing Plan
 
@@ -37,7 +40,7 @@ deliberately, not mechanically.
 | Adapter golden tests | Captured real wire payloads ↔ neutral model round-trips | Data-driven; payloads are checked-in fixtures | Thin |
 | Integration tests | Real threads + fake transport; full harness against a local mock SSE server | The only tests where threading is real | Thin |
 | Showcase contract tests | Deterministic NPC world and fake-controller panel behavior; real ImGui headless frame and package audit | Network-free, fixed state; the real dependency is compiled only in its opt-in leg | Thin |
-| End-to-end smoke | Real local model (Ollama / llama.cpp server) in CI | Nightly, not per-commit; flakiness quarantined by design | Thinnest |
+| End-to-end smoke | Real local model (Ollama / llama.cpp server) in CI | On demand, not per-commit; flakiness quarantined by design | Thinnest |
 
 ### Principles
 
@@ -55,44 +58,38 @@ deliberately, not mechanically.
 - **Test-first for pure logic, test-with for plumbing.** The state machine, parsers, and classifiers are TDD-friendly (pure functions, crisp specs) — write tests first there. Threading and curl plumbing are exploratory — tests land in the same commit, shaped by what was learned.
 - **Every bug becomes a test before it becomes a fix.** The reproduction (usually a machine-level event replay — this is why the sans-I/O design pays) is committed with the fix, permanently.
 
-## 3. Coverage — Measured Honestly, Gated Intelligently
+## 3. Coverage — A Habit, Not a Gate
 
-Coverage is a **detector of untested code, not a target**. Chasing a global percentage produces assertion-free tests that execute code without checking it. The gates are therefore structural:
+Coverage is a **detector of untested code, not a target**. Chasing a
+percentage produces assertion-free tests that execute code without checking
+it. During milestone development the project enforced coverage mechanically:
+diff branch coverage ≥ 90%, ≥ 95% branch floors on the sans-I/O machine, SSE
+parser, and retry classifier, an 88% aggregate backstop, per-function CRAP ≤
+30, and a pinned gcovr gate on the reflection codec/bridge — all measured by
+a bespoke analyzer under `scripts/`. Those gates did their job: the suites
+they demanded exist, the last full run measured 93.3% diff branch coverage
+and a maximum CRAP of 13.1, and every error path in the machine, parsers,
+and classifiers has a test asserting it.
 
-- **Instrumentation:** llvm-cov / gcov, *branch* coverage not just line — branch coverage is what catches the untested error path, and error paths are half this library.
-- **Diff coverage gate (the primary gate):** new/changed lines in a PR must meet a high branch-coverage bar (~90%). This is stricter than a global gate where it matters (the code being written now) and doesn't punish present work for past sins.
-- **Per-component floors first, one coarse global backstop:** the sans-I/O machine, parsers, and classifiers are pure — they carry a near-total floor (95%+ branch), because one global number would let untested machine logic hide behind well-covered plumbing. A deliberately loose aggregate floor (88% branch) backstops erosion in files no component floor lists; it sits below the measured total so honest deletions of well-covered code don't block, and it is raised deliberately as coverage grows (ADR 0011).
-- **Exclusions are visible and justified:** coverage-off pragmas require a comment and appear in review diffs. Silent exclusion is the metric's death.
-- **Collection is deterministic:** each test binary runs one coverage pass
-  with fixed Catch2 ordering, stable profile names, and atomic
-  profile-counter updates for the worker/app-thread runtime. `llvm-cov`
-  exports against one whole-archive mapper built from the installed package,
-  avoiding lost concurrent counter updates and unstable or mismatched mappings
-  from a many-executable export without changing which production branches are
-  counted. Repeat-run flake detection lives on the TSan leg, where
-  nondeterminism actually surfaces, not in coverage collection.
+At the v0.0.1 release posture
+([ADR 0012](docs/adr/0012-release-infrastructure-simplification.md)) the
+enforcement machinery was deleted, not the discipline. The standing habits:
+
+- **New behavior ships with tests at the sanctioned seam** (§2); a bug fix
+  ships with its reproduction. This is what the diff-coverage gate was
+  approximating.
+- **The pure components stay near-totally covered.** The machine, parsers,
+  and classifiers were designed for deterministic testing; untested branches
+  there are architecture violations, found by reading `llvm-cov report`
+  when touching them, not by a CI actuary.
+- **Coverage-off pragmas require a comment.** Silent exclusion is the
+  metric's death.
 
 **Consteval coverage is reported honestly.** Runtime instrumentation cannot
 observe a branch executed only by the compiler while forming
-`input_schema_v<Args>`. The live M3 gate covers type-directed branches with
-compile-time schema goldens, concept assertions, and compile-fail fixtures;
-they are not assigned a fabricated runtime percentage. Instrumentable M3 code
-has a separate pinned GCC 16/gcovr 8.6 gate using stock gcovr thresholds
-(ADR 0011): source decisions in `reflection_codec.hpp` must reach 85%, its
-functions 95%, and GCC/gcovr CFG branches in compiled `json_bridge.cpp` 95%.
-The decision floor sits below the ~89% measured result because gcovr's
-decision analysis still counts the one `GCOVR_EXCL_LINE`-marked GCC-generated
-switch on the reflected-enum decoder; a coarser threshold on one header is
-the accepted price of deleting the bespoke exclusion validator that
-previously required exactly that artifact.
-
-### CRAP gating — where coverage meets complexity
-
-CRAP (Change Risk Anti-Patterns) scores each function: `CRAP(f) = cc(f)² × (1 − cov(f))³ + cc(f)`, where `cc` is cyclomatic complexity and `cov` is branch coverage. It formalizes the real risk rule: **complex and untested is unacceptable; simple and untested is tolerable; complex and tested is watched.**
-
-- Hard gate: no function on main with CRAP > 30.
-- Watch list: CI reports the top-10 CRAP scores every run, so creeping risk is visible before it gates.
-- The two exits from a CRAP violation — test it or simplify it — are both wins. That's why this is the flagship gate: it never incentivizes a bad response.
+`input_schema_v<Args>`. Type-directed branches are covered by compile-time
+schema goldens, concept assertions, and compile-fail fixtures; they are never
+assigned a fabricated runtime percentage.
 
 ## 4. Complexity & Size Limits
 
@@ -123,9 +120,10 @@ Enforced via lizard and clang-tidy on every commit:
   wire-JSON boundaries
   because they consume attacker-adjacent input (a compromised or buggy server
   must not crash the host app). Reflection decoding has deterministic boundary
-  tests but no claimed property/fuzz gate in M3. Short live runs for all three
-  fuzz targets execute in the per-commit ring; the scheduled workflow runs the
-  same three targets for longer budgets.
+  tests but no claimed property/fuzz gate in M3. All three fuzz targets run
+  with long budgets in the scheduled nightly workflow (ADR 0012); the
+  deterministic golden, arbitrary-split, and boundary wire tests remain in
+  the per-commit suites.
 - Valgrind/memcheck occasionally as a differently-shaped net; not gating.
 
 ## 6. CI Pipeline Shape
@@ -136,24 +134,23 @@ Three rings, ordered by feedback speed; a failure in an inner ring stops the out
    GCC 16 component with reflection ON; stable GCC/Clang with reflection OFF —
    the severability proof), unit + component tests, deterministic
    fake-transport and local-loopback integration tests, adapter golden suites,
-   ASan/UBSan/TSan suites, short fuzz, diff coverage, CRAP, and complexity
-   gates. The M3 reflection leg also installs to a clean prefix and builds/runs
-   a downstream `find_package(scry CONFIG REQUIRED COMPONENTS reflection)`
+   ASan/UBSan/TSan suites, and complexity gates. The M3 reflection leg also
+   installs to a clean prefix and builds/runs a downstream
+   `find_package(scry CONFIG REQUIRED COMPONENTS reflection)`
    consumer. clang-p2996 is manual, non-gating compatibility work and never
-   builds installable or release artifacts. The M5 showcase contract requires
-   a separate default-OFF leg that enables the examples, builds them with
-   warnings as errors, runs deterministic NPC and fake-panel cases, executes a
-   real Dear ImGui headless frame, and repeats the core package-absence audit.
-2. **Per-merge to main:** publish retained integration and coverage reports and perform release-oriented packaging checks.
-3. **Nightly:** a bounded end-to-end smoke against a pinned local
-   OpenAI-compatible server, long fuzz, and deep static analysis. The
-   M4 smoke uses a health check, hard startup/turn/job timeouts, one chat case
-   and one tool round, and retained diagnostics on failure. It does not enter
-   the deterministic per-commit ring. Mutation testing (mutate the machine and
-   parsers; surviving mutants reveal assertion-free tests — this audits the
-   *tests*, which coverage cannot) runs on demand via `workflow_dispatch` at
-   milestone boundaries rather than nightly: its reports are non-gating, so a
-   scheduled run nobody reads is pure cost (ADR 0011).
+   builds installable or release artifacts.
+2. **Nightly:** deep static analysis (CodeQL), long fuzz on all three
+   protocol targets, and the M5 showcase contract — a default-OFF leg that
+   enables the examples, builds them with warnings as errors, runs
+   deterministic NPC and fake-panel cases, executes a real Dear ImGui
+   headless frame, and repeats the core package-absence audit. Showcase
+   feedback is immediate when it breaks (§8), so it does not gate PRs
+   (ADR 0012).
+3. **On demand (`workflow_dispatch`):** a bounded end-to-end smoke against a
+   checksum-pinned local OpenAI-compatible server. The smoke uses a health
+   check, hard startup/turn/job timeouts, one chat case and one tool round,
+   and retained diagnostics on failure. It exercises a live model, not the
+   deterministic protocol seams, so it never enters a gating ring.
 
 **Everything CI does is orchestrated by one local command**
 (`./scripts/preflight.sh`; `just ci` is an optional wrapper).
@@ -167,8 +164,8 @@ The shared `scripts/ci-reflection.sh` gate is called by local preflight and
 hosted CI. It performs a fresh GCC 16/P2996 build, runs the full configured
 suite (27 reflection-labelled tests: 22 runtime/schema/codec/bridge cases plus
 five compile-fail diagnostics), audits and consumes a clean reflection
-install, then reruns the reflection tests in a separate ASan+UBSan build and
-calls `scripts/reflection-coverage.sh`. The core gate separately audits a
+install, then reruns the reflection tests in a separate ASan+UBSan build.
+The core gate separately audits a
 clean reflection-OFF install and downstream consumer. M3 evidence does not
 claim a manual clang-p2996 run, randomized reflection property generation, or
 a reflection fuzz target.
@@ -190,20 +187,14 @@ turns, and a bounded cooperating teardown handler under TSan. A deliberately
 non-cooperating user handler remains outside Scry's enforceable shutdown bound
 and is documented rather than represented by a hanging test.
 
-The quality gate enforces its absolute floors — diff branch coverage, the
-component floors, the 88% aggregate backstop, and CRAP — from a single
-instrumented build of the candidate tree (ADR 0011); the most recent full run
-measured 93.322% branch coverage on changed lines and a maximum CRAP of
-13.125, printed alongside total branch coverage and the QA-004 CCN warning
-list on every run. The scheduled/manual
-`.github/workflows/nightly.yml` pipeline is implemented with CodeQL v4, long
-SSE/Anthropic/OpenAI fuzz jobs, an on-demand checksum-pinned Mull 0.34.0
-mutation job, and a bounded OpenAI-compatible smoke using checksum-pinned
-Ollama v0.32.1 pulling `qwen3:1.7b-q4_K_M`. These are live pipeline
-definitions; a completed hosted nightly execution is not yet claimed.
-Separate local evidence is live: `scripts/ci-local-model.sh` passed the
-public OpenAI-compatible chat and required-tool paths using Ollama 0.22.1 and
-`qwen3:1.7b-q4_K_M`. That local pass does not claim execution of the
+The scheduled/manual `.github/workflows/nightly.yml` pipeline runs CodeQL
+v4, long SSE/Anthropic/OpenAI fuzz jobs, and the showcase contract; the
+bounded OpenAI-compatible smoke using checksum-pinned Ollama v0.32.1 pulling
+`qwen3:1.7b-q4_K_M` is `workflow_dispatch`-only (ADR 0012). These are live
+pipeline definitions; a completed hosted nightly execution is not yet
+claimed. Separate local evidence is live: `scripts/ci-local-model.sh` passed
+the public OpenAI-compatible chat and required-tool paths using Ollama 0.22.1
+and `qwen3:1.7b-q4_K_M`. That local pass does not claim execution of the
 checksum-pinned Ollama v0.32.1 hosted job.
 
 M5 is live under ADR 0010. `scripts/ci-showcase.sh` is the single local/hosted
@@ -211,8 +202,8 @@ entry point: it runs 20 deterministic NPC, registration, and fake-controller
 panel tests three times; compiles and executes one headless frame with the
 pinned Dear ImGui sources under warnings-as-errors; and audits a clean
 reflection-OFF install plus downstream consumer to prove that no showcase
-artifact or dependency leaks into the package. `scripts/preflight.sh` and the
-hosted `showcase` job both call and pass that shared gate.
+artifact or dependency leaks into the package. The hosted nightly `showcase`
+job and the local `just showcase` recipe both call that shared gate.
 
 ## 7. Workflow & Change Hygiene
 
@@ -225,6 +216,6 @@ hosted `showcase` job both call and pass that shared gate.
 
 Where the line sits between rigor and overhead, decided in advance:
 
-- **Rigor is non-negotiable where bugs are silent:** threading (TSan), the machine (coverage floor + CRAP), parsers (fuzz + property tests), API drift (golden files). These fail quietly in production and loudly in CI — that's the trade we're buying.
+- **Rigor is non-negotiable where bugs are silent:** threading (TSan), the machine and parsers (deterministic suites + nightly fuzz), API drift (golden files, package-consumer audits). These fail quietly in production and loudly in CI — that's the trade we're buying.
 - **Pragmatism is fine where feedback is immediate:** example apps, demo polish, docs prose, CI plumbing itself. These fail visibly the moment they're wrong; gating them buys little.
-- **Process weight is itself ratcheted — downward.** If a gate produces noise but never catches anything real for months, it gets demoted or deleted, with a note. The system of gates must stay credible, because the whole philosophy (§1) rests on actually trusting red to mean something. This clause has been exercised once already: [ADR 0011](docs/adr/0011-absolute-quality-gates.md) demoted the merge-base ratchet, the exact-exclusion reflection validator, the nightly mutation schedule, and the model manifest pin.
+- **Process weight is itself ratcheted — downward.** If a gate produces noise but never catches anything real for months, it gets demoted or deleted, with a note. The system of gates must stay credible, because the whole philosophy (§1) rests on actually trusting red to mean something. This clause has been exercised twice: [ADR 0011](docs/adr/0011-absolute-quality-gates.md) demoted the merge-base ratchet, the exact-exclusion reflection validator, the nightly mutation schedule, and the model manifest pin; [ADR 0012](docs/adr/0012-release-infrastructure-simplification.md) retired the coverage/CRAP gating machinery, mutation testing, and the feasibility spikes at the v0.0.1 release posture, and moved fuzzing and the showcase to the nightly ring.
