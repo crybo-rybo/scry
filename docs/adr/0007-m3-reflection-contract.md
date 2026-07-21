@@ -1,7 +1,8 @@
 # ADR 0007: M3 Reflected Tool Contract
 
-- Status: Accepted (coverage-gate mechanics amended by
-  [ADR 0011](0011-absolute-quality-gates.md))
+- Status: Accepted (verification mechanics amended by
+  [ADR 0011](0011-absolute-quality-gates.md) and
+  [ADR 0012](0012-release-infrastructure-simplification.md))
 - Date: 2026-07-18
 
 ## Context
@@ -224,19 +225,20 @@ Glaze include directory or exported Glaze target.
 ## Verification evidence
 
 > **Amended 2026-07 by [ADR 0011](0011-absolute-quality-gates.md):** the
-> checked exclusion validator and the 95% adjusted-decision / 100% function
-> codec floors described below were replaced by stock gcovr
+> original checked exclusion validator and the 95% adjusted-decision / 100%
+> function codec floors were replaced by stock gcovr
 > `--fail-under-decision 85` / `--fail-under-function 95` thresholds; the
 > compiled bridge's 95% CFG branch floor is unchanged, suite repetition moved
 > to the TSan leg, and `scripts/ci-reflection.sh` additionally compiles the
 > core-only C++23 consumer with non-reflection GCC 14 against the
-> reflection-enabled installation. The contract in this ADR — what is
-> measured and why — remains accepted; only the gate mechanics changed.
+> reflection-enabled installation. These mechanics are historical after the
+> ADR 0012 amendment below.
 >
 > **Amended 2026-07 by
 > [ADR 0012](0012-release-infrastructure-simplification.md):** the
-> `scripts/reflection-coverage.sh` gcovr coverage leg described below was
-> retired at the v0.0.1 release posture. The build, 27-test suite, install
+> `scripts/reflection-coverage.sh` gcovr coverage leg from the prior
+> verification amendments was retired at the v0.0.1 release posture. The
+> build, 27-test suite, install
 > audit, downstream component consumer, core-surface proof, and ASan+UBSan
 > rerun in `scripts/ci-reflection.sh` remain the live gate.
 
@@ -251,16 +253,15 @@ The supported M3 path is live:
 - `scry_header_audit` and the include-first `scry_header_reflection` target
   enforce the public boundary;
 - `scripts/ci-reflection.sh` performs a fresh GCC 16/P2996-probed build, runs
-  the full 265-test suite three times, including all 27 reflection-labelled
-  tests, installs and audits the optional component, and builds/runs a downstream
-  `find_package(scry CONFIG REQUIRED COMPONENTS reflection)` consumer;
+  the full configured suite, including all 27 reflection-labelled tests,
+  installs and audits the optional component, and builds/runs a
+  downstream `find_package(scry CONFIG REQUIRED COMPONENTS reflection)`
+  consumer;
+- the same gate builds a core-only C++23 consumer with non-reflection GCC 14
+  against the reflection-enabled installation, proving that the stable core
+  surface remains severable from the experimental component;
 - the same script creates a separate ASan+UBSan build and reruns all 27
   reflection-labelled tests;
-- `scripts/reflection-coverage.sh` pins GCC/gcov 16 and gcovr 8.6, gates
-  adjusted runtime-codec source decisions at 95% and codec functions at 100%,
-  and gates the compiled bridge's GCC/gcovr CFG branches at 95%; its current
-  pass is 32/32 codec decisions, 62/62 functions, and 97/97 bridge branches;
-  and
 - the reflection-OFF gate builds, installs, audits the absence of every
   reflection artifact, and builds/runs the stable C++23 downstream consumer.
 
@@ -272,16 +273,11 @@ and must remain visibly unclaimed until their gates exist and pass.
 Ordinary runtime coverage cannot observe branches executed solely during
 constant evaluation. The type-directed consteval paths are covered by the
 compile-time positive and negative matrix rather than represented by a
-misleading runtime percentage. For the instrumentable runtime, pinned gcovr
-adjusted source decisions are the normative codec metric. Exactly one
-inline-justified GCC-generated switch on the enum decoder's definition line is
-excluded; a checked validator fails unless there is exactly that one exclusion
-and rejects malformed or widened metrics. The unadjusted codec result
-(33/37 decisions, 89.2%) and combined GCC/gcovr CFG arcs after standard
-exclusions and line merging (405/462, 87.7%) remain visible diagnostics because
-template, destructor, and exception-flow arcs do not map one-to-one to C++
-source decisions. The compiled JSON bridge remains separately accountable to
-the 95% GCC/gcovr CFG branch floor.
+misleading runtime percentage. The instrumentable codec and compiled JSON
+bridge remain covered by deterministic runtime and error-path cases, repeated
+under ASan+UBSan. The gcovr floors, exclusion validator, and compiler-artifact
+allowance were historical gate mechanics retired by ADR 0012; they are not
+part of the live M3 completion evidence.
 
 ## Consequences
 

@@ -6,7 +6,13 @@ Third of three: [DESIGN.md](DESIGN.md) says what we're building, [ARCHITECTURE.m
 
 ## 1. Governing Philosophy
 
-**Quality is enforced by machines, not remembered by humans.** This is (initially) a solo project, which means no reviewer will catch what CI doesn't. Every standard in this document either runs automatically on every commit or it does not exist. Aspirational rules that depend on discipline decay; gates don't.
+**Quality uses the strongest credible enforcement available.** Objective,
+repeatable properties run automatically on every commit; change-specific
+judgment that cannot be reduced to a trustworthy mechanical gate is handled by
+explicit PR self-review. This is initially a solo project, so neither side may
+be implicit: automated gates must fail loudly, and review obligations must be
+written into the definition of done. Habits are named as habits rather than
+misrepresented as machine-enforced standards.
 
 **The architecture was designed for testability — the process must cash that check.** The sans-I/O state machine, injectable transport, and pure parsers exist so the hardest logic can be tested deterministically. If coverage on those components is low, that's not a testing failure, it's an architecture violation.
 
@@ -23,8 +29,11 @@ scoring, enforced by a bespoke ~1,100-line analyzer with its own unit tests —
 was retired at the v0.0.1 release posture under §8 and
 [ADR 0012](docs/adr/0012-release-infrastructure-simplification.md). It was
 built so unattended agent-driven development could prove its work without a
-human reviewer; with a human maintainer reading every diff, red/green on real
-tests carries the same information at a fraction of the maintenance surface.
+human reviewer. At the release posture, automated behavioral gates and human
+review provide complementary evidence: tests establish that retained contracts
+still hold, while review checks that changed behavior has meaningful tests at
+the sanctioned seam. Coverage supplied a different signal, but preserving its
+bespoke analyzer was no longer worth the maintenance surface.
 (The merge-base ratchet that preceded it was demoted earlier, under
 [ADR 0011](docs/adr/0011-absolute-quality-gates.md).) The test suites written
 under those gates remain in full — the gates went, not the tests.
