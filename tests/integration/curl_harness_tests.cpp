@@ -194,7 +194,7 @@ TEST_CASE("non-success HTTP status cannot publish an SSE-shaped body") {
   REQUIRE(turn->on_text_delta(
       [&streamed](const std::string_view delta) { streamed.append(delta); }));
   REQUIRE(
-      turn->on_complete([&completed](const scry::Completion&) { completed = true; }));
+      turn->on_completion([&completed](const scry::Completion&) { completed = true; }));
   REQUIRE(turn->on_error([&error](const scry::Error& value) { error = value; }));
 
   REQUIRE(pump_until(*harness, [&] { return error.has_value() || completed; }));
@@ -251,7 +251,7 @@ TEST_CASE(
   REQUIRE(
       turn->on_cancelled([&cancelled](const scry::Cancelled&) { cancelled = true; }));
   REQUIRE(
-      turn->on_complete([&completed](const scry::Completion&) { completed = true; }));
+      turn->on_completion([&completed](const scry::Completion&) { completed = true; }));
   REQUIRE(turn->on_error([&error](const scry::Error& value) { error = value; }));
   server.wait_until_request();
 
@@ -284,7 +284,7 @@ TEST_CASE(
   bool callback_fired = false;
   REQUIRE(turn->on_text_delta(
       [&callback_fired](std::string_view) { callback_fired = true; }));
-  REQUIRE(turn->on_complete(
+  REQUIRE(turn->on_completion(
       [&callback_fired](const scry::Completion&) { callback_fired = true; }));
   REQUIRE(
       turn->on_error([&callback_fired](const scry::Error&) { callback_fired = true; }));

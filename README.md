@@ -61,6 +61,48 @@ runs a downstream
 repeats the reflection suite under ASan+UBSan. The reflection-OFF install and
 consumer remain clean C++23 surfaces with no reflection artifacts.
 
+## Using scry
+
+Scry supports Linux and macOS and requires a C++23 toolchain, CMake ≥ 3.25,
+and libcurl ≥ 7.84 development headers. CI covers GCC 14, Clang 18 (with
+libc++), and AppleClang on macOS 15. The C++26 reflection component is
+optional and requires GCC 16 or newer.
+
+Consume an installed package:
+
+```sh
+cmake -S scry -B scry/build -DCMAKE_BUILD_TYPE=Release
+cmake --build scry/build
+cmake --install scry/build --prefix /your/prefix
+```
+
+```cmake
+find_package(scry 0.0.1 CONFIG REQUIRED)
+target_link_libraries(app PRIVATE scry::scry)
+```
+
+Reflected typed tools are an explicit opt-in on a reflection-enabled install:
+`find_package(scry CONFIG REQUIRED COMPONENTS reflection)` and link
+`scry::reflection`.
+
+Or vendor it with FetchContent — Scry's tests, examples, and format targets
+stay off automatically when it is not the top-level project:
+
+```cmake
+include(FetchContent)
+FetchContent_Declare(
+  scry
+  GIT_REPOSITORY https://github.com/crybo-rybo/scry.git
+  GIT_TAG v0.0.1
+)
+FetchContent_MakeAvailable(scry)
+target_link_libraries(app PRIVATE scry::scry)
+```
+
+The canonical first program is [examples/main_loop.cpp](examples/main_loop.cpp):
+create a `Harness` from a `Config`, register a tool, `send()` a message, and
+pump `update()` from the loop you already own.
+
 ## Build and preflight
 
 Run the fast, platform-stable core workflow:

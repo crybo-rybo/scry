@@ -123,6 +123,8 @@ void append_quoted_move(std::string& json, const std::string_view move,
 
 [[nodiscard]] scry::Status validate_arguments(const scry::Json& arguments,
                                               const NpcTool tool) {
+  // Exact-text comparison only holds for these zero-argument schemas; tools
+  // with real arguments parse the JSON instead of comparing strings.
   if (arguments.text == "{}") {
     return {};
   }

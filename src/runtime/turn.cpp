@@ -44,7 +44,7 @@ Status Turn::on_tool_call(ToolCallCallback callback) {
   return route ? route->register_tool(std::move(callback)) : inactive_turn();
 }
 
-Status Turn::on_complete(CompletionCallback callback) {
+Status Turn::on_completion(CompletionCallback callback) {
   const auto route = impl_ == nullptr ? nullptr : impl_->route.lock();
   return route ? route->register_completion(std::move(callback)) : inactive_turn();
 }
