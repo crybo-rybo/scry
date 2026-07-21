@@ -2,6 +2,7 @@
 #include <iostream>
 #include <scry/scry.hpp>
 #include <string>
+#include <thread>
 #include <utility>
 
 namespace {
@@ -55,6 +56,9 @@ int main() {
       },
       [&app](scry::Json arguments) -> scry::Result<scry::Json> {
         // Explicit-schema handlers own argument validation at the C++23 boundary.
+        // Exact-text comparison only holds for this zero-argument schema; tools
+        // with real arguments parse the JSON (or use the reflected overload in
+        // examples/reflection_tools.cpp, which decodes into typed structs).
         if (arguments.text != "{}") {
           return std::unexpected(scry::Error{
               .category = scry::ErrorCategory::tool,
@@ -89,7 +93,7 @@ int main() {
     return 1;
   }
   auto turn = std::move(*turn_result);
-  auto callback_status = turn.on_complete(
+  auto callback_status = turn.on_completion(
       [&app](const scry::Completion& completion) { app.show_answer(completion.text); });
   if (!callback_status) {
     std::cerr << callback_status.error().message << '\n';
@@ -108,11 +112,17 @@ int main() {
     return 1;
   }
 
+  // A real host calls update() once per existing frame tick. This standalone
+  // example has no frame to piggyback on, so it sleeps when a pump delivered
+  // nothing rather than spinning the core.
   while (app.running()) {
-    harness.update({
+    const auto stats = harness.update({
         .time_budget = std::chrono::milliseconds{2},
         .max_callbacks = 32,
     });
+    if (stats.callbacks_delivered == 0 && stats.events_remaining == 0) {
+      std::this_thread::sleep_for(std::chrono::milliseconds{1});
+    }
   }
 
   return 0;

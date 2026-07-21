@@ -70,15 +70,6 @@
       }
     },
     {
-      "name": "curl",
-      "displayName": "libcurl runtime integration",
-      "inherits": "base",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug",
-        "SCRY_BUILD_CURL_SPIKE": true
-      }
-    },
-    {
       "name": "fuzz",
       "displayName": "Short protocol fuzz run",
       "inherits": "base",

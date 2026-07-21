@@ -2,10 +2,31 @@ cmake_minimum_required(VERSION 3.25)
 
 project(
   scry
-  VERSION 0.0.0
+  VERSION 0.0.1
   DESCRIPTION "A main-loop-friendly C++ LLM harness"
   LANGUAGES CXX
 )
+
+# The public version header is the other place the release number lives;
+# refuse to configure when the two disagree so they can never drift.
+file(READ "${PROJECT_SOURCE_DIR}/include/scry/version.hpp" SCRY_VERSION_HEADER)
+foreach(SCRY_VERSION_PART MAJOR MINOR PATCH)
+  if(NOT SCRY_VERSION_HEADER MATCHES "#define SCRY_VERSION_${SCRY_VERSION_PART} ([0-9]+)")
+    message(FATAL_ERROR "include/scry/version.hpp is missing SCRY_VERSION_${SCRY_VERSION_PART}")
+  endif()
+  set("SCRY_HEADER_VERSION_${SCRY_VERSION_PART}" "${CMAKE_MATCH_1}")
+endforeach()
+set(
+  SCRY_HEADER_VERSION
+  "${SCRY_HEADER_VERSION_MAJOR}.${SCRY_HEADER_VERSION_MINOR}.${SCRY_HEADER_VERSION_PATCH}"
+)
+if(NOT SCRY_HEADER_VERSION STREQUAL PROJECT_VERSION)
+  message(
+    FATAL_ERROR
+    "include/scry/version.hpp reports ${SCRY_HEADER_VERSION} but the project "
+    "version is ${PROJECT_VERSION}; bump both together"
+  )
+endif()
 
 include(CMakePackageConfigHelpers)
 include(FetchContent)
@@ -18,7 +39,6 @@ option(SCRY_ENABLE_CLANG_TIDY "Run clang-tidy while compiling" OFF)
 option(SCRY_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ${PROJECT_IS_TOP_LEVEL})
 option(SCRY_USE_LIBCXX "Use libc++ with a Clang-family compiler" OFF)
 option(SCRY_ENABLE_REFLECTION "Build the supported GCC 16+ reflection component" OFF)
-option(SCRY_BUILD_CURL_SPIKE "Build the libcurl/SSE feasibility spike" OFF)
 option(SCRY_BUILD_FUZZERS "Build short protocol fuzz targets" OFF)
 option(
   SCRY_BUILD_IMGUI_SHOWCASE
@@ -203,7 +223,6 @@ if(SCRY_ENABLE_FORMAT_CHECK)
     CONFIGURE_DEPENDS
       "${PROJECT_SOURCE_DIR}/examples/*.cpp"
       "${PROJECT_SOURCE_DIR}/include/*.hpp"
-      "${PROJECT_SOURCE_DIR}/spikes/*.cpp"
       "${PROJECT_SOURCE_DIR}/src/*.cpp"
       "${PROJECT_SOURCE_DIR}/src/*.hpp"
       "${PROJECT_SOURCE_DIR}/tests/*.cpp"
@@ -531,28 +550,17 @@ if(SCRY_BUILD_TESTS)
   endif()
 endif()
 
-if(SCRY_BUILD_CURL_SPIKE)
-  find_package(CURL 7.84 REQUIRED)
-  add_executable(scry_curl_sse_spike spikes/curl_sse.cpp)
-  target_compile_features(scry_curl_sse_spike PRIVATE cxx_std_23)
-  target_link_libraries(
-    scry_curl_sse_spike
-    PRIVATE CURL::libcurl scry_project_options
-  )
-  if(SCRY_BUILD_TESTS)
-    add_test(NAME curl-sse-feasibility COMMAND scry_curl_sse_spike)
-  endif()
-endif()
-
 configure_package_config_file(
   cmake/scryConfig.cmake.in
   "${PROJECT_BINARY_DIR}/scryConfig.cmake"
   INSTALL_DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/scry"
 )
+# Pre-1.0, minor releases may break API; SameMinorVersion keeps a consumer's
+# find_package(scry 0.1) from silently accepting an incompatible 0.2 install.
 write_basic_package_version_file(
   "${PROJECT_BINARY_DIR}/scryConfigVersion.cmake"
   VERSION "${PROJECT_VERSION}"
-  COMPATIBILITY SameMajorVersion
+  COMPATIBILITY SameMinorVersion
 )
 
 install(
@@ -586,4 +594,8 @@ install(
     "${PROJECT_BINARY_DIR}/scryConfig.cmake"
     "${PROJECT_BINARY_DIR}/scryConfigVersion.cmake"
   DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/scry"
+)
+install(
+  FILES LICENSE THIRD_PARTY_NOTICES.md
+  DESTINATION "${CMAKE_INSTALL_DOCDIR}"
 )
