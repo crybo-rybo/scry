@@ -106,5 +106,8 @@ int main() {
     return 1;
   }
 
-  return scry::version == "0.0.0" ? 0 : 1;
+  static_assert(scry::version_major == SCRY_VERSION_MAJOR);
+  static_assert(scry::version_minor == SCRY_VERSION_MINOR);
+  static_assert(scry::version_patch == SCRY_VERSION_PATCH);
+  return scry::version == "0.0.1" ? 0 : 1;
 }

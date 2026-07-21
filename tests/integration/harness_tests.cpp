@@ -169,7 +169,7 @@ TEST_CASE("public async path streams and commits only inside update") {
   REQUIRE(turn.on_text_delta(
       [&streamed](const std::string_view text) { streamed.append(text); }));
   REQUIRE(
-      turn.on_complete([&completed, &callback_thread](const scry::Completion& value) {
+      turn.on_completion([&completed, &callback_thread](const scry::Completion& value) {
         completed = value.text;
         callback_thread = std::this_thread::get_id();
       }));
@@ -257,7 +257,7 @@ TEST_CASE("busy conversations and queued cancellation issue no second transfer")
 
   bool first_completed = false;
   bool second_cancelled = false;
-  REQUIRE(first->on_complete(
+  REQUIRE(first->on_completion(
       [&first_completed](const scry::Completion&) { first_completed = true; }));
   REQUIRE(second->on_cancelled(
       [&second_cancelled](const scry::Cancelled&) { second_cancelled = true; }));
@@ -294,9 +294,10 @@ TEST_CASE("serialized turns begin in FIFO order with one active transfer") {
   CHECK(observer->calls() == 1);
 
   std::size_t completed = 0;
-  REQUIRE(first->on_complete([&completed](const scry::Completion&) { ++completed; }));
-  REQUIRE(second->on_complete([&completed](const scry::Completion&) { ++completed; }));
-  REQUIRE(third->on_complete([&completed](const scry::Completion&) { ++completed; }));
+  REQUIRE(first->on_completion([&completed](const scry::Completion&) { ++completed; }));
+  REQUIRE(
+      second->on_completion([&completed](const scry::Completion&) { ++completed; }));
+  REQUIRE(third->on_completion([&completed](const scry::Completion&) { ++completed; }));
   observer->release();
   REQUIRE(pump_until(harness, [&completed] { return completed == 3; }));
 
@@ -329,8 +330,8 @@ TEST_CASE("pending-turn admission limit rejects before acceptance") {
   CHECK(rejected.error().category == scry::ErrorCategory::resource_limit);
   transport_observer->release();
   bool completed = false;
-  REQUIRE(
-      first->on_complete([&completed](const scry::Completion&) { completed = true; }));
+  REQUIRE(first->on_completion(
+      [&completed](const scry::Completion&) { completed = true; }));
   REQUIRE(pump_until(harness, [&completed] { return completed; }));
 }
 
@@ -347,8 +348,8 @@ TEST_CASE("dropping a Turn detaches without cancelling its callbacks or commit")
   {
     auto turn = harness_result->send(*conversation, "Detached");
     REQUIRE(turn);
-    REQUIRE(
-        turn->on_complete([&completed](const scry::Completion&) { completed = true; }));
+    REQUIRE(turn->on_completion(
+        [&completed](const scry::Completion&) { completed = true; }));
   }
 
   REQUIRE(pump_until(*harness_result, [&completed] { return completed; }));

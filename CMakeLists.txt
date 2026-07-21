@@ -2,10 +2,31 @@ cmake_minimum_required(VERSION 3.25)
 
 project(
   scry
-  VERSION 0.0.0
+  VERSION 0.0.1
   DESCRIPTION "A main-loop-friendly C++ LLM harness"
   LANGUAGES CXX
 )
+
+# The public version header is the other place the release number lives;
+# refuse to configure when the two disagree so they can never drift.
+file(READ "${PROJECT_SOURCE_DIR}/include/scry/version.hpp" SCRY_VERSION_HEADER)
+foreach(SCRY_VERSION_PART MAJOR MINOR PATCH)
+  if(NOT SCRY_VERSION_HEADER MATCHES "#define SCRY_VERSION_${SCRY_VERSION_PART} ([0-9]+)")
+    message(FATAL_ERROR "include/scry/version.hpp is missing SCRY_VERSION_${SCRY_VERSION_PART}")
+  endif()
+  set("SCRY_HEADER_VERSION_${SCRY_VERSION_PART}" "${CMAKE_MATCH_1}")
+endforeach()
+set(
+  SCRY_HEADER_VERSION
+  "${SCRY_HEADER_VERSION_MAJOR}.${SCRY_HEADER_VERSION_MINOR}.${SCRY_HEADER_VERSION_PATCH}"
+)
+if(NOT SCRY_HEADER_VERSION STREQUAL PROJECT_VERSION)
+  message(
+    FATAL_ERROR
+    "include/scry/version.hpp reports ${SCRY_HEADER_VERSION} but the project "
+    "version is ${PROJECT_VERSION}; bump both together"
+  )
+endif()
 
 include(CMakePackageConfigHelpers)
 include(FetchContent)
@@ -534,10 +555,12 @@ configure_package_config_file(
   "${PROJECT_BINARY_DIR}/scryConfig.cmake"
   INSTALL_DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/scry"
 )
+# Pre-1.0, minor releases may break API; SameMinorVersion keeps a consumer's
+# find_package(scry 0.1) from silently accepting an incompatible 0.2 install.
 write_basic_package_version_file(
   "${PROJECT_BINARY_DIR}/scryConfigVersion.cmake"
   VERSION "${PROJECT_VERSION}"
-  COMPATIBILITY SameMajorVersion
+  COMPATIBILITY SameMinorVersion
 )
 
 install(
@@ -571,4 +594,8 @@ install(
     "${PROJECT_BINARY_DIR}/scryConfig.cmake"
     "${PROJECT_BINARY_DIR}/scryConfigVersion.cmake"
   DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/scry"
+)
+install(
+  FILES LICENSE THIRD_PARTY_NOTICES.md
+  DESTINATION "${CMAKE_INSTALL_DOCDIR}"
 )

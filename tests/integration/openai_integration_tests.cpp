@@ -163,7 +163,7 @@ TEST_CASE("OpenAI-compatible config drives a fragmented transactional tool round
   std::optional<scry::Completion> completion;
   REQUIRE(turn->on_tool_call(
       [&](const scry::ToolCall& call) { timeline.push_back("tool:" + call.name); }));
-  REQUIRE(turn->on_complete([&](const scry::Completion& value) {
+  REQUIRE(turn->on_completion([&](const scry::Completion& value) {
     timeline.emplace_back("complete");
     completion = value;
   }));
@@ -225,9 +225,9 @@ TEST_CASE("concurrent Harnesses keep Anthropic and OpenAI dialect state isolated
 
   std::optional<scry::Completion> anthropic_completion;
   std::optional<scry::Completion> openai_completion;
-  REQUIRE(anthropic_turn->on_complete(
+  REQUIRE(anthropic_turn->on_completion(
       [&](const scry::Completion& value) { anthropic_completion = value; }));
-  REQUIRE(openai_turn->on_complete(
+  REQUIRE(openai_turn->on_completion(
       [&](const scry::Completion& value) { openai_completion = value; }));
   for (std::size_t pump = 0;
        pump < 100'000 && (!anthropic_completion || !openai_completion); ++pump) {

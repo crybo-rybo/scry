@@ -20,7 +20,7 @@ public:
 
   [[nodiscard]] Status on_text_delta(TextDeltaCallback callback);
   [[nodiscard]] Status on_tool_call(ToolCallCallback callback);
-  [[nodiscard]] Status on_complete(CompletionCallback callback);
+  [[nodiscard]] Status on_completion(CompletionCallback callback);
   [[nodiscard]] Status on_error(ErrorCallback callback);
   [[nodiscard]] Status on_cancelled(CancelledCallback callback);
 

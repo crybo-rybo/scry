@@ -191,7 +191,7 @@ TEST_CASE("a command queued during backoff is consumed before the retry wakes") 
   REQUIRE(turn);
   std::optional<scry::Completion> completion;
   std::optional<scry::Error> failure;
-  REQUIRE(turn->on_complete(
+  REQUIRE(turn->on_completion(
       [&completion](const scry::Completion& value) { completion = value; }));
   REQUIRE(turn->on_error([&failure](const scry::Error& error) { failure = error; }));
   observer->wait_for_first_call();
