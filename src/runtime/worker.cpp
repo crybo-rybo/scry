@@ -264,7 +264,7 @@ TransitionResult
 WorkerActor::perform_attempt(TurnMachine& machine, const IssueModelRequest& issue,
                              const std::shared_ptr<std::atomic<bool>>& cancelled,
                              const std::stop_token& stopped) {
-  auto request = provider_->make_request(config_, issue.request);
+  auto request = provider_->make_request(config_, *issue.request);
   if (!request) {
     return failed_attempt(machine, std::move(request.error()), issue.turn_id,
                           config_.api_key);
