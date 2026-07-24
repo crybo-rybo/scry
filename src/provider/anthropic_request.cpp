@@ -53,7 +53,9 @@ encode_boundary_json(const Json& json, const std::string_view failure_message) {
   WireValue value{};
   value["type"] = "tool_result";
   value["tool_use_id"] = block.tool_call_id;
-  value["content"] = *encoded;
+  // Glaze's assignment operators bind const&, so moving into the node's
+  // variant is what transfers the payload instead of duplicating it.
+  value["content"].data = std::move(*encoded);
   value["is_error"] = block.is_error;
   return value;
 }
@@ -81,7 +83,7 @@ encode_boundary_json(const Json& json, const std::string_view failure_message) {
 
   WireValue value{};
   value["role"] = message.role == Role::user ? "user" : "assistant";
-  value["content"] = content;
+  value["content"].data = std::move(content);
   return value;
 }
 
@@ -185,7 +187,7 @@ encode_tools(const std::vector<ToolSchema>& tools) {
   root["max_tokens"] = request.sampling.max_tokens.value_or(0);
   root["temperature"] = request.sampling.temperature;
   root["stream"] = true;
-  root["messages"] = *messages;
+  root["messages"].data = std::move(*messages);
   if (!request.system_prompt.empty()) {
     root["system"] = request.system_prompt;
   }
@@ -193,7 +195,7 @@ encode_tools(const std::vector<ToolSchema>& tools) {
     root["top_p"] = *request.sampling.top_p;
   }
   if (!tools->empty()) {
-    root["tools"] = *tools;
+    root["tools"].data = std::move(*tools);
   }
   return root;
 }
