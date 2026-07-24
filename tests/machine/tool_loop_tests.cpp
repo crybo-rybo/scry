@@ -103,11 +103,12 @@ TEST_CASE("out-of-order tool results produce one ordered result message") {
 
   const auto first = machine.apply(result("call-a", R"({"order":1})", at(3ms)));
   const auto& issue = only_command<scry::detail::IssueModelRequest>(first);
-  REQUIRE(issue.request.messages.size() == 3);
+  REQUIRE(issue.request->messages.size() == 3);
   const auto& assistant =
-      message_at(issue.request.messages, 1, scry::detail::Role::assistant);
+      message_at(issue.request->messages, 1, scry::detail::Role::assistant);
   REQUIRE(assistant.content.size() == 2);
-  const auto& results = message_at(issue.request.messages, 2, scry::detail::Role::user);
+  const auto& results =
+      message_at(issue.request->messages, 2, scry::detail::Role::user);
   REQUIRE(results.content.size() == 2);
   const auto& first_result =
       std::get<scry::detail::ToolResultBlock>(results.content[0]);
@@ -410,4 +411,41 @@ TEST_CASE("model-request retries never redispatch completed tool calls") {
   const auto deadline = only_command<scry::detail::ScheduleRetryWake>(failed).deadline;
   const auto retry = machine.apply(scry::detail::RetryWake{.observed_at = deadline});
   CHECK(only_command<scry::detail::IssueModelRequest>(retry).attempt == 3);
+}
+
+TEST_CASE("retry attempts reissue one shared request snapshot") {
+  auto machine = make_machine();
+  const auto first = machine.apply(scry::detail::BeginTurn{.observed_at = at(0ms)});
+  const auto& issued = only_command<scry::detail::IssueModelRequest>(first);
+  const auto* snapshot = issued.request.get();
+
+  const auto failed = machine.apply(scry::detail::AttemptFailed{
+      .error = error(scry::ErrorCategory::network),
+      .observed_at = at(1ms),
+  });
+  const auto deadline = only_command<scry::detail::ScheduleRetryWake>(failed).deadline;
+  const auto retry = machine.apply(scry::detail::RetryWake{.observed_at = deadline});
+  const auto& reissued = only_command<scry::detail::IssueModelRequest>(retry);
+
+  CHECK(reissued.attempt == 2);
+  CHECK(reissued.request.get() == snapshot);
+}
+
+TEST_CASE("an issued request snapshot never observes later tool-round messages") {
+  auto machine = make_machine();
+  const auto first = machine.apply(scry::detail::BeginTurn{.observed_at = at(0ms)});
+  // Retaining the snapshot models an attempt still reading it while the tool
+  // round appends. Copy-on-write must reseat the machine, not this reader.
+  const auto snapshot = only_command<scry::detail::IssueModelRequest>(first).request;
+  REQUIRE(snapshot->messages.size() == 1);
+
+  const auto published =
+      machine.apply(scry::detail::ModelCompleted{.response = tool_response()});
+  static_cast<void>(only_command<scry::detail::PublishToolCall>(published));
+  const auto issued = machine.apply(result("call-1", R"({"ok":true})", at(1ms)));
+  const auto& reissued = only_command<scry::detail::IssueModelRequest>(issued);
+
+  CHECK(snapshot->messages.size() == 1);
+  CHECK(reissued.request->messages.size() == 3);
+  CHECK(reissued.request.get() != snapshot.get());
 }

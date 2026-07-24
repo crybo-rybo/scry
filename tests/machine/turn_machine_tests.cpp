@@ -45,8 +45,8 @@ TEST_CASE("queued turn issues its first model attempt") {
 
   CHECK(command.turn_id == turn_id);
   CHECK(command.attempt == 1);
-  CHECK(command.request.model == "test-model");
-  CHECK(command.request.system_prompt == "Be concise.");
+  CHECK(command.request->model == "test-model");
+  CHECK(command.request->system_prompt == "Be concise.");
   CHECK(machine.phase() == scry::detail::MachinePhase::awaiting_model);
   CHECK(machine.attempt_count() == 1);
 }
