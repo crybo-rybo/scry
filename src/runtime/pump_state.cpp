@@ -5,6 +5,20 @@
 namespace scry::detail {
 namespace {
 
+[[nodiscard]] std::string completion_text(const CompletionEvent& event) {
+  if (event.exchange.empty()) {
+    return {};
+  }
+  const auto& final_message = event.exchange.back();
+  std::string text;
+  for (const auto& block : final_message.content) {
+    if (const auto* value = std::get_if<TextBlock>(&block)) {
+      text += value->text;
+    }
+  }
+  return text;
+}
+
 class UpdateGuard final {
 public:
   explicit UpdateGuard(bool& updating) noexcept : updating_(updating) {
@@ -126,14 +140,15 @@ bool PumpState::ingest_events(const std::chrono::steady_clock::time_point deadli
 }
 
 void PumpState::accept_event(WorkerEvent event) {
+  // Every release below credits the size measured here on arrival. Remeasuring
+  // later would under-credit a committed completion, whose exchange has by then
+  // moved into the Conversation, and strand the remainder in the queue's
+  // per-turn byte ledger.
+  const auto turn_id = event_turn_id(event);
   const auto accounted_bytes = event_payload_bytes(event);
-  const auto route = find_route(event_turn_id(event));
-  if (!route) {
-    events_->release(event);
-    return;
-  }
-  if (route->terminal()) {
-    events_->release(event);
+  const auto route = find_route(turn_id);
+  if (!route || route->terminal()) {
+    events_->release(turn_id, accounted_bytes);
     return;
   }
 
@@ -148,7 +163,7 @@ void PumpState::accept_event(WorkerEvent event) {
         .accounted_bytes = accounted_bytes,
     });
   } else {
-    events_->release(event);
+    events_->release(turn_id, accounted_bytes);
   }
 }
 
@@ -168,7 +183,7 @@ bool PumpState::coalesce_pending_delta(const TextDeltaEvent& event,
 }
 
 void PumpState::apply_terminal(TurnRoute& route, WorkerEvent& event) {
-  if (const auto* completion = std::get_if<CompletionEvent>(&event)) {
+  if (auto* completion = std::get_if<CompletionEvent>(&event)) {
     if (conversation_limit_exceeded(route, *completion)) {
       event = ErrorEvent{
           .turn_id = completion->turn_id,
@@ -211,7 +226,7 @@ bool PumpState::conversation_limit_exceeded(
   return false;
 }
 
-void PumpState::commit_completion(TurnRoute& route, const CompletionEvent& event) {
+void PumpState::commit_completion(TurnRoute& route, CompletionEvent& event) {
   auto& conversation = *route.conversation();
   Message user{
       .role = Role::user,
@@ -219,10 +234,14 @@ void PumpState::commit_completion(TurnRoute& route, const CompletionEvent& event
   };
   conversation.payload_bytes += message_payload_bytes(user);
   conversation.messages.push_back(std::move(user));
-  for (const auto& message : event.exchange) {
+  // The callback needs only the final assistant text, so capture it before the
+  // exchange moves into the Conversation rather than retaining a second copy.
+  event.text = completion_text(event);
+  for (auto& message : event.exchange) {
     conversation.payload_bytes += message_payload_bytes(message);
-    conversation.messages.push_back(message);
+    conversation.messages.push_back(std::move(message));
   }
+  event.exchange.clear();
 }
 
 bool PumpState::deliver_one(std::size_t& callbacks_delivered) {

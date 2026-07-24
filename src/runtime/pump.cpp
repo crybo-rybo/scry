@@ -32,20 +32,6 @@ template <typename Callback>
   return {};
 }
 
-[[nodiscard]] std::string completion_text(const CompletionEvent& event) {
-  if (event.exchange.empty()) {
-    return {};
-  }
-  const auto& final_message = event.exchange.back();
-  std::string text;
-  for (const auto& block : final_message.content) {
-    if (const auto* value = std::get_if<TextBlock>(&block)) {
-      text += value->text;
-    }
-  }
-  return text;
-}
-
 } // namespace
 
 TurnRoute::TurnRoute(const TurnId turn_id, std::shared_ptr<std::atomic<bool>> cancelled,
@@ -155,9 +141,11 @@ void TurnRoute::invoke(const WorkerEvent& event) {
         } else if constexpr (std::is_same_v<Event, WorkerToolAcceptedEvent>) {
           accept_worker_tool(value);
         } else if constexpr (std::is_same_v<Event, CompletionEvent>) {
+          // commit_completion captured the text before moving the exchange
+          // into the Conversation.
           const Completion completion{
               .turn_id = value.turn_id,
-              .text = completion_text(value),
+              .text = value.text,
               .finish_reason = value.finish_reason,
               .usage = value.usage,
               .attempt_count = value.attempt_count,

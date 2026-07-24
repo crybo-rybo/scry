@@ -406,3 +406,26 @@ TEST_CASE("OpenAI stream error descriptors map recognized, fallback, and unsafe 
     CHECK(result.error().provider_detail == detail);
   }
 }
+
+TEST_CASE("OpenAI stream rejects events after the completion claims the response") {
+  OpenAiAdapter adapter{};
+  ProviderDecodeState state{};
+
+  apply(adapter, state,
+        chunk(R"({"index":0,"delta":{"content":"Hello"},"finish_reason":null})"));
+  apply(adapter, state, chunk(R"({"index":0,"delta":{},"finish_reason":"stop"})"));
+  const auto completed = event(adapter, state, "[DONE]");
+  REQUIRE(completed);
+  REQUIRE(completed->size() == 1);
+  CHECK(std::get<TextBlock>(
+            std::get<ProviderCompleted>(completed->front()).response.content.front())
+            .text == "Hello");
+  CHECK(state.completed);
+
+  // The terminal event owns the accumulated response, so every later event must
+  // be refused before anything reads the decode state's response again.
+  require_protocol(
+      event(adapter, state,
+            chunk(R"({"index":0,"delta":{"content":"late"},"finish_reason":null})")));
+  require_protocol(event(adapter, state, "[DONE]"));
+}

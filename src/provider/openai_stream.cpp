@@ -421,8 +421,10 @@ complete_stream(ProviderDecodeState& state, const OpenAiProviderDecodeState& dec
                             "OpenAI stream ended before a complete finish reason"));
   }
   state.completed = true;
+  // parse_stream_event rejects every later event once completed is set, so the
+  // accumulated response has no reader left and transfers to the terminal event.
   return std::vector<ProviderEvent>{
-      ProviderCompleted{.response = state.response},
+      ProviderCompleted{.response = std::move(state.response)},
   };
 }
 

@@ -279,3 +279,23 @@ TEST_CASE("Anthropic stream decoder enforces active block lifecycle boundaries")
   REQUIRE_FALSE(event);
   CHECK(event.error().category == ErrorCategory::protocol);
 }
+
+TEST_CASE("Anthropic stream rejects events after the completion claims the response") {
+  auto adapter = make_provider_adapter(ProviderDialect::anthropic);
+  REQUIRE(adapter.has_value());
+  ProviderDecodeState state{};
+
+  const auto events = decode_stream(**adapter, state, stream_fixture());
+  REQUIRE_FALSE(events.empty());
+  REQUIRE(std::holds_alternative<ProviderCompleted>(events.back()));
+  CHECK(state.completed);
+
+  // The terminal event owns the accumulated response, so every later event must
+  // be refused before anything reads the decode state's response again.
+  const auto late = (*adapter)->parse_stream_event(
+      "content_block_delta",
+      R"({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"late"}})",
+      state);
+  REQUIRE_FALSE(late);
+  CHECK(late.error().category == ErrorCategory::protocol);
+}

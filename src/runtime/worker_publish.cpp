@@ -73,13 +73,13 @@ WorkerActor::publish_provider_event(TurnMachine& machine, ProviderEvent event,
     }
     return {};
   }
-  if (const auto* completed = std::get_if<ProviderCompleted>(&event)) {
+  if (auto* completed = std::get_if<ProviderCompleted>(&event)) {
     if (completed_response) {
       return std::unexpected(publication_error(
           ErrorCategory::protocol, "provider stream emitted more than one completion",
           TurnId{}));
     }
-    completed_response = completed->response;
+    completed_response = std::move(completed->response);
     return {};
   }
   // The provider seam preserves an ignored event's name for debug inspection.
@@ -167,15 +167,15 @@ Status WorkerActor::publish_command(MachineCommand command) {
     }
     return {};
   }
-  if (const auto* completion = std::get_if<CommitCompletion>(&command)) {
+  if (auto* completion = std::get_if<CommitCompletion>(&command)) {
     if (!events_->push(
             CompletionEvent{
                 .turn_id = completion->turn_id,
-                .exchange = completion->exchange,
+                .exchange = std::move(completion->exchange),
                 .finish_reason = completion->finish_reason,
                 .usage = completion->usage,
                 .attempt_count = completion->attempt_count,
-                .provider_request_id = completion->provider_request_id,
+                .provider_request_id = std::move(completion->provider_request_id),
             },
             payload_limit)) {
       return std::unexpected(
@@ -185,9 +185,10 @@ Status WorkerActor::publish_command(MachineCommand command) {
     }
     return {};
   }
-  if (const auto* error = std::get_if<PublishError>(&command)) {
+  if (auto* error = std::get_if<PublishError>(&command)) {
     const auto turn_id = error->error.turn_id.value_or(TurnId{});
-    publish_terminal_event(ErrorEvent{.turn_id = turn_id, .error = error->error});
+    publish_terminal_event(
+        ErrorEvent{.turn_id = turn_id, .error = std::move(error->error)});
     return {};
   }
   if (const auto* cancelled = std::get_if<PublishCancelled>(&command)) {
