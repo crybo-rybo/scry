@@ -68,17 +68,20 @@ private:
   [[nodiscard]] TransitionResult complete_attempt(TurnMachine& machine,
                                                   ModelResponse response,
                                                   const TransportResult& result);
+  // Provider events and machine commands are consumed exactly once, so both
+  // take ownership: streamed text moves through to the event queue instead of
+  // being copied at each hop.
   [[nodiscard]] Status publish_stream_events(
-      TurnMachine& machine, const std::vector<ProviderEvent>& provider_events,
+      TurnMachine& machine, std::vector<ProviderEvent> provider_events,
       std::optional<ModelResponse>& completed_response, bool semantic_output_consumed);
   [[nodiscard]] Status
-  publish_provider_event(TurnMachine& machine, const ProviderEvent& event,
+  publish_provider_event(TurnMachine& machine, ProviderEvent event,
                          std::optional<ModelResponse>& completed_response);
   [[nodiscard]] Status publish_tool_batch(PublishToolCall first,
                                           std::deque<MachineCommand>& pending_commands);
   void publish_worker_tool_accepted(TurnId turn_id, std::string tool_call_id,
                                     std::size_t result_payload_bytes);
-  [[nodiscard]] Status publish_command(const MachineCommand& command);
+  [[nodiscard]] Status publish_command(MachineCommand command);
   void publish_terminal_event(WorkerEvent event);
   void publish_unhandled_failure(TurnId turn_id) noexcept;
 
