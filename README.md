@@ -101,7 +101,8 @@ target_link_libraries(app PRIVATE scry::scry)
 
 The canonical first program is [examples/main_loop.cpp](examples/main_loop.cpp):
 create a `Harness` from a `Config`, register a tool, `send()` a message, and
-pump `update()` from the loop you already own.
+pump `update()` from the loop you already own. It assumes a local Ollama server
+at `http://127.0.0.1:11434` with the `qwen3:1.7b` model installed.
 
 ## Build and preflight
 
