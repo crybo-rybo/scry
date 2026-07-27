@@ -127,8 +127,10 @@ void send_all(const int client, const std::string_view response) {
 
 } // namespace
 
-LoopbackServer::LoopbackServer(std::string response, const bool hold_response)
-    : response_(std::move(response)), response_released_(!hold_response) {
+LoopbackServer::LoopbackServer(std::string response, const bool hold_response,
+                               const std::size_t requests_to_serve)
+    : response_(std::move(response)), requests_to_serve_(requests_to_serve),
+      response_released_(!hold_response) {
   listener_ = create_listener(port_);
   if (listener_ < 0) {
     throw std::runtime_error{"failed to retain loopback socket"};
@@ -169,29 +171,56 @@ void LoopbackServer::release_response() {
   state_changed_.notify_all();
 }
 
+std::size_t LoopbackServer::accepted_connections() const {
+  const std::scoped_lock lock{state_mutex_};
+  return accepted_connections_;
+}
+
+bool LoopbackServer::serve_connection(const int client, const std::stop_token& stop,
+                                      std::size_t& served) {
+  while (served < requests_to_serve_ && !stop.stop_requested()) {
+    auto request = receive_request(client);
+    if (request.empty()) {
+      // The peer closed without another request; wait for a fresh connection.
+      return true;
+    }
+    {
+      const std::scoped_lock lock{state_mutex_};
+      request_ = std::move(request);
+      request_received_ = true;
+    }
+    state_changed_.notify_all();
+    {
+      std::unique_lock lock{state_mutex_};
+      state_changed_.wait(
+          lock, [this, &stop] { return response_released_ || stop.stop_requested(); });
+    }
+    if (stop.stop_requested()) {
+      return false;
+    }
+    send_all(client, response_);
+    ++served;
+  }
+  return true;
+}
+
 void LoopbackServer::serve(const std::stop_token stop) {
-  sockaddr_in address{};
-  socklen_t size = sizeof(address);
-  Socket client{::accept(listener_, reinterpret_cast<sockaddr*>(&address), &size)};
-  if (client.get() < 0 || stop.stop_requested()) {
-    return;
+  std::size_t served = 0;
+  while (served < requests_to_serve_ && !stop.stop_requested()) {
+    sockaddr_in address{};
+    socklen_t size = sizeof(address);
+    Socket client{::accept(listener_, reinterpret_cast<sockaddr*>(&address), &size)};
+    if (client.get() < 0 || stop.stop_requested()) {
+      return;
+    }
+    {
+      const std::scoped_lock lock{state_mutex_};
+      ++accepted_connections_;
+    }
+    if (!serve_connection(client.get(), stop, served)) {
+      return;
+    }
   }
-  auto request = receive_request(client.get());
-  {
-    const std::scoped_lock lock{state_mutex_};
-    request_ = std::move(request);
-    request_received_ = true;
-  }
-  state_changed_.notify_all();
-  {
-    std::unique_lock lock{state_mutex_};
-    state_changed_.wait(
-        lock, [this, &stop] { return response_released_ || stop.stop_requested(); });
-  }
-  if (stop.stop_requested()) {
-    return;
-  }
-  send_all(client.get(), response_);
 }
 
 } // namespace scry::test

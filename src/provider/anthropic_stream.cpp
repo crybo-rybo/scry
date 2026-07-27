@@ -360,8 +360,10 @@ handle_message_stop(ProviderDecodeState& state,
                             "Anthropic message_stop violated the message lifecycle"));
   }
   state.completed = true;
+  // parse_stream_event rejects every later event once completed is set, so the
+  // accumulated response has no reader left and transfers to the terminal event.
   return std::vector<ProviderEvent>{
-      ProviderCompleted{.response = state.response},
+      ProviderCompleted{.response = std::move(state.response)},
   };
 }
 

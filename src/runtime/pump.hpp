@@ -111,7 +111,7 @@ private:
   [[nodiscard]] bool
   conversation_limit_exceeded(const TurnRoute& route,
                               const CompletionEvent& event) const noexcept;
-  void commit_completion(TurnRoute& route, const CompletionEvent& event);
+  void commit_completion(TurnRoute& route, CompletionEvent& event);
   [[nodiscard]] bool deliver_one(std::size_t& callbacks_delivered);
   [[nodiscard]] bool has_deliverable() const noexcept;
   void release_discarded();
