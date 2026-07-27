@@ -32,10 +32,11 @@ private:
 } // namespace
 
 int main() {
+  // Assumes `ollama serve` is running and `ollama pull qwen3:8b` has completed.
   auto harness_result = scry::Harness::create(scry::Config{
-      .base_url = "https://api.anthropic.com",
-      .api_key = "load-from-the-host-secret-store",
-      .model = "configured-by-the-host",
+      .base_url = "http://127.0.0.1:11434/v1",
+      .model = "qwen3:8b",
+      .dialect = scry::ProviderDialect::openai_compatible,
   });
   if (!harness_result) {
     std::cerr << harness_result.error().message << '\n';
