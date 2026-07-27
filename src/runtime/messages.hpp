@@ -62,9 +62,14 @@ struct WorkerToolAcceptedEvent {
   std::size_t result_payload_bytes{};
 };
 
+// The pump commits `exchange` into the Conversation by moving it, then keeps
+// only `text` for the completion callback. `text` is the assistant text already
+// counted inside `exchange`, so it is deliberately absent from the queue byte
+// accounting in event_payload_bytes.
 struct CompletionEvent {
   TurnId turn_id{};
   std::vector<Message> exchange{};
+  std::string text{};
   FinishReason finish_reason{FinishReason::unknown};
   Usage usage{};
   std::uint32_t attempt_count{};

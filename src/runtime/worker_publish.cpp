@@ -40,7 +40,7 @@ constexpr std::size_t terminal_event_reserve = 512;
 
 Status
 WorkerActor::publish_stream_events(TurnMachine& machine,
-                                   const std::vector<ProviderEvent>& provider_events,
+                                   std::vector<ProviderEvent> provider_events,
                                    std::optional<ModelResponse>& completed_response,
                                    const bool semantic_output_consumed) {
   if (semantic_output_consumed && machine.phase() == MachinePhase::awaiting_model) {
@@ -51,8 +51,8 @@ WorkerActor::publish_stream_events(TurnMachine& machine,
           "provider semantic output could not enter streaming state", TurnId{}));
     }
   }
-  for (const auto& event : provider_events) {
-    auto status = publish_provider_event(machine, event, completed_response);
+  for (auto& event : provider_events) {
+    auto status = publish_provider_event(machine, std::move(event), completed_response);
     if (!status) {
       return status;
     }
@@ -61,25 +61,25 @@ WorkerActor::publish_stream_events(TurnMachine& machine,
 }
 
 Status
-WorkerActor::publish_provider_event(TurnMachine& machine, const ProviderEvent& event,
+WorkerActor::publish_provider_event(TurnMachine& machine, ProviderEvent event,
                                     std::optional<ModelResponse>& completed_response) {
-  if (const auto* text = std::get_if<ProviderTextDelta>(&event)) {
-    auto transition = machine.apply(ModelTextDelta{.text = text->text});
-    for (const auto& command : transition.commands) {
-      auto status = publish_command(command);
+  if (auto* text = std::get_if<ProviderTextDelta>(&event)) {
+    auto transition = machine.apply(ModelTextDelta{.text = std::move(text->text)});
+    for (auto& command : transition.commands) {
+      auto status = publish_command(std::move(command));
       if (!status) {
         return status;
       }
     }
     return {};
   }
-  if (const auto* completed = std::get_if<ProviderCompleted>(&event)) {
+  if (auto* completed = std::get_if<ProviderCompleted>(&event)) {
     if (completed_response) {
       return std::unexpected(publication_error(
           ErrorCategory::protocol, "provider stream emitted more than one completion",
           TurnId{}));
     }
-    completed_response = completed->response;
+    completed_response = std::move(completed->response);
     return {};
   }
   // The provider seam preserves an ignored event's name for debug inspection.
@@ -137,12 +137,15 @@ void WorkerActor::publish_worker_tool_accepted(const TurnId turn_id,
   assert(published);
 }
 
-Status WorkerActor::publish_command(const MachineCommand& command) {
+Status WorkerActor::publish_command(MachineCommand command) {
   const auto payload_limit =
       config_.limits.max_queued_event_bytes_per_turn - terminal_event_reserve;
-  if (const auto* delta = std::get_if<PublishTextDelta>(&command)) {
-    if (!events_->push(TextDeltaEvent{.turn_id = delta->turn_id, .text = delta->text},
-                       payload_limit)) {
+  if (auto* delta = std::get_if<PublishTextDelta>(&command)) {
+    // The rejection path below reads only the scalar correlation fields, so
+    // handing the text to the queue costs nothing on failure.
+    if (!events_->push(
+            TextDeltaEvent{.turn_id = delta->turn_id, .text = std::move(delta->text)},
+            payload_limit)) {
       return std::unexpected(
           publication_error(ErrorCategory::resource_limit,
                             "turn events exceed the configured queue limit",
@@ -164,15 +167,15 @@ Status WorkerActor::publish_command(const MachineCommand& command) {
     }
     return {};
   }
-  if (const auto* completion = std::get_if<CommitCompletion>(&command)) {
+  if (auto* completion = std::get_if<CommitCompletion>(&command)) {
     if (!events_->push(
             CompletionEvent{
                 .turn_id = completion->turn_id,
-                .exchange = completion->exchange,
+                .exchange = std::move(completion->exchange),
                 .finish_reason = completion->finish_reason,
                 .usage = completion->usage,
                 .attempt_count = completion->attempt_count,
-                .provider_request_id = completion->provider_request_id,
+                .provider_request_id = std::move(completion->provider_request_id),
             },
             payload_limit)) {
       return std::unexpected(
@@ -182,9 +185,10 @@ Status WorkerActor::publish_command(const MachineCommand& command) {
     }
     return {};
   }
-  if (const auto* error = std::get_if<PublishError>(&command)) {
+  if (auto* error = std::get_if<PublishError>(&command)) {
     const auto turn_id = error->error.turn_id.value_or(TurnId{});
-    publish_terminal_event(ErrorEvent{.turn_id = turn_id, .error = error->error});
+    publish_terminal_event(
+        ErrorEvent{.turn_id = turn_id, .error = std::move(error->error)});
     return {};
   }
   if (const auto* cancelled = std::get_if<PublishCancelled>(&command)) {
