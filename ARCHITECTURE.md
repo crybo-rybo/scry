@@ -407,6 +407,16 @@ therefore remains libcurl plus internal Glaze.
   installable or release artifacts; no manual Clang result is claimed for M3.
   clang-format + clang-tidy configs are checked in at M0.
 - **Warnings are errors** (`-Wall -Wextra -Wconversion`), from the first commit.
+- **Diagnostic logging build:** `-DSCRY_ENABLE_LOGGING=ON` (preset `dev-logging`)
+  compiles the internal `SCRY_LOG` macro into a small thread-safe file logger
+  (`src/core/log.*`); every other build compiles the macro to nothing. It
+  appends timestamped lifecycle lines — turn start/completion/failure,
+  model-request attempts and retries, tool routing and `<name> Tool Called`
+  dispatch, ignored provider stream events — to `scry.log` (override with the
+  `SCRY_LOG_FILE` environment variable). Lines carry only turn ids, tool
+  names, attempt counts, and error categories; prompt/tool content and
+  credentials never reach the log (ERR-004), and this remains an internal
+  diagnostic, not the public logging surface PROV-008 notes is absent.
 
 ## 11. Evolution Register: Deliberate Simplifications and Their End States
 
@@ -429,6 +439,7 @@ Every "boring first" choice is recorded here with the condition that triggers ev
 | One serialized worker-mode handler with no injected stop token | A real handler needs cooperative cancellation or parallel execution | Ratify a stop-aware or async handler boundary plus explicit pool, ordering, resource, and teardown policy |
 | M5 ImGui panel has no platform/renderer backend and the NPC world is ephemeral | A maintained standalone demo or durable game integration becomes a real deliverable | Ratify its platform matrix and lifecycle separately; keep any backend, persistence, rollback, or idempotency machinery outside the Scry package |
 | Streaming-only provider seam: adapters always request `stream: true` and decode through the stream path; the parallel non-streaming response decoders were removed as production-dead | A supported deployment genuinely cannot serve SSE, or a consumer needs non-streaming completions | Reintroduce a `parse_response` seam together with a runtime mode that actually exercises it, plus its golden and fuzz coverage — never as untested parallel code |
+| Compile-time diagnostic file logger (`SCRY_ENABLE_LOGGING`): fixed line format, one file sink chosen by environment variable, no runtime configuration or public API | A consumer needs runtime-toggleable, structured, or callback-driven diagnostics | Ratify a public logging/observer surface (the one PROV-008 records as absent) and route the same call sites through it |
 | Release-posture verification (ADR 0012): behavioral gates only — matrix, tests, sanitizers, tidy, package audits; no coverage/CRAP metric gating, no mutation testing, fuzz and showcase nightly | Unattended agent-driven development resumes at scale, or coverage erosion on the pure components is observed in review | Restore targeted pieces per ADR 0012 — starting with a single non-gating coverage report line, never the full retired apparatus by default |
 
 ## 12. Pattern Summary

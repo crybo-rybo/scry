@@ -1,5 +1,6 @@
 #include "runtime/worker.hpp"
 
+#include "core/log.hpp"
 #include "protocol/sse.hpp"
 #include "runtime/tool_dispatch.hpp"
 
@@ -73,6 +74,8 @@ void redact_sensitive_fields(Error& error, const std::string_view secret) {
   if (error.attempt == 0) {
     error.attempt = attempt;
   }
+  SCRY_LOG("Turn {} attempt {} failed ({})", turn_id.value, attempt,
+           error_category_name(error.category));
   return machine.apply(AttemptFailed{
       .error = std::move(error),
       .observed_at = std::chrono::steady_clock::now(),
@@ -172,6 +175,7 @@ void WorkerActor::register_worker_tool(RegisterWorkerToolCommand command) {
 
 void WorkerActor::process_turn(SendTurnCommand&& command,
                                const std::stop_token& stopped) {
+  SCRY_LOG("Worker accepted Turn {}", command.turn_id.value);
   TurnMachine machine{
       command.turn_id,
       std::move(command.request),
@@ -264,6 +268,8 @@ TransitionResult
 WorkerActor::perform_attempt(TurnMachine& machine, const IssueModelRequest& issue,
                              const std::shared_ptr<std::atomic<bool>>& cancelled,
                              const std::stop_token& stopped) {
+  SCRY_LOG("Model request issued (Turn {}, attempt {})", issue.turn_id.value,
+           issue.attempt);
   auto request = provider_->make_request(config_, *issue.request);
   if (!request) {
     return failed_attempt(machine, std::move(request.error()), issue.turn_id,
@@ -353,6 +359,8 @@ TransitionResult
 WorkerActor::wait_for_retry(TurnMachine& machine, const ScheduleRetryWake& wake,
                             const std::shared_ptr<std::atomic<bool>>& cancelled,
                             const std::stop_token& stopped) {
+  SCRY_LOG("Turn {} waiting to retry after failed attempt {}", wake.turn_id.value,
+           wake.failed_attempt);
   while (!stopped.stop_requested()) {
     if (cancelled->load(std::memory_order_acquire)) {
       return machine.apply(CancelTurn{});
@@ -433,6 +441,8 @@ TransitionResult WorkerActor::execute_worker_tool(TurnMachine& machine,
                         turn.worker_tool_names.end();
   auto* handler = accepted ? find_worker_handler(command.call.name) : nullptr;
   if (handler == nullptr) {
+    SCRY_LOG("{} Tool unavailable for the accepted Turn {}", command.call.name,
+             turn.turn_id.value);
     return machine.apply(ToolExecutionFailed{
         .error = worker_error(ErrorCategory::invalid_state,
                               "worker tool is unavailable for the accepted turn",
