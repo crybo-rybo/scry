@@ -236,7 +236,7 @@ bool WorkerActor::process_machine_command(
     }
     return true;
   }
-  auto published = publish_command(command);
+  auto published = publish_command(std::move(command));
   if (published) {
     return true;
   }
@@ -309,8 +309,9 @@ Status WorkerActor::consume_sse_events(TurnMachine& machine, AttemptState& state
     if (!provider_events) {
       return std::unexpected(std::move(provider_events.error()));
     }
-    auto status = publish_stream_events(machine, *provider_events, state.completed,
-                                        state.decode.semantic_output_consumed);
+    auto status =
+        publish_stream_events(machine, std::move(*provider_events), state.completed,
+                              state.decode.semantic_output_consumed);
     if (!status) {
       return status;
     }

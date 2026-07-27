@@ -387,3 +387,31 @@ TEST_CASE("curl transport rejects invalid request state before network IO") {
   REQUIRE_FALSE(result);
   CHECK(result.error().category == ErrorCategory::invalid_state);
 }
+
+TEST_CASE("consecutive transfers reuse one connection") {
+  // The shared helper marks responses "Connection: close"; persistent reuse
+  // needs the server to leave the connection open between the two requests.
+  constexpr std::string_view body = R"({"text":"hello"})";
+  const std::string keep_alive =
+      "HTTP/1.1 200 OK\r\nContent-Length: " + std::to_string(body.size()) + "\r\n\r\n" +
+      std::string{body};
+  scry::test::LoopbackServer server{keep_alive, false, 2};
+  CurlTransport transport;
+  std::stop_source shutdown;
+  const std::atomic cancelled{false};
+
+  for (int attempt = 0; attempt < 2; ++attempt) {
+    INFO("attempt " << attempt);
+    std::string received;
+    auto sink = append_to(received);
+    const auto result = transport.perform(request(server.url("/v1/messages")),
+                                          shutdown.get_token(), cancelled, sink);
+    REQUIRE(result);
+    CHECK(result->status_code == 200);
+    CHECK(received == body);
+  }
+
+  // Rebuilding the multi handle per attempt would discard libcurl's connection
+  // cache and force a second TCP connect, and with TLS a second handshake.
+  CHECK(server.accepted_connections() == 1);
+}

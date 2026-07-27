@@ -55,7 +55,9 @@ namespace {
 
   WireValue function{};
   function["name"] = call.name;
-  function["arguments"] = *encoded;
+  // Glaze's assignment operators bind const&, so moving into the node's
+  // variant is what transfers the payload instead of duplicating it.
+  function["arguments"].data = std::move(*encoded);
   WireValue value{};
   value["id"] = call.id;
   value["type"] = "function";
@@ -75,7 +77,7 @@ namespace {
   WireValue value{};
   value["role"] = "tool";
   value["tool_call_id"] = result.tool_call_id;
-  value["content"] = *content;
+  value["content"].data = std::move(*content);
   return value;
 }
 
@@ -103,7 +105,7 @@ encode_user_message(const Message& message) {
   if (results.empty()) {
     WireValue value{};
     value["role"] = "user";
-    value["content"] = text;
+    value["content"].data = std::move(text);
     encoded.push_back(std::move(value));
     return encoded;
   }
@@ -144,10 +146,10 @@ encode_assistant_message(const Message& message) {
   if (text.empty() && !calls.empty()) {
     value["content"] = nullptr;
   } else {
-    value["content"] = text;
+    value["content"].data = std::move(text);
   }
   if (!calls.empty()) {
-    value["tool_calls"] = calls;
+    value["tool_calls"].data = std::move(calls);
   }
   return std::vector<WireValue>{std::move(value)};
 }
@@ -263,7 +265,7 @@ encode_tools(const std::vector<ToolSchema>& tools) {
   }
   WireValue root{};
   root["model"] = request.model.empty() ? config.model : request.model;
-  root["messages"] = *messages;
+  root["messages"].data = std::move(*messages);
   root["temperature"] = request.sampling.temperature;
   root["max_tokens"] = request.sampling.max_tokens.value_or(0);
   root["stream"] = true;
@@ -274,7 +276,7 @@ encode_tools(const std::vector<ToolSchema>& tools) {
   stream_options["include_usage"] = true;
   root["stream_options"] = std::move(stream_options);
   if (!tools->empty()) {
-    root["tools"] = *tools;
+    root["tools"].data = std::move(*tools);
   }
   return root;
 }
