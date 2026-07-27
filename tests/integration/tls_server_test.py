@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import socket
 import ssl
 import subprocess
@@ -43,12 +44,12 @@ def response() -> bytes:
     return headers + STREAM
 
 
-def receive_request(connection: ssl.SSLSocket) -> None:
+def receive_request(connection: ssl.SSLSocket) -> bool:
     payload = b""
     while b"\r\n\r\n" not in payload:
         chunk = connection.recv(4096)
         if not chunk:
-            return
+            return False
         payload += chunk
     head, body = payload.split(b"\r\n\r\n", 1)
     content_length = 0
@@ -58,8 +59,9 @@ def receive_request(connection: ssl.SSLSocket) -> None:
     while len(body) < content_length:
         chunk = connection.recv(4096)
         if not chunk:
-            return
+            return False
         body += chunk
+    return True
 
 
 class SelfSignedServer:
@@ -90,13 +92,19 @@ class SelfSignedServer:
             try:
                 with raw:
                     with self.context.wrap_socket(raw, server_side=True) as secured:
-                        receive_request(secured)
-                        secured.sendall(response())
+                        if receive_request(secured):
+                            secured.sendall(response())
             except ssl.SSLError:
                 if self.accepted != 1:
                     self.errors.append("unexpected TLS handshake failure")
             except OSError as error:
-                self.errors.append(str(error))
+                # The verification-enabled client can close or reset the
+                # connection after receiving the self-signed certificate.
+                if self.accepted != 1 or error.errno not in {
+                    errno.ECONNRESET,
+                    errno.EPIPE,
+                }:
+                    self.errors.append(str(error))
 
     def close(self) -> None:
         self.stopped.set()
