@@ -78,8 +78,8 @@ struct SynchronousTurnState {
 
 void install_synchronous_callbacks(Turn& turn, SynchronousTurnState& state) {
   const auto text = turn.on_text_delta([](std::string_view) {});
-  const auto completion =
-      turn.on_complete([&state](const Completion& value) { state.completion = value; });
+  const auto completion = turn.on_completion(
+      [&state](const Completion& value) { state.completion = value; });
   const auto error =
       turn.on_error([&state](const Error& value) { state.error = value; });
   const auto cancelled =

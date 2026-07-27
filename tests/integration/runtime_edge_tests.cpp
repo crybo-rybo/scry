@@ -329,7 +329,7 @@ TEST_CASE("post-completion cancellation is safe and idempotent") {
   bool completed = false;
   bool cancelled = false;
   REQUIRE(
-      turn->on_complete([&completed](const scry::Completion&) { completed = true; }));
+      turn->on_completion([&completed](const scry::Completion&) { completed = true; }));
   REQUIRE(
       turn->on_cancelled([&cancelled](const scry::Cancelled&) { cancelled = true; }));
   REQUIRE(pump_until(*harness, [&completed] { return completed; }));
@@ -390,7 +390,7 @@ TEST_CASE("callbacks may use public operations and nested update is diagnosed") 
   bool nested_callback_registered = false;
   bool terminal_cancel_idempotent = false;
   std::optional<scry::Error> nested_wait_error;
-  REQUIRE(first->on_complete([&](const scry::Completion&) {
+  REQUIRE(first->on_completion([&](const scry::Completion&) {
     first_completed = true;
     nested_update_rejected = harness->update().reentrant_update_rejected;
     registration_succeeded = static_cast<bool>(harness->tools().add(tool(), handler()));
@@ -404,7 +404,7 @@ TEST_CASE("callbacks may use public operations and nested update is diagnosed") 
     nested_send_succeeded = nested.has_value();
     if (nested) {
       second.emplace(std::move(*nested));
-      nested_callback_registered = static_cast<bool>(second->on_complete(
+      nested_callback_registered = static_cast<bool>(second->on_completion(
           [&second_completed](const scry::Completion&) { second_completed = true; }));
     }
   }));
@@ -441,9 +441,9 @@ TEST_CASE("two Harness workers can overlap independent transfers") {
   REQUIRE(second_turn);
   bool first_completed = false;
   bool second_completed = false;
-  REQUIRE(first_turn->on_complete(
+  REQUIRE(first_turn->on_completion(
       [&first_completed](const scry::Completion&) { first_completed = true; }));
-  REQUIRE(second_turn->on_complete(
+  REQUIRE(second_turn->on_completion(
       [&second_completed](const scry::Completion&) { second_completed = true; }));
 
   constexpr std::size_t maximum_pumps = 100'000;

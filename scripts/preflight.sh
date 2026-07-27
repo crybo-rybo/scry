@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 
+# Local equivalent of the per-commit CI ring (ADR 0012): core, clang-tidy,
+# sanitizers, and the GCC 16 reflection component. Fuzzing, the showcase,
+# and the local-model smoke live in the scheduled/manual nightly workflow.
+
 set -uo pipefail
 
 readonly root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -48,28 +52,6 @@ run_preset() {
       "$@"
 }
 
-run_fuzz() {
-  local build_dir="build/fuzz"
-  if [[ "$(uname -s)" == "Darwin" ]] &&
-    command -v brew >/dev/null 2>&1 &&
-    brew list --versions llvm >/dev/null 2>&1; then
-    local llvm_bin
-    llvm_bin="$(brew --prefix llvm)/bin"
-    build_dir="build/fuzz-llvm"
-    CC="${llvm_bin}/clang" CXX="${llvm_bin}/clang++" \
-      cmake --preset fuzz -B "${build_dir}" || return
-  else
-    cmake --preset fuzz || return
-  fi
-  cmake --build "${build_dir}" \
-    --target scry_sse_fuzz scry_anthropic_fuzz scry_openai_fuzz &&
-    ctest \
-      --test-dir "${build_dir}" \
-      --output-on-failure \
-      --repeat until-fail:3 \
-      -R fuzz
-}
-
 run_reflection() {
   if ! command -v g++-16 >/dev/null 2>&1; then
     echo "g++-16 is unavailable; the hosted Linux reflection leg is authoritative" >&2
@@ -79,14 +61,11 @@ run_reflection() {
 }
 
 cd "${root_dir}"
-run_gate "core (with libcurl runtime)" ./scripts/ci-local.sh -DSCRY_BUILD_CURL_SPIKE=ON
-run_gate "quality gate" ./scripts/quality-gate.sh
+run_gate "core" ./scripts/ci-local.sh
 run_gate "clang-tidy" run_tidy
 run_gate "ASan + UBSan" run_preset asan
 # TSan is where nondeterminism surfaces; the repeat runs live here (QA-008).
 run_gate "TSan" run_preset tsan --repeat until-fail:3
-run_gate "short protocol fuzzing" run_fuzz
-run_gate "opt-in showcase" ./scripts/ci-showcase.sh
 run_gate "GCC 16 supported reflection component" run_reflection
 
 if [[ "${failures}" -ne 0 ]]; then

@@ -46,7 +46,7 @@ TEST_CASE("mixed worker and app tools preserve provider order and observer threa
     observer_threads.push_back(std::this_thread::get_id());
   }));
   REQUIRE(
-      turn->on_complete([&completed](const scry::Completion&) { completed = true; }));
+      turn->on_completion([&completed](const scry::Completion&) { completed = true; }));
 
   const auto update_thread = std::this_thread::get_id();
   REQUIRE(pump_until(harness, [&completed] { return completed; }));
@@ -108,7 +108,7 @@ TEST_CASE("all-worker tools contain handler exceptions and preserve provider ord
     timeline.push_back("observer:" + call.name);
   }));
   REQUIRE(
-      turn->on_complete([&completed](const scry::Completion&) { completed = true; }));
+      turn->on_completion([&completed](const scry::Completion&) { completed = true; }));
   REQUIRE(pump_until(harness, [&completed] { return completed; }));
 
   const std::scoped_lock lock{timeline_mutex};
@@ -154,7 +154,7 @@ TEST_CASE("an accepted turn does not consult later worker registrations") {
 
   bool completed = false;
   REQUIRE(
-      turn->on_complete([&completed](const scry::Completion&) { completed = true; }));
+      turn->on_completion([&completed](const scry::Completion&) { completed = true; }));
   REQUIRE(pump_until(harness, [&completed] { return completed; }));
 
   const std::scoped_lock lock{counter_mutex};
@@ -264,9 +264,9 @@ TEST_CASE("a queued turn remains serialized while a worker handler is held") {
   REQUIRE(second);
   bool first_completed = false;
   bool second_completed = false;
-  REQUIRE(first->on_complete(
+  REQUIRE(first->on_completion(
       [&first_completed](const scry::Completion&) { first_completed = true; }));
-  REQUIRE(second->on_complete(
+  REQUIRE(second->on_completion(
       [&second_completed](const scry::Completion&) { second_completed = true; }));
   REQUIRE(pump_until(harness, [&] {
     const std::scoped_lock lock{handler_mutex};
@@ -385,9 +385,9 @@ TEST_CASE("a queued turn waits for the active turn's tool round") {
 
   bool first_completed = false;
   bool second_completed = false;
-  REQUIRE(first_turn->on_complete(
+  REQUIRE(first_turn->on_completion(
       [&](const scry::Completion&) { first_completed = true; }));
-  REQUIRE(second_turn->on_complete(
+  REQUIRE(second_turn->on_completion(
       [&](const scry::Completion&) { second_completed = true; }));
   REQUIRE(pump_until(harness, [&] { return first_completed && second_completed; }));
 

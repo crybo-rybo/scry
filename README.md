@@ -35,13 +35,13 @@ round, and worker-mode mixed/all-worker ordering, thread-ID, snapshot,
 cancellation, detached-turn, budget, and cooperating-shutdown coverage. The
 provider seam is streaming-only: the dead non-streaming decode path was
 removed (ARCHITECTURE.md §11 records the reintroduction condition). The
-absolute quality gates ([ADR 0011](docs/adr/0011-absolute-quality-gates.md))
-pass from a single instrumented build: 93.322% diff branch coverage against
-the 90% floor, the 95% component floors, the 88% aggregate branch-coverage
-backstop, and a maximum CRAP of 13.125 against the limit of 30.
+development-era coverage/CRAP gating machinery was retired at the release
+posture ([ADR 0012](docs/adr/0012-release-infrastructure-simplification.md));
+its final full run measured 93.322% diff branch coverage and a maximum CRAP
+of 13.125, and the test suites it demanded remain in full.
 
-The scheduled/manual M4 nightly pipeline is also implemented: CodeQL, long
-SSE/Anthropic/OpenAI fuzzing, an on-demand Mull mutation job, and a bounded
+The scheduled/manual nightly pipeline runs CodeQL, long
+SSE/Anthropic/OpenAI fuzzing, and the showcase gate, plus an on-demand
 OpenAI-compatible smoke using checksum-pinned Ollama v0.32.1 pulling
 `qwen3:1.7b-q4_K_M`. This records a live pipeline, not a claim that a hosted
 nightly execution has already completed. Separately,
@@ -58,13 +58,50 @@ builds the reflected example and standalone header, runs 27 schema, codec,
 bridge, registration, and compile-fail tests, audits a clean component install,
 runs a downstream
 `find_package(scry CONFIG REQUIRED COMPONENTS reflection)` consumer, and
-repeats the reflection suite under ASan+UBSan. Its pinned coverage leg gates
-the codec's source decisions at 85% and functions at 95% with stock gcovr
-thresholds, plus the compiled bridge's GCC/gcovr CFG branches at 95%
-([ADR 0011](docs/adr/0011-absolute-quality-gates.md)); the decision floor
-allows for the one inline-justified GCC-generated switch artifact that
-gcovr's decision analysis still counts. The reflection-OFF install and
+repeats the reflection suite under ASan+UBSan. The reflection-OFF install and
 consumer remain clean C++23 surfaces with no reflection artifacts.
+
+## Using scry
+
+Scry supports Linux and macOS and requires a C++23 toolchain, CMake ≥ 3.25,
+and libcurl ≥ 7.84 development headers. CI covers GCC 14, Clang 18 (with
+libc++), and AppleClang on macOS 15. The C++26 reflection component is
+optional and requires GCC 16 or newer.
+
+Consume an installed package:
+
+```sh
+cmake -S scry -B scry/build -DCMAKE_BUILD_TYPE=Release
+cmake --build scry/build
+cmake --install scry/build --prefix /your/prefix
+```
+
+```cmake
+find_package(scry 0.0.1 CONFIG REQUIRED)
+target_link_libraries(app PRIVATE scry::scry)
+```
+
+Reflected typed tools are an explicit opt-in on a reflection-enabled install:
+`find_package(scry CONFIG REQUIRED COMPONENTS reflection)` and link
+`scry::reflection`.
+
+Or vendor it with FetchContent — Scry's tests, examples, and format targets
+stay off automatically when it is not the top-level project:
+
+```cmake
+include(FetchContent)
+FetchContent_Declare(
+  scry
+  GIT_REPOSITORY https://github.com/crybo-rybo/scry.git
+  GIT_TAG v0.0.1
+)
+FetchContent_MakeAvailable(scry)
+target_link_libraries(app PRIVATE scry::scry)
+```
+
+The canonical first program is [examples/main_loop.cpp](examples/main_loop.cpp):
+create a `Harness` from a `Config`, register a tool, `send()` a message, and
+pump `update()` from the loop you already own.
 
 ## Build and preflight
 
@@ -86,17 +123,13 @@ Before handing off a pull request, run the complete local preflight:
 ./scripts/preflight.sh
 ```
 
-That one command adds the absolute coverage/CRAP quality gate, clang-tidy,
-sanitizers, short protocol fuzzing, the curl runtime spike on the core leg,
-and the host-specific reflection leg. It
-runs all available legs and reports host-specific toolchains that are
+That one command adds clang-tidy, the ASan/UBSan and TSan suites, and the
+host-specific GCC 16 reflection leg — the same set the hosted per-commit CI
+ring enforces ([ADR 0012](docs/adr/0012-release-infrastructure-simplification.md)).
+It runs all available legs and reports host-specific toolchains that are
 unavailable locally; hosted CI is authoritative for those environments.
-The M4 OpenAI/worker gates and M3 reflection gate are live through that same
-preflight entry point.
-The M5 showcase gate is also wired through this entry point and passes locally:
-it runs 20 deterministic tests three times, compiles and executes a real
-headless Dear ImGui frame, and audits the default-OFF package plus a downstream
-consumer. Hosted CI runs and passes the same gate.
+Long protocol fuzzing and the M5 showcase gate run in the scheduled nightly
+workflow; `just showcase` runs the showcase gate locally.
 `just ci` is the optional convenience wrapper.
 
 The reflection-OFF surface targets stable C++23 compilers. The accepted M3
@@ -105,11 +138,9 @@ package shape keeps it that way: a reflection-enabled build uses GCC 16+ with
 `find_package(scry CONFIG REQUIRED COMPONENTS reflection)` and
 `scry::reflection`. Core-only builds and installations contain no reflection
 component or experimental language flags. The shared reflection build, test,
-coverage, ASan+UBSan, install-audit, and downstream-consumer gate is live.
+ASan+UBSan, install-audit, and downstream-consumer gate is live.
 clang-p2996 remains manual, non-gating compatibility work, produces no package
 artifacts, and is not claimed as M3 verification.
-`just curl` exercises the production Curl runtime integration as well as the
-retained low-level feasibility probe.
 
 ## Documentation
 
@@ -117,7 +148,7 @@ retained low-level feasibility probe.
 |---|---|
 | [DESIGN.md](DESIGN.md) | High-level design: vision, goals/non-goals, the five core public concepts, interaction and threading model (with diagrams), implemented explicit-schema and reflected-tool ergonomics, provider abstraction, open questions, and roadmap (M0–M5). **Start here.** |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | How the code is shaped: the C++ patterns and idioms each piece commits to — actor-model concurrency, sans-I/O state machine, type erasure, optional consteval codegen and JSON bridge, PImpl, error-as-value — plus the evolution register documenting every deliberate simplification and its intended end state. |
-| [ENGINEERING.md](ENGINEERING.md) | How we work: testing plan and pyramid, coverage and CRAP/complexity gating, static and dynamic analysis (sanitizers, fuzzing, mutation testing), CI shape, workflow, and the absolute-gates philosophy — fixed floors, visible drift. |
+| [ENGINEERING.md](ENGINEERING.md) | How we work: testing plan and pyramid, coverage habits, static and dynamic analysis (sanitizers, nightly fuzzing), CI shape, workflow, and the gates-are-behavioral philosophy of the v0.0.1 release posture. |
 | [REQUIREMENTS.md](REQUIREMENTS.md) | **The normative register.** Every binding requirement as a numbered RFC-2119 row with milestone and verification method. When prose elsewhere conflicts with the register, the register wins. |
 | [ADR 0001](docs/adr/0001-public-object-graph-and-lifetimes.md) | Accepted public ownership, registry snapshot, Turn detach, and callback-lifetime decisions. |
 | [ADR 0002](docs/adr/0002-build-and-dependency-foundation.md) | Build, package, dependency-acquisition, and initial test-harness decisions. |
@@ -129,7 +160,8 @@ retained low-level feasibility probe.
 | [ADR 0008](docs/adr/0008-m4-openai-compatible-contract.md) | Accepted M4 endpoint, authentication, common request/response, streaming, error, and per-dialect state contract for OpenAI-compatible Chat Completions. |
 | [ADR 0009](docs/adr/0009-m4-worker-tool-execution.md) | Accepted M4 per-tool execution policy, handler ownership, ordered control flow, cancellation, observer, and teardown contract. |
 | [ADR 0010](docs/adr/0010-m5-showcase-contract.md) | Accepted M5 showcase-only boundary, host-owned ImGui lifecycle, deterministic NPC tools, pinned build-only dependency, and acceptance gates. |
-| [ADR 0011](docs/adr/0011-absolute-quality-gates.md) | Absolute quality gates from a single build replace the merge-base ratchet, bespoke reflection coverage validator, nightly mutation schedule, and model manifest pin. |
+| [ADR 0011](docs/adr/0011-absolute-quality-gates.md) | Historical: absolute quality gates from a single build replaced the merge-base ratchet, bespoke reflection coverage validator, nightly mutation schedule, and model manifest pin. Gating machinery since retired by ADR 0012. |
+| [ADR 0012](docs/adr/0012-release-infrastructure-simplification.md) | v0.0.1 release posture: the coverage/CRAP gating machinery, mutation testing, and feasibility spikes are retired; fuzzing and the showcase move to the nightly ring; behavioral gates (matrix, tests, sanitizers, tidy, package audits) remain. |
 
 ## Reading order
 

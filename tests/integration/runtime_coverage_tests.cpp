@@ -153,7 +153,7 @@ data: {"type":"message_stop"}
 void check_inactive_callbacks(scry::Turn& turn) {
   CHECK_FALSE(turn.on_text_delta([](std::string_view) {}));
   CHECK_FALSE(turn.on_tool_call([](const scry::ToolCall&) {}));
-  CHECK_FALSE(turn.on_complete([](const scry::Completion&) {}));
+  CHECK_FALSE(turn.on_completion([](const scry::Completion&) {}));
   CHECK_FALSE(turn.on_error([](const scry::Error&) {}));
   CHECK_FALSE(turn.on_cancelled([](const scry::Cancelled&) {}));
 }

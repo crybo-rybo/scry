@@ -54,7 +54,8 @@ TEST_CASE("two-tool turn snapshots tools, resends results, and commits atomicall
     timeline.push_back("observer:" + call.name);
     callback_threads.push_back(std::this_thread::get_id());
   }));
-  REQUIRE(turn.on_complete([&](const scry::Completion& value) { completion = value; }));
+  REQUIRE(
+      turn.on_completion([&](const scry::Completion& value) { completion = value; }));
 
   CHECK(conversation.empty());
   REQUIRE(pump_one_until(harness, [&] { return timeline.size() >= 2; }));

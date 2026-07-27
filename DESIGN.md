@@ -10,7 +10,7 @@ registrations from ordinary C++ types; its contract, implementation, package
 boundary, sanitizer leg, and runtime coverage gate are complete under ADR
 0007.
 
-The name is the design: **reflection** (the mirror) + **consulting an oracle** (the LLM). Namespace `scry::`, suggested repo name `scry` (fallbacks: `scry-cpp`, `scrylib`).
+The name is the design: **reflection** (the mirror) + **consulting an oracle** (the LLM). Namespace `scry::`; the canonical repository is [github.com/crybo-rybo/scry](https://github.com/crybo-rybo/scry).
 
 ---
 
@@ -66,7 +66,7 @@ The app touches five core concepts:
 | `scry::Config` | Plain value aggregate: base URL, API key, model, sampling params, provider dialect. Designated-initializer friendly. |
 | `scry::Conversation` | Owns message history (system prompt, user/assistant turns, tool calls/results). Serializable for persistence. |
 | `scry::ToolRegistry` | Named tools: description + schema + callable. Owned by a Harness and snapshotted when a turn is accepted. |
-| `scry::Turn` | Handle to one in-flight agentic exchange. Carries callbacks (`on_text_delta`, `on_tool_call`, `on_complete`, `on_error`) and `cancel()`. |
+| `scry::Turn` | Handle to one in-flight agentic exchange. Carries callbacks (`on_text_delta`, `on_tool_call`, `on_completion`, `on_error`) and `cancel()`. |
 | `scry::Harness` | Created from `Config`; owns provider/auth state, the tool registry, worker thread, and event queue. `send()` starts a turn; `update()` pumps completions into the app thread. |
 
 Intended feel:
@@ -101,7 +101,7 @@ if (!registered) { /* invalid schema, duplicate name, or inactive registry */ }
 
 auto turn = harness->send(*conversation, "Is the host application still running?");
 if (!turn) { /* busy, invalid state, or admission/resource limit */ }
-turn->on_complete([&](const scry::Completion& result) {
+turn->on_completion([&](const scry::Completion& result) {
     ui.show(result.text);
 });
 
@@ -176,7 +176,7 @@ sequenceDiagram
     H-->>App: on_tool_call (informational,<br/>after result is posted)
     H->>LLM: POST /messages (+ tool result)
     LLM-->>H: stream: final answer
-    H-->>App: on_complete (via update())
+    H-->>App: on_completion (via update())
 ```
 
 The loop iterates as many times as the model requests tools, bounded by a configurable `max_tool_rounds` to prevent runaways.
@@ -189,7 +189,7 @@ One worker thread per `Harness` does all blocking I/O. A lock-free (or mutex-gua
 graph TB
     subgraph MT["Main thread (app-owned)"]
         U["harness.update()"]
-        CB["user callbacks<br/>on_text_delta / on_complete / tool handlers"]
+        CB["user callbacks<br/>on_text_delta / on_completion / tool handlers"]
         S["send() / cancel()"]
     end
     subgraph WT["Worker thread (scry-owned)"]
@@ -384,14 +384,11 @@ types; compiled implementation reaches Glaze through a Scry-owned JSON bridge.
 
 The live M3 verification path runs 27 reflection-labelled tests: 22 runtime,
 schema, codec, bridge, and registration cases plus five stable-diagnostic
-compile failures. `scripts/reflection-coverage.sh` pins GCC/gcov 16 and gcovr
-8.6 and gates with stock gcovr thresholds
-([ADR 0011](docs/adr/0011-absolute-quality-gates.md)): at least 85% source
-decisions and 95% functions in the runtime codec, and at least 95% GCC/gcovr
-CFG branches in the compiled JSON bridge. The codec decision floor
-accommodates the one inline-justified GCC-generated switch on the
-reflected-enum decoder that gcovr's decision analysis still counts; the
-earlier bespoke exclusion validator is retired. Consteval paths stay covered
+compile failures, repeated under a separate GCC 16 ASan+UBSan build. The
+milestone-era gcovr coverage floors on the codec and bridge were retired at
+the release posture
+([ADR 0012](docs/adr/0012-release-infrastructure-simplification.md)); the
+suites they demanded remain. Consteval paths stay covered
 by the positive/negative compile matrix; no reflection property/fuzz or
 manual Clang result is claimed.
 
