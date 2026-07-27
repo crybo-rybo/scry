@@ -35,16 +35,24 @@ struct EasyDeleter {
 
 using EasyHandle = std::unique_ptr<CURL, EasyDeleter>;
 
+struct MultiDeleter {
+  void operator()(CURLM* multi) const noexcept {
+    static_cast<void>(curl_multi_cleanup(multi));
+  }
+};
+
+using MultiHandle = std::unique_ptr<CURLM, MultiDeleter>;
+
+// Borrows the transport's multi handle for one transfer. Detaching the easy
+// handle at scope exit returns its connection to that handle's cache instead
+// of destroying the cache with the transfer.
 class MultiTransfer final {
 public:
-  MultiTransfer() : multi_(curl_multi_init()) {}
+  explicit MultiTransfer(CURLM* multi) noexcept : multi_(multi) {}
 
   ~MultiTransfer() {
     if (multi_ != nullptr && easy_ != nullptr) {
       static_cast<void>(curl_multi_remove_handle(multi_, easy_));
-    }
-    if (multi_ != nullptr) {
-      static_cast<void>(curl_multi_cleanup(multi_));
     }
   }
 
@@ -430,8 +438,21 @@ public:
     return global_.error();
   }
 
+  // One worker thread owns a transport for the harness lifetime, so the multi
+  // handle persists across attempts. It carries libcurl's connection cache:
+  // keeping it is what lets a retry, a tool round, or a later turn reuse an
+  // established TCP connection and TLS session instead of repeating the
+  // handshake. A null return is reported as transfer setup failure.
+  [[nodiscard]] CURLM* multi() {
+    if (!multi_) {
+      multi_.reset(curl_multi_init());
+    }
+    return multi_.get();
+  }
+
 private:
   CurlGlobalLease global_;
+  MultiHandle multi_{};
 };
 
 CurlTransport::CurlTransport() : impl_(std::make_unique<Impl>()) {}
@@ -482,7 +503,7 @@ Result<TransportResult> CurlTransport::perform(const TransportRequest& request,
   if (auto status = configure_easy(easy.get(), request, *headers, context); !status) {
     return std::unexpected(std::move(status.error()));
   }
-  MultiTransfer multi;
+  MultiTransfer multi{impl_->multi()};
   if (!multi.valid() || multi.add(easy.get()) != CURLM_OK) {
     return std::unexpected(
         make_error(ErrorCategory::network, "libcurl transfer setup failed", true));

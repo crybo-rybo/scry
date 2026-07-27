@@ -236,7 +236,7 @@ bool WorkerActor::process_machine_command(
     }
     return true;
   }
-  auto published = publish_command(command);
+  auto published = publish_command(std::move(command));
   if (published) {
     return true;
   }
@@ -264,7 +264,7 @@ TransitionResult
 WorkerActor::perform_attempt(TurnMachine& machine, const IssueModelRequest& issue,
                              const std::shared_ptr<std::atomic<bool>>& cancelled,
                              const std::stop_token& stopped) {
-  auto request = provider_->make_request(config_, issue.request);
+  auto request = provider_->make_request(config_, *issue.request);
   if (!request) {
     return failed_attempt(machine, std::move(request.error()), issue.turn_id,
                           config_.api_key);
@@ -309,8 +309,9 @@ Status WorkerActor::consume_sse_events(TurnMachine& machine, AttemptState& state
     if (!provider_events) {
       return std::unexpected(std::move(provider_events.error()));
     }
-    auto status = publish_stream_events(machine, *provider_events, state.completed,
-                                        state.decode.semantic_output_consumed);
+    auto status =
+        publish_stream_events(machine, std::move(*provider_events), state.completed,
+                              state.decode.semantic_output_consumed);
     if (!status) {
       return status;
     }

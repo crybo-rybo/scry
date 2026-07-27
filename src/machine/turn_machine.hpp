@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <scry/config.hpp>
 #include <scry/error.hpp>
@@ -85,9 +86,14 @@ enum class MachineEventKind : std::uint8_t {
   cancel,
 };
 
+// The request is a shared immutable snapshot rather than a per-attempt copy:
+// retries and tool rounds reissue the same conversation, and the machine
+// outlives every attempt that reads it. TurnMachine reseats the snapshot
+// copy-on-write, so a snapshot handed to one attempt never observes the
+// messages a later tool round appends.
 struct IssueModelRequest {
   TurnId turn_id{};
-  ModelRequest request{};
+  std::shared_ptr<const ModelRequest> request{};
   std::uint32_t attempt{};
 };
 
@@ -236,6 +242,7 @@ private:
                                       MachineTimePoint observed_at) const noexcept;
   [[nodiscard]] Result<std::vector<ToolCallBlock>>
   validate_response(const ModelResponse& response) const;
+  [[nodiscard]] ModelRequest& mutable_request();
   [[nodiscard]] bool usage_would_overflow(const Usage& usage) const noexcept;
   [[nodiscard]] bool reserve_exchange_bytes(std::size_t bytes) noexcept;
   [[nodiscard]] std::size_t remaining_exchange_bytes() const noexcept;
@@ -243,7 +250,7 @@ private:
   [[nodiscard]] Error correlate(Error error) const;
 
   TurnId turn_id_{};
-  ModelRequest request_{};
+  std::shared_ptr<ModelRequest> request_{};
   RetryPolicy retry_policy_{};
   ToolLoopPolicy tool_policy_{};
   State state_{QueuedState{}};

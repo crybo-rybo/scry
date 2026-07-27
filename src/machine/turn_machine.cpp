@@ -68,8 +68,8 @@ validated_call(const ToolCallBlock& call, const std::vector<std::string>& respon
 
 TurnMachine::TurnMachine(TurnId turn_id, ModelRequest request, RetryPolicy retry_policy,
                          ToolLoopPolicy tool_policy)
-    : turn_id_(turn_id), request_(std::move(request)), retry_policy_(retry_policy),
-      tool_policy_(tool_policy) {}
+    : turn_id_(turn_id), request_(std::make_shared<ModelRequest>(std::move(request))),
+      retry_policy_(retry_policy), tool_policy_(tool_policy) {}
 
 TransitionResult TurnMachine::apply(MachineEvent event) {
   if (phase() == MachinePhase::terminal) {
@@ -264,8 +264,9 @@ TransitionResult TurnMachine::on_event(ToolResultReady event) {
     results.content.emplace_back(std::move(call.result).value());
   }
   auto assistant = std::move(awaiting->assistant);
-  request_.messages.push_back(assistant);
-  request_.messages.push_back(results);
+  auto& request = mutable_request();
+  request.messages.push_back(assistant);
+  request.messages.push_back(results);
   exchange_.push_back(std::move(assistant));
   exchange_.push_back(std::move(results));
   return start_request(event.observed_at);
@@ -304,6 +305,17 @@ TransitionResult TurnMachine::issue_attempt() {
       .request = request_,
       .attempt = attempt_count_,
   });
+}
+
+ModelRequest& TurnMachine::mutable_request() {
+  // An attempt in flight still holds the snapshot it was issued. Reseating
+  // onto a private copy keeps that snapshot immutable for its reader; the
+  // common case, where every issued attempt has already been consumed,
+  // mutates in place and copies nothing.
+  if (request_.use_count() > 1) {
+    request_ = std::make_shared<ModelRequest>(*request_);
+  }
+  return *request_;
 }
 
 TransitionResult TurnMachine::begin_tool_round(ModelResponse response,
