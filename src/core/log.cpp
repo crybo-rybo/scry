@@ -73,7 +73,7 @@ void log_line(const std::string_view message) noexcept {
     file.stream << std::format("[{}] [t:{:04x}] {}\n", timestamp_utc(), thread_tag(),
                                message);
     file.stream.flush();
-  } catch (...) {
+  } catch (...) { // NOLINT(bugprone-empty-catch)
     // Diagnostics must never alter library behavior.
   }
 }

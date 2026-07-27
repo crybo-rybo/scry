@@ -99,11 +99,10 @@ Result<ToolResultBlock> dispatch_tool_handler(ToolHandler& handler,
   if (!result) {
     SCRY_LOG("{} Tool failed ({})", call.name,
              error_category_name(result.error().category));
-  } else if (result->is_error) {
-    SCRY_LOG("{} Tool returned an error result", call.name);
-  } else {
-    SCRY_LOG("{} Tool completed", call.name);
+    return result;
   }
+  SCRY_LOG("{} Tool {}", call.name,
+           result->is_error ? "returned an error result" : "completed");
   return result;
 }
 

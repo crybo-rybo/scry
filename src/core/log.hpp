@@ -54,7 +54,7 @@ template <typename... Args>
 void log_event(const std::format_string<Args...> fmt, Args&&... args) noexcept {
   try {
     log_line(std::format(fmt, std::forward<Args>(args)...));
-  } catch (...) {
+  } catch (...) { // NOLINT(bugprone-empty-catch)
     // Formatting can only fail on allocation; drop the line rather than throw.
   }
 }
