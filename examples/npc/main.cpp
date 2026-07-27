@@ -80,7 +80,7 @@ private:
     app.show_error(status.error().message);
     return false;
   }
-  status = turn.on_complete(
+  status = turn.on_completion(
       [&app](const scry::Completion& completion) { app.show_completion(completion); });
   if (!status) {
     app.show_error(status.error().message);

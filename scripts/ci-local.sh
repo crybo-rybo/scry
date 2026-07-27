@@ -15,9 +15,9 @@ cd "${root_dir}"
 readonly format_check="${SCRY_FORMAT_CHECK:-1}"
 
 git diff --check
-python3 -m lizard include src examples spikes tests -l cpp -C 15 -a 6
+python3 -m lizard include src examples tests -l cpp -C 15 -a 6
 unlinked_todos="$(
-  git grep -nE '//[[:space:]]*TODO\b' -- include src examples spikes tests |
+  git grep -nE '//[[:space:]]*TODO\b' -- include src examples tests |
     grep -vE 'https?://|#[0-9]+' || true
 )"
 if [[ -n "${unlinked_todos}" ]]; then

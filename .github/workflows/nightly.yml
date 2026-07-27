@@ -1,3 +1,7 @@
+# Scheduled/manual ring (ENGINEERING.md §6, ADR 0012 release posture):
+# CodeQL, long protocol fuzzing, and the opt-in showcase run nightly; the
+# Ollama local-model smoke is workflow_dispatch-only because it exercises
+# a live model, not the deterministic protocol seams that gate PRs.
 name: Nightly quality
 
 on:
@@ -85,46 +89,29 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  mutation:
-    name: Mull machine, SSE, and retry
-    # Mutation reports are non-gating and nobody is required to read a nightly
-    # one; run this per-milestone on demand instead of every night (ADR 0011).
-    if: github.event_name == 'workflow_dispatch'
+  showcase:
+    name: Opt-in Dear ImGui + grid-NPC showcase
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 20
+    env:
+      CC: gcc-14
+      CXX: g++-14
     steps:
       - uses: actions/checkout@v7.0.0
-      - name: Install LLVM 18 build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            clang-18 curl libc++-18-dev libc++abi-18-dev \
-            libcurl4-openssl-dev ninja-build
-      - name: Install pinned Mull 0.34.0 package
-        env:
-          MULL_URL: >-
-            https://github.com/mull-project/mull/releases/download/0.34.0/Mull-18-0.34.0-LLVM-18.1.3-ubuntu-amd64-24.04.deb
-          MULL_SHA256: >-
-            d2491551b2a9d5b28f896c75278e891f748284b4a2523795c62b5315ad7a9e73
-        run: |
-          curl --fail --location --retry 3 \
-            --output mull-0.34.0-llvm18.deb "${MULL_URL}"
-          echo "${MULL_SHA256}  mull-0.34.0-llvm18.deb" | sha256sum --check
-          sudo apt-get install -y ./mull-0.34.0-llvm18.deb
-          mull-runner-18 --version
-      - name: Run mutation reports
-        run: ./scripts/ci-nightly-mutation.sh
-      - name: Upload mutation reports
-        if: always()
-        uses: actions/upload-artifact@v6
-        with:
-          name: nightly-mull-reports
-          path: build/nightly-mutation-reports
-          if-no-files-found: error
-          retention-days: 30
+      - name: Install showcase toolchain
+        run: >
+          sudo apt-get update &&
+          sudo apt-get install -y
+          g++-14 libcurl4-openssl-dev ninja-build
+      - name: Build, test, render a headless frame, and audit packaging
+        run: ./scripts/ci-showcase.sh
 
   local-model:
     name: Ollama OpenAI-compatible smoke
+    # Exercises a live model over a real server; run on demand rather than
+    # burning a 60-minute scheduled job (ADR 0012). The deterministic
+    # fake-transport suites gate protocol correctness per-commit.
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:

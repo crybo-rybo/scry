@@ -31,8 +31,8 @@ struct PanelState {
     return registration_status(status);
   }
   status =
-      turn.on_complete([callback = std::move(callbacks.completed)](
-                           const scry::Completion& value) { callback(value.text); });
+      turn.on_completion([callback = std::move(callbacks.completed)](
+                             const scry::Completion& value) { callback(value.text); });
   if (!status) {
     return registration_status(status);
   }

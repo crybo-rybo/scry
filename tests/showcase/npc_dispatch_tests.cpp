@@ -104,7 +104,7 @@ TEST_CASE("NPC registrations execute on the update thread and resend observation
   std::optional<scry::Completion> completion;
   std::optional<scry::Error> error;
   REQUIRE(
-      turn->on_complete([&](const scry::Completion& value) { completion = value; }));
+      turn->on_completion([&](const scry::Completion& value) { completion = value; }));
   REQUIRE(turn->on_error([&](const scry::Error& value) { error = value; }));
   REQUIRE(
       pump_until(harness, [&] { return completion.has_value() || error.has_value(); }));

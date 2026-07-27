@@ -18,9 +18,6 @@ format-check:
 ci-fast:
     ./scripts/ci-local.sh
 
-quality:
-    ./scripts/quality-gate.sh
-
 ci:
     ./scripts/preflight.sh
 
@@ -37,11 +34,6 @@ tsan:
     cmake --preset tsan
     cmake --build build/tsan
     ctest --test-dir build/tsan --output-on-failure
-
-curl:
-    cmake --preset curl
-    cmake --build build/curl
-    ctest --test-dir build/curl --output-on-failure
 
 reflection:
     ./scripts/ci-reflection.sh
