@@ -31,6 +31,14 @@
       }
     },
     {
+      "name": "dev-logging",
+      "displayName": "Developer build with file diagnostics",
+      "inherits": "dev",
+      "cacheVariables": {
+        "SCRY_ENABLE_LOGGING": true
+      }
+    },
+    {
       "name": "ci",
       "displayName": "CI release-like build",
       "inherits": "base",

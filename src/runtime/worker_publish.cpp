@@ -1,3 +1,4 @@
+#include "core/log.hpp"
 #include "runtime/worker.hpp"
 
 #include <cassert>
@@ -83,8 +84,13 @@ WorkerActor::publish_provider_event(TurnMachine& machine, ProviderEvent event,
     return {};
   }
   // The provider seam preserves an ignored event's name for debug inspection.
-  // Scry has no public logging surface yet, so the worker consumes this marker.
+  // Scry has no public logging surface, so the worker consumes this marker;
+  // the SCRY_ENABLE_LOGGING build records the name before dropping it.
   assert(std::holds_alternative<ProviderIgnoredEvent>(event));
+  if (std::holds_alternative<ProviderIgnoredEvent>(event)) {
+    SCRY_LOG("Ignored provider stream event: {}",
+             std::get<ProviderIgnoredEvent>(event).name);
+  }
   return {};
 }
 
@@ -183,15 +189,20 @@ Status WorkerActor::publish_command(MachineCommand command) {
                             "turn events exceed the configured queue limit",
                             completion->turn_id, completion->attempt_count));
     }
+    SCRY_LOG("Turn {} completed (attempts: {})", completion->turn_id.value,
+             completion->attempt_count);
     return {};
   }
   if (auto* error = std::get_if<PublishError>(&command)) {
     const auto turn_id = error->error.turn_id.value_or(TurnId{});
+    SCRY_LOG("Turn {} failed ({})", turn_id.value,
+             error_category_name(error->error.category));
     publish_terminal_event(
         ErrorEvent{.turn_id = turn_id, .error = std::move(error->error)});
     return {};
   }
   if (const auto* cancelled = std::get_if<PublishCancelled>(&command)) {
+    SCRY_LOG("Turn {} cancelled", cancelled->turn_id.value);
     publish_terminal_event(CancelledEvent{.turn_id = cancelled->turn_id});
   }
   return {};

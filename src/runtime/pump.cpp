@@ -1,5 +1,6 @@
 #include "runtime/pump.hpp"
 
+#include "core/log.hpp"
 #include "runtime/tool_dispatch.hpp"
 
 #include <algorithm>
@@ -169,9 +170,13 @@ void TurnRoute::dispatch(const ToolCallEvent& event) {
       std::min(remaining_exchange_bytes_, event.remaining_exchange_bytes);
   const auto registration = find_tool_registration(tools_, event.call.name);
   if (registration && registration->execution == ToolExecution::worker_thread) {
+    SCRY_LOG("Routing {} Tool to the worker thread (Turn {})", event.call.name,
+             turn_id_.value);
     dispatch_on_worker(event);
     return;
   }
+  SCRY_LOG("Routing {} Tool to the app thread (Turn {})", event.call.name,
+           turn_id_.value);
   dispatch_on_app(event);
 }
 

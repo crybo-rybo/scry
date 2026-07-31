@@ -1,0 +1,7 @@
+# Point clangd at the documented edit-loop build (`cmake --preset dev`), which
+# exports compile_commands.json; without it, editors fall back to flag guessing
+# and report false diagnostics. Files absent from this database (for example
+# sources compiled only under another preset) inherit flags from the nearest
+# indexed sibling, which keeps them accurate too.
+CompileFlags:
+  CompilationDatabase: build/dev

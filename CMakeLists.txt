@@ -39,6 +39,11 @@ option(SCRY_ENABLE_CLANG_TIDY "Run clang-tidy while compiling" OFF)
 option(SCRY_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ${PROJECT_IS_TOP_LEVEL})
 option(SCRY_USE_LIBCXX "Use libc++ with a Clang-family compiler" OFF)
 option(SCRY_ENABLE_REFLECTION "Build the supported GCC 16+ reflection component" OFF)
+option(
+  SCRY_ENABLE_LOGGING
+  "Compile internal lifecycle diagnostics that append to a log file"
+  OFF
+)
 option(SCRY_BUILD_FUZZERS "Build short protocol fuzz targets" OFF)
 option(
   SCRY_BUILD_IMGUI_SHOWCASE
@@ -106,6 +111,11 @@ target_include_directories(
     "${PROJECT_SOURCE_DIR}/src"
 )
 target_include_directories(scry SYSTEM PRIVATE "${glaze_SOURCE_DIR}/include")
+
+if(SCRY_ENABLE_LOGGING)
+  target_sources(scry PRIVATE src/core/log.cpp)
+  target_compile_definitions(scry PRIVATE SCRY_ENABLE_LOGGING=1)
+endif()
 
 add_library(scry_project_options INTERFACE)
 target_compile_options(
