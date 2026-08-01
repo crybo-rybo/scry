@@ -10,8 +10,10 @@
 
 #include <scry/detail/reflection_registration.hpp>
 
+/// Optional experimental C++26 typed-tool API built on P2996 reflection.
 namespace scry::reflection {
 
+/// Whether this installed component was built with C++26 reflection support.
 inline constexpr bool enabled = true;
 
 } // namespace scry::reflection

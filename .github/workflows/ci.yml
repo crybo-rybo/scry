@@ -3,8 +3,8 @@
 # Live gates: format (pinned clang-format-18), core build matrix with
 # warnings-as-errors plus complexity, contract tests, and the
 # install/package-consumer audit via ci-local.sh, ASan/UBSan/TSan,
-# clang-tidy, and the gating GCC 16 reflection leg. Fuzzing, the showcase,
-# and the local-model smoke live in nightly.yml.
+# clang-tidy, the warning-clean Doxygen site, and the gating GCC 16 reflection
+# leg. Fuzzing, the showcase, and the local-model smoke live in nightly.yml.
 #
 # Toolchains are pinned deliberately (ENGINEERING.md §7): compiler drift on
 # experimental legs is a first-class risk.
@@ -25,6 +25,28 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  documentation:
+    name: Doxygen API site
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - name: Install documentation toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y doxygen graphviz ninja-build
+          doxygen --version
+          dot -V
+      - name: Build warning-clean API documentation
+        run: ./scripts/ci-docs.sh
+      - name: Retain generated website
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: scry-api-docs
+          path: build/docs/html
+          if-no-files-found: error
+          retention-days: 14
+
   format:
     name: clang-format (pinned 18)
     runs-on: ubuntu-24.04
