@@ -1,6 +1,6 @@
+#include "core/json_codec.hpp"
 #include "core/model.hpp"
 #include "core/provider.hpp"
-#include "provider/wire_json.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 #include <fstream>
@@ -22,10 +22,10 @@ using namespace scry::detail;
 }
 
 [[nodiscard]] std::string canonical(const std::string_view json) {
-  auto parsed = parse_wire_json(json, ErrorCategory::protocol, "Fixture is invalid");
+  auto parsed = parse_json(json, ErrorCategory::protocol, "Fixture is invalid");
   REQUIRE(parsed.has_value());
   auto encoded =
-      write_wire_json(*parsed, ErrorCategory::protocol, "Fixture could not be encoded");
+      write_json_text(*parsed, ErrorCategory::protocol, "Fixture could not be encoded");
   REQUIRE(encoded.has_value());
   return *encoded;
 }
@@ -128,24 +128,18 @@ TEST_CASE("Anthropic request encoding preserves neutral tool shapes") {
   CHECK(encoded->body.find(R"("input_schema":{"type":"object"})") != std::string::npos);
 }
 
-TEST_CASE("Anthropic request validation reports value errors without secrets") {
+TEST_CASE("Anthropic request encoding reports boundary errors without secrets") {
   const auto adapter = make_provider_adapter(ProviderDialect::anthropic);
   REQUIRE(adapter);
   auto invalid = request();
-  invalid.sampling.max_tokens.reset();
-
-  auto result = adapter->make_request(config(), invalid);
-  REQUIRE_FALSE(result.has_value());
-  CHECK(result.error().category == ErrorCategory::invalid_config);
-  CHECK(result.error().message.find("sanitized-test-key") == std::string::npos);
-
-  invalid = request();
   invalid.messages.front().content = {ToolCallBlock{
       .id = "tool_1",
       .name = "lookup",
       .arguments = Json{.text = "not-json"},
   }};
-  result = adapter->make_request(config(), invalid);
+
+  const auto result = adapter->make_request(config(), invalid);
   REQUIRE_FALSE(result.has_value());
   CHECK(result.error().category == ErrorCategory::invalid_config);
+  CHECK(result.error().message.find("sanitized-test-key") == std::string::npos);
 }

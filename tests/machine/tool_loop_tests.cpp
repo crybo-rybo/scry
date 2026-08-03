@@ -123,6 +123,27 @@ TEST_CASE("out-of-order tool results produce one ordered result message") {
   CHECK(issue.attempt == 2);
 }
 
+TEST_CASE("tool-call arguments are canonicalized once for dispatch and for history") {
+  auto machine = make_machine();
+  begin(machine);
+
+  const auto published = machine.apply(scry::detail::ModelCompleted{
+      .response =
+          tool_response({tool_call("call-1", "lookup", R"({ "b" : 2, "a" : 1 })")}),
+  });
+  CHECK(only_command<scry::detail::PublishToolCall>(published).call.arguments.text ==
+        R"({"a":1,"b":2})");
+
+  const auto issued = machine.apply(result("call-1", R"({"ok":true})", at(1ms)));
+  const auto& issue = only_command<scry::detail::IssueModelRequest>(issued);
+  const auto& assistant =
+      message_at(issue.request->messages, 1, scry::detail::Role::assistant);
+  REQUIRE(assistant.content.size() == 1);
+  CHECK(
+      std::get<scry::detail::ToolCallBlock>(assistant.content.front()).arguments.text ==
+      R"({"a":1,"b":2})");
+}
+
 TEST_CASE("multi-round completion carries the transactional exchange and totals") {
   auto machine = make_machine();
   begin(machine);

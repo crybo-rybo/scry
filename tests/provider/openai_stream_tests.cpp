@@ -160,6 +160,26 @@ TEST_CASE("OpenAI stream accepts repeated metadata and normalizes empty argument
   CHECK(call.arguments.text == "{}");
 }
 
+TEST_CASE("OpenAI streamed tool arguments are validated but not rewritten") {
+  OpenAiAdapter adapter;
+  ProviderDecodeState state{};
+  apply(
+      adapter, state,
+      chunk(
+          R"({"index":0,"delta":{"tool_calls":[{"index":0,"id":"call","type":"function","function":{"name":"lookup","arguments":"{ \"b\" : 2, \"a\" : 1 }"}}]},"finish_reason":null})"));
+  apply(adapter, state,
+        chunk(R"({"index":0,"delta":{},"finish_reason":"tool_calls"})"));
+
+  const auto completed = event(adapter, state, "[DONE]");
+  REQUIRE(completed);
+  const auto& response = std::get<ProviderCompleted>(completed->front()).response;
+  REQUIRE(response.content.size() == 1);
+  // The stream layer proves the object root and forwards the received bytes;
+  // TurnMachine is the one place that canonicalizes them.
+  CHECK(std::get<ToolCallBlock>(response.content.front()).arguments.text ==
+        R"({ "b" : 2, "a" : 1 })");
+}
+
 TEST_CASE("OpenAI streamed argument limit rejects before appending") {
   OpenAiAdapter adapter;
   ProviderDecodeState state{.max_tool_arguments_bytes = 7};

@@ -1,7 +1,7 @@
+#include "core/json_codec.hpp"
 #include "provider/anthropic.hpp"
 #include "provider/anthropic_content.hpp"
-#include "provider/anthropic_error.hpp"
-#include "provider/wire_json.hpp"
+#include "provider/shared.hpp"
 
 #include <limits>
 #include <string>
@@ -18,61 +18,36 @@ namespace {
          name == "ping";
 }
 
-[[nodiscard]] Result<AnthropicProviderDecodeState*>
-anthropic_decode_state(ProviderDecodeState& state) {
-  if (std::holds_alternative<std::monostate>(state.dialect)) {
-    state.dialect.emplace<AnthropicProviderDecodeState>();
-  }
-  auto* decode = std::get_if<AnthropicProviderDecodeState>(&state.dialect);
-  if (decode == nullptr) {
-    return std::unexpected(make_provider_error(
-        ErrorCategory::protocol,
-        "Anthropic stream received decode state owned by another dialect"));
-  }
-  return decode;
-}
-
 [[nodiscard]] Result<std::string_view> event_type(const std::string_view event_name,
-                                                  const WireValue& root) {
-  auto type = required_wire_string(root, "type");
+                                                  const JsonValue& root) {
+  auto type = required_json_string(root, "type");
   if (!type) {
     return std::unexpected(std::move(type.error()));
   }
   if (event_name != "message" && event_name != *type) {
     return std::unexpected(
-        make_provider_error(ErrorCategory::protocol,
-                            "Anthropic SSE event name and payload type do not match"));
+        make_error(ErrorCategory::protocol,
+                   "Anthropic SSE event name and payload type do not match"));
   }
   return *type;
 }
 
-[[nodiscard]] Result<std::size_t> content_index(const WireValue& root) {
-  auto index = optional_wire_uint(root, "index");
+[[nodiscard]] Result<std::size_t> content_index(const JsonValue& root) {
+  auto index = optional_json_uint(root, "index");
   if (!index) {
     return std::unexpected(std::move(index.error()));
   }
   const auto parsed_index = *index;
   if (!parsed_index || *parsed_index > static_cast<std::uint64_t>(
                                            std::numeric_limits<std::size_t>::max())) {
-    return std::unexpected(make_provider_error(
+    return std::unexpected(make_error(
         ErrorCategory::protocol, "Anthropic content event has no usable block index"));
   }
   return static_cast<std::size_t>(*parsed_index);
 }
 
-[[nodiscard]] Result<const WireValue*> required_object(const WireValue& root,
-                                                       const std::string_view name) {
-  const auto* value = wire_field(root, name);
-  if (value == nullptr || !value->is_object()) {
-    return std::unexpected(make_provider_error(
-        ErrorCategory::protocol,
-        "Anthropic payload field '" + std::string{name} + "' must be an object"));
-  }
-  return value;
-}
-
-[[nodiscard]] std::string request_identifier(const WireValue& root) {
-  const auto parsed = optional_wire_string(root, "request_id");
+[[nodiscard]] std::string request_identifier(const JsonValue& root) {
+  const auto parsed = optional_json_string(root, "request_id");
   if (!parsed) {
     return {};
   }
@@ -84,8 +59,8 @@ anthropic_decode_state(ProviderDecodeState& state) {
 }
 
 [[nodiscard]] Result<std::vector<ProviderEvent>>
-decode_initial_content(const WireValue& message, ProviderDecodeState& state) {
-  auto values = required_wire_array(message, "content");
+decode_initial_content(const JsonValue& message, ProviderDecodeState& state) {
+  auto values = required_json_array(message, "content");
   if (!values) {
     return std::unexpected(std::move(values.error()));
   }
@@ -106,10 +81,10 @@ decode_initial_content(const WireValue& message, ProviderDecodeState& state) {
   return events;
 }
 
-[[nodiscard]] Status apply_initial_finish(const WireValue& message,
+[[nodiscard]] Status apply_initial_finish(const JsonValue& message,
                                           ProviderDecodeState& state,
                                           AnthropicProviderDecodeState& decode) {
-  auto reason = optional_wire_string(message, "stop_reason");
+  auto reason = optional_json_string(message, "stop_reason");
   if (!reason) {
     return std::unexpected(std::move(reason.error()));
   }
@@ -123,23 +98,22 @@ decode_initial_content(const WireValue& message, ProviderDecodeState& state) {
 }
 
 [[nodiscard]] Result<std::vector<ProviderEvent>>
-handle_message_start(const WireValue& root, ProviderDecodeState& state,
+handle_message_start(const JsonValue& root, ProviderDecodeState& state,
                      AnthropicProviderDecodeState& decode) {
   if (decode.message_started) {
     return std::unexpected(
-        make_provider_error(ErrorCategory::protocol,
-                            "Anthropic stream emitted more than one message_start"));
+        make_error(ErrorCategory::protocol,
+                   "Anthropic stream emitted more than one message_start"));
   }
-  auto message = required_object(root, "message");
+  auto message = required_json_object(root, "message");
   if (!message) {
     return std::unexpected(std::move(message.error()));
   }
-  auto type = required_wire_string(**message, "type");
+  auto type = required_json_string(**message, "type");
   if (!type || *type != "message") {
-    return std::unexpected(
-        type ? make_provider_error(ErrorCategory::protocol,
-                                   "Anthropic message_start is not a message")
-             : std::move(type.error()));
+    return std::unexpected(type ? make_error(ErrorCategory::protocol,
+                                             "Anthropic message_start is not a message")
+                                : std::move(type.error()));
   }
   if (state.response.provider_request_id.empty()) {
     state.response.provider_request_id = request_identifier(**message);
@@ -157,24 +131,24 @@ handle_message_start(const WireValue& root, ProviderDecodeState& state,
 }
 
 [[nodiscard]] Result<std::vector<ProviderEvent>>
-handle_content_start(const WireValue& root, ProviderDecodeState& state,
+handle_content_start(const JsonValue& root, ProviderDecodeState& state,
                      AnthropicProviderDecodeState& decode) {
   if (!decode.message_started || decode.active_content_index ||
       decode.finish_observed) {
-    return std::unexpected(make_provider_error(
-        ErrorCategory::protocol,
-        "Anthropic content block began outside the message lifecycle"));
+    return std::unexpected(
+        make_error(ErrorCategory::protocol,
+                   "Anthropic content block began outside the message lifecycle"));
   }
   auto index = content_index(root);
   if (!index) {
     return std::unexpected(std::move(index.error()));
   }
   if (*index != state.response.content.size()) {
-    return std::unexpected(make_provider_error(
-        ErrorCategory::protocol,
-        "Anthropic content blocks did not begin in contiguous order"));
+    return std::unexpected(
+        make_error(ErrorCategory::protocol,
+                   "Anthropic content blocks did not begin in contiguous order"));
   }
-  auto value = required_object(root, "content_block");
+  auto value = required_json_object(root, "content_block");
   if (!value) {
     return std::unexpected(std::move(value.error()));
   }
@@ -195,7 +169,7 @@ handle_content_start(const WireValue& root, ProviderDecodeState& state,
 }
 
 [[nodiscard]] Result<ContentBlock*>
-indexed_block(const WireValue& root, ProviderDecodeState& state,
+indexed_block(const JsonValue& root, ProviderDecodeState& state,
               AnthropicProviderDecodeState& decode) {
   auto index = content_index(root);
   if (!index) {
@@ -203,27 +177,27 @@ indexed_block(const WireValue& root, ProviderDecodeState& state,
   }
   if (*index >= state.response.content.size()) {
     return std::unexpected(
-        make_provider_error(ErrorCategory::protocol,
-                            "Anthropic content event referenced an unknown block"));
+        make_error(ErrorCategory::protocol,
+                   "Anthropic content event referenced an unknown block"));
   }
   if (decode.active_content_index != *index) {
-    return std::unexpected(make_provider_error(
-        ErrorCategory::protocol,
-        "Anthropic content event targeted a block that is not active"));
+    return std::unexpected(
+        make_error(ErrorCategory::protocol,
+                   "Anthropic content event targeted a block that is not active"));
   }
   return &state.response.content[*index];
 }
 
 [[nodiscard]] Result<std::vector<ProviderEvent>>
-handle_text_delta(const WireValue& delta, ContentBlock& block,
+handle_text_delta(const JsonValue& delta, ContentBlock& block,
                   ProviderDecodeState& state) {
-  auto text = required_wire_string(delta, "text");
+  auto text = required_json_string(delta, "text");
   if (!text) {
     return std::unexpected(std::move(text.error()));
   }
   auto* destination = std::get_if<TextBlock>(&block);
   if (destination == nullptr) {
-    return std::unexpected(make_provider_error(
+    return std::unexpected(make_error(
         ErrorCategory::protocol, "Anthropic text delta targeted a non-text block"));
   }
   destination->text.append(*text);
@@ -234,24 +208,24 @@ handle_text_delta(const WireValue& delta, ContentBlock& block,
 }
 
 [[nodiscard]] Result<std::vector<ProviderEvent>>
-handle_json_delta(const WireValue& delta, ContentBlock& block,
+handle_json_delta(const JsonValue& delta, ContentBlock& block,
                   ProviderDecodeState& state) {
-  auto partial = required_wire_string(delta, "partial_json");
+  auto partial = required_json_string(delta, "partial_json");
   if (!partial) {
     return std::unexpected(std::move(partial.error()));
   }
   auto* destination = std::get_if<ToolCallBlock>(&block);
   if (destination == nullptr) {
     return std::unexpected(
-        make_provider_error(ErrorCategory::protocol,
-                            "Anthropic input JSON delta targeted a non-tool block"));
+        make_error(ErrorCategory::protocol,
+                   "Anthropic input JSON delta targeted a non-tool block"));
   }
-  if (destination->arguments.text.size() > state.max_tool_arguments_bytes ||
-      partial->size() >
-          state.max_tool_arguments_bytes - destination->arguments.text.size()) {
-    return std::unexpected(make_provider_error(
-        ErrorCategory::resource_limit,
-        "Anthropic tool arguments exceed the configured byte limit"));
+  if (auto status = accept_tool_argument_bytes(
+          destination->arguments.text.size(), partial->size(),
+          state.max_tool_arguments_bytes,
+          "Anthropic tool arguments exceed the configured byte limit");
+      !status) {
+    return std::unexpected(std::move(status.error()));
   }
   destination->arguments.text.append(*partial);
   state.semantic_output_consumed = true;
@@ -259,17 +233,17 @@ handle_json_delta(const WireValue& delta, ContentBlock& block,
 }
 
 [[nodiscard]] Result<std::vector<ProviderEvent>>
-handle_content_delta(const WireValue& root, ProviderDecodeState& state,
+handle_content_delta(const JsonValue& root, ProviderDecodeState& state,
                      AnthropicProviderDecodeState& decode) {
   auto block = indexed_block(root, state, decode);
   if (!block) {
     return std::unexpected(std::move(block.error()));
   }
-  auto delta = required_object(root, "delta");
+  auto delta = required_json_object(root, "delta");
   if (!delta) {
     return std::unexpected(std::move(delta.error()));
   }
-  auto type = required_wire_string(**delta, "type");
+  auto type = required_json_string(**delta, "type");
   if (!type) {
     return std::unexpected(std::move(type.error()));
   }
@@ -280,12 +254,12 @@ handle_content_delta(const WireValue& root, ProviderDecodeState& state,
     return handle_json_delta(**delta, **block, state);
   }
   return std::unexpected(
-      make_provider_error(ErrorCategory::protocol,
-                          "Anthropic returned an unsupported required content delta"));
+      make_error(ErrorCategory::protocol,
+                 "Anthropic returned an unsupported required content delta"));
 }
 
 [[nodiscard]] Result<std::vector<ProviderEvent>>
-handle_content_stop(const WireValue& root, ProviderDecodeState& state,
+handle_content_stop(const JsonValue& root, ProviderDecodeState& state,
                     AnthropicProviderDecodeState& decode) {
   auto block = indexed_block(root, state, decode);
   if (!block) {
@@ -299,41 +273,36 @@ handle_content_stop(const WireValue& root, ProviderDecodeState& state,
   if (tool->arguments.text.empty()) {
     tool->arguments.text = "{}";
   }
-  auto parsed = parse_wire_json(tool->arguments.text, ErrorCategory::protocol,
-                                "Anthropic streamed tool input is not valid JSON");
+  // The stream layer only proves the arguments are a JSON object and forwards
+  // the bytes as received; TurnMachine owns the single canonicalization pass.
+  auto parsed = parse_json(tool->arguments.text, ErrorCategory::protocol,
+                           "Anthropic streamed tool input is not valid JSON");
   if (!parsed) {
     return std::unexpected(std::move(parsed.error()));
   }
   if (!parsed->is_object()) {
     return std::unexpected(
-        make_provider_error(ErrorCategory::protocol,
-                            "Anthropic streamed tool input must be a JSON object"));
+        make_error(ErrorCategory::protocol,
+                   "Anthropic streamed tool input must be a JSON object"));
   }
-  auto canonical =
-      write_wire_json(*parsed, ErrorCategory::protocol,
-                      "Anthropic streamed tool input could not be preserved");
-  if (!canonical) {
-    return std::unexpected(std::move(canonical.error()));
-  }
-  tool->arguments.text = std::move(*canonical);
   decode.active_content_index.reset();
   return std::vector<ProviderEvent>{};
 }
 
 [[nodiscard]] Result<std::vector<ProviderEvent>>
-handle_message_delta(const WireValue& root, ProviderDecodeState& state,
+handle_message_delta(const JsonValue& root, ProviderDecodeState& state,
                      AnthropicProviderDecodeState& decode) {
   if (!decode.message_started || decode.active_content_index ||
       decode.finish_observed) {
     return std::unexpected(
-        make_provider_error(ErrorCategory::protocol,
-                            "Anthropic message_delta violated the message lifecycle"));
+        make_error(ErrorCategory::protocol,
+                   "Anthropic message_delta violated the message lifecycle"));
   }
-  auto delta = required_object(root, "delta");
+  auto delta = required_json_object(root, "delta");
   if (!delta) {
     return std::unexpected(std::move(delta.error()));
   }
-  auto reason = optional_wire_string(**delta, "stop_reason");
+  auto reason = optional_json_string(**delta, "stop_reason");
   if (!reason) {
     return std::unexpected(std::move(reason.error()));
   }
@@ -356,8 +325,8 @@ handle_message_stop(ProviderDecodeState& state,
   if (!decode.message_started || decode.active_content_index ||
       !decode.finish_observed || state.completed) {
     return std::unexpected(
-        make_provider_error(ErrorCategory::protocol,
-                            "Anthropic message_stop violated the message lifecycle"));
+        make_error(ErrorCategory::protocol,
+                   "Anthropic message_stop violated the message lifecycle"));
   }
   state.completed = true;
   // parse_stream_event rejects every later event once completed is set, so the
@@ -367,15 +336,15 @@ handle_message_stop(ProviderDecodeState& state,
   };
 }
 
-[[nodiscard]] Error stream_error(const WireValue& root) {
+[[nodiscard]] Error stream_error(const JsonValue& root) {
   auto type = std::string{"unknown_error"};
-  if (const auto* value = wire_field(root, "error");
+  if (const auto* value = json_field(root, "error");
       value != nullptr && value->is_object()) {
-    auto parsed = optional_wire_string(*value, "type");
+    auto parsed = optional_json_string(*value, "type");
     if (parsed) {
       const auto error_type = *parsed;
       if (error_type) {
-        type = sanitize_anthropic_error_type(*error_type);
+        type = sanitize_error_token(*error_type);
       }
     }
   }
@@ -391,15 +360,14 @@ handle_message_stop(ProviderDecodeState& state,
     category = ErrorCategory::network;
     retryable = true;
   }
-  Error error =
-      make_provider_error(category, "Anthropic stream returned an error", retryable);
+  Error error = make_error(category, "Anthropic stream returned an error", retryable);
   error.provider_detail = "anthropic:" + type;
   error.provider_request_id = request_identifier(root);
   return error;
 }
 
 [[nodiscard]] Result<std::vector<ProviderEvent>>
-dispatch_event(const std::string_view type, const WireValue& root,
+dispatch_event(const std::string_view type, const JsonValue& root,
                ProviderDecodeState& state, AnthropicProviderDecodeState& decode) {
   if (type == "message_start") {
     return handle_message_start(root, state, decode);
@@ -436,12 +404,13 @@ AnthropicAdapter::parse_stream_event(const std::string_view event_name,
                                      const std::string_view data,
                                      ProviderDecodeState& state) const {
   // NOLINTEND(bugprone-easily-swappable-parameters)
-  if (state.completed) {
-    return std::unexpected(
-        make_provider_error(ErrorCategory::protocol,
-                            "Anthropic stream emitted data after its terminal event"));
+  if (auto status = reject_event_after_terminal(
+          state, "Anthropic stream emitted data after its terminal event");
+      !status) {
+    return std::unexpected(std::move(status.error()));
   }
-  auto decode = anthropic_decode_state(state);
+  auto decode = dialect_decode_state<AnthropicProviderDecodeState>(
+      state, "Anthropic stream received decode state owned by another dialect");
   if (!decode) {
     return std::unexpected(std::move(decode.error()));
   }
@@ -451,8 +420,8 @@ AnthropicAdapter::parse_stream_event(const std::string_view event_name,
     }};
   }
 
-  auto root = parse_wire_json(data, ErrorCategory::protocol,
-                              "Anthropic SSE data is not valid JSON");
+  auto root =
+      parse_json(data, ErrorCategory::protocol, "Anthropic SSE data is not valid JSON");
   if (!root) {
     return std::unexpected(std::move(root.error()));
   }
