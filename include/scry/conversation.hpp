@@ -30,7 +30,7 @@ public:
   /// @param json Versioned Scry conversation document.
   /// @return The restored conversation, or ErrorCategory::invalid_config if the
   /// document is malformed, unsupported, or exceeds structural constraints.
-  [[nodiscard]] static Result<Conversation> from_json(const Json& json);
+  [[nodiscard]] static Result<Conversation> from_json(Json json);
 
   /// Destroys this handle and its committed history when no live turn retains the
   /// state.

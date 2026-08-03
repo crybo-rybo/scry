@@ -68,12 +68,6 @@ struct Completion {
   std::string provider_request_id{};
 };
 
-/// Terminal cancellation event for an accepted turn.
-struct Cancelled {
-  /// Cancelled turn.
-  TurnId turn_id{};
-};
-
 /// Limits one Harness::update() pump invocation.
 struct UpdateOptions {
   /// Optional soft deadline checked between callbacks.
@@ -92,8 +86,6 @@ struct UpdateStats {
   std::size_t events_remaining{};
   /// Whether a time/callback budget was exhausted or a reentrant update was rejected.
   bool budget_exhausted{false};
-  /// Whether this invocation was rejected because update() was already active.
-  bool reentrant_update_rejected{false};
 };
 
 /// Callback for a coalesced fragment of streamed assistant text.
@@ -104,13 +96,23 @@ using TextDeltaCallback = UniqueFunction<void(std::string_view)>;
 /// Callback observing an accepted tool call after its result is applied.
 using ToolCallCallback = UniqueFunction<void(const ToolCall&)>;
 
-/// Callback for successful turn termination.
-using CompletionCallback = UniqueFunction<void(const Completion&)>;
-
-/// Callback for failed turn termination.
-using ErrorCallback = UniqueFunction<void(const Error&)>;
-
-/// Callback for cancelled turn termination.
-using CancelledCallback = UniqueFunction<void(const Cancelled&)>;
+/// Callbacks delivered on the Harness::update() thread for one turn.
+///
+/// Every member is optional; an empty member simply means no delivery of that kind.
+/// Callbacks are supplied to Harness::send() and are attached from the moment the turn
+/// is accepted, so no event can precede them.
+struct TurnCallbacks {
+  /// Observes coalesced fragments of streamed assistant text.
+  TextDeltaCallback on_text_delta{};
+  /// Observes accepted tool calls after their results are applied.
+  ToolCallCallback on_tool_call{};
+  /// Terminal callback invoked exactly once per accepted turn.
+  ///
+  /// Delivery happens on the Harness::update() thread and carries the Completion on
+  /// success, the terminal Error on failure, and on cancellation an Error whose
+  /// category is ErrorCategory::cancelled and whose turn_id identifies the turn.
+  /// Dropping the Turn handle does not suppress it.
+  UniqueFunction<void(Result<Completion>)> on_finished{};
+};
 
 } // namespace scry

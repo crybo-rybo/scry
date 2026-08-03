@@ -45,13 +45,15 @@ struct PumpFixture {
       std::make_shared<scry::detail::ConversationState>()};
 
   [[nodiscard]] std::shared_ptr<scry::detail::TurnRoute>
-  route(const std::uint64_t value, const std::size_t conversation_limit = 1024) const {
+  route(const std::uint64_t value, scry::TurnCallbacks callbacks = {},
+        const std::size_t conversation_limit = 1024) const {
     return std::make_shared<scry::detail::TurnRoute>(
         scry::TurnId{.value = value}, std::make_shared<std::atomic<bool>>(false),
         commands, conversation, "question",
         scry::detail::TurnRouteOptions{
             .max_tool_result_bytes = 1024,
             .max_conversation_bytes = conversation_limit,
+            .callbacks = std::move(callbacks),
         });
   }
 };
@@ -68,11 +70,6 @@ struct PumpFixture {
       .attempt_count = 2,
       .provider_request_id = "request-id",
   };
-}
-
-void check_registration_error(const scry::Status& status) {
-  REQUIRE_FALSE(status);
-  CHECK(status.error().category == scry::ErrorCategory::invalid_state);
 }
 
 } // namespace
@@ -195,33 +192,34 @@ TEST_CASE("event metadata accounts for every event alternative") {
   CHECK(scry::detail::event_payload_bytes(cancelled) == 0);
 }
 
-TEST_CASE("turn route rejects empty and duplicate callback registrations") {
+TEST_CASE("a turn route with empty callbacks claims no observer event") {
   PumpFixture fixture;
   const auto route = fixture.route(212);
-  check_registration_error(route->register_text({}));
-  REQUIRE(route->register_text([](std::string_view) {}));
-  check_registration_error(route->register_text([](std::string_view) {}));
-  check_registration_error(route->register_tool({}));
-  REQUIRE(route->register_tool([](const scry::ToolCall&) {}));
-  check_registration_error(route->register_tool([](const scry::ToolCall&) {}));
-  check_registration_error(route->register_completion({}));
-  REQUIRE(route->register_completion([](const scry::Completion&) {}));
-  check_registration_error(route->register_completion([](const scry::Completion&) {}));
-  check_registration_error(route->register_error({}));
-  REQUIRE(route->register_error([](const scry::Error&) {}));
-  check_registration_error(route->register_error([](const scry::Error&) {}));
-  check_registration_error(route->register_cancelled({}));
-  REQUIRE(route->register_cancelled([](const scry::Cancelled&) {}));
-  check_registration_error(route->register_cancelled([](const scry::Cancelled&) {}));
+  const auto turn_id = route->id();
+  CHECK_FALSE(route->has_callback(
+      scry::detail::WorkerEvent{scry::detail::TextDeltaEvent{.turn_id = turn_id}}));
+  CHECK_FALSE(route->has_callback(scry::detail::WorkerEvent{completion(turn_id)}));
+  CHECK_FALSE(route->has_callback(
+      scry::detail::WorkerEvent{scry::detail::ErrorEvent{.turn_id = turn_id}}));
+  CHECK_FALSE(route->has_callback(
+      scry::detail::WorkerEvent{scry::detail::CancelledEvent{.turn_id = turn_id}}));
+  // A tool call is dispatched by the route itself, so it is claimed regardless.
+  CHECK(route->has_callback(
+      scry::detail::WorkerEvent{scry::detail::ToolCallEvent{.turn_id = turn_id}}));
 }
 
-TEST_CASE("turn route dispatches every terminal and text worker event callback") {
+TEST_CASE("turn route routes every terminal worker event through on_finished") {
   PumpFixture fixture;
-  const auto route = fixture.route(213);
   std::string text;
-  std::optional<scry::Completion> completed;
-  std::optional<scry::Error> failed;
-  std::optional<scry::Cancelled> cancelled;
+  std::vector<scry::Result<scry::Completion>> finished;
+  const auto route = fixture.route(
+      213, scry::TurnCallbacks{
+               .on_text_delta = [&text](const std::string_view value) { text = value; },
+               .on_finished =
+                   [&finished](scry::Result<scry::Completion> result) {
+                     finished.push_back(std::move(result));
+                   },
+           });
   const scry::detail::WorkerEvent text_event{
       scry::detail::TextDeltaEvent{.turn_id = route->id(), .text = "delta"}};
   const scry::detail::WorkerEvent completion_event{completion(route->id())};
@@ -231,29 +229,27 @@ TEST_CASE("turn route dispatches every terminal and text worker event callback")
   }};
   const scry::detail::WorkerEvent cancelled_event{
       scry::detail::CancelledEvent{.turn_id = route->id()}};
-  CHECK_FALSE(route->has_callback(text_event));
-  CHECK_FALSE(route->has_callback(completion_event));
-  CHECK_FALSE(route->has_callback(error_event));
-  CHECK_FALSE(route->has_callback(cancelled_event));
-  REQUIRE(
-      route->register_text([&text](const std::string_view value) { text = value; }));
-  REQUIRE(route->register_completion(
-      [&completed](const scry::Completion& value) { completed = value; }));
-  REQUIRE(
-      route->register_error([&failed](const scry::Error& value) { failed = value; }));
-  REQUIRE(route->register_cancelled(
-      [&cancelled](const scry::Cancelled& value) { cancelled = value; }));
+  CHECK(route->has_callback(text_event));
+  CHECK(route->has_callback(completion_event));
+  CHECK(route->has_callback(error_event));
+  CHECK(route->has_callback(cancelled_event));
+
   route->invoke(text_event);
   route->invoke(completion_event);
   route->invoke(error_event);
   route->invoke(cancelled_event);
+
   CHECK(text == "delta");
-  REQUIRE(completed);
-  CHECK(completed->attempt_count == 2);
-  REQUIRE(failed);
-  CHECK(failed->message == "failure");
-  REQUIRE(cancelled);
-  CHECK(cancelled->turn_id == route->id());
+  REQUIRE(finished.size() == 3);
+  REQUIRE(finished[0]);
+  CHECK(finished[0]->attempt_count == 2);
+  REQUIRE_FALSE(finished[1]);
+  CHECK(finished[1].error().category == scry::ErrorCategory::network);
+  CHECK(finished[1].error().message == "failure");
+  // Cancellation surfaces as a terminal error carrying the cancelled turn.
+  REQUIRE_FALSE(finished[2]);
+  CHECK(finished[2].error().category == scry::ErrorCategory::cancelled);
+  CHECK(finished[2].error().turn_id == route->id());
 }
 
 TEST_CASE("pump releases events without routes and events after terminal state") {
@@ -266,14 +262,18 @@ TEST_CASE("pump releases events without routes and events after terminal state")
   REQUIRE(fixture.events->push(
       scry::detail::TextDeltaEvent{.turn_id = missing, .text = std::string(16, 'x')},
       16));
-  const auto route = fixture.route(215);
-  pump.add_route(route);
   bool completed = false;
   bool text_called = false;
-  REQUIRE(route->register_completion(
-      [&completed](const scry::Completion&) { completed = true; }));
-  REQUIRE(
-      route->register_text([&text_called](std::string_view) { text_called = true; }));
+  const auto route = fixture.route(
+      215,
+      scry::TurnCallbacks{
+          .on_text_delta = [&text_called](std::string_view) { text_called = true; },
+          .on_finished =
+              [&completed](scry::Result<scry::Completion> done) {
+                completed = done.has_value();
+              },
+      });
+  pump.add_route(route);
   REQUIRE(fixture.events->push(completion(route->id()), 1024));
   REQUIRE(fixture.events->push(
       scry::detail::TextDeltaEvent{.turn_id = route->id(), .text = "late"}, 1024));
@@ -308,12 +308,16 @@ TEST_CASE("pump discards detached unclaimed events and cleans terminal routes") 
 TEST_CASE("detached callback routes remain until pending delivery completes") {
   PumpFixture fixture;
   scry::detail::PumpState pump{fixture.events};
-  const auto route = fixture.route(218);
+  bool completed = false;
+  const auto route =
+      fixture.route(218, scry::TurnCallbacks{
+                             .on_finished =
+                                 [&completed](scry::Result<scry::Completion> done) {
+                                   completed = done.has_value();
+                                 },
+                         });
   pump.add_route(route);
   route->detach();
-  bool completed = false;
-  REQUIRE(route->register_completion(
-      [&completed](const scry::Completion&) { completed = true; }));
   REQUIRE(fixture.events->push(completion(route->id()), 1024));
 
   const auto deferred = pump.update({.max_callbacks = 0});
@@ -326,39 +330,44 @@ TEST_CASE("detached callback routes remain until pending delivery completes") {
   CHECK_FALSE(pump.find_route(route->id()));
 }
 
-TEST_CASE("late callback registration receives buffered text and error events") {
+TEST_CASE("events no callback can consume are released on arrival") {
   PumpFixture fixture;
   scry::detail::PumpState pump{fixture.events};
+  constexpr std::size_t limit = 32;
   const auto route = fixture.route(219);
   pump.add_route(route);
   REQUIRE(fixture.events->push(
-      scry::detail::TextDeltaEvent{.turn_id = route->id(), .text = "buffered"}, 1024));
+      scry::detail::TextDeltaEvent{.turn_id = route->id(), .text = "buffered"}, limit));
   REQUIRE(fixture.events->push_terminal(
       scry::detail::ErrorEvent{
           .turn_id = route->id(),
           .error = {.category = scry::ErrorCategory::protocol, .message = "failed"},
       },
-      1024));
-  CHECK(pump.update({}).callbacks_delivered == 0);
+      limit));
 
-  std::string text;
-  std::string error;
-  REQUIRE(
-      route->register_text([&text](const std::string_view value) { text = value; }));
-  REQUIRE(route->register_error(
-      [&error](const scry::Error& value) { error = value.message; }));
-  CHECK(pump.update({}).callbacks_delivered == 2);
-  CHECK(text == "buffered");
-  CHECK(error == "failed");
+  const auto stats = pump.update({});
+  CHECK(stats.callbacks_delivered == 0);
+  CHECK(stats.events_remaining == 0);
+  // The terminal still lands even with nothing observing it.
+  CHECK(route->terminal());
+  CHECK_FALSE(fixture.conversation->busy);
+  // Both events returned their bytes, so the whole per-turn budget is free again.
+  CHECK(fixture.events->push(
+      scry::detail::TextDeltaEvent{
+          .turn_id = route->id(),
+          .text = std::string(limit, 'x'),
+      },
+      limit));
 }
 
 TEST_CASE("pump shutdown releases pending and queued event ownership") {
   PumpFixture fixture;
   scry::detail::PumpState pump{fixture.events};
-  const auto route = fixture.route(220);
+  const auto route = fixture.route(220, scry::TurnCallbacks{
+                                            .on_text_delta = [](std::string_view) {},
+                                        });
   fixture.conversation->busy = true;
   pump.add_route(route);
-  REQUIRE(route->register_text([](std::string_view) {}));
   REQUIRE(fixture.events->push(
       scry::detail::TextDeltaEvent{.turn_id = route->id(), .text = "pending"}, 1024));
   CHECK(pump.update({.max_callbacks = 0}).events_remaining == 1);

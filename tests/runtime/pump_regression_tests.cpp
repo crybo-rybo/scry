@@ -21,13 +21,14 @@ struct PumpFixture {
   std::size_t max_conversation_bytes{1024};
 
   [[nodiscard]] std::shared_ptr<scry::detail::TurnRoute>
-  route(const std::uint64_t id) const {
+  route(const std::uint64_t id, scry::TurnCallbacks callbacks = {}) const {
     return std::make_shared<scry::detail::TurnRoute>(
         scry::TurnId{.value = id}, std::make_shared<std::atomic<bool>>(false), commands,
         conversation, "q",
         scry::detail::TurnRouteOptions{
             .max_tool_result_bytes = 1024,
             .max_conversation_bytes = max_conversation_bytes,
+            .callbacks = std::move(callbacks),
         });
   }
 };
@@ -88,12 +89,18 @@ TEST_CASE("completion mutation releases the originally accounted queue bytes") {
   PumpFixture fixture;
   scry::detail::PumpState pump{fixture.events};
   fixture.max_conversation_bytes = 1;
-  const auto route = fixture.route(102);
+  std::optional<scry::Error> delivered_error;
+  const auto route = fixture.route(
+      102, scry::TurnCallbacks{
+               .on_finished =
+                   [&delivered_error](scry::Result<scry::Completion> done) {
+                     if (!done) {
+                       delivered_error = std::move(done.error());
+                     }
+                   },
+           });
   pump.add_route(route);
 
-  std::optional<scry::Error> delivered_error;
-  REQUIRE(route->register_error(
-      [&delivered_error](const scry::Error& error) { delivered_error = error; }));
   REQUIRE(fixture.events->push(oversized_completion(route->id()), 256));
 
   const auto stats = pump.update({});
@@ -113,20 +120,26 @@ TEST_CASE("completion mutation releases the originally accounted queue bytes") {
 TEST_CASE("events enqueued by a callback wait for the next pump update") {
   PumpFixture fixture;
   scry::detail::PumpState pump{fixture.events};
-  const auto route = fixture.route(103);
-  pump.add_route(route);
-
   std::string delivered;
   bool second_enqueue_succeeded = false;
-  REQUIRE(route->register_text([&delivered, &second_enqueue_succeeded,
-                                events = fixture.events,
-                                turn_id = route->id()](const std::string_view text) {
-    delivered.append(text);
-    if (text == "first") {
-      second_enqueue_succeeded = events->push(
-          scry::detail::TextDeltaEvent{.turn_id = turn_id, .text = "second"}, 1024);
-    }
-  }));
+  const auto turn_id = scry::TurnId{.value = 103};
+  const auto route = fixture.route(
+      turn_id.value,
+      scry::TurnCallbacks{
+          .on_text_delta =
+              [&delivered, &second_enqueue_succeeded, events = fixture.events,
+               turn_id](const std::string_view text) {
+                delivered.append(text);
+                if (text == "first") {
+                  second_enqueue_succeeded =
+                      events->push(scry::detail::TextDeltaEvent{.turn_id = turn_id,
+                                                                .text = "second"},
+                                   1024);
+                }
+              },
+      });
+  pump.add_route(route);
+
   REQUIRE(fixture.events->push(
       scry::detail::TextDeltaEvent{.turn_id = route->id(), .text = "first"}, 1024));
 
@@ -142,33 +155,38 @@ TEST_CASE("events enqueued by a callback wait for the next pump update") {
   CHECK(delivered == "firstsecond");
 }
 
-TEST_CASE("reentrant pump update reports an explicit rejection") {
+TEST_CASE("a rejected reentrant pump update reports an exhausted budget") {
   PumpFixture fixture;
   scry::detail::PumpState pump{fixture.events};
-  const auto route = fixture.route(104);
+  std::optional<scry::UpdateStats> nested;
+  const auto route = fixture.route(
+      104, scry::TurnCallbacks{
+               .on_text_delta =
+                   [&pump, &nested](std::string_view) { nested = pump.update({}); },
+           });
   pump.add_route(route);
 
-  std::optional<scry::UpdateStats> nested;
-  REQUIRE(route->register_text(
-      [&pump, &nested](std::string_view) { nested = pump.update({}); }));
   REQUIRE(fixture.events->push(
       scry::detail::TextDeltaEvent{.turn_id = route->id(), .text = "delta"}, 1024));
 
   const auto outer = pump.update({});
   CHECK(outer.callbacks_delivered == 1);
-  CHECK_FALSE(outer.reentrant_update_rejected);
+  CHECK_FALSE(outer.budget_exhausted);
   REQUIRE(nested);
-  CHECK(nested->reentrant_update_rejected);
+  // The rejection is observable only through budget_exhausted, and it delivers
+  // nothing while the outer pump owns the event.
   CHECK(nested->budget_exhausted);
+  CHECK(nested->callbacks_delivered == 0);
 }
 
 TEST_CASE("a nonpositive pump budget expires before queued work") {
   PumpFixture fixture;
   auto now = std::chrono::steady_clock::time_point{};
   scry::detail::PumpState pump{fixture.events, [&now] { return now; }};
-  const auto route = fixture.route(105);
+  const auto route = fixture.route(105, scry::TurnCallbacks{
+                                            .on_text_delta = [](std::string_view) {},
+                                        });
   pump.add_route(route);
-  REQUIRE(route->register_text([](std::string_view) {}));
   REQUIRE(fixture.events->push(
       scry::detail::TextDeltaEvent{.turn_id = route->id(), .text = "deferred"}, 1024));
 

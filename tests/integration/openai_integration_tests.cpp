@@ -154,17 +154,22 @@ TEST_CASE("OpenAI-compatible config drives a fragmented transactional tool round
   auto conversation = scry::Conversation::create(
       {.system_prompt = "Use the lookup tool before answering."});
   REQUIRE(conversation);
-  auto turn = harness.send(*conversation, "Weather in Boston?");
-  REQUIRE(turn);
-
   std::vector<std::string> timeline;
   std::optional<scry::Completion> completion;
-  REQUIRE(turn->on_tool_call(
-      [&](const scry::ToolCall& call) { timeline.push_back("tool:" + call.name); }));
-  REQUIRE(turn->on_completion([&](const scry::Completion& value) {
-    timeline.emplace_back("complete");
-    completion = value;
-  }));
+  auto turn = harness.send(*conversation, "Weather in Boston?",
+                           {
+                               .on_tool_call =
+                                   [&](const scry::ToolCall& call) {
+                                     timeline.push_back("tool:" + call.name);
+                                   },
+                               .on_finished =
+                                   [&](scry::Result<scry::Completion> finished) {
+                                     REQUIRE(finished);
+                                     timeline.emplace_back("complete");
+                                     completion = std::move(*finished);
+                                   },
+                           });
+  REQUIRE(turn);
   REQUIRE(pump_until(harness, [&] { return completion.has_value(); }));
 
   CHECK(arguments == R"({"city":"Boston"})");
@@ -216,17 +221,24 @@ TEST_CASE("concurrent Harnesses keep Anthropic and OpenAI dialect state isolated
   auto openai_conversation = scry::Conversation::create();
   REQUIRE(anthropic_conversation);
   REQUIRE(openai_conversation);
-  auto anthropic_turn = anthropic_harness.send(*anthropic_conversation, "first");
-  auto openai_turn = openai_harness.send(*openai_conversation, "second");
+  std::optional<scry::Completion> anthropic_completion;
+  std::optional<scry::Completion> openai_completion;
+  const auto capture = [](std::optional<scry::Completion>& target) {
+    return scry::TurnCallbacks{
+        .on_finished =
+            [&target](scry::Result<scry::Completion> finished) {
+              REQUIRE(finished);
+              target = std::move(*finished);
+            },
+    };
+  };
+  auto anthropic_turn = anthropic_harness.send(*anthropic_conversation, "first",
+                                               capture(anthropic_completion));
+  auto openai_turn =
+      openai_harness.send(*openai_conversation, "second", capture(openai_completion));
   REQUIRE(anthropic_turn);
   REQUIRE(openai_turn);
 
-  std::optional<scry::Completion> anthropic_completion;
-  std::optional<scry::Completion> openai_completion;
-  REQUIRE(anthropic_turn->on_completion(
-      [&](const scry::Completion& value) { anthropic_completion = value; }));
-  REQUIRE(openai_turn->on_completion(
-      [&](const scry::Completion& value) { openai_completion = value; }));
   for (std::size_t pump = 0;
        pump < 100'000 && (!anthropic_completion || !openai_completion); ++pump) {
     static_cast<void>(anthropic_harness.update());

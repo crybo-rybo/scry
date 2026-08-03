@@ -13,15 +13,19 @@ namespace {
 [[nodiscard]] std::string delivered_text(PumpFixture& fixture, const std::uint64_t id,
                                          std::vector<scry::detail::Message> exchange) {
   scry::detail::PumpState pump{fixture.events};
-  const auto route = fixture.route(id, {});
-  pump.add_route(route);
   std::string observed;
   bool delivered = false;
-  REQUIRE(route->register_completion(
-      [&observed, &delivered](const scry::Completion& completion) {
-        observed = completion.text;
-        delivered = true;
-      }));
+  const auto route = fixture.route(
+      id, {}, 1024,
+      scry::TurnCallbacks{
+          .on_finished =
+              [&observed, &delivered](scry::Result<scry::Completion> done) {
+                REQUIRE(done);
+                observed = done->text;
+                delivered = true;
+              },
+      });
+  pump.add_route(route);
   REQUIRE(fixture.events->push(
       scry::detail::CompletionEvent{
           .turn_id = route->id(),
@@ -58,9 +62,12 @@ TEST_CASE("completion callback text extraction covers empty and non-text exchang
 TEST_CASE("committing a completion moves its exchange into the Conversation") {
   PumpFixture fixture;
   scry::detail::PumpState pump{fixture.events};
-  const auto route = fixture.route(405, {});
+  const auto route =
+      fixture.route(405, {}, 1024,
+                    scry::TurnCallbacks{
+                        .on_finished = [](scry::Result<scry::Completion>) {},
+                    });
   pump.add_route(route);
-  REQUIRE(route->register_completion([](const scry::Completion&) {}));
   REQUIRE(fixture.events->push(completion_event(route->id()), 1024));
 
   static_cast<void>(pump.update({}));

@@ -19,6 +19,7 @@ struct TurnRouteOptions {
   ToolSnapshot tools{};
   std::size_t max_tool_result_bytes{};
   std::size_t max_conversation_bytes{};
+  TurnCallbacks callbacks{};
 };
 
 class TurnRoute final {
@@ -37,14 +38,7 @@ public:
   [[nodiscard]] bool terminal() const noexcept;
   void mark_terminal() noexcept;
 
-  [[nodiscard]] Status register_text(TextDeltaCallback callback);
-  [[nodiscard]] Status register_tool(ToolCallCallback callback);
-  [[nodiscard]] Status register_completion(CompletionCallback callback);
-  [[nodiscard]] Status register_error(ErrorCallback callback);
-  [[nodiscard]] Status register_cancelled(CancelledCallback callback);
-
   [[nodiscard]] bool has_callback(const WorkerEvent& event) const noexcept;
-  [[nodiscard]] bool should_discard(const WorkerEvent& event) const noexcept;
   void invoke(const WorkerEvent& event);
 
   [[nodiscard]] const std::shared_ptr<ConversationState>& conversation() const noexcept;
@@ -66,11 +60,7 @@ private:
   bool attached_{true};
   bool terminal_{false};
   bool tool_dispatch_failed_{false};
-  TextDeltaCallback on_text_{};
-  ToolCallCallback on_tool_{};
-  CompletionCallback on_completion_{};
-  ErrorCallback on_error_{};
-  CancelledCallback on_cancelled_{};
+  TurnCallbacks callbacks_{};
 };
 
 using PumpClock = UniqueFunction<std::chrono::steady_clock::time_point()>;

@@ -1,18 +1,16 @@
 #pragma once
 
 #include <memory>
-#include <scry/error.hpp>
-#include <scry/events.hpp>
 #include <scry/turn_id.hpp>
 
 namespace scry {
 
-/// Move-only handle for one accepted agentic exchange.
+/// Move-only cancellation handle for one accepted agentic exchange.
 ///
-/// Dropping the handle detaches without cancelling or blocking: the turn continues,
-/// successful history still commits, and already registered callbacks remain
-/// deliverable. While attached, callbacks registered after activity begins receive
-/// buffered prior events in order within the configured resource limit.
+/// Callbacks belong to the turn itself and are supplied to Harness::send(), so this
+/// handle only identifies and cancels. Dropping it detaches without cancelling or
+/// blocking: the turn continues, successful history still commits, and the
+/// TurnCallbacks supplied at send remain deliverable.
 class Turn final {
 public:
   /// Detaches from the turn without cancelling it.
@@ -36,38 +34,13 @@ public:
   [[nodiscard]] TurnId id() const noexcept;
 
   /// Requests cooperative cancellation.
+  ///
+  /// The turn still terminates through TurnCallbacks::on_finished, with an Error whose
+  /// category is ErrorCategory::cancelled.
   /// @return true only when this call issued the cancellation request; false if
   /// cancellation was already requested, the turn was terminal, or the handle is moved
   /// from.
-  [[nodiscard]] bool cancel() noexcept;
-
-  /// Registers the streamed-text observer.
-  /// @param callback Move-only callback invoked inside Harness::update().
-  /// @return Success, or ErrorCategory::invalid_state if registration is unavailable.
-  [[nodiscard]] Status on_text_delta(TextDeltaCallback callback);
-
-  /// Registers the tool-call observer.
-  ///
-  /// Tool execution does not require this observer. It runs on the update() thread
-  /// after the canonical result is accepted.
-  /// @param callback Move-only callback invoked inside Harness::update().
-  /// @return Success, or ErrorCategory::invalid_state if registration is unavailable.
-  [[nodiscard]] Status on_tool_call(ToolCallCallback callback);
-
-  /// Registers the successful terminal callback.
-  /// @param callback Move-only callback invoked inside Harness::update().
-  /// @return Success, or ErrorCategory::invalid_state if registration is unavailable.
-  [[nodiscard]] Status on_completion(CompletionCallback callback);
-
-  /// Registers the failed terminal callback.
-  /// @param callback Move-only callback invoked inside Harness::update().
-  /// @return Success, or ErrorCategory::invalid_state if registration is unavailable.
-  [[nodiscard]] Status on_error(ErrorCallback callback);
-
-  /// Registers the cancelled terminal callback.
-  /// @param callback Move-only callback invoked inside Harness::update().
-  /// @return Success, or ErrorCategory::invalid_state if registration is unavailable.
-  [[nodiscard]] Status on_cancelled(CancelledCallback callback);
+  bool cancel() noexcept;
 
 private:
   class Impl;

@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <memory>
 #include <scry/error.hpp>
+#include <scry/events.hpp>
 #include <scry/json.hpp>
 #include <scry/tool_registry.hpp>
 #include <string>
@@ -73,7 +74,8 @@ struct PumpFixture {
 
   [[nodiscard]] std::shared_ptr<scry::detail::TurnRoute>
   route(const std::uint64_t id, scry::detail::ToolSnapshot tools,
-        const std::size_t result_limit = 1024) const {
+        const std::size_t result_limit = 1024,
+        scry::TurnCallbacks callbacks = {}) const {
     return std::make_shared<scry::detail::TurnRoute>(
         scry::TurnId{.value = id}, std::make_shared<std::atomic<bool>>(false), commands,
         conversation, "question",
@@ -81,6 +83,7 @@ struct PumpFixture {
             .tools = std::move(tools),
             .max_tool_result_bytes = result_limit,
             .max_conversation_bytes = 1024,
+            .callbacks = std::move(callbacks),
         });
   }
 };

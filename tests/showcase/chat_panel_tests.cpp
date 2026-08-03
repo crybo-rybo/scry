@@ -9,12 +9,31 @@
 namespace {
 
 struct ControllerState {
-  std::vector<scry_showcase::PanelCallbacks> submissions{};
+  std::vector<scry::TurnCallbacks> submissions{};
   std::vector<std::string> messages{};
   std::string submit_error{};
   std::size_t cancel_requests{};
   bool cancellation_accepted{true};
 };
+
+// The panel sees only what a real turn would deliver through on_finished.
+void complete(scry::TurnCallbacks& callbacks, std::string text) {
+  callbacks.on_finished(scry::Completion{.text = std::move(text)});
+}
+
+void fail(scry::TurnCallbacks& callbacks, std::string message) {
+  callbacks.on_finished(std::unexpected(scry::Error{
+      .category = scry::ErrorCategory::network,
+      .message = std::move(message),
+  }));
+}
+
+void cancel(scry::TurnCallbacks& callbacks) {
+  callbacks.on_finished(std::unexpected(scry::Error{
+      .category = scry::ErrorCategory::cancelled,
+      .message = "turn cancelled",
+  }));
+}
 
 class FakeController final : public scry_showcase::PanelController {
 public:
@@ -22,7 +41,7 @@ public:
       : state_(std::move(state)) {}
 
   [[nodiscard]] scry_showcase::SubmitStatus
-  submit(std::string user_message, scry_showcase::PanelCallbacks callbacks) override {
+  submit(std::string user_message, scry::TurnCallbacks callbacks) override {
     state_->messages.push_back(std::move(user_message));
     state_->submissions.push_back(std::move(callbacks));
     if (!state_->submit_error.empty()) {
@@ -57,9 +76,9 @@ TEST_CASE("Chat panel streams a turn and records completion") {
   CHECK(fixture.panel.snapshot().phase == scry_showcase::ChatPhase::streaming);
 
   auto& callbacks = fixture.controller_state->submissions.back();
-  callbacks.text_delta("hel");
-  callbacks.text_delta("lo");
-  callbacks.completed("provider aggregate is ignored after deltas");
+  callbacks.on_text_delta("hel");
+  callbacks.on_text_delta("lo");
+  complete(callbacks, "provider aggregate is ignored after deltas");
 
   const auto snapshot = fixture.panel.snapshot();
   CHECK(snapshot.phase == scry_showcase::ChatPhase::completed);
@@ -72,7 +91,7 @@ TEST_CASE("Chat panel uses aggregate completion when no deltas arrived") {
   PanelFixture fixture;
 
   REQUIRE(fixture.panel.submit("hello"));
-  fixture.controller_state->submissions.back().completed("complete response");
+  complete(fixture.controller_state->submissions.back(), "complete response");
 
   CHECK(fixture.panel.snapshot().assistant_text == "complete response");
 }
@@ -88,7 +107,7 @@ TEST_CASE("Chat panel reports synchronous submit errors") {
   CHECK(fixture.panel.snapshot().phase == scry_showcase::ChatPhase::failed);
   CHECK(fixture.panel.snapshot().error_message == "provider unavailable");
 
-  fixture.controller_state->submissions.back().completed("late completion");
+  complete(fixture.controller_state->submissions.back(), "late completion");
   CHECK(fixture.panel.snapshot().phase == scry_showcase::ChatPhase::failed);
 }
 
@@ -96,7 +115,7 @@ TEST_CASE("Chat panel reports asynchronous errors") {
   PanelFixture fixture;
 
   REQUIRE(fixture.panel.submit("hello"));
-  fixture.controller_state->submissions.back().failed("stream failed");
+  fail(fixture.controller_state->submissions.back(), "stream failed");
 
   CHECK(fixture.panel.snapshot().phase == scry_showcase::ChatPhase::failed);
   CHECK(fixture.panel.snapshot().error_message == "stream failed");
@@ -110,7 +129,7 @@ TEST_CASE("Chat panel exposes cancellation state") {
   CHECK(fixture.panel.snapshot().phase == scry_showcase::ChatPhase::cancelling);
   CHECK_FALSE(fixture.panel.cancel());
   CHECK(fixture.controller_state->cancel_requests == 1);
-  fixture.controller_state->submissions.back().cancelled();
+  cancel(fixture.controller_state->submissions.back());
 
   CHECK(fixture.panel.snapshot().phase == scry_showcase::ChatPhase::cancelled);
   CHECK(fixture.controller_state->cancel_requests == 1);
@@ -144,9 +163,9 @@ TEST_CASE("Chat panel ignores callbacks from an older submission") {
   PanelFixture fixture;
 
   REQUIRE(fixture.panel.submit("first"));
-  fixture.controller_state->submissions.front().completed("first response");
+  complete(fixture.controller_state->submissions.front(), "first response");
   REQUIRE(fixture.panel.submit("second"));
-  fixture.controller_state->submissions.front().failed("stale error");
+  fail(fixture.controller_state->submissions.front(), "stale error");
 
   const auto snapshot = fixture.panel.snapshot();
   CHECK(snapshot.phase == scry_showcase::ChatPhase::streaming);
@@ -163,8 +182,8 @@ TEST_CASE("Chat panel destruction requests cancellation without retaining state"
   }
 
   CHECK(controller_state->cancel_requests == 1);
-  controller_state->submissions.back().text_delta("late");
-  controller_state->submissions.back().cancelled();
+  controller_state->submissions.back().on_text_delta("late");
+  cancel(controller_state->submissions.back());
 }
 
 TEST_CASE("Chat panel destruction cancels only a live streaming turn") {
@@ -179,7 +198,7 @@ TEST_CASE("Chat panel destruction cancels only a live streaming turn") {
   {
     scry_showcase::ChatPanel panel{controller};
     REQUIRE(panel.submit("completed"));
-    controller_state->submissions.back().completed("done");
+    complete(controller_state->submissions.back(), "done");
   }
   CHECK(controller_state->cancel_requests == 0);
 
