@@ -159,8 +159,10 @@ audit. This amendment retires the deterministic NPC grid showcase:
   package-boundary and shared-gate requirements (`SHOW-003`, `SHOW-004`).
   `SHOW-004`'s gate content no longer includes NPC tests.
 - `examples/tool_chat` is a non-gating developer shakedown surface. It is not
-  part of the M5 acceptance gate and consumes only the public `scry::scry`
-  C++23 surface (no private Glaze link).
+  part of the M5 acceptance gate and consumes only public Scry C++23 APIs. Its
+  application-owned typed JSON adapter privately uses the already-pinned Glaze
+  dependency; the adapter is neither installed nor exported, and is covered by
+  deterministic codec tests.
 - ADR 0012's commitment to retain suites written for retired *gates* is
   unchanged. Deleting a retired *feature* may delete tests that only
   specified that feature.

@@ -34,7 +34,16 @@ tool results, and the number of provider requests used by each turn. Internal
 Scry lifecycle diagnostics default to `build/dev-logging/tool-chat.log`; set
 `SCRY_LOG_FILE=/dev/stderr` to interleave them with the chat transcript.
 
-Use `/tools`, `/reset`, `/help`, and `/quit` while chatting. This is an
-exploratory developer tool that links only `scry::scry`, not a deterministic
-acceptance gate. Use `scripts/ci-local-model.sh` when a bounded pass/fail
-live-model check is needed.
+The example uses only Scry's public C++23 API. Its application-owned
+`tool_codec` translates between `scry::Json` and typed arithmetic structures
+with the repository's pinned Glaze dependency. Glaze is private to the example:
+it is not exposed by `scry::scry`, installed, or exported to consumers. A real
+C++23 application would put its own JSON library behind the same small adapter.
+On a supported GCC 16 C++26 toolchain,
+[`scry::reflection::add<Args>`](../reflection_tools.cpp) generates the schema
+and performs this marshalling instead.
+
+Use `/tools`, `/reset`, `/help`, and `/quit` while chatting. The live-model run
+is an exploratory developer shakedown, not a deterministic acceptance gate.
+The example-owned codec does have deterministic regression coverage. Use
+`scripts/ci-local-model.sh` when a bounded pass/fail live-model check is needed.

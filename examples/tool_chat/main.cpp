@@ -1,13 +1,12 @@
+#include "tool_codec.hpp"
+
 #include <array>
-#include <cerrno>
 #include <chrono>
-#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <ctime>
 #include <format>
 #include <iostream>
-#include <optional>
 #include <scry/scry.hpp>
 #include <string>
 #include <string_view>
@@ -69,65 +68,16 @@ void print_tool_outcome(const std::string_view name, const std::string_view argu
       .text = std::format(R"({{"datetime":"{}","timezone":"UTC"}})", timestamp.data())};
 }
 
-[[nodiscard]] std::string_view trim_ascii_whitespace(std::string_view text) noexcept {
-  while (!text.empty() && (text.front() == ' ' || text.front() == '\t' ||
-                           text.front() == '\n' || text.front() == '\r')) {
-    text.remove_prefix(1);
-  }
-  while (!text.empty() && (text.back() == ' ' || text.back() == '\t' ||
-                           text.back() == '\n' || text.back() == '\r')) {
-    text.remove_suffix(1);
-  }
-  return text;
-}
-
-[[nodiscard]] std::optional<double>
-parse_json_number_field(const std::string_view json, const std::string_view key) {
-  const auto needle = std::format("\"{}\"", key);
-  const auto key_pos = json.find(needle);
-  if (key_pos == std::string_view::npos) {
-    return std::nullopt;
-  }
-
-  auto cursor = json.substr(key_pos + needle.size());
-  cursor = trim_ascii_whitespace(cursor);
-  if (cursor.empty() || cursor.front() != ':') {
-    return std::nullopt;
-  }
-  cursor.remove_prefix(1);
-  cursor = trim_ascii_whitespace(cursor);
-  if (cursor.empty()) {
-    return std::nullopt;
-  }
-
-  // libc++ (Clang/AppleClang) does not provide floating-point std::from_chars.
-  // Copy to a null-terminated buffer so strtod can parse portably.
-  const std::string token{cursor};
-  char* end = nullptr;
-  errno = 0;
-  const double value = std::strtod(token.c_str(), &end);
-  if (end == token.c_str() || errno == ERANGE || !std::isfinite(value)) {
-    return std::nullopt;
-  }
-  return value;
-}
-
 using ArithmeticOperation = double (*)(double, double);
 
 [[nodiscard]] scry::Result<scry::Json> calculate(const scry::Json& arguments,
                                                  const ArithmeticOperation operation) {
-  const auto a = parse_json_number_field(arguments.text, "a");
-  const auto b = parse_json_number_field(arguments.text, "b");
-  if (!a || !b) {
-    return std::unexpected(
-        tool_error("arithmetic tools require finite numeric a and b fields"));
+  auto decoded = decode_arithmetic_arguments(arguments);
+  if (!decoded) {
+    return std::unexpected(std::move(decoded.error()));
   }
-
-  const double value = operation(*a, *b);
-  if (!std::isfinite(value)) {
-    return std::unexpected(tool_error("arithmetic result is not finite"));
-  }
-  return scry::Json{.text = std::format(R"({{"result":{}}})", value)};
+  return encode_arithmetic_result(
+      ArithmeticResult{.result = operation(decoded->a, decoded->b)});
 }
 
 [[nodiscard]] double add(const double a, const double b) noexcept { return a + b; }
@@ -165,8 +115,7 @@ register_arithmetic_tool(scry::Harness& harness, const std::string_view name,
           .description = std::string{description},
           .input_schema =
               {
-                  .text =
-                      R"({"type":"object","properties":{"a":{"type":"number","description":"First operand"},"b":{"type":"number","description":"Second operand"}},"required":["a","b"],"additionalProperties":false})",
+                  .text = std::string{arithmetic_input_schema},
               },
       },
       [tool_name = std::move(tool_name),

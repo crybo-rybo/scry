@@ -5,10 +5,21 @@ if(SCRY_BUILD_EXAMPLES)
     PRIVATE scry::scry scry_project_options
   )
 
+  add_library(scry_tool_chat_codec STATIC tool_chat/tool_codec.cpp)
+  target_include_directories(
+    scry_tool_chat_codec
+    PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/tool_chat"
+  )
+  target_link_libraries(
+    scry_tool_chat_codec
+    PUBLIC scry::scry
+    PRIVATE glaze::glaze scry_project_options
+  )
+
   add_executable(scry_tool_chat tool_chat/main.cpp)
   target_link_libraries(
     scry_tool_chat
-    PRIVATE scry::scry scry_project_options
+    PRIVATE scry_tool_chat_codec scry_project_options
   )
 
   if(SCRY_ENABLE_REFLECTION)

@@ -274,6 +274,8 @@ Amendment log:
   in place; SHOW-003/SHOW-004 IDs retained. M5 gating is ImGui-only under
   SHOW-001/003/004; SHOW-004's gate content drops NPC tests. The non-gating
   `examples/tool_chat` developer shakedown is recorded outside the SHOW
-  contract and must consume only the public `scry::scry` surface. QA-001
-  verification clarified: suites for retained contracts remain, while feature
-  removal deletes tests that only specified the removed feature.
+  contract and must consume only public Scry APIs. Its example-owned C++23 JSON
+  adapter may privately use the already-pinned Glaze dependency but is not
+  installed or exported. QA-001 verification clarified: suites for retained
+  contracts remain, while feature removal deletes tests that only specified
+  the removed feature.

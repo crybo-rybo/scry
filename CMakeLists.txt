@@ -470,6 +470,23 @@ if(SCRY_BUILD_TESTS)
       scry_project_options
   )
   catch_discover_tests(scry_runtime_tests TEST_PREFIX "runtime.")
+  if(SCRY_BUILD_EXAMPLES)
+    add_executable(
+      scry_tool_chat_codec_tests
+      tests/examples/tool_chat_codec_tests.cpp
+    )
+    target_link_libraries(
+      scry_tool_chat_codec_tests
+      PRIVATE
+        Catch2::Catch2WithMain
+        scry_tool_chat_codec
+        scry_project_options
+    )
+    catch_discover_tests(
+      scry_tool_chat_codec_tests
+      TEST_PREFIX "examples.tool-chat."
+    )
+  endif()
   add_subdirectory(tests/machine)
   add_subdirectory(tests/protocol)
   add_subdirectory(tests/provider)

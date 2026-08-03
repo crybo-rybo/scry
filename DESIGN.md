@@ -468,7 +468,12 @@ ARCHITECTURE.md §7). Remaining:
 The non-gating `examples/tool_chat` developer tool complements these milestone
 artifacts. It keeps one `Conversation` across terminal prompts and exposes
 model-selected arguments and application-produced results for three harmless
-tools. It exercises only the existing C++23 public surface and is intentionally
+tools. It exercises only the existing C++23 public Scry surface. An
+example-owned adapter privately uses the already-pinned Glaze dependency to
+translate the explicit JSON boundary into typed arithmetic structures; it is
+not installed or exported, and consumers can substitute their own JSON stack.
+The optional `scry::reflection::add<Args>()` path removes that application
+adapter on supported C++26 toolchains. The live chat remains intentionally
 separate from the bounded pass/fail local-model smoke and deterministic M5
 showcase gate.
 
