@@ -11,7 +11,6 @@
 #include <optional>
 #include <scry/config.hpp>
 #include <stop_token>
-#include <string>
 #include <string_view>
 #include <vector>
 
@@ -28,13 +27,8 @@ public:
 
 private:
   struct AttemptState;
-  struct WorkerTool {
-    std::string name{};
-    ToolHandler handler{};
-  };
 
   void accept_command(WorkerCommand command);
-  void register_worker_tool(RegisterWorkerToolCommand command);
   void process_turn(SendTurnCommand&& command, const std::stop_token& stopped);
   [[nodiscard]] bool
   process_machine_command(TurnMachine& machine, MachineCommand command,
@@ -53,12 +47,7 @@ private:
                                                const std::stop_token& stopped);
   [[nodiscard]] std::optional<TransitionResult>
   handle_tool_wait_command(TurnMachine& machine, WorkerCommand command,
-                           const SendTurnCommand& turn, const std::stop_token& stopped);
-  [[nodiscard]] TransitionResult execute_worker_tool(TurnMachine& machine,
-                                                     ExecuteWorkerToolCommand command,
-                                                     const SendTurnCommand& turn,
-                                                     const std::stop_token& stopped);
-  [[nodiscard]] ToolHandler* find_worker_handler(std::string_view name) noexcept;
+                           const SendTurnCommand& turn);
   [[nodiscard]] Status consume_stream_chunk(TurnMachine& machine, AttemptState& state,
                                             std::string_view chunk);
   [[nodiscard]] Status consume_sse_events(TurnMachine& machine, AttemptState& state,
@@ -79,8 +68,6 @@ private:
                          std::optional<ModelResponse>& completed_response);
   [[nodiscard]] Status publish_tool_batch(PublishToolCall first,
                                           std::deque<MachineCommand>& pending_commands);
-  void publish_worker_tool_accepted(TurnId turn_id, std::string tool_call_id,
-                                    std::size_t result_payload_bytes);
   [[nodiscard]] Status publish_command(MachineCommand command);
   void publish_terminal_event(WorkerEvent event);
   void publish_unhandled_failure(TurnId turn_id) noexcept;
@@ -91,7 +78,6 @@ private:
   std::shared_ptr<CommandQueue> commands_{};
   std::shared_ptr<EventQueue> events_{};
   std::deque<SendTurnCommand> pending_{};
-  std::vector<WorkerTool> worker_tools_{};
 };
 
 } // namespace scry::detail

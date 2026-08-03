@@ -72,19 +72,17 @@ successful_result(const ToolCallBlock& call, const Json& value,
   };
 }
 
-} // namespace
-
-ToolRegistrationPtr find_tool_registration(const ToolSnapshot& snapshot,
-                                           const std::string_view name) {
+[[nodiscard]] ToolRegistrationPtr find_tool_registration(const ToolSnapshot& snapshot,
+                                                         const std::string_view name) {
   const auto found = std::ranges::find_if(snapshot, [name](const auto& registration) {
     return registration->definition.name == name;
   });
   return found == snapshot.end() ? nullptr : *found;
 }
 
-Result<ToolResultBlock> dispatch_tool_handler(ToolHandler& handler,
-                                              const ToolCallBlock& call,
-                                              const std::size_t max_result_bytes) {
+[[nodiscard]] Result<ToolResultBlock>
+dispatch_tool_handler(ToolHandler& handler, const ToolCallBlock& call,
+                      const std::size_t max_result_bytes) {
   if (!handler) {
     SCRY_LOG("{} Tool handler unavailable", call.name);
     return error_result(call, "tool handler is unavailable", max_result_bytes);
@@ -105,6 +103,8 @@ Result<ToolResultBlock> dispatch_tool_handler(ToolHandler& handler,
            result->is_error ? "returned an error result" : "completed");
   return result;
 }
+
+} // namespace
 
 Result<ToolResultBlock> dispatch_tool(const ToolSnapshot& snapshot,
                                       const ToolCallBlock& call,

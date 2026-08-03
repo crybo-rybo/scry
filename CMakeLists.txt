@@ -96,7 +96,6 @@ add_library(
     src/runtime/tool_dispatch.cpp
     src/runtime/turn.cpp
     src/runtime/worker.cpp
-    src/runtime/worker_publish.cpp
 )
 add_library(scry::scry ALIAS scry)
 set_target_properties(scry PROPERTIES EXPORT_NAME scry)

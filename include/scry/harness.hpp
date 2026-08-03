@@ -30,9 +30,7 @@ public:
 
   /// Cancels outstanding work, stops Scry-owned I/O, and joins the worker.
   ///
-  /// Undelivered callbacks are discarded once destruction begins. A non-cooperating
-  /// application handler explicitly registered for worker execution remains outside
-  /// Scry's enforceable shutdown bound.
+  /// Undelivered callbacks are discarded once destruction begins.
   ~Harness();
 
   /// Moves ownership of the worker and all Harness state.

@@ -7,9 +7,7 @@
 #include <chrono>
 #include <cstddef>
 #include <deque>
-#include <limits>
 #include <memory>
-#include <optional>
 #include <scry/events.hpp>
 #include <scry/unique_function.hpp>
 #include <string>
@@ -20,7 +18,6 @@ namespace scry::detail {
 struct TurnRouteOptions {
   ToolSnapshot tools{};
   std::size_t max_tool_result_bytes{};
-  std::size_t max_exchange_bytes{std::numeric_limits<std::size_t>::max()};
   std::size_t max_conversation_bytes{};
 };
 
@@ -47,7 +44,6 @@ public:
   [[nodiscard]] Status register_cancelled(CancelledCallback callback);
 
   [[nodiscard]] bool has_callback(const WorkerEvent& event) const noexcept;
-  [[nodiscard]] bool should_retain(const WorkerEvent& event) const noexcept;
   [[nodiscard]] bool should_discard(const WorkerEvent& event) const noexcept;
   void invoke(const WorkerEvent& event);
 
@@ -57,9 +53,6 @@ public:
 
 private:
   void dispatch(const ToolCallEvent& event);
-  void dispatch_on_app(const ToolCallEvent& event);
-  void dispatch_on_worker(const ToolCallEvent& event);
-  void accept_worker_tool(const WorkerToolAcceptedEvent& event);
   void notify_tool_observer(const ToolCallBlock& call);
 
   TurnId turn_id_{};
@@ -69,12 +62,10 @@ private:
   std::string user_message_{};
   ToolSnapshot tools_{};
   std::size_t max_tool_result_bytes_{};
-  std::size_t remaining_exchange_bytes_{std::numeric_limits<std::size_t>::max()};
   std::size_t max_conversation_bytes_{};
   bool attached_{true};
   bool terminal_{false};
   bool tool_dispatch_failed_{false};
-  std::optional<ToolCallBlock> pending_worker_tool_{};
   TextDeltaCallback on_text_{};
   ToolCallCallback on_tool_{};
   CompletionCallback on_completion_{};

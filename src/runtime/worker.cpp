@@ -2,11 +2,11 @@
 
 #include "core/log.hpp"
 #include "protocol/sse.hpp"
-#include "runtime/tool_dispatch.hpp"
 
 #include <algorithm>
 #include <cassert>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -18,6 +18,8 @@
 namespace scry::detail {
 namespace {
 
+constexpr std::size_t terminal_event_reserve = 512;
+
 [[nodiscard]] Error worker_error(const ErrorCategory category, std::string message,
                                  const TurnId turn_id,
                                  const std::uint32_t attempt = 0) {
@@ -27,6 +29,17 @@ namespace {
       .turn_id = turn_id,
       .attempt = attempt,
   };
+}
+
+[[nodiscard]] WorkerEvent bound_terminal_event(WorkerEvent event) {
+  auto* error = std::get_if<ErrorEvent>(&event);
+  if (error == nullptr || event_payload_bytes(event) <= terminal_event_reserve) {
+    return event;
+  }
+  error->error.message = "turn failed; diagnostic exceeded the event buffer";
+  error->error.provider_detail.clear();
+  error->error.provider_request_id.clear();
+  return event;
 }
 
 void append_commands(std::deque<MachineCommand>& destination,
@@ -136,16 +149,11 @@ void WorkerActor::run(const std::stop_token& stopped) noexcept {
 }
 
 void WorkerActor::accept_command(WorkerCommand command) {
-  if (auto* registration = std::get_if<RegisterWorkerToolCommand>(&command)) {
-    register_worker_tool(std::move(*registration));
-    return;
-  }
   if (auto* send = std::get_if<SendTurnCommand>(&command)) {
     pending_.push_back(std::move(*send));
     return;
   }
-  if (std::holds_alternative<ToolResultCommand>(command) ||
-      std::holds_alternative<ExecuteWorkerToolCommand>(command)) {
+  if (std::holds_alternative<ToolResultCommand>(command)) {
     // Tool work is meaningful only while its turn owns the serialized worker
     // slot. Values that arrive after terminal cancellation are stale.
     return;
@@ -156,21 +164,6 @@ void WorkerActor::accept_command(WorkerCommand command) {
     pending_.erase(found);
     publish_terminal_event(CancelledEvent{.turn_id = turn_id});
   }
-}
-
-void WorkerActor::register_worker_tool(RegisterWorkerToolCommand command) {
-  const auto duplicate =
-      std::ranges::any_of(worker_tools_, [&command](const WorkerTool& tool) {
-        return tool.name == command.name;
-      });
-  assert(!duplicate);
-  if (duplicate) {
-    return;
-  }
-  worker_tools_.push_back(WorkerTool{
-      .name = std::move(command.name),
-      .handler = std::move(command.handler),
-  });
 }
 
 void WorkerActor::process_turn(SendTurnCommand&& command,
@@ -390,8 +383,7 @@ TransitionResult WorkerActor::wait_for_tool(TurnMachine& machine,
     if (!command) {
       break;
     }
-    auto transition =
-        handle_tool_wait_command(machine, std::move(*command), turn, stopped);
+    auto transition = handle_tool_wait_command(machine, std::move(*command), turn);
     if (transition) {
       return std::move(*transition);
     }
@@ -401,8 +393,7 @@ TransitionResult WorkerActor::wait_for_tool(TurnMachine& machine,
 
 std::optional<TransitionResult>
 WorkerActor::handle_tool_wait_command(TurnMachine& machine, WorkerCommand command,
-                                      const SendTurnCommand& turn,
-                                      const std::stop_token& stopped) {
+                                      const SendTurnCommand& turn) {
   if (auto* result = std::get_if<ToolResultCommand>(&command)) {
     if (result->turn_id != turn.turn_id) {
       return std::nullopt;
@@ -416,12 +407,6 @@ WorkerActor::handle_tool_wait_command(TurnMachine& machine, WorkerCommand comman
         .observed_at = std::chrono::steady_clock::now(),
     });
   }
-  if (auto* execute = std::get_if<ExecuteWorkerToolCommand>(&command)) {
-    if (execute->turn_id != turn.turn_id) {
-      return std::nullopt;
-    }
-    return execute_worker_tool(machine, std::move(*execute), turn, stopped);
-  }
   if (const auto* cancel = std::get_if<CancelTurnCommand>(&command);
       cancel != nullptr && cancel->turn_id == turn.turn_id) {
     return machine.apply(CancelTurn{});
@@ -430,51 +415,161 @@ WorkerActor::handle_tool_wait_command(TurnMachine& machine, WorkerCommand comman
   return std::nullopt;
 }
 
-TransitionResult WorkerActor::execute_worker_tool(TurnMachine& machine,
-                                                  ExecuteWorkerToolCommand command,
-                                                  const SendTurnCommand& turn,
-                                                  const std::stop_token& stopped) {
-  if (turn.cancelled->load(std::memory_order_acquire)) {
-    return machine.apply(CancelTurn{});
+Status
+WorkerActor::publish_stream_events(TurnMachine& machine,
+                                   std::vector<ProviderEvent> provider_events,
+                                   std::optional<ModelResponse>& completed_response,
+                                   const bool semantic_output_consumed) {
+  if (semantic_output_consumed && machine.phase() == MachinePhase::awaiting_model) {
+    const auto transition = machine.apply(ModelSemanticOutput{});
+    if (transition.status != TransitionStatus::applied) {
+      return std::unexpected(worker_error(
+          ErrorCategory::invalid_state,
+          "provider semantic output could not enter streaming state", TurnId{}));
+    }
   }
-  const auto accepted = std::ranges::find(turn.worker_tool_names, command.call.name) !=
-                        turn.worker_tool_names.end();
-  auto* handler = accepted ? find_worker_handler(command.call.name) : nullptr;
-  if (handler == nullptr) {
-    SCRY_LOG("{} Tool unavailable for the accepted Turn {}", command.call.name,
-             turn.turn_id.value);
-    return machine.apply(ToolExecutionFailed{
-        .error = worker_error(ErrorCategory::invalid_state,
-                              "worker tool is unavailable for the accepted turn",
-                              turn.turn_id, machine.attempt_count()),
-    });
+  for (auto& event : provider_events) {
+    auto status = publish_provider_event(machine, std::move(event), completed_response);
+    if (!status) {
+      return status;
+    }
   }
-
-  auto result = dispatch_tool_handler(*handler, command.call,
-                                      config_.limits.max_tool_result_bytes);
-  if (stopped.stop_requested() || turn.cancelled->load(std::memory_order_acquire)) {
-    return machine.apply(CancelTurn{});
-  }
-  if (!result) {
-    return machine.apply(ToolExecutionFailed{.error = std::move(result.error())});
-  }
-
-  const auto result_payload_bytes = content_payload_bytes(*result);
-  auto transition = machine.apply(ToolResultReady{
-      .result = std::move(*result),
-      .observed_at = std::chrono::steady_clock::now(),
-  });
-  if (transition.status == TransitionStatus::applied &&
-      machine.phase() != MachinePhase::terminal) {
-    publish_worker_tool_accepted(turn.turn_id, std::move(command.call.id),
-                                 result_payload_bytes);
-  }
-  return transition;
+  return {};
 }
 
-ToolHandler* WorkerActor::find_worker_handler(const std::string_view name) noexcept {
-  const auto found = std::ranges::find(worker_tools_, name, &WorkerTool::name);
-  return found == worker_tools_.end() ? nullptr : &found->handler;
+Status
+WorkerActor::publish_provider_event(TurnMachine& machine, ProviderEvent event,
+                                    std::optional<ModelResponse>& completed_response) {
+  if (auto* text = std::get_if<ProviderTextDelta>(&event)) {
+    auto transition = machine.apply(ModelTextDelta{.text = std::move(text->text)});
+    for (auto& command : transition.commands) {
+      auto status = publish_command(std::move(command));
+      if (!status) {
+        return status;
+      }
+    }
+    return {};
+  }
+  if (auto* completed = std::get_if<ProviderCompleted>(&event)) {
+    if (completed_response) {
+      return std::unexpected(
+          worker_error(ErrorCategory::protocol,
+                       "provider stream emitted more than one completion", TurnId{}));
+    }
+    completed_response = std::move(completed->response);
+    return {};
+  }
+  // The provider seam preserves an ignored event's name for debug inspection.
+  // Scry has no public logging surface, so the worker consumes this marker;
+  // the SCRY_ENABLE_LOGGING build records the name before dropping it.
+  assert(std::holds_alternative<ProviderIgnoredEvent>(event));
+  if (std::holds_alternative<ProviderIgnoredEvent>(event)) {
+    SCRY_LOG("Ignored provider stream event: {}",
+             std::get<ProviderIgnoredEvent>(event).name);
+  }
+  return {};
+}
+
+Status WorkerActor::publish_tool_batch(PublishToolCall first,
+                                       std::deque<MachineCommand>& pending_commands) {
+  const auto turn_id = first.turn_id;
+  std::vector<WorkerEvent> events;
+  events.emplace_back(ToolCallEvent{
+      .turn_id = turn_id,
+      .call = std::move(first.call),
+  });
+  while (!pending_commands.empty()) {
+    auto* next = std::get_if<PublishToolCall>(&pending_commands.front());
+    if (next == nullptr || next->turn_id != turn_id) {
+      break;
+    }
+    events.emplace_back(ToolCallEvent{
+        .turn_id = turn_id,
+        .call = std::move(next->call),
+    });
+    pending_commands.pop_front();
+  }
+  const auto payload_limit =
+      config_.limits.max_queued_event_bytes_per_turn - terminal_event_reserve;
+  if (!events_->push_batch(std::move(events), payload_limit)) {
+    return std::unexpected(
+        worker_error(ErrorCategory::resource_limit,
+                     "tool-call batch exceeds the configured queue limit", turn_id));
+  }
+  return {};
+}
+
+Status WorkerActor::publish_command(MachineCommand command) {
+  const auto payload_limit =
+      config_.limits.max_queued_event_bytes_per_turn - terminal_event_reserve;
+  if (auto* delta = std::get_if<PublishTextDelta>(&command)) {
+    // The rejection path below reads only the scalar correlation fields, so
+    // handing the text to the queue costs nothing on failure.
+    if (!events_->push(
+            TextDeltaEvent{.turn_id = delta->turn_id, .text = std::move(delta->text)},
+            payload_limit)) {
+      return std::unexpected(
+          worker_error(ErrorCategory::resource_limit,
+                       "turn events exceed the configured queue limit", delta->turn_id,
+                       delta->attempt));
+    }
+    return {};
+  }
+  if (auto* completion = std::get_if<CommitCompletion>(&command)) {
+    if (!events_->push(
+            CompletionEvent{
+                .turn_id = completion->turn_id,
+                .exchange = std::move(completion->exchange),
+                .finish_reason = completion->finish_reason,
+                .usage = completion->usage,
+                .attempt_count = completion->attempt_count,
+                .provider_request_id = std::move(completion->provider_request_id),
+            },
+            payload_limit)) {
+      return std::unexpected(
+          worker_error(ErrorCategory::resource_limit,
+                       "turn events exceed the configured queue limit",
+                       completion->turn_id, completion->attempt_count));
+    }
+    SCRY_LOG("Turn {} completed (attempts: {})", completion->turn_id.value,
+             completion->attempt_count);
+    return {};
+  }
+  if (auto* error = std::get_if<PublishError>(&command)) {
+    const auto turn_id = error->error.turn_id.value_or(TurnId{});
+    SCRY_LOG("Turn {} failed ({})", turn_id.value,
+             error_category_name(error->error.category));
+    publish_terminal_event(
+        ErrorEvent{.turn_id = turn_id, .error = std::move(error->error)});
+    return {};
+  }
+  if (const auto* cancelled = std::get_if<PublishCancelled>(&command)) {
+    SCRY_LOG("Turn {} cancelled", cancelled->turn_id.value);
+    publish_terminal_event(CancelledEvent{.turn_id = cancelled->turn_id});
+  }
+  return {};
+}
+
+void WorkerActor::publish_terminal_event(WorkerEvent event) {
+  event = bound_terminal_event(std::move(event));
+  const auto pushed = events_->push_terminal(
+      std::move(event), config_.limits.max_queued_event_bytes_per_turn);
+  static_cast<void>(pushed);
+  assert(pushed);
+}
+
+void WorkerActor::publish_unhandled_failure(const TurnId turn_id) noexcept {
+  try {
+    publish_terminal_event(ErrorEvent{
+        .turn_id = turn_id,
+        .error = worker_error(ErrorCategory::invalid_state,
+                              "worker could not process the accepted turn", turn_id),
+    });
+  } catch (...) {
+    // Allocation failure is outside Scry's semantic-failure contract. The
+    // thread boundary still never permits an exception to escape.
+    return;
+  }
 }
 
 } // namespace scry::detail

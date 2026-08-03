@@ -7,8 +7,6 @@ add_executable(
   runtime_coverage_tests.cpp
   runtime_edge_tests.cpp
   tool_loop_tests.cpp
-  worker_tool_edge_tests.cpp
-  worker_tool_loop_tests.cpp
   "${PROJECT_SOURCE_DIR}/tests/support/transport/loopback_server.cpp"
 )
 target_include_directories(

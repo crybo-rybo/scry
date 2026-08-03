@@ -112,7 +112,6 @@ struct ScheduleRetryWake {
 struct PublishToolCall {
   TurnId turn_id{};
   ToolCallBlock call{};
-  std::size_t remaining_exchange_bytes{std::numeric_limits<std::size_t>::max()};
 };
 
 // The driver forwards this terminal intent to the pump as one value. The pump
@@ -244,7 +243,6 @@ private:
   [[nodiscard]] ModelRequest& mutable_request();
   [[nodiscard]] bool usage_would_overflow(const Usage& usage) const noexcept;
   [[nodiscard]] bool reserve_exchange_bytes(std::size_t bytes) noexcept;
-  [[nodiscard]] std::size_t remaining_exchange_bytes() const noexcept;
   void accumulate_usage(const Usage& usage) noexcept;
   [[nodiscard]] Error correlate(Error error) const;
 

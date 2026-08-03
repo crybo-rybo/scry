@@ -109,7 +109,6 @@ public:
                                     std::move(events)};
           actor.run(stopped);
         }) {
-    tools_->impl_->bind_command_queue(commands_);
     SCRY_LOG("Harness created (model: {})", config_.model);
   }
 
@@ -158,13 +157,11 @@ public:
     auto messages = conversation->messages;
     messages.push_back(user_message(text));
     auto schemas = detail::snapshot_schemas(tools);
-    auto worker_tool_names = detail::snapshot_worker_tool_names(tools);
     auto route = std::make_shared<detail::TurnRoute>(
         turn_id, cancelled, commands_, conversation, std::move(text),
         detail::TurnRouteOptions{
             .tools = std::move(tools),
             .max_tool_result_bytes = config_.limits.max_tool_result_bytes,
-            .max_exchange_bytes = max_exchange_bytes,
             .max_conversation_bytes = config_.limits.max_conversation_bytes,
         });
     auto request =
@@ -176,7 +173,6 @@ public:
     commands_->push(detail::SendTurnCommand{
         .turn_id = turn_id,
         .request = std::move(request),
-        .worker_tool_names = std::move(worker_tool_names),
         .cancelled = std::move(cancelled),
         .max_exchange_bytes = max_exchange_bytes,
     });
