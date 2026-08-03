@@ -13,9 +13,9 @@ cheap-to-move value types or lightweight handles. Exclusively owned resources
 use `std::unique_ptr` or dedicated RAII wrappers. Shared lifetime is deliberate
 and enumerated: command/event queues and the per-turn cancellation flag cross
 the worker boundary; a Conversation handle and its live pump route share
-Conversation state; and a pump-side registration route is owned by the Harness
-and observed weakly by the Turn handle. ADR 0009 adds no shared handler:
-worker-mode callables move once into worker ownership. Raw pointers are
+Conversation state; and a pump-side turn route is owned by the Harness and
+observed weakly by the Turn handle. Tool handlers are never shared: each one
+stays in the pump-side snapshot of the turn that captured it. Raw pointers are
 non-owning observers only, never stored across a suspension point.
 
 **Rule of Zero.** Types define no special member functions unless they manage a resource directly; resource management is pushed into dedicated RAII wrappers (curl handles, threads, queues) so everything above them defaults.
@@ -24,7 +24,7 @@ non-owning observers only, never stored across a suspension point.
 
 **No singletons, no globals, no static init order problems.** Everything hangs off a `Harness` instance. Two harnesses in one process (e.g., different providers) must just work. The one unavoidable global — libcurl's `curl_global_init` — is wrapped in a reference-counted RAII guard (Meyers-style function-local static, initialized on first Harness).
 
-**Semantic failures are values; callback exceptions stay synchronous.** Internals may use whatever is idiomatic for the dependency at hand, but Scry-originated semantic and operational failures never throw across the public boundary. Immediate rejection reports through `std::expected`; failure after a turn is accepted reports through its `on_error` callback. Allocation and standard-library construction failure (`std::bad_alloc`) are **excluded from the contract** — we do not pretend to survive OOM, and smearing `noexcept`+expected over every allocating call would buy nothing. Two hard rules stand regardless: nothing ever throws *across* the worker/main thread boundary, and tool-handler exceptions are caught at the dispatch site and converted into tool-error results returned to the model. User callbacks should not throw; if one does, the exception propagates synchronously out of `update()` to the app with the Harness left in a valid state and the event counted as delivered (see §3).
+**Semantic failures are values; callback exceptions stay synchronous.** Internals may use whatever is idiomatic for the dependency at hand, but Scry-originated semantic and operational failures never throw across the public boundary. Immediate rejection reports through `std::expected`; failure after a turn is accepted reports through the `on_finished` callback supplied to `send()`, which receives the error in place of a completion. Allocation and standard-library construction failure (`std::bad_alloc`) are **excluded from the contract** — we do not pretend to survive OOM, and smearing `noexcept`+expected over every allocating call would buy nothing. Two hard rules stand regardless: nothing ever throws *across* the worker/main thread boundary, and tool-handler exceptions are caught at the dispatch site and converted into tool-error results returned to the model. User callbacks should not throw; if one does, the exception propagates synchronously out of `update()` to the app with the Harness left in a valid state and the event counted as delivered (see §3).
 
 **Concepts over inheritance in templates, interfaces only at seams.** Virtual dispatch appears in exactly two places (provider adapter, transport — §6, §7), both internal. The public API has no inheritable types; extension points are callables and config, not subclassing.
 
@@ -32,20 +32,19 @@ non-owning observers only, never stored across a suspension point.
 this where useful). Callable boundaries use Scry's small move-only
 `UniqueFunction` because supported macOS standard libraries do not yet
 consistently ship `std::move_only_function`; the boundary remains move-only
-rather than silently becoming copy-only on one platform. The implemented M3
-reflection layer remains an isolated, severable C++26 component (see §5) and
-is not part of the stable runtime surface.
+rather than silently becoming copy-only on one platform. The reflection layer
+remains an isolated, severable, experimental C++26 component (see §5) and is
+not part of the stable runtime surface.
 
 ## 2. The Concurrency Architecture: Actor, Not Locks
 
 The single most important structural decision. The worker thread is an
 **actor**: it exclusively owns all mutable networking and loop state, and (bar
 the per-turn cancellation atomic, §3) the only way anything crosses the thread
-boundary is **message passing** through two queues. The live commands cover
-send, cancel, tool result, worker-handler registration/execution, and shutdown;
-events cover deltas, tool requests, worker-result acknowledgements,
-completions, and errors. ADR 0009 added those M4 worker messages to the existing
-queues, not another channel.
+boundary is **message passing** through two queues. Commands cover send,
+cancel, tool result, and shutdown; events cover text deltas, tool-call
+requests, completions, and errors. Every message type lives on those two
+queues; nothing gets its own side channel.
 
 Practices that follow:
 
@@ -60,23 +59,18 @@ Practices that follow:
 
 ## 3. Turn Ownership, Lifecycle, and the Handle Pattern
 
-A `Turn` is a **handle**: a move-only PImpl value holding an immutable `TurnId`, a shared reference to the turn's cancellation flag, and a weak route to pump-side registration state — *not* the worker's turn state itself. The weak route makes callback registration and queued-turn cancellation safe when a Turn outlives its Harness: registration returns `invalid_state`, while `cancel()` remains a harmless atomic operation. Copying a handle to in-flight work invites double-cancel ambiguity, hence move-only. This is the `std::future`/`std::stop_source` school: small, thread-safe by narrowness, no behavior hidden in destructors beyond a documented detach.
+A `Turn` is a **handle**: a move-only PImpl value holding an immutable `TurnId`, a shared reference to the turn's cancellation flag, and a weak route to pump-side turn state — *not* the worker's turn state itself. It exposes exactly two operations, `id()` and `cancel()`; the callbacks belong to the turn and are supplied to `send()`, so there is nothing to register on the handle afterwards. The weak route makes queued-turn cancellation safe when a Turn outlives its Harness: `cancel()` remains a harmless atomic operation. Copying a handle to in-flight work invites double-cancel ambiguity, hence move-only. This is the `std::future`/`std::stop_source` school: small, thread-safe by narrowness, no behavior hidden in destructors beyond a documented detach.
 
 ### Ownership table (implemented invariant)
-
-These rows describe the live M4 system, including ADR 0009 worker-tool
-ownership.
 
 | State | Exclusive owner | Notes |
 |---|---|---|
 | Transport handles, curl state, wire buffers, SSE parser state | Worker | Never visible to any other thread |
 | Loop state machines (per turn) | Worker | Addressed by `TurnId` |
-| Callback registrations, buffered undelivered events per turn, Turn registration routes | Pump side (Harness main-thread state) | Written/read only inside API calls and `update()`; handles observe routes weakly |
+| Turn callbacks, buffered undelivered events per turn, Turn routes | Pump side (Harness main-thread state) | Callbacks move in at `send()`; read only inside `update()`; handles observe routes weakly |
 | Conversation contents | App thread via pump | A live route retains shared lifetime on the pump side; contents are mutated only at terminal-event delivery |
-| Tool definitions and execution modes | Pump side; immutable per accepted turn | Worker commands receive neutral schemas plus worker tool names/modes, never the live registry |
-| App-thread tool handlers | Pump side; immutable per accepted turn | Invoked only by `update()` |
-| Worker-thread tool handlers (M4) | Worker table after one FIFO move | Never shared back; registration precedes later send commands |
-| Worker-call route gate and acknowledged-result accounting (M4) | Pump side | Pauses later batch calls until the worker machine accepts the result |
+| Tool definitions | Pump side; immutable per accepted turn | Worker commands receive copied neutral schemas, never the live registry |
+| Tool handlers | Pump side; immutable per accepted turn | Invoked only by `update()`; never cross the thread boundary |
 | Command queue, event queue | Shared, internally synchronized | Sanctioned crossing points |
 | Per-turn cancel flag (`atomic<bool>`) | Shared | Third sanctioned crossing point |
 | `TurnId` | Immutable value | Freely copied everywhere |
@@ -127,7 +121,7 @@ stateDiagram-v2
     Cancelled --> [*]
 ```
 
-This is the implemented M2 lifecycle. `AwaitingTool` extends the original chat
+`AwaitingTool` extends the original chat
 states: one valid assistant tool-call batch enters it, every result is retained
 in provider order, and the final result starts the next model request
 automatically. Tool-round limits and malformed batches fail before handlers are
@@ -143,30 +137,34 @@ Crossing the cumulative bound therefore fails the turn without partially
 committing history; resource errors retain the provider request ID that was
 available at the failing response boundary.
 
-While the Harness remains alive, exactly one observable terminal event is
-delivered per accepted turn — never zero, never two. Harness destruction is the
+While the Harness remains alive, exactly one terminal outcome is delivered per
+accepted turn — never zero, never two. There is one terminal callback:
+`on_finished` receives a `Result<Completion>`, holding the completion on
+success or the `Error` on failure. Cancellation is not a separate event type;
+it arrives on that same channel as an `Error` carrying
+`ErrorCategory::cancelled`. Harness destruction is the
 explicit exception: shutdown aborts work and discards undelivered events, so it
 does not expose teardown callbacks. The remaining lifecycle contracts, each of
 which is a numbered requirement:
 
 - **Conversation commits are transactional.** History is mutated only by the pump at terminal-event delivery: `Completed` commits the full exchange (user message, all tool rounds, final answer) atomically; `Failed`/`Cancelled` commit nothing. This keeps Conversation retry/resubmission mechanically clean, but does not make external handler side effects reversible or idempotent; side-effecting schemas need app-owned operation keys and reconciliation (DESIGN.md §8).
-- **Detach semantics.** Dropping the handle detaches: the turn runs to termination, the Conversation still commits on completion, and callbacks already registered in the Harness continue to receive events. Unclaimed buffered events may be discarded once no Turn handle remains; dropping loses future control and registration, not callbacks already registered.
-- **Late attachment.** While the handle remains attached, callbacks registered after events began arriving receive buffered prior events in order — no races, no missed deltas within configured buffer limits.
+- **Detach semantics.** Dropping the handle detaches: the turn runs to termination, the Conversation still commits on success, and the callbacks supplied at `send()` continue to receive events. Unclaimed buffered events may be discarded once no Turn handle remains; dropping loses future control, not the callbacks the turn already owns.
+- **Callbacks belong to the turn, not the handle.** They are moved into the pump at `send()`, before the turn is accepted, so no event can be produced before its handler exists. There is no late-registration race to reason about and no registration API after acceptance. Per-turn buffering remains bounded by `ResourceLimits::max_queued_event_bytes_per_turn`, which bounds the inter-thread event queue.
 - **Reentrancy.** Callbacks may call `send`, `cancel`, and registration APIs.
-  Reentrant `update()` performs no work and reports
-  `UpdateStats::reentrant_update_rejected`; it never recurses into callback
-  delivery. Accepted turns snapshot immutable registry records, so later or
-  reentrant changes affect subsequent turns rather than in-flight ones.
+  Reentrant `update()` performs no work and never recurses into callback
+  delivery; it returns immediately, reporting the rejection through
+  `UpdateStats::budget_exhausted`. Accepted turns snapshot immutable registry
+  records, so later or reentrant changes affect subsequent turns rather than
+  in-flight ones.
 - **Non-preemption.** The `update()` budget is a soft deadline checked *between* callbacks; an individual callback or tool handler is never preempted and may overrun the budget. The budget bounds Scry's scheduling, not user code.
 - **Callback exceptions** propagate out of `update()` with the harness valid and the event counted delivered (§1).
 - **Callback arguments are borrowed** for the invocation only; apps copy values or text views they retain.
 - **Shutdown.** `~Harness()` cancels all turns, aborts Scry-owned transport
   waits within their configured bound, joins the worker, and discards
-  undelivered events. No callback ever fires after destruction begins. An M4
-  worker-mode application handler is non-preemptive and excluded from that
-  Scry-owned bound: opting in carries an application MUST that it return within
-  the application's teardown requirement. The destructor cannot safely force
-  arbitrary C++ user code to stop and joins after it returns.
+  undelivered events. No callback ever fires after destruction begins. Because
+  every tool handler runs on the app thread inside `update()`, no application
+  code is ever in flight on the worker at teardown, and the shutdown bound
+  covers the whole join.
 
 ### Conversation persistence
 
@@ -177,7 +175,12 @@ strictly validates and restores it. Text, tool-call, and tool-result blocks
 round-trip without provider wire shapes or Glaze types. Busy state, callbacks,
 turn IDs, registry snapshots, and every uncommitted round are intentionally
 excluded. The app owns encryption, files/databases, retention, and migration
-between future document versions.
+between document versions.
+
+**The document format is unstable before 1.0.** The version field exists, but
+0.x releases may change the shape without a migration path: a document written
+by one 0.x release is not guaranteed to load in another. Treat persistence as
+session continuity within a pinned Scry version, not an archival format.
 
 ## 4. The Agentic Loop: Sans-I/O State Machine
 
@@ -194,7 +197,7 @@ injected by the driver — the machine never sleeps, it requests "wake me at
 T." Attempt and elapsed caps reset for each model request, while completion
 reports aggregate attempts and usage across the whole tool loop.
 
-## 5. Tool Registry: Type Erasure Below, Reflection Above in M3
+## 5. Tool Registry: Type Erasure Below, Optional Reflection Above
 
 Two layers, one table (as settled in DESIGN.md §8):
 
@@ -202,30 +205,27 @@ Two layers, one table (as settled in DESIGN.md §8):
 
 The Registry is owned by its Harness. `send()` snapshots its immutable shared
 records for the accepted turn, so registration during `update()` never mutates
-an in-flight turn and the live registry never crosses the worker boundary.
-Copied neutral schemas, execution modes, and worker tool names cross while every
-handler remains exclusively owned. The public registry cannot be moved out of
-its Harness, and explicit schemas are parsed and canonicalized at registration.
-Mutation is additive-only: duplicate names are rejected, and
-replacement/removal remain absent until a real hot-reload contract defines
-their snapshot semantics.
+an in-flight turn and the live registry never crosses the worker boundary. Only
+copied neutral schemas cross; every handler stays exclusively pump-owned. The
+public registry cannot be moved out of its Harness, and explicit schemas are
+parsed and canonicalized at registration. Mutation is additive-only: duplicate
+names are rejected, and replacement/removal remain absent until a real
+hot-reload contract defines their snapshot semantics.
 
-**M4 execution ownership (implemented).** Execution policy is a
-registration option, not provider metadata. An app-mode record keeps its
-handler in the pump-side snapshot. A worker-mode handler moves once through a
-FIFO registration command into a worker-owned table; accepted turns snapshot
-the definition and mode and identify worker tools by name. A provider batch is
-still published atomically. The pump walks it in order: app calls run directly,
-while a worker call posts one execute command and closes a per-route gate. The
-worker invokes its owned handler, feeds the canonical result to the same
-`TurnMachine`, and publishes an acceptance acknowledgement. Only then does the
-pump update mirrored budget accounting, run the observer on the update thread,
-and admit the next call. A fatal failure emits the existing terminal event
-without an acknowledgement, permanently suppressing the batch suffix. Worker
-mode is serialized latency isolation, not parallel execution.
+**Execution ownership.** There is one execution policy: every handler runs on
+the app thread inside `update()`. A provider batch is published atomically; the
+pump then walks it in provider order, invoking each handler directly, updating
+the exchange budget, running the tool observer, and feeding the canonical result
+to the turn's machine before admitting the next call. A fatal framework failure
+emits the terminal event and permanently suppresses the batch suffix. Nothing
+about a tool call crosses the worker boundary except the resulting neutral
+message content, which is why the shutdown bound in §3 needs no carve-out for
+application code. A slow handler therefore costs frame time; the intended answer
+for that case is an asynchronous/deferred tool-result API (evolution register,
+§11), not a second thread quietly executing app callbacks.
 
-**Upper layer — consteval code generation (M3, implemented).**
-The accepted P2996 layer is a compile-time *code generator* targeting the lower
+**Upper layer — consteval code generation (optional, experimental).**
+The P2996 layer is a compile-time *code generator* targeting the lower
 layer. Given a plain aggregate, it builds
 `scry::reflection::input_schema_v<Args>` in canonical fixed storage and
 instantiates a typed deserializer/invoker erased into an ordinary
@@ -276,19 +276,21 @@ Additional practices:
   reflection controls omission; `std::optional` controls nullability. The
   decoder constructs normal C++ defaults and validates the canonical parsed
   object before invocation.
-- **Descriptions have explicit precedence.** P3394 Scry annotations are the
-  primary inline source when supported; `tool_traits<Args>` is the portable
-  path and per-member override.
+- **Descriptions have one source.** The P3394 `description` annotation is the
+  only way to attach a tool or parameter description; there is no portable
+  trait-based fallback or override to keep in agreement with it.
 - **Canonical parsed input is the seam.** Unknown/missing/type/range checks run
   on the canonical unique-key object. Detecting duplicate lexical JSON keys
-  would require a different parser boundary and is not smuggled into M3.
+  would require a different parser boundary and is deliberately out of scope.
 
 ## 6. Provider Adapters: Strategy at a Narrow Seam
 
 One of the two sanctioned virtual interfaces. The pattern is classic
 **Strategy**: a small internal interface — translate neutral request → wire
 request, parse wire stream events → neutral events. Anthropic and ADR 0008's
-M4 OpenAI-compatible Chat Completions subset are implemented on the same seam.
+OpenAI-compatible Chat Completions subset are implemented on the same seam.
+Adapters receive a `Config` that `Harness::create` has already validated; they
+translate, they do not re-check configuration.
 
 Discipline that keeps it clean:
 
@@ -324,7 +326,7 @@ The second sanctioned interface, existing for one reason: **dependency injection
 
 - Internal fallible paths return `std::expected<T, Error>`; `Error` is one struct with a category enum (`invalid_config`, `invalid_state`, `busy`, `authentication`, `rate_limit`, `network`, `protocol`, `resource_limit`, `tool`, `max_tool_rounds`, `cancelled`) plus message, sanitized provider detail, retryability, and correlation fields. One error type end-to-end — no per-layer error hierarchies to translate between.
 - The retry classifier (which categories are retryable) is a pure function owned by the loop state machine, tested as a table.
-- At the boundary, failures before work is accepted are returned immediately by `std::expected`. After acceptance, errors become the `on_error` event. `errno`-style status polling is deliberately absent; there is exactly one asynchronous failure channel.
+- At the boundary, failures before work is accepted are returned immediately by `std::expected`. After acceptance, the same `Error` arrives through `on_finished` in place of the completion — including cancellation, as category `cancelled`. `errno`-style status polling is deliberately absent; there is exactly one asynchronous outcome channel.
 
 ## 9. JSON and Dependency Policy
 
@@ -335,88 +337,55 @@ The second sanctioned interface, existing for one reason: **dependency injection
   Scry-owned JSON-view bridge whose implementation alone includes Glaze. A
   downstream core or reflection consumer never discovers or links an exported
   Glaze target.
+- **One codec, one canonical form.** A single internal JSON codec serves every
+  seam — provider wire encoding and decoding, the tool boundary, Conversation
+  persistence, and the reflection bridge — and it emits exactly one canonical
+  form, with object keys sorted lexicographically. There is no second encoder
+  and no per-seam canonicalization to keep in agreement, so "canonical JSON"
+  means one thing throughout the codebase.
 - Dependency bar is high: curl, Glaze, and test frameworks. Each new dependency needs a written justification in this doc. Header hygiene enforced (IWYU in CI) so the PImpl firewall stays real.
 
-**M5 showcase boundary (ADR 0010).** Showcase code depends inward on the
-installed/public `scry::scry` surface; the library never depends back on a
-showcase. The ImGui panel, its controller seam, and the NPC world live outside
-namespace `scry` and are not installed or exported. The host owns the Harness,
-Conversation, update cadence, ImGui context/backends/window/loop, and world
-lifetime. The panel retains only the active public Turn plus example-local
-callback state. Weak callback capture and a submission generation prevent
-late events from touching a destroyed panel or replacing newer state;
-destruction requests cancellation without waiting.
-
-The deterministic NPC's explicit-schema handlers execute on the app thread and
-close over host-owned in-memory state. This is the sanctioned seam for state a
-main loop already owns; it does not create an engine abstraction or a second
-agent loop. The example's mutations are ephemeral. Durable adaptations require
-application-owned idempotency or reconciliation because failed/cancelled turns
-do not roll back external state.
-
-**Dear ImGui justification.** Dear ImGui is required to compile the real widget
-and execute a headless frame rather than validating a look-alike facade. It is
-MIT licensed and pinned to `v1.92.8` commit
-`8936b58fe26e8c3da834b8f60b06511d537b4c63`. It is a build-only dependency of
-the opt-in `SCRY_BUILD_IMGUI_SHOWCASE` path, which defaults OFF. Only core ImGui
-sources are permitted: Scry does not select or acquire a window-system or
-renderer backend. A normal build never fetches ImGui, and no ImGui header,
+**Showcase boundary ([ADR 0010](docs/adr/0010-m5-showcase-contract.md)).**
+Dependency direction is one-way: showcase code depends inward on the public
+`scry::scry` surface, and the library never depends back. The ImGui panel, its
+controller seam, and the NPC world live outside namespace `scry` and are
+neither installed nor exported; the host owns the Harness, Conversation, update
+cadence, ImGui context/backends/window/loop, and world lifetime. Their
+explicit-schema handlers close over host-owned in-memory state — the sanctioned
+seam for state a main loop already owns, not an engine abstraction or a second
+agent loop. Dear ImGui is a build-only, default-OFF, pinned MIT dependency that
+must compile the real widget rather than a look-alike facade; no ImGui header,
 type, target, source, option, or transitive requirement may appear in the
-public/install/exported package surface. The core runtime dependency set
-therefore remains libcurl plus internal Glaze.
+public, installed, or exported package surface, so the core runtime dependency
+set remains libcurl plus internal Glaze. SHOW-001–004 state the binding form.
 
 ## 10. Testing & Tooling Practices
 
-- **The test pyramid mirrors the architecture:** sans-I/O machine tests (majority, no network, no threads) → adapter golden-file tests → transport tests against a local mock HTTP/SSE server → a thin end-to-end smoke suite against a real local model (Ollama/llama.cpp in CI, nightly not per-commit).
-- Threaded code tested under **TSan and ASan in CI** from M0 — sanitizers are cheap the day the code is written and impossible to retrofit onto a flaky foundation. UBSan on the reflection layer especially.
-- M4 has deterministic OpenAI request/response/stream goldens, arbitrary-split
-  and short `scry_openai_fuzz` coverage, config-only and concurrent
-  cross-dialect integration, a full fragmented tool round, and a Curl
-  path/header/SSE case. Worker execution covers both thread IDs, FIFO
-  snapshots, mixed and all-worker ordered batches, acknowledgements and
-  cumulative budgets, failures, cancellation, detached execution, cooperating
-  teardown, and observer affinity under TSan.
-- The scheduled/manual nightly pipeline is implemented with CodeQL, long
-  SSE/Anthropic/OpenAI fuzz runs, and the showcase gate; the bounded local
-  OpenAI-compatible chat/tool smoke runs on demand via `workflow_dispatch`,
-  and mutation testing is retired (ADR 0012). Ollama v0.32.1 is
-  checksum-pinned as an
-  executable; the pulled `qwen3:1.7b-q4_K_M` model tag is not digest-pinned,
-  so routine upstream repushes cannot break the smoke. This documents the
-  live pipeline; no completed hosted nightly execution is claimed yet.
-- M5's live acceptance gate covers deterministic NPC domain/registration cases,
-  fake-controller panel send/stream/complete/error/cancel/lifetime cases, a
-  warnings-as-errors compile/link against the pinned real Dear ImGui sources,
-  one headless ImGui frame, and a clean-package absence audit. The shared
-  showcase script passes locally and in hosted CI.
-- CI matrix: GCC 16 with `-std=c++26 -freflection` is the supported M3
-  component toolchain. The live `scripts/ci-reflection.sh` gate performs a
-  fresh P2996-probed build, the reflection header audit, the 27-test schema,
-  codec, bridge, registration, and compile-fail suite, a clean component
-  install audit, a downstream
-  `find_package(scry CONFIG REQUIRED COMPONENTS reflection)` consumer, and a
-  core-only C++23 consumer compiled with non-reflection GCC 14 against the
-  same reflection-enabled installation — the compiled proof that the core
-  surface stays C++23 and reflection never leaks unrequested (TOOL-003). A
-  separate GCC 16 ASan+UBSan build reruns all 27 reflection-labelled tests.
-  Stable GCC/Clang continue to build, test, install, and
-  consume the
-  reflection-OFF C++23 core on Linux and macOS; its clean-install audit rejects
-  every reflection header, detail directory, library, or export. clang-p2996
-  is deferred to manual, non-gating compatibility work and never produces
-  installable or release artifacts; no manual Clang result is claimed for M3.
-  clang-format + clang-tidy configs are checked in at M0.
+- **The test pyramid mirrors the architecture** — that is the point of the seams in §2, §4, §6, and §7, and ENGINEERING.md §2 lays out the resulting layers.
+- Threaded code is tested under **TSan and ASan in CI** — sanitizers are cheap the day the code is written and impossible to retrofit onto a flaky foundation. UBSan on the reflection layer especially.
+- Each provider dialect carries deterministic request/response/stream goldens,
+  arbitrary-split stream coverage, a checked fuzz corpus, and a public Curl
+  path/header/SSE case; cross-dialect integration proves two configured
+  Harnesses cannot contaminate each other's decode state.
+- **The package boundary is tested, not asserted.** The core matrix installs to
+  a clean prefix, audits it for any reflection header, detail directory,
+  library, or export, and builds a downstream `find_package(scry)` consumer.
+  The reflection gate mirrors that for its component and adds the compiled
+  proof of TOOL-003: a core-only C++23 consumer built with a non-reflection
+  compiler against the same reflection-enabled installation. ENGINEERING.md §6
+  owns the ring shape and which leg runs where.
 - **Warnings are errors** (`-Wall -Wextra -Wconversion`), from the first commit.
 - **Diagnostic logging build:** `-DSCRY_ENABLE_LOGGING=ON` (preset `dev-logging`)
   compiles the internal `SCRY_LOG` macro into a small thread-safe file logger
-  (`src/core/log.*`); every other build compiles the macro to nothing. It
-  appends timestamped lifecycle lines — turn start/completion/failure,
-  model-request attempts and retries, tool routing and `<name> Tool Called`
-  dispatch, ignored provider stream events — to `scry.log` (override with the
-  `SCRY_LOG_FILE` environment variable). Lines carry only turn ids, tool
-  names, attempt counts, and error categories; prompt/tool content and
-  credentials never reach the log (ERR-004), and this remains an internal
-  diagnostic, not the public logging surface PROV-008 notes is absent.
+  (`src/core/log.*`); every other build compiles the macro to nothing. Even in
+  a logging build, output is off until the `SCRY_LOG_FILE` environment variable
+  names a destination — Scry never writes a log file the host did not ask for.
+  When enabled it appends timestamped lifecycle lines: turn
+  start/completion/failure, model-request attempts and retries, tool dispatch,
+  and ignored provider stream events. Lines carry only turn ids, tool names,
+  attempt counts, and error categories; prompt/tool content and credentials
+  never reach the log (ERR-004), and this remains an internal diagnostic, not
+  the public logging surface PROV-008 notes is absent.
 
 ## 11. Evolution Register: Deliberate Simplifications and Their End States
 
@@ -429,18 +398,19 @@ Every "boring first" choice is recorded here with the condition that triggers ev
 | Blocking `send`-and-wait built on pump-until-complete | Coroutine-scheduler apps appear as users | `co_await`-able turn awaitable layered on the event queue; core remains callback/pump-based |
 | Provider factory keyed on internal enum, no plugin API | A third-party provider that can't be upstreamed | Public adapter concept + registration hook; only then |
 | OpenAI-compatible common Chat Completions subset only | A supported deployment requires Azure, Responses API, structured output, or another extension | Ratify a separate adapter/contract; never grow compatibility by wire-format guessing |
-| Closed M3 reflected-value matrix; P3394 descriptions plus `tool_traits` override | A concrete tool needs an unsupported type/constraint or metadata source | Add one schema/decode/encode/diagnostic contract at a time; keep the trait as portable fallback and deliberate override |
+| Closed reflected-value matrix; P3394 annotations are the only description source | A concrete tool needs an unsupported type/constraint, or a description that cannot be an annotation | Add one schema/decode/encode/diagnostic contract at a time; ratify a second description source only with an explicit precedence rule |
 | No connection pooling beyond curl defaults | Measured connect/TLS overhead in streaming-heavy use | curl share/multi connection reuse, invisible above the transport seam |
 | Scry-owned `UniqueFunction` at callable boundaries | All supported macOS/Linux standard libraries ship a conforming `std::move_only_function` and a pre-1.0 API change is acceptable | Replace the small owned erasure with the standard facility after ABI and allocation benchmarks |
 | Additive-only ToolRegistry with immutable accepted-turn snapshots | A concrete hot-reload or dynamic-plugin use case needs mutation | Explicit replace/remove operations with documented snapshot and handler-lifetime semantics |
 | Linux + macOS only | Concrete Windows user demand | Windows reflection-OFF via clang; MSVC leg only if/when P2996 ships there |
 | Reflection-ON CI leg on Linux only (PORT-005) | A production-grade P2996 toolchain becomes practically distributable on macOS | Gating reflection legs on both platforms |
-| Serialized turns: M2 queued turns wait while the active turn awaits a main-thread tool | Serialized scheduling measurably limits a real app | Tool-await releases the slot under curl-multi multiplexing (same trigger as row 2) |
-| One serialized worker-mode handler with no injected stop token | A real handler needs cooperative cancellation or parallel execution | Ratify a stop-aware or async handler boundary plus explicit pool, ordering, resource, and teardown policy |
-| M5 ImGui panel has no platform/renderer backend and the NPC world is ephemeral | A maintained standalone demo or durable game integration becomes a real deliverable | Ratify its platform matrix and lifecycle separately; keep any backend, persistence, rollback, or idempotency machinery outside the Scry package |
+| Serialized turns: queued turns wait while the active turn awaits a tool result | Serialized scheduling measurably limits a real app | Tool-await releases the slot under curl-multi multiplexing (same trigger as row 2) |
+| All tool handlers run synchronously on the app thread inside `update()` | A real tool is slow enough that running it on the app thread costs the host its frame budget | An asynchronous/deferred tool-result API: the handler accepts the call, returns immediately, and completes the result later through the pump — with its own cancellation, ordering, and budget rules ratified up front |
+| Showcase ImGui panel has no platform/renderer backend and the NPC world is ephemeral | A maintained standalone demo or durable game integration becomes a real deliverable | Ratify its platform matrix and lifecycle separately; keep any backend, persistence, rollback, or idempotency machinery outside the Scry package |
 | Streaming-only provider seam: adapters always request `stream: true` and decode through the stream path; the parallel non-streaming response decoders were removed as production-dead | A supported deployment genuinely cannot serve SSE, or a consumer needs non-streaming completions | Reintroduce a `parse_response` seam together with a runtime mode that actually exercises it, plus its golden and fuzz coverage — never as untested parallel code |
 | Compile-time diagnostic file logger (`SCRY_ENABLE_LOGGING`): fixed line format, one file sink chosen by environment variable, no runtime configuration or public API | A consumer needs runtime-toggleable, structured, or callback-driven diagnostics | Ratify a public logging/observer surface (the one PROV-008 records as absent) and route the same call sites through it |
-| Release-posture verification (ADR 0012): behavioral gates only — matrix, tests, sanitizers, tidy, package audits; no coverage/CRAP metric gating, no mutation testing, fuzz and showcase nightly | Unattended agent-driven development resumes at scale, or coverage erosion on the pure components is observed in review | Restore targeted pieces per ADR 0012 — starting with a single non-gating coverage report line, never the full retired apparatus by default |
+| Release-posture verification (ADR 0012): behavioral gates only — matrix, tests, sanitizers, tidy, package audits; no coverage/CRAP metric gating, no mutation testing, fuzz and showcase on the scheduled ring | Unattended agent-driven development resumes at scale, or coverage erosion on the pure components is observed in review | Restore targeted pieces per ADR 0012 — starting with a single non-gating coverage report line, never the full retired apparatus by default |
+| v0.0.1 runtime simplification (ADR 0012): worker-thread tool execution and its registration options removed, turn callbacks supplied once at `send()` with a single terminal outcome, one JSON codec with one canonical form | A slow tool, a coroutine host, or a second serialization shape presents a concrete need the simplified surface cannot express | Reintroduce capability by contract, not by restoring the old machinery: an async/deferred tool-result API for slow tools (row above), a `co_await`-able turn for coroutine hosts, and a ratified second document contract before any second canonical form |
 
 ## 12. Pattern Summary
 
@@ -449,9 +419,9 @@ Every "boring first" choice is recorded here with the condition that triggers ev
 | Public types | PImpl handles, plain contract values, Rule of Zero |
 | Concurrency | Actor model; message passing over variant commands/events; jthread + stop_token |
 | Delivery | Single-threaded-by-construction pump with time budget |
-| In-flight turns | Move-only PImpl handle + shared cancel flag + weak pump registration route |
+| In-flight turns | Move-only PImpl handle (`id()`/`cancel()`) + shared cancel flag + weak pump route; callbacks owned by the turn from `send()` |
 | Agentic loop | Sans-I/O explicit state machine; time as injected events |
-| Tool registry | Mode-aware ownership over one type-erased registration substrate; optional M3 consteval codegen and strict Scry-owned JSON bridge above it |
+| Tool registry | One type-erased registration substrate, app-thread dispatch; optional consteval codegen and strict Scry-owned JSON bridge above it |
 | Providers | Config-selected Strategy at a narrow seam; stateless adapters with per-turn dialect state and golden-file tests |
 | Transport | RAII curl, C-callback trampolines, injectable seam; pure incremental SSE parser |
 | Errors | One categorized value type; expected before acceptance, one async error event after |

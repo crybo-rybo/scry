@@ -2,8 +2,18 @@
 
 - Status: Accepted (verification mechanics amended by
   [ADR 0011](0011-absolute-quality-gates.md) and
-  [ADR 0012](0012-release-infrastructure-simplification.md))
+  [ADR 0012](0012-release-infrastructure-simplification.md); description
+  precedence amended pre-release, see below)
 - Date: 2026-07-18
+
+**Amendment note (v0.0.1).** The portable `tool_traits<Args>::descriptions`
+fallback and per-member override described below were removed before release.
+The P3394 `[[=scry::reflection::description{"..."}]]` annotation is now the
+only source of tool and parameter descriptions, so the precedence rule this ADR
+ratified no longer applies; TOOL-007 states the current contract. Nothing else
+in the schema, type-mapping, marshalling, diagnostic, or package boundary
+changed. The body below is retained unchanged as the record of what was decided
+and why.
 
 ## Context
 

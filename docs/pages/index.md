@@ -9,7 +9,7 @@ The stable surface has five core concepts:
 - `scry::Config` selects the provider and defines operational bounds.
 - `scry::Conversation` owns transactionally committed history.
 - `scry::ToolRegistry` holds explicit-schema tools snapshotted for each accepted turn.
-- `scry::Turn` controls and observes one asynchronous exchange.
+- `scry::Turn` is a move-only handle to one asynchronous exchange: `id()` and `cancel()`.
 - `scry::Harness` owns the configured runtime, worker, tools, and callback pump.
 
 ## Minimal main-loop integration
@@ -24,12 +24,15 @@ auto harness = scry::Harness::create(scry::Config{
 });
 
 auto conversation = scry::Conversation::create();
-auto turn = harness->send(*conversation, "Give me one useful observation.");
 
-turn->on_text_delta([](std::string_view text) { render_streamed_text(text); });
-turn->on_completion([](const scry::Completion& completion) {
-  render_final_answer(completion.text);
-});
+auto turn = harness->send(*conversation, "Give me one useful observation.",
+    scry::TurnCallbacks{
+        .on_text_delta = [](std::string_view text) { render_streamed_text(text); },
+        .on_finished = [](scry::Result<scry::Completion> outcome) {
+          if (outcome) { render_final_answer(outcome->text); }
+          else { render_error(outcome.error()); }
+        },
+    });
 
 while (application_is_running()) {
   harness->update();
@@ -37,7 +40,8 @@ while (application_is_running()) {
 }
 ```
 
-Every asynchronous callback, and every default-mode tool handler, runs inside
+Callbacks are supplied when the turn is created, so no event can arrive before its handler
+exists. Every asynchronous callback, and every tool handler, runs inside
 `scry::Harness::update()` on the thread that calls it. `scry::Harness::send()` never waits for
 network I/O. The explicitly named `scry::Harness::send_and_wait()` convenience is the sole
 blocking exception.
@@ -49,15 +53,17 @@ The stable C++23 substrate accepts a `scry::ToolDefinition` and a move-only
 Registration is additive, duplicate names are rejected, and accepted turns retain immutable
 snapshots.
 
-The optional `scry::reflection` package component uses C++26 P2996 reflection to generate schemas
-and strictly marshal typed arguments and results. It lowers into the same registry rather than
-creating a second dispatch path. Core-only consumers remain ordinary C++23 programs and receive
-no reflection headers or compiler flags.
+The optional, experimental `scry::reflection` package component uses C++26 P2996 reflection to
+generate schemas and strictly marshal typed arguments and results. It lowers into the same
+registry rather than creating a second dispatch path. Core-only consumers remain ordinary C++23
+programs and receive no reflection headers or compiler flags.
 
 ## Lifetime and error model
 
-Failures before a turn is accepted are returned as `scry::Result`; failures afterward arrive
-through the turn's error callback. Successful completion commits the full conversation exchange
+Failures before a turn is accepted are returned as `scry::Result`; afterwards, every outcome
+arrives through the single terminal callback `scry::TurnCallbacks::on_finished`, which receives
+the completion on success or the `scry::Error` on failure — including cancellation, as
+`scry::ErrorCategory::cancelled`. Successful completion commits the full conversation exchange
 atomically. Error and cancellation commit nothing.
 
 Dropping `scry::Turn` detaches without cancellation or blocking. `scry::Turn::cancel()` is an

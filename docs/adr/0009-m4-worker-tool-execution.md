@@ -1,7 +1,22 @@
 # ADR 0009: M4 Worker-Thread Tool Execution
 
-- Status: Accepted
+- Status: Superseded (v0.0.1 simplification pass;
+  [ADR 0012](0012-release-infrastructure-simplification.md))
 - Date: 2026-07-18
+
+**Superseded note.** Worker-mode tool execution was removed before the v0.0.1
+release, together with `ToolExecution`, `ToolRegistrationOptions`, and the
+three-argument `ToolRegistry::add` overload; requirement THR-021 is retired and
+THR-011 now states the single policy — every handler runs on the app thread
+inside `update()`. The mode bought latency isolation only, never parallelism:
+turns serialize on one worker regardless, so an opted-in handler moved the
+frame-budget cost rather than removing it, at the price of a second ownership
+regime, an acknowledgement gate, and a teardown carve-out excluding application
+code from Scry's shutdown bound. A future asynchronous/deferred tool-result API
+— the handler accepts a call, returns immediately, and completes its result on
+a later `update()` — is the intended replacement for genuinely slow tools; it
+keeps application callbacks on the application's own thread. The body below is
+retained unchanged as the record of what was decided and why.
 
 ## Context
 
