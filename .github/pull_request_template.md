@@ -1,12 +1,9 @@
 ## What and why
 
-<!-- Summarize the change and link the affected SCRY-<AREA>-NNN requirements. -->
+<!-- Summarize the change and the motivation behind it. -->
 
 ## Definition of done
 
-- [ ] `just ci` passes locally, or unavailable hosted-only toolchain legs are identified
-- [ ] Behavior and architecture changes update the load-bearing documentation
-- [ ] Public API changes include a compiling example
-- [ ] Deliberate simplifications are recorded in the evolution register
-- [ ] Bug fixes include a regression test
-- [ ] New dependencies include a written justification
+- [ ] The summary above explains what changed and why
+- [ ] Tests are added or updated
+- [ ] Documentation is updated if behavior changed

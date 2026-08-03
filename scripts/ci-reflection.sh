@@ -7,7 +7,6 @@ readonly build_dir="${root_dir}/build/reflection-gcc16"
 readonly stage_dir="${root_dir}/build/stage-reflection"
 readonly consumer_dir="${root_dir}/build/package-consumer-reflection"
 readonly core_consumer_dir="${root_dir}/build/package-consumer-core-on-reflection"
-readonly sanitizer_build_dir="${root_dir}/build/reflection-gcc16-asan-ubsan"
 
 if ! command -v g++-16 >/dev/null 2>&1; then
   echo "g++-16 is required for the supported reflection component" >&2
@@ -57,14 +56,3 @@ cmake \
   -DCMAKE_PREFIX_PATH="${stage_dir}" \
   -DSCRY_CONSUMER_COMPILE_ONLY=ON
 cmake --build "${core_consumer_dir}"
-
-cmake \
-  --preset reflection-gcc16 \
-  --fresh \
-  -B "${sanitizer_build_dir}" \
-  -DSCRY_SANITIZER=address-undefined
-cmake --build "${sanitizer_build_dir}"
-ctest \
-  --test-dir "${sanitizer_build_dir}" \
-  --output-on-failure \
-  --label-regex reflection

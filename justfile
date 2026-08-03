@@ -21,6 +21,9 @@ ci-fast:
 ci:
     ./scripts/preflight.sh
 
+docs:
+    ./scripts/ci-docs.sh
+
 tidy:
     cmake --preset ci -B build/tidy -DSCRY_ENABLE_CLANG_TIDY=ON -DSCRY_ENABLE_FORMAT_CHECK=OFF
     cmake --build build/tidy

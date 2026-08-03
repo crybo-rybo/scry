@@ -72,11 +72,6 @@ readonly timeout_bin="$(timeout_command)"
 
 if [[ ! -d "${seed_corpus}" ]]; then
   echo "Missing seed corpus: ${seed_corpus}" >&2
-  if [[ "${fuzz_kind}" == "openai" ]]; then
-    echo "Expected M4 wiring: tests/fuzz/corpus/openai plus" >&2
-    echo "tests/provider/openai_fuzz.cpp and a SCRY_BUILD_FUZZERS-guarded" >&2
-    echo "scry_openai_fuzz target in tests/provider/CMakeLists.txt." >&2
-  fi
   exit 1
 fi
 
@@ -86,13 +81,7 @@ cd "${root_dir}"
 cmake --preset fuzz -B "${build_dir}"
 if ! cmake --build "${build_dir}" --target help | grep -Eq \
   "(^|[[:space:]])${target}([:[:space:]]|$)"; then
-  echo "Configured build does not define ${target}." >&2
-  echo "Expected root wiring: SCRY_BUILD_FUZZERS=ON and the provider/protocol" >&2
-  echo "test subdirectory included from the root test build." >&2
-  if [[ "${fuzz_kind}" == "openai" ]]; then
-    echo "Expected provider wiring: tests/provider/openai_fuzz.cpp and a" >&2
-    echo "SCRY_BUILD_FUZZERS-guarded target in tests/provider/CMakeLists.txt." >&2
-  fi
+  echo "Missing fuzz target ${target}; configure with SCRY_BUILD_FUZZERS=ON." >&2
   exit 1
 fi
 cmake --build "${build_dir}" --target "${target}"
