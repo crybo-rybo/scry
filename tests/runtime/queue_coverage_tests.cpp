@@ -93,28 +93,6 @@ TEST_CASE("event queue rejects a coalesced delta beyond remaining capacity") {
       queue.push(scry::detail::TextDeltaEvent{.turn_id = turn_id, .text = "xy"}, 4));
 }
 
-TEST_CASE("event queue discard preserves bytes already owned by the pump") {
-  scry::detail::EventQueue queue;
-  const auto target = scry::TurnId{.value = 207};
-  const auto other = scry::TurnId{.value = 208};
-  REQUIRE(
-      queue.push(scry::detail::TextDeltaEvent{.turn_id = target, .text = "held"}, 32));
-  auto held = queue.try_pop();
-  REQUIRE(held);
-  REQUIRE(queue.push_terminal(
-      scry::detail::ErrorEvent{.turn_id = target, .error = {.message = "queued"}}, 32));
-  REQUIRE(
-      queue.push(scry::detail::TextDeltaEvent{.turn_id = other, .text = "other"}, 32));
-  queue.discard(scry::TurnId{.value = 999});
-  CHECK(queue.size() == 2);
-  queue.discard(target);
-  CHECK(queue.size() == 1);
-  REQUIRE(queue.push(
-      scry::detail::TextDeltaEvent{.turn_id = target, .text = std::string(28, 'x')},
-      32));
-  queue.release(*held);
-}
-
 TEST_CASE("event queue release retains and then clears remaining accounting") {
   scry::detail::EventQueue queue;
   const auto turn_id = scry::TurnId{.value = 209};
@@ -155,6 +133,7 @@ TEST_CASE("blocking queue exposes timeout and size behavior") {
 TEST_CASE("event queue wait reports timeout and ready data") {
   scry::detail::EventQueue queue;
   CHECK_FALSE(queue.wait_for_data(0ms));
-  queue.push_terminal(scry::detail::CancelledEvent{.turn_id = {.value = 211}});
+  REQUIRE(
+      queue.push_terminal(scry::detail::CancelledEvent{.turn_id = {.value = 211}}, 16));
   CHECK(queue.wait_for_data(0ms));
 }

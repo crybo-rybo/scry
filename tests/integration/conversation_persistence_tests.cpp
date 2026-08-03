@@ -25,9 +25,7 @@ namespace {
 }
 
 [[nodiscard]] std::unique_ptr<scry::detail::ProviderAdapter> provider() {
-  auto adapter = scry::detail::make_provider_adapter(scry::ProviderDialect::anthropic);
-  REQUIRE(adapter);
-  return std::move(*adapter);
+  return scry::detail::make_provider_adapter(scry::ProviderDialect::anthropic);
 }
 
 [[nodiscard]] scry::Result<scry::Harness>

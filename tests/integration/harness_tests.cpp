@@ -50,9 +50,7 @@ data: {"type":"message_stop"}
 }
 
 [[nodiscard]] std::unique_ptr<scry::detail::ProviderAdapter> provider() {
-  auto result = scry::detail::make_provider_adapter(scry::ProviderDialect::anthropic);
-  REQUIRE(result);
-  return std::move(*result);
+  return scry::detail::make_provider_adapter(scry::ProviderDialect::anthropic);
 }
 
 [[nodiscard]] scry::test::ScriptedExchange successful_exchange() {

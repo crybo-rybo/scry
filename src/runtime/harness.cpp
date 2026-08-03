@@ -45,7 +45,6 @@ make_request(const Config& config, const detail::ConversationState& conversation
              std::vector<detail::Message> messages,
              std::vector<detail::ToolSchema> schemas) {
   return detail::ModelRequest{
-      .model = config.model,
       .system_prompt = conversation.config.system_prompt,
       .messages = std::move(messages),
       .tools = std::move(schemas),
@@ -220,16 +219,13 @@ Result<Harness> Harness::create(Config config) {
     return std::unexpected(std::move(status.error()));
   }
   auto provider = detail::make_provider_adapter(config.dialect);
-  if (!provider) {
-    return std::unexpected(std::move(provider.error()));
-  }
   auto transport = std::make_unique<detail::CurlTransport>();
   if (auto status = transport->status(); !status) {
     return std::unexpected(std::move(status.error()));
   }
   auto tools = make_tool_registry();
   return detail::translate_worker_start_failure<Harness>(
-      [config = std::move(config), provider = std::move(*provider),
+      [config = std::move(config), provider = std::move(provider),
        transport = std::move(transport), tools = std::move(tools)]() mutable {
         return Harness{std::make_unique<Impl>(std::move(config), std::move(provider),
                                               std::move(transport), std::move(tools))};

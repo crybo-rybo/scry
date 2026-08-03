@@ -56,12 +56,12 @@ void append(std::vector<ProviderEvent>& destination,
 } // namespace
 
 TEST_CASE("Anthropic stream decoder preserves deltas, usage, and completion") {
-  auto adapter = make_provider_adapter(ProviderDialect::anthropic);
-  REQUIRE(adapter.has_value());
+  const auto adapter = make_provider_adapter(ProviderDialect::anthropic);
+  REQUIRE(adapter);
   ProviderDecodeState state{};
   state.response.provider_request_id = "req_stream_header";
 
-  const auto events = decode_stream(**adapter, state, stream_fixture());
+  const auto events = decode_stream(*adapter, state, stream_fixture());
   REQUIRE(events.size() == 4);
   REQUIRE(std::holds_alternative<ProviderIgnoredEvent>(events[0]));
   CHECK(std::get<ProviderIgnoredEvent>(events[0]).name == "ping");
@@ -80,86 +80,85 @@ TEST_CASE("Anthropic stream decoder preserves deltas, usage, and completion") {
 }
 
 TEST_CASE("Anthropic stream decoder observes optional unknown events") {
-  auto adapter = make_provider_adapter(ProviderDialect::anthropic);
-  REQUIRE(adapter.has_value());
+  const auto adapter = make_provider_adapter(ProviderDialect::anthropic);
+  REQUIRE(adapter);
   ProviderDecodeState state{};
 
-  auto event = (*adapter)->parse_stream_event("future_optional", "not-json", state);
+  auto event = adapter->parse_stream_event("future_optional", "not-json", state);
   REQUIRE(event.has_value());
   REQUIRE(event->size() == 1);
   CHECK(std::get<ProviderIgnoredEvent>(event->front()).name == "future_optional");
 
-  event = (*adapter)->parse_stream_event(
-      "message", R"({"type":"future_optional","value":1})", state);
+  event = adapter->parse_stream_event("message",
+                                      R"({"type":"future_optional","value":1})", state);
   REQUIRE(event.has_value());
   REQUIRE(event->size() == 1);
   CHECK(std::get<ProviderIgnoredEvent>(event->front()).name == "future_optional");
 }
 
 TEST_CASE("Anthropic stream rejects decode state owned by another dialect") {
-  auto adapter = make_provider_adapter(ProviderDialect::anthropic);
-  REQUIRE(adapter.has_value());
+  const auto adapter = make_provider_adapter(ProviderDialect::anthropic);
+  REQUIRE(adapter);
   ProviderDecodeState state{};
   state.dialect.emplace<OpenAiProviderDecodeState>();
 
-  const auto event =
-      (*adapter)->parse_stream_event("future_optional", "not-json", state);
+  const auto event = adapter->parse_stream_event("future_optional", "not-json", state);
   REQUIRE_FALSE(event);
   CHECK(event.error().category == ErrorCategory::protocol);
 }
 
 TEST_CASE("Anthropic stream decoder rejects malformed required events") {
-  auto adapter = make_provider_adapter(ProviderDialect::anthropic);
-  REQUIRE(adapter.has_value());
+  const auto adapter = make_provider_adapter(ProviderDialect::anthropic);
+  REQUIRE(adapter);
   ProviderDecodeState state{};
 
-  auto event = (*adapter)->parse_stream_event("content_block_delta", "{broken", state);
+  auto event = adapter->parse_stream_event("content_block_delta", "{broken", state);
   REQUIRE_FALSE(event.has_value());
   CHECK(event.error().category == ErrorCategory::protocol);
 
-  event = (*adapter)->parse_stream_event(
+  event = adapter->parse_stream_event(
       "message_start",
       R"({"type":"message_start","message":{"type":"message","content":[],"stop_reason":null}})",
       state);
   REQUIRE(event.has_value());
-  event = (*adapter)->parse_stream_event(
+  event = adapter->parse_stream_event(
       "content_block_start",
       R"({"type":"content_block_start","index":0,"content_block":{"type":"future_required"}})",
       state);
   REQUIRE_FALSE(event.has_value());
   CHECK(event.error().category == ErrorCategory::protocol);
 
-  event = (*adapter)->parse_stream_event("ping", R"({"type":"message_stop"})", state);
+  event = adapter->parse_stream_event("ping", R"({"type":"message_stop"})", state);
   REQUIRE_FALSE(event.has_value());
   CHECK(event.error().category == ErrorCategory::protocol);
 }
 
 TEST_CASE("Anthropic stream decoder preserves fragmented tool input shape") {
-  auto adapter = make_provider_adapter(ProviderDialect::anthropic);
-  REQUIRE(adapter.has_value());
+  const auto adapter = make_provider_adapter(ProviderDialect::anthropic);
+  REQUIRE(adapter);
   ProviderDecodeState state{};
 
-  const auto message_start = (*adapter)->parse_stream_event(
+  const auto message_start = adapter->parse_stream_event(
       "message_start",
       R"({"type":"message_start","message":{"type":"message","content":[],"stop_reason":null}})",
       state);
   REQUIRE(message_start.has_value());
-  const auto start = (*adapter)->parse_stream_event(
+  const auto start = adapter->parse_stream_event(
       "content_block_start",
       R"({"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"tool_1","name":"lookup","input":{}}})",
       state);
   REQUIRE(start.has_value());
-  const auto first = (*adapter)->parse_stream_event(
+  const auto first = adapter->parse_stream_event(
       "content_block_delta",
       R"({"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"answer\":"}})",
       state);
   REQUIRE(first.has_value());
-  const auto second = (*adapter)->parse_stream_event(
+  const auto second = adapter->parse_stream_event(
       "content_block_delta",
       R"({"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"42}"}})",
       state);
   REQUIRE(second.has_value());
-  const auto stop = (*adapter)->parse_stream_event(
+  const auto stop = adapter->parse_stream_event(
       "content_block_stop", R"({"type":"content_block_stop","index":0})", state);
   REQUIRE(stop.has_value());
 
@@ -170,11 +169,11 @@ TEST_CASE("Anthropic stream decoder preserves fragmented tool input shape") {
 }
 
 TEST_CASE("Anthropic stream decoder maps provider errors and terminal misuse") {
-  auto adapter = make_provider_adapter(ProviderDialect::anthropic);
-  REQUIRE(adapter.has_value());
+  const auto adapter = make_provider_adapter(ProviderDialect::anthropic);
+  REQUIRE(adapter);
   ProviderDecodeState state{};
 
-  auto event = (*adapter)->parse_stream_event(
+  auto event = adapter->parse_stream_event(
       "error",
       R"({"type":"error","error":{"type":"overloaded_error","message":"private"},"request_id":"req_error"})",
       state);
@@ -185,7 +184,7 @@ TEST_CASE("Anthropic stream decoder maps provider errors and terminal misuse") {
   CHECK(event.error().provider_detail == "anthropic:overloaded_error");
   CHECK(event.error().message.find("private") == std::string::npos);
 
-  event = (*adapter)->parse_stream_event(
+  event = adapter->parse_stream_event(
       "error",
       R"({"type":"error","error":{"type":"unsafe-secret-value","message":"private"}})",
       state);
@@ -194,41 +193,41 @@ TEST_CASE("Anthropic stream decoder maps provider errors and terminal misuse") {
   CHECK(event.error().provider_detail == "anthropic:unknown_error");
   CHECK(event.error().provider_detail.find("secret") == std::string::npos);
 
-  event = (*adapter)->parse_stream_event("message_stop", R"({"type":"message_stop"})",
-                                         state);
+  event =
+      adapter->parse_stream_event("message_stop", R"({"type":"message_stop"})", state);
   REQUIRE_FALSE(event.has_value());
 
-  event = (*adapter)->parse_stream_event(
+  event = adapter->parse_stream_event(
       "message_start",
       R"({"type":"message_start","message":{"type":"message","content":[],"stop_reason":null}})",
       state);
   REQUIRE(event.has_value());
-  event = (*adapter)->parse_stream_event(
+  event = adapter->parse_stream_event(
       "message_delta", R"({"type":"message_delta","delta":{"stop_reason":"end_turn"}})",
       state);
   REQUIRE(event.has_value());
-  event = (*adapter)->parse_stream_event("message_stop", R"({"type":"message_stop"})",
-                                         state);
+  event =
+      adapter->parse_stream_event("message_stop", R"({"type":"message_stop"})", state);
   REQUIRE(event.has_value());
-  event = (*adapter)->parse_stream_event("message_stop", R"({"type":"message_stop"})",
-                                         state);
+  event =
+      adapter->parse_stream_event("message_stop", R"({"type":"message_stop"})", state);
   REQUIRE_FALSE(event.has_value());
   CHECK(event.error().category == ErrorCategory::protocol);
 }
 
 TEST_CASE("Anthropic stream decoder rejects content after the finish event") {
-  auto adapter = make_provider_adapter(ProviderDialect::anthropic);
-  REQUIRE(adapter.has_value());
+  const auto adapter = make_provider_adapter(ProviderDialect::anthropic);
+  REQUIRE(adapter);
   ProviderDecodeState state{};
 
-  REQUIRE((*adapter)->parse_stream_event(
+  REQUIRE(adapter->parse_stream_event(
       "message_start",
       R"({"type":"message_start","message":{"type":"message","content":[],"stop_reason":null}})",
       state));
-  REQUIRE((*adapter)->parse_stream_event(
+  REQUIRE(adapter->parse_stream_event(
       "message_delta", R"({"type":"message_delta","delta":{"stop_reason":"end_turn"}})",
       state));
-  const auto late_content = (*adapter)->parse_stream_event(
+  const auto late_content = adapter->parse_stream_event(
       "content_block_start",
       R"({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}})",
       state);
@@ -238,42 +237,42 @@ TEST_CASE("Anthropic stream decoder rejects content after the finish event") {
 }
 
 TEST_CASE("Anthropic stream decoder enforces active block lifecycle boundaries") {
-  auto adapter = make_provider_adapter(ProviderDialect::anthropic);
-  REQUIRE(adapter.has_value());
+  const auto adapter = make_provider_adapter(ProviderDialect::anthropic);
+  REQUIRE(adapter);
   ProviderDecodeState state{};
 
-  REQUIRE((*adapter)->parse_stream_event(
+  REQUIRE(adapter->parse_stream_event(
       "message_start",
       R"({"type":"message_start","message":{"type":"message","content":[],"stop_reason":null}})",
       state));
-  REQUIRE((*adapter)->parse_stream_event(
+  REQUIRE(adapter->parse_stream_event(
       "content_block_start",
       R"({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}})",
       state));
 
-  auto event = (*adapter)->parse_stream_event(
+  auto event = adapter->parse_stream_event(
       "message_delta", R"({"type":"message_delta","delta":{"stop_reason":"end_turn"}})",
       state);
   REQUIRE_FALSE(event);
   CHECK(event.error().category == ErrorCategory::protocol);
-  event = (*adapter)->parse_stream_event("message_stop", R"({"type":"message_stop"})",
-                                         state);
+  event =
+      adapter->parse_stream_event("message_stop", R"({"type":"message_stop"})", state);
   REQUIRE_FALSE(event);
   CHECK(event.error().category == ErrorCategory::protocol);
 
-  REQUIRE((*adapter)->parse_stream_event(
+  REQUIRE(adapter->parse_stream_event(
       "content_block_stop", R"({"type":"content_block_stop","index":0})", state));
-  event = (*adapter)->parse_stream_event(
+  event = adapter->parse_stream_event(
       "content_block_delta",
       R"({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"late"}})",
       state);
   REQUIRE_FALSE(event);
   CHECK(event.error().category == ErrorCategory::protocol);
 
-  REQUIRE((*adapter)->parse_stream_event(
+  REQUIRE(adapter->parse_stream_event(
       "message_delta", R"({"type":"message_delta","delta":{"stop_reason":"end_turn"}})",
       state));
-  event = (*adapter)->parse_stream_event(
+  event = adapter->parse_stream_event(
       "message_delta", R"({"type":"message_delta","delta":{"stop_reason":"end_turn"}})",
       state);
   REQUIRE_FALSE(event);
@@ -281,18 +280,18 @@ TEST_CASE("Anthropic stream decoder enforces active block lifecycle boundaries")
 }
 
 TEST_CASE("Anthropic stream rejects events after the completion claims the response") {
-  auto adapter = make_provider_adapter(ProviderDialect::anthropic);
-  REQUIRE(adapter.has_value());
+  const auto adapter = make_provider_adapter(ProviderDialect::anthropic);
+  REQUIRE(adapter);
   ProviderDecodeState state{};
 
-  const auto events = decode_stream(**adapter, state, stream_fixture());
+  const auto events = decode_stream(*adapter, state, stream_fixture());
   REQUIRE_FALSE(events.empty());
   REQUIRE(std::holds_alternative<ProviderCompleted>(events.back()));
   CHECK(state.completed);
 
   // The terminal event owns the accumulated response, so every later event must
   // be refused before anything reads the decode state's response again.
-  const auto late = (*adapter)->parse_stream_event(
+  const auto late = adapter->parse_stream_event(
       "content_block_delta",
       R"({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"late"}})",
       state);

@@ -6,7 +6,6 @@
 
 #include <array>
 #include <catch2/catch_test_macros.hpp>
-#include <cstdint>
 #include <limits>
 #include <optional>
 #include <scry/config.hpp>
@@ -38,7 +37,6 @@ using StreamResult = Result<std::vector<ProviderEvent>>;
 }
 [[nodiscard]] ModelRequest request() {
   return {
-      .model = "request-model",
       .messages = {Message{
           .role = Role::user,
           .content = {TextBlock{.text = "hello"}},
@@ -103,9 +101,6 @@ TEST_CASE("wire JSON errors and provider error types remain bounded and safe") {
   CHECK(sanitize_anthropic_error_type("unsafe-value") == "unknown_error");
   REQUIRE(make_provider_adapter(ProviderDialect::anthropic));
   REQUIRE(make_provider_adapter(ProviderDialect::openai_compatible));
-  const auto unknown =
-      make_provider_adapter(static_cast<ProviderDialect>(std::uint8_t{255}));
-  REQUIRE_FALSE(unknown);
 }
 TEST_CASE("Anthropic content decoding covers text, tool, and rejection shapes") {
   auto text =
@@ -170,9 +165,8 @@ TEST_CASE("Anthropic request validation rejects every invalid boundary") {
   invalid_config.api_key.clear();
   require_request_error(adapter, invalid_config, valid_request);
   invalid_config.model.clear();
+  require_request_error(adapter, invalid_config, valid_request);
   auto invalid_request = valid_request;
-  invalid_request.model.clear();
-  require_request_error(adapter, invalid_config, invalid_request);
   for (const auto temperature : {std::numeric_limits<double>::quiet_NaN(), -0.1, 1.1}) {
     invalid_request = valid_request;
     invalid_request.sampling.temperature = temperature;
@@ -195,7 +189,6 @@ TEST_CASE("Anthropic request encoding preserves optional and tool branches") {
   value_config.base_url = "https://api.anthropic.test/v1/messages///";
   value_config.tls_verify_peer = false;
   auto value_request = request();
-  value_request.model.clear();
   value_request.system_prompt = "system";
   value_request.sampling.top_p = 0.8;
   value_request.tools.push_back({.name = "lookup",

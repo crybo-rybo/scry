@@ -38,14 +38,13 @@ using namespace scry::detail;
   return Config{
       .base_url = std::move(base_url),
       .api_key = "sanitized-key",
-      .model = "fallback-model",
+      .model = "chat-model",
       .dialect = ProviderDialect::openai_compatible,
   };
 }
 
 [[nodiscard]] ModelRequest request() {
   return ModelRequest{
-      .model = "chat-model",
       .system_prompt = "Be concise",
       .messages =
           {
@@ -215,10 +214,9 @@ TEST_CASE("OpenAI request validation covers every documented numeric boundary") 
 
   invalid_config = valid_config;
   invalid_config.model.clear();
-  auto invalid_request = valid_request;
-  invalid_request.model.clear();
-  require_invalid_request(invalid_config, invalid_request);
+  require_invalid_request(invalid_config, valid_request);
 
+  auto invalid_request = valid_request;
   for (const auto temperature : {std::numeric_limits<double>::quiet_NaN(), -0.1, 2.1}) {
     invalid_request = valid_request;
     invalid_request.sampling.temperature = temperature;

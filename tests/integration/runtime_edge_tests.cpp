@@ -64,9 +64,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
 }
 
 [[nodiscard]] std::unique_ptr<scry::detail::ProviderAdapter> provider() {
-  auto result = scry::detail::make_provider_adapter(scry::ProviderDialect::anthropic);
-  REQUIRE(result);
-  return std::move(*result);
+  return scry::detail::make_provider_adapter(scry::ProviderDialect::anthropic);
 }
 
 [[nodiscard]] scry::test::ScriptedExchange success() {

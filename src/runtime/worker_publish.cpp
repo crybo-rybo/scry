@@ -159,20 +159,6 @@ Status WorkerActor::publish_command(MachineCommand command) {
     }
     return {};
   }
-  if (const auto* tool = std::get_if<PublishToolCall>(&command)) {
-    if (!events_->push(
-            ToolCallEvent{
-                .turn_id = tool->turn_id,
-                .call = tool->call,
-                .remaining_exchange_bytes = tool->remaining_exchange_bytes,
-            },
-            payload_limit)) {
-      return std::unexpected(publication_error(
-          ErrorCategory::resource_limit,
-          "turn events exceed the configured queue limit", tool->turn_id));
-    }
-    return {};
-  }
   if (auto* completion = std::get_if<CommitCompletion>(&command)) {
     if (!events_->push(
             CompletionEvent{

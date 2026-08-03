@@ -335,12 +335,8 @@ poll_timeout_milliseconds(const std::chrono::milliseconds value) noexcept {
   return configure_tls(easy, request);
 }
 
-[[nodiscard]] Status validate_execution(const std::optional<Error>& startup_error,
-                                        const std::stop_token& shutdown,
+[[nodiscard]] Status validate_execution(const std::stop_token& shutdown,
                                         const std::atomic<bool>& cancelled) {
-  if (startup_error) {
-    return std::unexpected(*startup_error);
-  }
   if (shutdown.stop_requested()) {
     return std::unexpected(
         curl_error::cancelled(curl_error::AbortCause::harness_shutdown));
@@ -459,10 +455,6 @@ CurlTransport::CurlTransport() : impl_(std::make_unique<Impl>()) {}
 
 CurlTransport::~CurlTransport() = default;
 
-CurlTransport::CurlTransport(CurlTransport&&) noexcept = default;
-
-CurlTransport& CurlTransport::operator=(CurlTransport&&) noexcept = default;
-
 Status CurlTransport::status() const {
   const auto& startup_error = impl_->startup_error();
   if (startup_error) {
@@ -475,8 +467,7 @@ Result<TransportResult> CurlTransport::perform(const TransportRequest& request,
                                                const std::stop_token shutdown,
                                                const std::atomic<bool>& cancelled,
                                                BodyChunkSink& body_sink) {
-  if (auto status = validate_execution(impl_->startup_error(), shutdown, cancelled);
-      !status) {
+  if (auto status = validate_execution(shutdown, cancelled); !status) {
     return std::unexpected(std::move(status.error()));
   }
   if (auto status = transport_policy::validate_request(request, body_sink); !status) {

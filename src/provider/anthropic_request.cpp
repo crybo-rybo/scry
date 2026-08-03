@@ -154,7 +154,7 @@ encode_tools(const std::vector<ToolSchema>& tools) {
   if (config.api_key.empty()) {
     return std::unexpected(invalid_request("Anthropic api_key is required"));
   }
-  if (request.model.empty() && config.model.empty()) {
+  if (config.model.empty()) {
     return std::unexpected(invalid_request("Anthropic model is required"));
   }
   return validate_sampling(request.sampling);
@@ -183,7 +183,7 @@ encode_tools(const std::vector<ToolSchema>& tools) {
   }
 
   WireValue root{};
-  root["model"] = request.model.empty() ? config.model : request.model;
+  root["model"] = config.model;
   root["max_tokens"] = request.sampling.max_tokens.value_or(0);
   root["temperature"] = request.sampling.temperature;
   root["stream"] = true;

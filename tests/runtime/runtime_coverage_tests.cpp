@@ -164,10 +164,6 @@ TEST_CASE("message and event payload accounting visits every content block") {
   };
   constexpr std::size_t message_bytes = 3 + 2 + 4 + 5 + 3 + 4 + sizeof(bool);
   CHECK(scry::detail::message_payload_bytes(message) == message_bytes);
-  const scry::detail::ModelResponse response{
-      .content = message.content,
-      .provider_request_id = "req",
-  };
   const scry::detail::WorkerEvent event{scry::detail::CompletionEvent{
       .turn_id = {.value = 201},
       .exchange = {message},
@@ -176,7 +172,6 @@ TEST_CASE("message and event payload accounting visits every content block") {
   }};
   CHECK(scry::detail::event_payload_bytes(event) ==
         message_bytes + std::string_view{"req"}.size());
-  CHECK(scry::detail::response_text(response) == "abc");
 }
 
 TEST_CASE("event metadata accounts for every event alternative") {
@@ -293,7 +288,7 @@ TEST_CASE("pump releases events without routes and events after terminal state")
   CHECK_FALSE(text_called);
   CHECK(route->terminal());
   CHECK(pump.live_route_count() == 0);
-  CHECK(pump.route_count() == 1);
+  CHECK(pump.find_route(route->id()));
   CHECK_FALSE(pump.find_route(scry::TurnId{.value = 999}));
 }
 
@@ -306,7 +301,7 @@ TEST_CASE("pump discards detached unclaimed events and cleans terminal routes") 
   REQUIRE(fixture.events->push(
       scry::detail::TextDeltaEvent{.turn_id = live->id(), .text = "unclaimed"}, 1024));
   CHECK(pump.update({}).events_remaining == 0);
-  CHECK(pump.route_count() == 1);
+  CHECK(pump.find_route(live->id()));
 
   const auto terminal = fixture.route(217);
   pump.add_route(terminal);
@@ -330,11 +325,11 @@ TEST_CASE("detached callback routes remain until pending delivery completes") {
   const auto deferred = pump.update({.max_callbacks = 0});
   CHECK(deferred.events_remaining == 1);
   CHECK(deferred.budget_exhausted);
-  CHECK(pump.route_count() == 1);
+  CHECK(pump.find_route(route->id()));
 
   CHECK(pump.update({}).callbacks_delivered == 1);
   CHECK(completed);
-  CHECK(pump.route_count() == 0);
+  CHECK_FALSE(pump.find_route(route->id()));
 }
 
 TEST_CASE("late callback registration receives buffered text and error events") {
@@ -344,10 +339,12 @@ TEST_CASE("late callback registration receives buffered text and error events") 
   pump.add_route(route);
   REQUIRE(fixture.events->push(
       scry::detail::TextDeltaEvent{.turn_id = route->id(), .text = "buffered"}, 1024));
-  fixture.events->push_terminal(scry::detail::ErrorEvent{
-      .turn_id = route->id(),
-      .error = {.category = scry::ErrorCategory::protocol, .message = "failed"},
-  });
+  REQUIRE(fixture.events->push_terminal(
+      scry::detail::ErrorEvent{
+          .turn_id = route->id(),
+          .error = {.category = scry::ErrorCategory::protocol, .message = "failed"},
+      },
+      1024));
   CHECK(pump.update({}).callbacks_delivered == 0);
 
   std::string text;
@@ -377,7 +374,7 @@ TEST_CASE("pump shutdown releases pending and queued event ownership") {
   pump.shutdown();
 
   CHECK_FALSE(fixture.conversation->busy);
-  CHECK(pump.route_count() == 0);
+  CHECK_FALSE(pump.find_route(route->id()));
   CHECK(fixture.events->size() == 0);
   REQUIRE(fixture.events->push(
       scry::detail::TextDeltaEvent{

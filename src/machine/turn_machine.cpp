@@ -384,10 +384,6 @@ TransitionResult TurnMachine::finish_error(Error error) {
   return applied(PublishError{.error = std::move(error)});
 }
 
-TransitionResult TurnMachine::fail(const ErrorCategory category, std::string message) {
-  return finish_error(correlate(response_error(category, std::move(message))));
-}
-
 TransitionResult TurnMachine::fail_response(const ErrorCategory category,
                                             std::string message,
                                             std::string provider_request_id) {

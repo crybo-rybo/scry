@@ -233,7 +233,7 @@ encode_tools(const std::vector<ToolSchema>& tools) {
     return std::unexpected(
         invalid_request("OpenAI api_key must contain no line breaks"));
   }
-  if (request.model.empty() && config.model.empty()) {
+  if (config.model.empty()) {
     return std::unexpected(invalid_request("OpenAI model is required"));
   }
   return validate_sampling(request.sampling);
@@ -264,7 +264,7 @@ encode_tools(const std::vector<ToolSchema>& tools) {
     return std::unexpected(std::move(tools.error()));
   }
   WireValue root{};
-  root["model"] = request.model.empty() ? config.model : request.model;
+  root["model"] = config.model;
   root["messages"].data = std::move(*messages);
   root["temperature"] = request.sampling.temperature;
   root["max_tokens"] = request.sampling.max_tokens.value_or(0);

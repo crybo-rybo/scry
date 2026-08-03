@@ -44,10 +44,7 @@ data: [DONE]
 }
 
 [[nodiscard]] std::unique_ptr<scry::detail::ProviderAdapter> provider() {
-  auto created =
-      scry::detail::make_provider_adapter(scry::ProviderDialect::openai_compatible);
-  REQUIRE(created);
-  return std::move(*created);
+  return scry::detail::make_provider_adapter(scry::ProviderDialect::openai_compatible);
 }
 
 [[nodiscard]] scry::test::ScriptedExchange

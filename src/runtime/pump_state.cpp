@@ -66,8 +66,6 @@ std::shared_ptr<TurnRoute> PumpState::find_route(const TurnId turn_id) const {
   return found == routes_.end() ? nullptr : found->second;
 }
 
-std::size_t PumpState::route_count() const noexcept { return routes_.size(); }
-
 std::size_t PumpState::live_route_count() const noexcept {
   return static_cast<std::size_t>(std::ranges::count_if(
       routes_, [](const auto& entry) { return !entry.second->terminal(); }));

@@ -83,9 +83,7 @@ public:
   [[nodiscard]] bool push(WorkerEvent event, std::size_t max_bytes_per_turn);
   [[nodiscard]] bool push_batch(std::vector<WorkerEvent> events,
                                 std::size_t max_bytes_per_turn);
-  void push_terminal(WorkerEvent event);
   [[nodiscard]] bool push_terminal(WorkerEvent event, std::size_t max_bytes_per_turn);
-  void discard(TurnId turn_id);
   void release(const WorkerEvent& event);
   void release(TurnId turn_id, std::size_t payload_bytes);
 

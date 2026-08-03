@@ -232,7 +232,6 @@ private:
                                                   std::vector<ToolCallBlock> calls);
   [[nodiscard]] TransitionResult complete_turn(ModelResponse response);
   [[nodiscard]] TransitionResult finish_error(Error error);
-  [[nodiscard]] TransitionResult fail(ErrorCategory category, std::string message);
   [[nodiscard]] TransitionResult fail_response(ErrorCategory category,
                                                std::string message,
                                                std::string provider_request_id);

@@ -89,7 +89,6 @@ void append_arguments(AnthropicAdapter& adapter, ProviderDecodeState& state,
 
 [[nodiscard]] ModelRequest multi_tool_request() {
   return {
-      .model = "claude-test",
       .messages =
           {
               Message{

@@ -144,10 +144,12 @@ TEST_CASE("callback exceptions consume the event and leave the pump valid") {
   pump.add_route(route);
   REQUIRE(route->register_error(
       [](const scry::Error&) { throw std::runtime_error{"app callback"}; }));
-  fixture.events->push_terminal(scry::detail::ErrorEvent{
-      .turn_id = route->id(),
-      .error = {.category = scry::ErrorCategory::network},
-  });
+  REQUIRE(fixture.events->push_terminal(
+      scry::detail::ErrorEvent{
+          .turn_id = route->id(),
+          .error = {.category = scry::ErrorCategory::network},
+      },
+      1024));
 
   CHECK_THROWS_AS(pump.update({}), std::runtime_error);
   CHECK(pump.update({}).callbacks_delivered == 0);

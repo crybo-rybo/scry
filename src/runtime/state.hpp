@@ -37,6 +37,4 @@ struct ToolRegistryState {
 [[nodiscard]] std::vector<std::string>
 snapshot_worker_tool_names(const ToolSnapshot& snapshot);
 
-[[nodiscard]] std::string response_text(const ModelResponse& response);
-
 } // namespace scry::detail

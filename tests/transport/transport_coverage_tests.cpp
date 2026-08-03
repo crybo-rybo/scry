@@ -245,7 +245,7 @@ TEST_CASE("HTTP error policy covers server-range boundaries") {
   CHECK(http_error(600, "").category == ErrorCategory::protocol);
 }
 
-TEST_CASE("curl global and transport leases remain usable after moves") {
+TEST_CASE("curl global leases remain usable after moves") {
   scry::detail::CurlGlobalLease shared;
   REQUIRE_FALSE(shared.error());
   scry::detail::CurlGlobalLease moved{std::move(shared)};
@@ -254,10 +254,7 @@ TEST_CASE("curl global and transport leases remain usable after moves") {
   assigned = std::move(moved);
   REQUIRE_FALSE(assigned.error());
 
-  CurlTransport original;
-  CurlTransport moved_transport{std::move(original)};
-  CurlTransport transport;
-  transport = std::move(moved_transport);
+  const CurlTransport transport;
   REQUIRE(transport.status());
 }
 

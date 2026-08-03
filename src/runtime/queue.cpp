@@ -1,7 +1,6 @@
 #include "runtime/queue.hpp"
 
 #include <algorithm>
-#include <limits>
 #include <type_traits>
 
 namespace scry::detail {
@@ -78,11 +77,6 @@ bool EventQueue::push_batch(std::vector<WorkerEvent> events,
   return true;
 }
 
-void EventQueue::push_terminal(WorkerEvent event) {
-  static_cast<void>(
-      push_terminal(std::move(event), std::numeric_limits<std::size_t>::max()));
-}
-
 bool EventQueue::push_terminal(WorkerEvent event,
                                const std::size_t max_bytes_per_turn) {
   {
@@ -99,26 +93,6 @@ bool EventQueue::push_terminal(WorkerEvent event,
   }
   ready_.notify_one();
   return true;
-}
-
-void EventQueue::discard(const TurnId turn_id) {
-  const std::scoped_lock lock{mutex_};
-  std::size_t removed_bytes = 0;
-  std::erase_if(values_, [turn_id, &removed_bytes](const auto& event) {
-    if (event_turn_id(event) != turn_id) {
-      return false;
-    }
-    removed_bytes += event_payload_bytes(event);
-    return true;
-  });
-  const auto found = bytes_by_turn_.find(turn_id);
-  if (found == bytes_by_turn_.end()) {
-    return;
-  }
-  found->second -= std::min(found->second, removed_bytes);
-  if (found->second == 0) {
-    bytes_by_turn_.erase(found);
-  }
 }
 
 void EventQueue::release(const WorkerEvent& event) {

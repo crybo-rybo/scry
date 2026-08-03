@@ -90,7 +90,6 @@ public:
 
   void add_route(std::shared_ptr<TurnRoute> route);
   [[nodiscard]] std::shared_ptr<TurnRoute> find_route(TurnId turn_id) const;
-  [[nodiscard]] std::size_t route_count() const noexcept;
   [[nodiscard]] std::size_t live_route_count() const noexcept;
   [[nodiscard]] bool updating() const noexcept;
 

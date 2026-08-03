@@ -85,9 +85,7 @@ data: {"type":"message_stop"}
 
 [[nodiscard]] std::unique_ptr<scry::detail::ProviderAdapter>
 provider(const scry::ProviderDialect dialect) {
-  auto result = scry::detail::make_provider_adapter(dialect);
-  REQUIRE(result);
-  return std::move(*result);
+  return scry::detail::make_provider_adapter(dialect);
 }
 
 [[nodiscard]] scry::test::ScriptedExchange

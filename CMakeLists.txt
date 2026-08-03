@@ -92,7 +92,6 @@ add_library(
     src/runtime/pump.cpp
     src/runtime/pump_state.cpp
     src/runtime/queue.cpp
-    src/runtime/state.cpp
     src/runtime/tool_registry.cpp
     src/runtime/tool_dispatch.cpp
     src/runtime/turn.cpp
