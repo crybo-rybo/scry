@@ -10,26 +10,13 @@
 namespace scry::detail {
 namespace {
 
-[[nodiscard]] Error registration_error(std::string message) {
+/// Terminal error reported to on_finished when a turn ends through cancellation.
+[[nodiscard]] Error cancellation_error(const TurnId turn_id) {
   return Error{
-      .category = ErrorCategory::invalid_state,
-      .message = std::move(message),
+      .category = ErrorCategory::cancelled,
+      .message = "turn cancelled",
+      .turn_id = turn_id,
   };
-}
-
-template <typename Callback>
-[[nodiscard]] Status register_once(Callback& destination, Callback callback,
-                                   const char* name) {
-  if (!callback) {
-    return std::unexpected(registration_error(std::string{"cannot register an empty "} +
-                                              name + " callback"));
-  }
-  if (destination) {
-    return std::unexpected(
-        registration_error(std::string{name} + " callback is already registered"));
-  }
-  destination = std::move(callback);
-  return {};
 }
 
 } // namespace
@@ -43,7 +30,8 @@ TurnRoute::TurnRoute(const TurnId turn_id, std::shared_ptr<std::atomic<bool>> ca
       user_message_(std::move(user_message)), tools_(std::move(options.tools)),
       max_tool_result_bytes_(options.max_tool_result_bytes),
       remaining_exchange_bytes_(options.max_exchange_bytes),
-      max_conversation_bytes_(options.max_conversation_bytes) {}
+      max_conversation_bytes_(options.max_conversation_bytes),
+      callbacks_(std::move(options.callbacks)) {}
 
 TurnId TurnRoute::id() const noexcept { return turn_id_; }
 
@@ -69,50 +57,21 @@ bool TurnRoute::terminal() const noexcept { return terminal_; }
 
 void TurnRoute::mark_terminal() noexcept { terminal_ = true; }
 
-Status TurnRoute::register_text(TextDeltaCallback callback) {
-  return register_once(on_text_, std::move(callback), "text-delta");
-}
-
-Status TurnRoute::register_tool(ToolCallCallback callback) {
-  return register_once(on_tool_, std::move(callback), "tool-call");
-}
-
-Status TurnRoute::register_completion(CompletionCallback callback) {
-  return register_once(on_completion_, std::move(callback), "completion");
-}
-
-Status TurnRoute::register_error(ErrorCallback callback) {
-  return register_once(on_error_, std::move(callback), "error");
-}
-
-Status TurnRoute::register_cancelled(CancelledCallback callback) {
-  return register_once(on_cancelled_, std::move(callback), "cancelled");
-}
-
 bool TurnRoute::has_callback(const WorkerEvent& event) const noexcept {
   return std::visit(
       [this](const auto& value) {
         using Event = std::decay_t<decltype(value)>;
         if constexpr (std::is_same_v<Event, TextDeltaEvent>) {
-          return static_cast<bool>(on_text_);
+          return static_cast<bool>(callbacks_.on_text_delta);
         } else if constexpr (std::is_same_v<Event, ToolCallEvent>) {
+          // A tool call is acted on by the route itself rather than observed, so
+          // one it can no longer dispatch is dead rather than pending.
           return !terminal_ && !tool_dispatch_failed_;
-        } else if constexpr (std::is_same_v<Event, CompletionEvent>) {
-          return static_cast<bool>(on_completion_);
-        } else if constexpr (std::is_same_v<Event, ErrorEvent>) {
-          return static_cast<bool>(on_error_);
-        } else if constexpr (std::is_same_v<Event, CancelledEvent>) {
-          return static_cast<bool>(on_cancelled_);
+        } else {
+          return static_cast<bool>(callbacks_.on_finished);
         }
       },
       event);
-}
-
-bool TurnRoute::should_discard(const WorkerEvent& event) const noexcept {
-  // Observer events wait for a callback the application may still register. A
-  // tool call is instead acted on by the route itself, so one it can no longer
-  // dispatch is dead rather than pending.
-  return std::holds_alternative<ToolCallEvent>(event) && !has_callback(event);
 }
 
 void TurnRoute::invoke(const WorkerEvent& event) {
@@ -120,25 +79,24 @@ void TurnRoute::invoke(const WorkerEvent& event) {
       [this](const auto& value) {
         using Event = std::decay_t<decltype(value)>;
         if constexpr (std::is_same_v<Event, TextDeltaEvent>) {
-          on_text_(value.text);
+          callbacks_.on_text_delta(value.text);
         } else if constexpr (std::is_same_v<Event, ToolCallEvent>) {
           dispatch(value);
         } else if constexpr (std::is_same_v<Event, CompletionEvent>) {
           // commit_completion captured the text before moving the exchange
           // into the Conversation.
-          const Completion completion{
+          callbacks_.on_finished(Completion{
               .turn_id = value.turn_id,
               .text = value.text,
               .finish_reason = value.finish_reason,
               .usage = value.usage,
               .attempt_count = value.attempt_count,
               .provider_request_id = value.provider_request_id,
-          };
-          on_completion_(completion);
+          });
         } else if constexpr (std::is_same_v<Event, ErrorEvent>) {
-          on_error_(value.error);
+          callbacks_.on_finished(std::unexpected(value.error));
         } else if constexpr (std::is_same_v<Event, CancelledEvent>) {
-          on_cancelled_(Cancelled{.turn_id = value.turn_id});
+          callbacks_.on_finished(std::unexpected(cancellation_error(value.turn_id)));
         }
       },
       event);
@@ -177,13 +135,13 @@ void TurnRoute::dispatch(const ToolCallEvent& event) {
         .result = std::move(result),
     });
   }
-  if (result_ready && on_tool_) {
+  if (result_ready && callbacks_.on_tool_call) {
     notify_tool_observer(event.call);
   }
 }
 
 void TurnRoute::notify_tool_observer(const ToolCallBlock& call) {
-  on_tool_(ToolCall{
+  callbacks_.on_tool_call(ToolCall{
       .turn_id = turn_id_,
       .id = call.id,
       .name = call.name,

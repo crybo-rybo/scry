@@ -73,32 +73,18 @@ private:
   });
 }
 
-[[nodiscard]] bool add_callbacks(scry::Turn& turn, Application& app) {
-  auto status = turn.on_text_delta(
-      [&app](const std::string_view delta) { app.show_delta(delta); });
-  if (!status) {
-    app.show_error(status.error().message);
-    return false;
-  }
-  status = turn.on_completion(
-      [&app](const scry::Completion& completion) { app.show_completion(completion); });
-  if (!status) {
-    app.show_error(status.error().message);
-    return false;
-  }
-  status = turn.on_error(
-      [&app](const scry::Error& error) { app.show_error(error.message); });
-  if (!status) {
-    app.show_error(status.error().message);
-    return false;
-  }
-  status = turn.on_cancelled(
-      [&app](const scry::Cancelled&) { app.show_error("Turn cancelled"); });
-  if (!status) {
-    app.show_error(status.error().message);
-    return false;
-  }
-  return true;
+[[nodiscard]] scry::TurnCallbacks npc_callbacks(Application& app) {
+  return {
+      .on_text_delta = [&app](const std::string_view delta) { app.show_delta(delta); },
+      .on_finished =
+          [&app](scry::Result<scry::Completion> finished) {
+            if (finished) {
+              app.show_completion(*finished);
+            } else {
+              app.show_error(finished.error().message);
+            }
+          },
+  };
 }
 
 void pump_until_terminal(scry::Harness& harness, const Application& app) {
@@ -148,16 +134,12 @@ void pump_until_terminal(scry::Harness& harness, const Application& app) {
   }
   auto conversation = std::move(*conversation_result);
 
-  auto turn_result = harness.send(conversation, prompt_from_arguments(argc, argv));
-  if (!turn_result) {
-    std::cerr << turn_result.error().message << '\n';
-    return 1;
-  }
-  auto turn = std::move(*turn_result);
-
   Application app;
-  if (!add_callbacks(turn, app)) {
-    return app.exit_code();
+  const auto turn =
+      harness.send(conversation, prompt_from_arguments(argc, argv), npc_callbacks(app));
+  if (!turn) {
+    std::cerr << turn.error().message << '\n';
+    return 1;
   }
   pump_until_terminal(harness, app);
 

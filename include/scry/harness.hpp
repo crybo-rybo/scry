@@ -59,11 +59,16 @@ public:
   /// The call validates admission synchronously, snapshots current tool registrations,
   /// and returns without waiting for network I/O. The host must call update() to
   /// execute app-thread tools and deliver callbacks.
+  ///
+  /// Callbacks are attached atomically as the turn is accepted, so no event can precede
+  /// them. An accepted turn always reaches TurnCallbacks::on_finished exactly once.
   /// @param conversation Conversation that receives the exchange on successful
   /// completion.
   /// @param user_message User text appended transactionally if the turn succeeds.
+  /// @param callbacks Optional per-turn observers delivered inside update().
   /// @return A controllable Turn handle, or an immediate admission error.
-  [[nodiscard]] Result<Turn> send(Conversation& conversation, std::string user_message);
+  [[nodiscard]] Result<Turn> send(Conversation& conversation, std::string user_message,
+                                  TurnCallbacks callbacks = {});
 
   /// Runs one turn synchronously on top of send() and update().
   ///
@@ -78,8 +83,8 @@ public:
   /// Pumps queued events, app-thread tool handlers, and callbacks on the calling
   /// thread.
   ///
-  /// Reentrant calls are rejected and reported through UpdateStats. Exceptions escaping
-  /// an application callback propagate synchronously after the event counts as
+  /// Reentrant calls are rejected and report UpdateStats::budget_exhausted. Exceptions
+  /// escaping an application callback propagate synchronously after the event counts as
   /// delivered; the Harness remains valid.
   /// @param options Soft time and callback limits for this invocation.
   /// @return Delivery and queue statistics.
@@ -87,8 +92,6 @@ public:
 
 private:
   class Impl;
-
-  [[nodiscard]] static std::unique_ptr<ToolRegistry> make_tool_registry();
 
   explicit Harness(std::unique_ptr<Impl> impl) noexcept;
 

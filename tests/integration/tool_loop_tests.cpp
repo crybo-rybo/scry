@@ -42,20 +42,25 @@ TEST_CASE("two-tool turn snapshots tools, resends results, and commits atomicall
   auto conversation_result = scry::Conversation::create();
   REQUIRE(conversation_result);
   auto conversation = std::move(*conversation_result);
-  auto turn_result = harness.send(conversation, "Run both tools");
+  std::optional<scry::Completion> completion;
+  auto turn_result =
+      harness.send(conversation, "Run both tools",
+                   {
+                       .on_tool_call =
+                           [&](const scry::ToolCall& call) {
+                             timeline.push_back("observer:" + call.name);
+                             callback_threads.push_back(std::this_thread::get_id());
+                           },
+                       .on_finished =
+                           [&](scry::Result<scry::Completion> finished) {
+                             REQUIRE(finished);
+                             completion = std::move(*finished);
+                           },
+                   });
   REQUIRE(turn_result);
-  auto turn = std::move(*turn_result);
 
   REQUIRE(harness.tools().add(tool_definition("after_send_tool"),
                               static_handler(R"({"handled":"after-send"})")));
-
-  std::optional<scry::Completion> completion;
-  REQUIRE(turn.on_tool_call([&](const scry::ToolCall& call) {
-    timeline.push_back("observer:" + call.name);
-    callback_threads.push_back(std::this_thread::get_id());
-  }));
-  REQUIRE(
-      turn.on_completion([&](const scry::Completion& value) { completion = value; }));
 
   CHECK(conversation.empty());
   REQUIRE(pump_one_until(harness, [&] { return timeline.size() >= 2; }));

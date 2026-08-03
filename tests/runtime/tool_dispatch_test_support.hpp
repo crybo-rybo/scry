@@ -10,6 +10,7 @@
 #include <limits>
 #include <memory>
 #include <scry/error.hpp>
+#include <scry/events.hpp>
 #include <scry/json.hpp>
 #include <scry/tool_registry.hpp>
 #include <string>
@@ -77,6 +78,7 @@ struct PumpFixture {
   [[nodiscard]] std::shared_ptr<scry::detail::TurnRoute>
   route(const std::uint64_t id, scry::detail::ToolSnapshot tools,
         const std::size_t result_limit = 1024,
+        scry::TurnCallbacks callbacks = {},
         const std::size_t exchange_limit =
             std::numeric_limits<std::size_t>::max()) const {
     return std::make_shared<scry::detail::TurnRoute>(
@@ -87,6 +89,7 @@ struct PumpFixture {
             .max_tool_result_bytes = result_limit,
             .max_exchange_bytes = exchange_limit,
             .max_conversation_bytes = 1024,
+            .callbacks = std::move(callbacks),
         });
   }
 };

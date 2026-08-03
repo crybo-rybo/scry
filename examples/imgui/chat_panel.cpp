@@ -3,6 +3,7 @@
 #include <array>
 #include <imgui.h>
 #include <optional>
+#include <string_view>
 #include <utility>
 
 namespace scry_showcase {
@@ -16,55 +17,19 @@ struct PanelState {
   std::string error_message{};
 };
 
-[[nodiscard]] SubmitStatus registration_status(const scry::Status& status) {
-  if (status) {
-    return {};
-  }
-  return std::unexpected(status.error().message);
-}
-
-[[nodiscard]] SubmitStatus attach_callbacks(scry::Turn& turn,
-                                            PanelCallbacks callbacks) {
-  auto status = turn.on_text_delta([callback = std::move(callbacks.text_delta)](
-                                       std::string_view delta) { callback(delta); });
-  if (!status) {
-    return registration_status(status);
-  }
-  status =
-      turn.on_completion([callback = std::move(callbacks.completed)](
-                             const scry::Completion& value) { callback(value.text); });
-  if (!status) {
-    return registration_status(status);
-  }
-  status = turn.on_error([callback = std::move(callbacks.failed)](
-                             const scry::Error& error) { callback(error.message); });
-  if (!status) {
-    return registration_status(status);
-  }
-  status = turn.on_cancelled([callback = std::move(callbacks.cancelled)](
-                                 const scry::Cancelled&) { callback(); });
-  return registration_status(status);
-}
-
 class HarnessPanelController final : public PanelController {
 public:
   HarnessPanelController(scry::Harness& harness, scry::Conversation& conversation)
       : harness_(harness), conversation_(conversation) {}
 
   [[nodiscard]] SubmitStatus submit(std::string user_message,
-                                    PanelCallbacks callbacks) override {
-    auto result = harness_.send(conversation_, std::move(user_message));
+                                    scry::TurnCallbacks callbacks) override {
+    auto result =
+        harness_.send(conversation_, std::move(user_message), std::move(callbacks));
     if (!result) {
       return std::unexpected(result.error().message);
     }
-
-    auto turn = std::move(*result);
-    auto status = attach_callbacks(turn, std::move(callbacks));
-    if (!status) {
-      static_cast<void>(turn.cancel());
-      return status;
-    }
-    turn_.emplace(std::move(turn));
+    turn_.emplace(std::move(*result));
     return {};
   }
 
@@ -83,40 +48,33 @@ struct CallbackContext {
   std::uint64_t generation;
 };
 
-[[nodiscard]] PanelCallbacks make_callbacks(CallbackContext context) {
+[[nodiscard]] scry::TurnCallbacks make_callbacks(CallbackContext context) {
   const std::weak_ptr<PanelState> weak_state{context.state};
   const auto generation = context.generation;
-  return PanelCallbacks{
-      .text_delta =
+  return scry::TurnCallbacks{
+      .on_text_delta =
           [weak_state, generation](std::string_view delta) {
             if (const auto locked = weak_state.lock();
                 locked && locked->generation == generation) {
               locked->assistant_text.append(delta);
             }
           },
-      .completed =
-          [weak_state, generation](std::string text) {
-            if (const auto locked = weak_state.lock();
-                locked && locked->generation == generation) {
+      .on_finished =
+          [weak_state, generation](scry::Result<scry::Completion> finished) {
+            const auto locked = weak_state.lock();
+            if (!locked || locked->generation != generation) {
+              return;
+            }
+            if (finished) {
               if (locked->assistant_text.empty()) {
-                locked->assistant_text = std::move(text);
+                locked->assistant_text = std::move(finished->text);
               }
               locked->phase = ChatPhase::completed;
-            }
-          },
-      .failed =
-          [weak_state, generation](std::string message) {
-            if (const auto locked = weak_state.lock();
-                locked && locked->generation == generation) {
-              locked->error_message = std::move(message);
-              locked->phase = ChatPhase::failed;
-            }
-          },
-      .cancelled =
-          [weak_state, generation] {
-            if (const auto locked = weak_state.lock();
-                locked && locked->generation == generation) {
+            } else if (finished.error().category == scry::ErrorCategory::cancelled) {
               locked->phase = ChatPhase::cancelled;
+            } else {
+              locked->error_message = std::move(finished.error().message);
+              locked->phase = ChatPhase::failed;
             }
           },
   };

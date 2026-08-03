@@ -95,14 +95,21 @@ TEST_CASE("NPC registrations execute on the update thread and resend observation
 
   auto conversation = scry::Conversation::create();
   REQUIRE(conversation);
-  auto turn = harness.send(*conversation, "Look before moving.");
-  REQUIRE(turn);
-
   std::optional<scry::Completion> completion;
   std::optional<scry::Error> error;
-  REQUIRE(
-      turn->on_completion([&](const scry::Completion& value) { completion = value; }));
-  REQUIRE(turn->on_error([&](const scry::Error& value) { error = value; }));
+  auto turn = harness.send(*conversation, "Look before moving.",
+                           {
+                               .on_finished =
+                                   [&](scry::Result<scry::Completion> finished) {
+                                     if (finished) {
+                                       completion = std::move(*finished);
+                                     } else {
+                                       error = std::move(finished.error());
+                                     }
+                                   },
+                           });
+  REQUIRE(turn);
+
   REQUIRE(
       pump_until(harness, [&] { return completion.has_value() || error.has_value(); }));
 

@@ -310,14 +310,21 @@ TEST_CASE("semantic output prevents a retry after a transient transport failure"
   REQUIRE(harness);
   REQUIRE(conversation);
 
-  auto turn = harness->send(*conversation, "do not retry");
-  REQUIRE(turn);
   std::string streamed;
   std::optional<scry::Error> failure_result;
-  REQUIRE(turn->on_text_delta(
-      [&streamed](const std::string_view text) { streamed.append(text); }));
-  REQUIRE(turn->on_error(
-      [&failure_result](const scry::Error& error) { failure_result = error; }));
+  auto turn = harness->send(
+      *conversation, "do not retry",
+      {
+          .on_text_delta =
+              [&streamed](const std::string_view text) { streamed.append(text); },
+          .on_finished =
+              [&failure_result](scry::Result<scry::Completion> finished) {
+                if (!finished) {
+                  failure_result = std::move(finished.error());
+                }
+              },
+      });
+  REQUIRE(turn);
 
   REQUIRE(
       pump_until(*harness, [&failure_result] { return failure_result.has_value(); }));
@@ -344,11 +351,17 @@ TEST_CASE("cancelling a pending retry wakes the worker without another attempt")
   REQUIRE(harness);
   REQUIRE(conversation);
 
-  auto turn = harness->send(*conversation, "cancel retry");
-  REQUIRE(turn);
   bool cancelled = false;
-  REQUIRE(
-      turn->on_cancelled([&cancelled](const scry::Cancelled&) { cancelled = true; }));
+  auto turn = harness->send(
+      *conversation, "cancel retry",
+      {
+          .on_finished =
+              [&cancelled](scry::Result<scry::Completion> finished) {
+                cancelled = !finished &&
+                            finished.error().category == scry::ErrorCategory::cancelled;
+              },
+      });
+  REQUIRE(turn);
   observer->wait_for_first_call();
 
   CHECK(turn->cancel());
@@ -444,14 +457,18 @@ TEST_CASE("post-completion cancellation is safe and idempotent") {
   REQUIRE(harness);
   REQUIRE(conversation);
 
-  auto turn = harness->send(*conversation, "complete first");
-  REQUIRE(turn);
   bool completed = false;
-  bool cancelled = false;
-  REQUIRE(
-      turn->on_completion([&completed](const scry::Completion&) { completed = true; }));
-  REQUIRE(
-      turn->on_cancelled([&cancelled](const scry::Cancelled&) { cancelled = true; }));
+  std::size_t finished_count = 0;
+  auto turn = harness->send(
+      *conversation, "complete first",
+      {
+          .on_finished =
+              [&completed, &finished_count](scry::Result<scry::Completion> finished) {
+                completed = finished.has_value();
+                ++finished_count;
+              },
+      });
+  REQUIRE(turn);
   REQUIRE(pump_until(*harness, [&completed] { return completed; }));
 
   static_cast<void>(turn->cancel());
@@ -460,7 +477,9 @@ TEST_CASE("post-completion cancellation is safe and idempotent") {
     static_cast<void>(harness->update());
     std::this_thread::yield();
   }
-  CHECK_FALSE(cancelled);
+  // The terminal contract is exactly once: a cancel after completion delivers
+  // nothing further.
+  CHECK(finished_count == 1);
   CHECK(conversation->message_count() == 2);
 }
 
@@ -498,36 +517,49 @@ TEST_CASE("callbacks may use public operations and nested update is diagnosed") 
   REQUIRE(first_conversation);
   REQUIRE(second_conversation);
 
-  auto first_result = harness->send(*first_conversation, "first");
-  REQUIRE(first_result);
-  std::optional<scry::Turn> first{std::move(*first_result)};
+  std::optional<scry::Turn> first;
   std::optional<scry::Turn> second;
   bool first_completed = false;
   bool second_completed = false;
   bool nested_update_rejected = false;
   bool registration_succeeded = false;
   bool nested_send_succeeded = false;
-  bool nested_callback_registered = false;
   bool terminal_cancel_idempotent = false;
   std::optional<scry::Error> nested_wait_error;
-  REQUIRE(first->on_completion([&](const scry::Completion&) {
-    first_completed = true;
-    nested_update_rejected = harness->update().reentrant_update_rejected;
-    registration_succeeded = static_cast<bool>(harness->tools().add(tool(), handler()));
-    auto nested_wait = harness->send_and_wait(*second_conversation, "blocking second");
-    if (!nested_wait) {
-      nested_wait_error = nested_wait.error();
-    }
-    static_cast<void>(first->cancel());
-    terminal_cancel_idempotent = !first->cancel();
-    auto nested = harness->send(*second_conversation, "second");
-    nested_send_succeeded = nested.has_value();
-    if (nested) {
-      second.emplace(std::move(*nested));
-      nested_callback_registered = static_cast<bool>(second->on_completion(
-          [&second_completed](const scry::Completion&) { second_completed = true; }));
-    }
-  }));
+  auto first_result = harness->send(
+      *first_conversation, "first",
+      {
+          .on_finished =
+              [&](scry::Result<scry::Completion> finished) {
+                first_completed = finished.has_value();
+                // A reentrant update is rejected, and budget_exhausted is the
+                // only signal of it.
+                nested_update_rejected = harness->update().budget_exhausted;
+                registration_succeeded =
+                    static_cast<bool>(harness->tools().add(tool(), handler()));
+                auto nested_wait =
+                    harness->send_and_wait(*second_conversation, "blocking second");
+                if (!nested_wait) {
+                  nested_wait_error = nested_wait.error();
+                }
+                static_cast<void>(first->cancel());
+                terminal_cancel_idempotent = !first->cancel();
+                auto nested = harness->send(
+                    *second_conversation, "second",
+                    {
+                        .on_finished =
+                            [&second_completed](scry::Result<scry::Completion> done) {
+                              second_completed = done.has_value();
+                            },
+                    });
+                nested_send_succeeded = nested.has_value();
+                if (nested) {
+                  second.emplace(std::move(*nested));
+                }
+              },
+      });
+  REQUIRE(first_result);
+  first.emplace(std::move(*first_result));
 
   REQUIRE(pump_until(*harness, [&] { return first_completed && second_completed; }));
   CHECK(nested_update_rejected);
@@ -536,7 +568,6 @@ TEST_CASE("callbacks may use public operations and nested update is diagnosed") 
   CHECK(nested_wait_error->category == scry::ErrorCategory::invalid_state);
   CHECK(terminal_cancel_idempotent);
   CHECK(nested_send_succeeded);
-  CHECK(nested_callback_registered);
   CHECK(harness->tools().size() == 1);
   CHECK(first_conversation->message_count() == 2);
   CHECK(second_conversation->message_count() == 2);
@@ -555,16 +586,26 @@ TEST_CASE("two Harness workers can overlap independent transfers") {
   REQUIRE(first_conversation);
   REQUIRE(second_conversation);
 
-  auto first_turn = first->send(*first_conversation, "first");
-  auto second_turn = second->send(*second_conversation, "second");
-  REQUIRE(first_turn);
-  REQUIRE(second_turn);
   bool first_completed = false;
   bool second_completed = false;
-  REQUIRE(first_turn->on_completion(
-      [&first_completed](const scry::Completion&) { first_completed = true; }));
-  REQUIRE(second_turn->on_completion(
-      [&second_completed](const scry::Completion&) { second_completed = true; }));
+  auto first_turn =
+      first->send(*first_conversation, "first",
+                  {
+                      .on_finished =
+                          [&first_completed](scry::Result<scry::Completion> finished) {
+                            first_completed = finished.has_value();
+                          },
+                  });
+  auto second_turn = second->send(
+      *second_conversation, "second",
+      {
+          .on_finished =
+              [&second_completed](scry::Result<scry::Completion> finished) {
+                second_completed = finished.has_value();
+              },
+      });
+  REQUIRE(first_turn);
+  REQUIRE(second_turn);
 
   constexpr std::size_t maximum_pumps = 100'000;
   for (std::size_t pump = 0;

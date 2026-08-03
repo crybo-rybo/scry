@@ -185,17 +185,24 @@ TEST_CASE("non-success HTTP status cannot publish an SSE-shaped body") {
   REQUIRE(harness);
   auto conversation = scry::Conversation::create();
   REQUIRE(conversation);
-  auto turn = harness->send(*conversation, "Do not follow this body");
-  REQUIRE(turn);
-
   std::string streamed;
   std::optional<scry::Error> error;
   bool completed = false;
-  REQUIRE(turn->on_text_delta(
-      [&streamed](const std::string_view delta) { streamed.append(delta); }));
-  REQUIRE(
-      turn->on_completion([&completed](const scry::Completion&) { completed = true; }));
-  REQUIRE(turn->on_error([&error](const scry::Error& value) { error = value; }));
+  auto turn = harness->send(
+      *conversation, "Do not follow this body",
+      {
+          .on_text_delta =
+              [&streamed](const std::string_view delta) { streamed.append(delta); },
+          .on_finished =
+              [&completed, &error](scry::Result<scry::Completion> finished) {
+                if (finished) {
+                  completed = true;
+                } else {
+                  error = std::move(finished.error());
+                }
+              },
+      });
+  REQUIRE(turn);
 
   REQUIRE(pump_until(*harness, [&] { return error.has_value() || completed; }));
   REQUIRE(error);
@@ -242,17 +249,25 @@ TEST_CASE(
   REQUIRE(harness);
   auto conversation = scry::Conversation::create();
   REQUIRE(conversation);
-  auto turn = harness->send(*conversation, "Cancel this request");
-  REQUIRE(turn);
-
   bool cancelled = false;
   bool completed = false;
   std::optional<scry::Error> error;
-  REQUIRE(
-      turn->on_cancelled([&cancelled](const scry::Cancelled&) { cancelled = true; }));
-  REQUIRE(
-      turn->on_completion([&completed](const scry::Completion&) { completed = true; }));
-  REQUIRE(turn->on_error([&error](const scry::Error& value) { error = value; }));
+  auto turn = harness->send(*conversation, "Cancel this request",
+                            {
+                                .on_finished =
+                                    [&cancelled, &completed,
+                                     &error](scry::Result<scry::Completion> finished) {
+                                      if (finished) {
+                                        completed = true;
+                                      } else if (finished.error().category ==
+                                                 scry::ErrorCategory::cancelled) {
+                                        cancelled = true;
+                                      } else {
+                                        error = std::move(finished.error());
+                                      }
+                                    },
+                            });
+  REQUIRE(turn);
   server.wait_until_request();
 
   const auto started = std::chrono::steady_clock::now();
@@ -278,18 +293,16 @@ TEST_CASE(
   std::optional<scry::Harness> harness{std::move(*created)};
   auto conversation = scry::Conversation::create();
   REQUIRE(conversation);
-  auto turn = harness->send(*conversation, "Destroy this Harness");
-  REQUIRE(turn);
-
   bool callback_fired = false;
-  REQUIRE(turn->on_text_delta(
-      [&callback_fired](std::string_view) { callback_fired = true; }));
-  REQUIRE(turn->on_completion(
-      [&callback_fired](const scry::Completion&) { callback_fired = true; }));
-  REQUIRE(
-      turn->on_error([&callback_fired](const scry::Error&) { callback_fired = true; }));
-  REQUIRE(turn->on_cancelled(
-      [&callback_fired](const scry::Cancelled&) { callback_fired = true; }));
+  auto turn = harness->send(
+      *conversation, "Destroy this Harness",
+      {
+          .on_text_delta =
+              [&callback_fired](std::string_view) { callback_fired = true; },
+          .on_finished = [&callback_fired](
+                             scry::Result<scry::Completion>) { callback_fired = true; },
+      });
+  REQUIRE(turn);
   server.wait_until_request();
 
   const auto started = std::chrono::steady_clock::now();

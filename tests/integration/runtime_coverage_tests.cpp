@@ -148,14 +148,6 @@ data: {"type":"message_stop"}
   };
 }
 
-void check_inactive_callbacks(scry::Turn& turn) {
-  CHECK_FALSE(turn.on_text_delta([](std::string_view) {}));
-  CHECK_FALSE(turn.on_tool_call([](const scry::ToolCall&) {}));
-  CHECK_FALSE(turn.on_completion([](const scry::Completion&) {}));
-  CHECK_FALSE(turn.on_error([](const scry::Error&) {}));
-  CHECK_FALSE(turn.on_cancelled([](const scry::Cancelled&) {}));
-}
-
 class FailingProvider final : public scry::detail::ProviderAdapter {
 public:
   [[nodiscard]] scry::Result<scry::detail::TransportRequest>
@@ -238,7 +230,6 @@ TEST_CASE("moved-from public runtime handles remain safely observable") {
   auto turn = std::move(*turn_result);
   CHECK_FALSE(turn_result->id());
   CHECK_FALSE(turn_result->cancel());
-  check_inactive_callbacks(*turn_result);
   CHECK(turn.id());
 }
 
@@ -261,7 +252,6 @@ TEST_CASE("a Turn can cancel safely after its Harness has been destroyed") {
   CHECK(survivor->id() == accepted_id);
   CHECK(survivor->cancel());
   CHECK_FALSE(survivor->cancel());
-  check_inactive_callbacks(*survivor);
 }
 
 TEST_CASE("construction and synchronous admission failures are immediate") {

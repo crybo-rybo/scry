@@ -52,49 +52,18 @@ make_request(const Config& config, const detail::ConversationState& conversation
   };
 }
 
-struct SynchronousTurnState {
-  std::optional<Completion> completion{};
-  std::optional<Error> error{};
-  bool cancelled{false};
-
-  [[nodiscard]] bool terminal() const noexcept {
-    return completion.has_value() || error.has_value() || cancelled;
-  }
-
-  [[nodiscard]] Result<Completion> result(const TurnId turn_id) {
-    if (completion) {
-      return std::move(*completion);
-    }
-    if (error) {
-      return std::unexpected(std::move(*error));
-    }
-    return std::unexpected(Error{
-        .category = ErrorCategory::cancelled,
-        .message = "turn was cancelled",
-        .turn_id = turn_id,
-    });
-  }
-};
-
-void install_synchronous_callbacks(Turn& turn, SynchronousTurnState& state) {
-  const auto text = turn.on_text_delta([](std::string_view) {});
-  const auto completion = turn.on_completion(
-      [&state](const Completion& value) { state.completion = value; });
-  const auto error =
-      turn.on_error([&state](const Error& value) { state.error = value; });
-  const auto cancelled =
-      turn.on_cancelled([&state](const Cancelled&) { state.cancelled = true; });
-  static_cast<void>(text);
-  static_cast<void>(completion);
-  static_cast<void>(error);
-  static_cast<void>(cancelled);
-  assert(text && completion && error && cancelled);
-}
-
 } // namespace
 
 class Harness::Impl final {
 public:
+  /// ToolRegistry's constructor is private to its friend Harness, which extends to
+  /// Harness's members. Keeping the factory here spares the public header a
+  /// declaration that no consumer can use.
+  [[nodiscard]] static std::unique_ptr<ToolRegistry> make_tool_registry() {
+    return std::unique_ptr<ToolRegistry>{
+        new ToolRegistry{std::make_unique<ToolRegistry::Impl>()}};
+  }
+
   Impl(Config config, std::unique_ptr<detail::ProviderAdapter> provider,
        std::unique_ptr<detail::Transport> transport,
        std::unique_ptr<ToolRegistry> tools)
@@ -125,7 +94,7 @@ public:
 
   [[nodiscard]] Result<std::shared_ptr<detail::TurnRoute>>
   send(const std::shared_ptr<detail::ConversationState>& conversation, std::string text,
-       detail::ToolSnapshot tools) {
+       detail::ToolSnapshot tools, TurnCallbacks callbacks) {
     if (text.empty()) {
       return std::unexpected(immediate_error(ErrorCategory::invalid_state,
                                              "user message must not be empty"));
@@ -164,6 +133,7 @@ public:
             .max_tool_result_bytes = config_.limits.max_tool_result_bytes,
             .max_exchange_bytes = max_exchange_bytes,
             .max_conversation_bytes = config_.limits.max_conversation_bytes,
+            .callbacks = std::move(callbacks),
         });
     auto request =
         make_request(config_, *conversation, std::move(messages), std::move(schemas));
@@ -206,11 +176,6 @@ Harness::~Harness() = default;
 Harness::Harness(Harness&&) noexcept = default;
 Harness& Harness::operator=(Harness&&) noexcept = default;
 
-std::unique_ptr<ToolRegistry> Harness::make_tool_registry() {
-  return std::unique_ptr<ToolRegistry>{
-      new ToolRegistry{std::make_unique<ToolRegistry::Impl>()}};
-}
-
 Result<Harness> Harness::create(Config config) {
   if (auto status = detail::validate_config(config); !status) {
     return std::unexpected(std::move(status.error()));
@@ -220,7 +185,7 @@ Result<Harness> Harness::create(Config config) {
   if (auto status = transport->status(); !status) {
     return std::unexpected(std::move(status.error()));
   }
-  auto tools = make_tool_registry();
+  auto tools = Impl::make_tool_registry();
   return detail::translate_worker_start_failure<Harness>(
       [config = std::move(config), provider = std::move(provider),
        transport = std::move(transport), tools = std::move(tools)]() mutable {
@@ -239,14 +204,15 @@ const ToolRegistry& Harness::tools() const noexcept {
   return impl_->tools();
 }
 
-Result<Turn> Harness::send(Conversation& conversation, std::string user_message_text) {
+Result<Turn> Harness::send(Conversation& conversation, std::string user_message_text,
+                           TurnCallbacks callbacks) {
   if (impl_ == nullptr || conversation.impl_ == nullptr) {
     return std::unexpected(immediate_error(
         ErrorCategory::invalid_state, "Harness and Conversation must both be active"));
   }
   auto tools = impl_->tools().impl_->snapshot();
   auto route = impl_->send(conversation.impl_->state, std::move(user_message_text),
-                           std::move(tools));
+                           std::move(tools), std::move(callbacks));
   if (!route) {
     return std::unexpected(std::move(route.error()));
   }
@@ -260,20 +226,26 @@ Result<Completion> Harness::send_and_wait(Conversation& conversation,
         immediate_error(ErrorCategory::invalid_state,
                         "send_and_wait cannot run from inside an update callback"));
   }
-  auto turn_result = send(conversation, std::move(user_message_text));
+  // on_finished is guaranteed exactly once per accepted turn, so it alone decides
+  // when this loop stops.
+  std::optional<Result<Completion>> outcome;
+  auto turn_result = send(
+      conversation, std::move(user_message_text),
+      TurnCallbacks{
+          .on_finished =
+              [&outcome](Result<Completion> result) { outcome = std::move(result); },
+      });
   if (!turn_result) {
     return std::unexpected(std::move(turn_result.error()));
   }
-  auto turn = std::move(*turn_result);
-  SynchronousTurnState state;
-  install_synchronous_callbacks(turn, state);
-  while (!state.terminal()) {
+  const auto turn = std::move(*turn_result);
+  while (!outcome) {
     static_cast<void>(update());
-    if (!state.terminal()) {
+    if (!outcome) {
       static_cast<void>(impl_->wait_for_event());
     }
   }
-  return state.result(turn.id());
+  return std::move(*outcome);
 }
 
 UpdateStats Harness::update(const UpdateOptions options) {
@@ -293,7 +265,7 @@ Result<Harness> HarnessTestAccess::create(Config config,
         immediate_error(ErrorCategory::invalid_config,
                         "provider and transport components must not be empty"));
   }
-  auto tools = Harness::make_tool_registry();
+  auto tools = Harness::Impl::make_tool_registry();
   return translate_worker_start_failure<Harness>(
       [config = std::move(config), provider = std::move(provider),
        transport = std::move(transport), tools = std::move(tools)]() mutable {
