@@ -416,7 +416,7 @@ Result<Json> Conversation::to_json() const {
                             "Conversation document could not be encoded");
 }
 
-Result<Conversation> Conversation::from_json(Json json) {
+Result<Conversation> Conversation::from_json(const Json& json) {
   auto root = detail::parse_json(json.text, ErrorCategory::invalid_config,
                                  "Conversation document is not valid JSON");
   if (!root) {
