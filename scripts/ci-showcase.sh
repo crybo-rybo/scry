@@ -25,7 +25,7 @@ if find "${default_build_dir}" -iname '*imgui*' -print -quit | grep -q .; then
   exit 1
 fi
 if cmake --build "${default_build_dir}" --target help |
-  grep -E -q 'scry_imgui|scry_npc_showcase'; then
+  grep -E -q 'scry_imgui'; then
   echo "The default-OFF configure exposed a showcase target" >&2
   exit 1
 fi
@@ -49,13 +49,13 @@ cmake -E remove_directory "${stage_dir}"
 cmake --install "${build_dir}" --prefix "${stage_dir}"
 
 if find "${stage_dir}" -type f \
-  \( -iname '*imgui*' -o -iname '*showcase*' -o -iname '*npc*' \) \
+  \( -iname '*imgui*' -o -iname '*showcase*' \) \
   -print -quit | grep -q .; then
   echo "Showcase artifact leaked into the installed package" >&2
   exit 1
 fi
 
-if grep -R -E -i 'imgui|scry_showcase|scry_npc' \
+if grep -R -E -i 'imgui|scry_showcase' \
   "${stage_dir}/lib/cmake/scry" >/dev/null; then
   echo "Showcase dependency leaked into the installed CMake package" >&2
   exit 1

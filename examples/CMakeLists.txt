@@ -5,6 +5,12 @@ if(SCRY_BUILD_EXAMPLES)
     PRIVATE scry::scry scry_project_options
   )
 
+  add_executable(scry_tool_chat tool_chat/main.cpp)
+  target_link_libraries(
+    scry_tool_chat
+    PRIVATE glaze::glaze scry::scry scry_project_options
+  )
+
   if(SCRY_ENABLE_REFLECTION)
     add_executable(scry_reflection_example reflection_tools.cpp)
     target_link_libraries(
@@ -50,18 +56,4 @@ target_link_libraries(
   scry_imgui_chat_panel
   PUBLIC scry::scry
   PRIVATE scry_imgui_vendor scry_project_options
-)
-
-add_executable(
-  scry_npc_showcase
-  npc/main.cpp
-  npc/world.cpp
-)
-target_include_directories(
-  scry_npc_showcase
-  PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/npc"
-)
-target_link_libraries(
-  scry_npc_showcase
-  PRIVATE scry::scry scry_project_options
 )

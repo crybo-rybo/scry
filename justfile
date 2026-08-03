@@ -41,5 +41,8 @@ reflection:
 nightly-local-model:
     ./scripts/ci-local-model.sh
 
+tool-chat:
+    ./scripts/run-tool-chat.sh
+
 showcase:
     ./scripts/ci-showcase.sh

@@ -47,7 +47,7 @@ option(
 option(SCRY_BUILD_FUZZERS "Build short protocol fuzz targets" OFF)
 option(
   SCRY_BUILD_IMGUI_SHOWCASE
-  "Build the opt-in Dear ImGui and grid-NPC showcase"
+  "Build the opt-in Dear ImGui showcase"
   OFF
 )
 option(

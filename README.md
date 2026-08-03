@@ -13,11 +13,10 @@ consulting an oracle (the LLM).
 Built for the apps that live in C++ — games, GUI tools, simulators — where you can't block a frame, can't shell out to Python, and want tool use, not just chat.
 
 **Status:** M4 breadth and the M5 showcase are complete. M5 is implemented under
-[ADR 0010](docs/adr/0010-m5-showcase-contract.md) with opt-in C++23 examples for
-a host-owned Dear ImGui chat panel and a deterministic grid NPC driven through
-explicit tools. These examples consume only `scry::scry`: they add no public
-API, installed artifact, or runtime dependency. The shared showcase gate passes
-locally and in hosted CI.
+[ADR 0010](docs/adr/0010-m5-showcase-contract.md) with an opt-in C++23
+host-owned Dear ImGui chat panel. It consumes only `scry::scry`: it adds no
+public API, installed artifact, or runtime dependency. The shared showcase gate
+passes locally and in hosted CI.
 
 The C++23 runtime selects Anthropic Messages or the strict OpenAI-compatible
 Chat Completions subset from `Config`, including local servers with no API key.
@@ -104,6 +103,14 @@ create a `Harness` from a `Config`, register a tool, `send()` a message, and
 pump `update()` from the loop you already own. It assumes a local Ollama server
 at `http://127.0.0.1:11434` with the `qwen3:1.7b` model installed.
 
+For human exploration, [the interactive tool chat](examples/tool_chat/README.md)
+starts a persistent terminal conversation with visible date/time, addition, and
+multiplication calls. It defaults to Ollama with `qwen3:8b`:
+
+```sh
+./scripts/run-tool-chat.sh
+```
+
 ## Build and preflight
 
 Run the fast, platform-stable core workflow:
@@ -171,7 +178,7 @@ artifacts, and is not claimed as M3 verification.
 | [ADR 0007](docs/adr/0007-m3-reflection-contract.md) | Accepted M3 schema/type mapping, strict marshalling, description precedence, optional package component, and no-Glaze public boundary. |
 | [ADR 0008](docs/adr/0008-m4-openai-compatible-contract.md) | Accepted M4 endpoint, authentication, common request/response, streaming, error, and per-dialect state contract for OpenAI-compatible Chat Completions. |
 | [ADR 0009](docs/adr/0009-m4-worker-tool-execution.md) | Accepted M4 per-tool execution policy, handler ownership, ordered control flow, cancellation, observer, and teardown contract. |
-| [ADR 0010](docs/adr/0010-m5-showcase-contract.md) | Accepted M5 showcase-only boundary, host-owned ImGui lifecycle, deterministic NPC tools, pinned build-only dependency, and acceptance gates. |
+| [ADR 0010](docs/adr/0010-m5-showcase-contract.md) | Accepted M5 showcase-only boundary, host-owned ImGui lifecycle, pinned build-only dependency, and acceptance gates. |
 | [ADR 0011](docs/adr/0011-absolute-quality-gates.md) | Historical: absolute quality gates from a single build replaced the merge-base ratchet, bespoke reflection coverage validator, nightly mutation schedule, and model manifest pin. Gating machinery since retired by ADR 0012. |
 | [ADR 0012](docs/adr/0012-release-infrastructure-simplification.md) | v0.0.1 release posture: the coverage/CRAP gating machinery, mutation testing, and feasibility spikes are retired; fuzzing and the showcase move to the nightly ring; behavioral gates (matrix, tests, sanitizers, tidy, package audits) remain. |
 

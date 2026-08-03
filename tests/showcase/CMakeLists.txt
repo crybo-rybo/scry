@@ -1,15 +1,11 @@
 add_executable(
   scry_showcase_tests
   chat_panel_tests.cpp
-  npc_dispatch_tests.cpp
-  npc_world_tests.cpp
-  "${PROJECT_SOURCE_DIR}/examples/npc/world.cpp"
 )
 target_include_directories(
   scry_showcase_tests
   PRIVATE
     "${PROJECT_SOURCE_DIR}/examples/imgui"
-    "${PROJECT_SOURCE_DIR}/examples/npc"
     "${PROJECT_SOURCE_DIR}/src"
     "${PROJECT_SOURCE_DIR}/tests"
 )

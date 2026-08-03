@@ -90,7 +90,7 @@ jobs:
           retention-days: 14
 
   showcase:
-    name: Opt-in Dear ImGui + grid-NPC showcase
+    name: Opt-in Dear ImGui showcase
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:

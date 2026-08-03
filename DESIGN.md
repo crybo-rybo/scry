@@ -36,16 +36,15 @@ Scry lets an existing C++ application add LLM capabilities — chat *and* tool u
   server, and LM Studio are implemented behind a config-only switch.
 - Server/model configuration (base URL, auth, model, sampling params) as simple declarative config.
 - Streaming, cancellation, and retries handled internally with clear thread guarantees.
-- M5 examples that prove the public C++23 surface embeds in a real immediate-mode
-  GUI and a small stateful game loop without expanding Scry's API or lifecycle.
+- An M5 example that proves the public C++23 surface embeds in a real
+  immediate-mode GUI without expanding Scry's API or lifecycle.
 
 **Non-Goals**
 
 - Not an inference engine. Scry talks to servers; it does not load weights.
 - Not a framework. Scry never owns `main()`, never spins an event loop the app must join, never demands ownership of app lifecycle.
-- Not a GUI or game engine. Showcase views and world objects remain
-  example-local; applications keep their window, rendering, input, state, and
-  update-loop ownership.
+- Not a GUI framework. The showcase view remains example-local; applications
+  keep their window, rendering, input, state, and update-loop ownership.
 - No prompt-template/chain DSL (LangChain-style). Apps compose in C++.
 - MSVC support is deferred (no public P2996 support as of mid-2026 — see §9).
 
@@ -463,7 +462,14 @@ ARCHITECTURE.md §7). Remaining:
 | **M2 — Tools (complete)** | Snapshot and serialize explicit-schema registrations; multi-round tool states in the sans-I/O machine; main-thread ordered dispatch and automatic resend; transactional tool history and versioned Conversation persistence. |
 | **M3 — Reflection (complete)** | Optional GCC 16 `scry::reflection` component; P2996 lexical schema generation and strict typed marshalling; `scry::reflection::add<Args>()`; annotation/trait descriptions; package consumer and docs demo. |
 | **M4 — Breadth (complete)** | ADR 0008 OpenAI-compatible Chat Completions subset and ADR 0009 ordered per-tool worker execution; retries/backoff polish, cancellation hardening, and their deterministic, fuzz, sanitizer, Curl, and scheduled bounded local-model gates. |
-| **M5 — Showcase (complete)** | ADR 0010 examples: an opt-in Dear ImGui chat panel and a deterministic grid world where the LLM drives an NPC through explicit tools, with no new public/package surface. |
+| **M5 — Showcase (complete)** | ADR 0010: an opt-in Dear ImGui chat panel with no new public/package surface. |
+
+The non-gating `examples/tool_chat` developer tool complements these milestone
+artifacts. It keeps one `Conversation` across terminal prompts and exposes
+model-selected arguments and application-produced results for three harmless
+tools. It exercises only the existing C++23 public surface and is intentionally
+separate from the bounded pass/fail local-model smoke and deterministic M5
+showcase gate.
 
 ### M5 showcase contract
 
@@ -476,23 +482,16 @@ control. It may use an example-private controller to make those transitions
 deterministic in tests. Destroying the panel requests cancellation but never
 blocks.
 
-The NPC example uses explicit closed-empty-object schemas for `look` and four
-cardinal move tools. A fixed 5-by-5 in-memory grid makes observations,
-successful movement, and blocked boundaries reproducible. Those handlers stay
-on the app thread because they touch host state. The world is deliberately
-ephemeral: it demonstrates the tool loop, not transactionality for game state.
-Applications adapting the example to durable effects remain responsible for
-idempotency or reconciliation across failed, cancelled, or resubmitted turns.
-
 Dear ImGui is build-only showcase material, default OFF, pinned to `v1.92.8`
 commit `8936b58fe26e8c3da834b8f60b06511d537b4c63` under its MIT license.
 No platform or renderer backend is selected. No ImGui type, source, target, or
 dependency may enter Scry's public headers, install, exports, or normal runtime
-dependency set. SHOW-001–004 and ADR 0010 define the acceptance boundary; M5 is
-not complete until the deterministic panel/NPC tests, real headless ImGui frame,
-warnings-as-errors build, package audit, and shared local/hosted gate pass.
-Those checks pass locally through `scripts/ci-showcase.sh` and the complete
-preflight and in hosted CI through the same script. M5 is complete.
+dependency set. SHOW-001, SHOW-003, SHOW-004, and ADR 0010 define the acceptance
+boundary; M5 is not complete until the deterministic panel tests, real
+headless ImGui frame, warnings-as-errors build, package audit, and shared
+local/hosted gate pass. Those checks pass locally through
+`scripts/ci-showcase.sh` and in hosted CI through the same script. M5 is
+complete.
 
 M1 and M2 precede M3 on purpose: reflection is the flashy layer, but it now
 has a complete, tested C++23 agentic runtime to lower onto.

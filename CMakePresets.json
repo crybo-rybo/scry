@@ -101,7 +101,7 @@
     },
     {
       "name": "showcase",
-      "displayName": "Opt-in Dear ImGui and grid-NPC showcase",
+      "displayName": "Opt-in Dear ImGui showcase",
       "inherits": "base",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",

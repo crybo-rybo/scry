@@ -339,20 +339,13 @@ The second sanctioned interface, existing for one reason: **dependency injection
 
 **M5 showcase boundary (ADR 0010).** Showcase code depends inward on the
 installed/public `scry::scry` surface; the library never depends back on a
-showcase. The ImGui panel, its controller seam, and the NPC world live outside
-namespace `scry` and are not installed or exported. The host owns the Harness,
-Conversation, update cadence, ImGui context/backends/window/loop, and world
-lifetime. The panel retains only the active public Turn plus example-local
-callback state. Weak callback capture and a submission generation prevent
-late events from touching a destroyed panel or replacing newer state;
-destruction requests cancellation without waiting.
-
-The deterministic NPC's explicit-schema handlers execute on the app thread and
-close over host-owned in-memory state. This is the sanctioned seam for state a
-main loop already owns; it does not create an engine abstraction or a second
-agent loop. The example's mutations are ephemeral. Durable adaptations require
-application-owned idempotency or reconciliation because failed/cancelled turns
-do not roll back external state.
+showcase. The ImGui panel and its controller seam live outside namespace `scry`
+and are not installed or exported. The host owns the Harness, Conversation,
+update cadence, and ImGui context/backends/window/loop. The panel retains only
+the active public Turn plus example-local callback state. Weak callback capture
+and a submission generation prevent late events from touching a destroyed
+panel or replacing newer state; destruction requests cancellation without
+waiting.
 
 **Dear ImGui justification.** Dear ImGui is required to compile the real widget
 and execute a headless frame rather than validating a look-alike facade. It is
@@ -384,8 +377,8 @@ therefore remains libcurl plus internal Glaze.
   executable; the pulled `qwen3:1.7b-q4_K_M` model tag is not digest-pinned,
   so routine upstream repushes cannot break the smoke. This documents the
   live pipeline; no completed hosted nightly execution is claimed yet.
-- M5's live acceptance gate covers deterministic NPC domain/registration cases,
-  fake-controller panel send/stream/complete/error/cancel/lifetime cases, a
+- M5's live acceptance gate covers fake-controller panel
+  send/stream/complete/error/cancel/lifetime cases, a
   warnings-as-errors compile/link against the pinned real Dear ImGui sources,
   one headless ImGui frame, and a clean-package absence audit. The shared
   showcase script passes locally and in hosted CI.
@@ -437,7 +430,7 @@ Every "boring first" choice is recorded here with the condition that triggers ev
 | Reflection-ON CI leg on Linux only (PORT-005) | A production-grade P2996 toolchain becomes practically distributable on macOS | Gating reflection legs on both platforms |
 | Serialized turns: M2 queued turns wait while the active turn awaits a main-thread tool | Serialized scheduling measurably limits a real app | Tool-await releases the slot under curl-multi multiplexing (same trigger as row 2) |
 | One serialized worker-mode handler with no injected stop token | A real handler needs cooperative cancellation or parallel execution | Ratify a stop-aware or async handler boundary plus explicit pool, ordering, resource, and teardown policy |
-| M5 ImGui panel has no platform/renderer backend and the NPC world is ephemeral | A maintained standalone demo or durable game integration becomes a real deliverable | Ratify its platform matrix and lifecycle separately; keep any backend, persistence, rollback, or idempotency machinery outside the Scry package |
+| M5 ImGui panel has no platform/renderer backend | A maintained standalone demo becomes a real deliverable | Ratify its platform matrix and lifecycle separately; keep any backend outside the Scry package |
 | Streaming-only provider seam: adapters always request `stream: true` and decode through the stream path; the parallel non-streaming response decoders were removed as production-dead | A supported deployment genuinely cannot serve SSE, or a consumer needs non-streaming completions | Reintroduce a `parse_response` seam together with a runtime mode that actually exercises it, plus its golden and fuzz coverage — never as untested parallel code |
 | Compile-time diagnostic file logger (`SCRY_ENABLE_LOGGING`): fixed line format, one file sink chosen by environment variable, no runtime configuration or public API | A consumer needs runtime-toggleable, structured, or callback-driven diagnostics | Ratify a public logging/observer surface (the one PROV-008 records as absent) and route the same call sites through it |
 | Release-posture verification (ADR 0012): behavioral gates only — matrix, tests, sanitizers, tidy, package audits; no coverage/CRAP metric gating, no mutation testing, fuzz and showcase nightly | Unattended agent-driven development resumes at scale, or coverage erosion on the pure components is observed in review | Restore targeted pieces per ADR 0012 — starting with a single non-gating coverage report line, never the full retired apparatus by default |

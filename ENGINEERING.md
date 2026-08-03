@@ -48,7 +48,7 @@ under those gates remain in full — the gates went, not the tests.
 | Component tests | SSE parser, retry classifier, reflected schema/codec, queue, pump budget | Pure or single-threaded; property-based where inputs are adversarial | Most of the rest |
 | Adapter golden tests | Captured real wire payloads ↔ neutral model round-trips | Data-driven; payloads are checked-in fixtures | Thin |
 | Integration tests | Real threads + fake transport; full harness against a local mock SSE server | The only tests where threading is real | Thin |
-| Showcase contract tests | Deterministic NPC world and fake-controller panel behavior; real ImGui headless frame and package audit | Network-free, fixed state; the real dependency is compiled only in its opt-in leg | Thin |
+| Showcase contract tests | Fake-controller panel behavior; real ImGui headless frame and package audit | Network-free, fixed state; the real dependency is compiled only in its opt-in leg | Thin |
 | End-to-end smoke | Real local model (Ollama / llama.cpp server) in CI | On demand, not per-commit; flakiness quarantined by design | Thinnest |
 
 ### Principles
@@ -152,10 +152,9 @@ Three rings, ordered by feedback speed; a failure in an inner ring stops the out
 2. **Nightly:** deep static analysis (CodeQL), long fuzz on all three
    protocol targets, and the M5 showcase contract — a default-OFF leg that
    enables the examples, builds them with warnings as errors, runs
-   deterministic NPC and fake-panel cases, executes a real Dear ImGui
-   headless frame, and repeats the core package-absence audit. Showcase
-   feedback is immediate when it breaks (§8), so it does not gate PRs
-   (ADR 0012).
+   deterministic fake-panel cases, executes a real Dear ImGui headless frame,
+   and repeats the core package-absence audit. Showcase feedback is immediate
+   when it breaks (§8), so it does not gate PRs (ADR 0012).
 3. **On demand (`workflow_dispatch`):** a bounded end-to-end smoke against a
    checksum-pinned local OpenAI-compatible server. The smoke uses a health
    check, hard startup/turn/job timeouts, one chat case and one tool round,
@@ -219,12 +218,12 @@ and `qwen3:1.7b-q4_K_M`. That local pass does not claim execution of the
 checksum-pinned Ollama v0.32.1 hosted job.
 
 M5 is live under ADR 0010. `scripts/ci-showcase.sh` is the single local/hosted
-entry point: it runs 20 deterministic NPC, registration, and fake-controller
-panel tests three times; compiles and executes one headless frame with the
-pinned Dear ImGui sources under warnings-as-errors; and audits a clean
-reflection-OFF install plus downstream consumer to prove that no showcase
-artifact or dependency leaks into the package. The hosted nightly `showcase`
-job and the local `just showcase` recipe both call that shared gate.
+entry point: it runs the deterministic fake-controller panel tests three times;
+compiles and executes one headless frame with the pinned Dear ImGui sources
+under warnings-as-errors; and audits a clean reflection-OFF install plus
+downstream consumer to prove that no showcase artifact or dependency leaks into
+the package. The hosted nightly `showcase` job and the local `just showcase`
+recipe both call that shared gate.
 
 ## 7. Workflow & Change Hygiene
 
