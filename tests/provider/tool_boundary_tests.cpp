@@ -1,8 +1,8 @@
+#include "core/json_codec.hpp"
 #include "core/model.hpp"
 #include "core/provider.hpp"
 #include "provider/anthropic.hpp"
 #include "provider/anthropic_content.hpp"
-#include "provider/wire_json.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 #include <cstddef>
@@ -57,24 +57,24 @@ void append_arguments(AnthropicAdapter& adapter, ProviderDecodeState& state,
 }
 
 [[nodiscard]] std::string canonical_json(const std::string_view json) {
-  auto parsed = parse_wire_json(json, ErrorCategory::protocol, "invalid test JSON");
+  auto parsed = parse_json(json, ErrorCategory::protocol, "invalid test JSON");
   REQUIRE(parsed);
   auto encoded =
-      write_wire_json(*parsed, ErrorCategory::protocol, "test JSON encode failed");
+      write_json_text(*parsed, ErrorCategory::protocol, "test JSON encode failed");
   REQUIRE(encoded);
   return *encoded;
 }
 
-[[nodiscard]] std::string canonical_value(const WireValue& value) {
+[[nodiscard]] std::string canonical_value(const JsonValue& value) {
   auto encoded =
-      write_wire_json(value, ErrorCategory::protocol, "test JSON encode failed");
+      write_json_text(value, ErrorCategory::protocol, "test JSON encode failed");
   REQUIRE(encoded);
   return canonical_json(*encoded);
 }
 
-[[nodiscard]] const WireValue& required_field(const WireValue& value,
+[[nodiscard]] const JsonValue& required_field(const JsonValue& value,
                                               const std::string_view name) {
-  const auto* field = wire_field(value, name);
+  const auto* field = json_field(value, name);
   REQUIRE(field != nullptr);
   return *field;
 }
@@ -141,29 +141,29 @@ void append_arguments(AnthropicAdapter& adapter, ProviderDecodeState& state,
   };
 }
 
-void check_schemas(const WireValue& root) {
-  const auto tools = required_wire_array(root, "tools");
+void check_schemas(const JsonValue& root) {
+  const auto tools = required_json_array(root, "tools");
   REQUIRE(tools);
   REQUIRE((*tools)->size() == 2);
-  CHECK(*required_wire_string((*tools)->at(0), "name") == "weather");
-  CHECK(*required_wire_string((*tools)->at(1), "name") == "days");
+  CHECK(*required_json_string((*tools)->at(0), "name") == "weather");
+  CHECK(*required_json_string((*tools)->at(1), "name") == "days");
   CHECK(canonical_value(required_field((*tools)->at(0), "input_schema")) ==
         canonical_json(R"({"type":"object","required":["city"]})"));
   CHECK(canonical_value(required_field((*tools)->at(1), "input_schema")) ==
         canonical_json(R"({"type":"object","required":["days"]})"));
 }
 
-void check_messages(const WireValue& root) {
-  const auto messages = required_wire_array(root, "messages");
+void check_messages(const JsonValue& root) {
+  const auto messages = required_json_array(root, "messages");
   REQUIRE(messages);
   REQUIRE((*messages)->size() == 2);
-  const auto calls = required_wire_array((*messages)->at(0), "content");
+  const auto calls = required_json_array((*messages)->at(0), "content");
   REQUIRE(calls);
   REQUIRE((*calls)->size() == 2);
-  CHECK(*required_wire_string((*calls)->at(0), "id") == "call-a");
-  CHECK(*required_wire_string((*calls)->at(1), "id") == "call-b");
+  CHECK(*required_json_string((*calls)->at(0), "id") == "call-a");
+  CHECK(*required_json_string((*calls)->at(1), "id") == "call-b");
 
-  const auto results = required_wire_array((*messages)->at(1), "content");
+  const auto results = required_json_array((*messages)->at(1), "content");
   REQUIRE(results);
   REQUIRE((*results)->size() == 2);
   CHECK(
@@ -254,6 +254,20 @@ TEST_CASE("Anthropic streamed argument limit rejects before appending") {
   }
 }
 
+TEST_CASE("Anthropic streamed tool arguments are validated but not rewritten") {
+  AnthropicAdapter adapter;
+  ProviderDecodeState state;
+  start_message(adapter, state);
+  start_tool(adapter, state, 0, "call-1", "lookup");
+  append_arguments(adapter, state, 0, R"({ \"b\" : 2, \"a\" : 1 })");
+  stop_tool(adapter, state, 0);
+
+  // The stream layer proves the object root and forwards the received bytes;
+  // TurnMachine is the one place that canonicalizes them.
+  CHECK(std::get<ToolCallBlock>(state.response.content.front()).arguments.text ==
+        R"({ "b" : 2, "a" : 1 })");
+}
+
 TEST_CASE("Anthropic stream rejects malformed JSON assembled from valid deltas") {
   AnthropicAdapter adapter;
   ProviderDecodeState state;
@@ -285,9 +299,9 @@ TEST_CASE("Anthropic tool arguments require JSON object roots") {
   }
 
   SECTION("non-streaming input") {
-    const auto parsed = parse_wire_json(
-        R"({"type":"tool_use","id":"call-1","name":"lookup","input":[]})",
-        ErrorCategory::protocol, "invalid test JSON");
+    const auto parsed =
+        parse_json(R"({"type":"tool_use","id":"call-1","name":"lookup","input":[]})",
+                   ErrorCategory::protocol, "invalid test JSON");
     REQUIRE(parsed);
     const auto decoded = decode_anthropic_content(*parsed, false);
     REQUIRE_FALSE(decoded);
@@ -299,8 +313,7 @@ TEST_CASE("Anthropic request serializes multiple schemas and tool results in ord
   AnthropicAdapter adapter;
   const auto encoded = adapter.make_request(config(), multi_tool_request());
   REQUIRE(encoded);
-  auto root =
-      parse_wire_json(encoded->body, ErrorCategory::protocol, "request is invalid");
+  auto root = parse_json(encoded->body, ErrorCategory::protocol, "request is invalid");
   REQUIRE(root);
   check_schemas(*root);
   check_messages(*root);

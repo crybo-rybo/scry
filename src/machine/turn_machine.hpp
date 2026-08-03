@@ -238,8 +238,11 @@ private:
                                          TransitionDiagnosticReason reason) const;
   [[nodiscard]] bool retry_is_allowed(const Error& error,
                                       MachineTimePoint observed_at) const noexcept;
+  // Validates the model response and rewrites each tool call in place with its
+  // canonical arguments, so the committed assistant message and the dispatched
+  // call carry the same bytes.
   [[nodiscard]] Result<std::vector<ToolCallBlock>>
-  validate_response(const ModelResponse& response) const;
+  validate_response(ModelResponse& response) const;
   [[nodiscard]] ModelRequest& mutable_request();
   [[nodiscard]] bool usage_would_overflow(const Usage& usage) const noexcept;
   [[nodiscard]] bool reserve_exchange_bytes(std::size_t bytes) noexcept;

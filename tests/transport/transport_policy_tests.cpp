@@ -1,7 +1,6 @@
 #include "transport/transport_policy.hpp"
 
 #include <catch2/catch_test_macros.hpp>
-#include <chrono>
 #include <limits>
 #include <scry/error.hpp>
 #include <string>
@@ -23,7 +22,6 @@ namespace {
 } // namespace
 
 TEST_CASE("transport request validation rejects incomplete requests") {
-  using namespace std::chrono_literals;
   using scry::ErrorCategory;
   using scry::detail::transport_policy::validate_request;
 
@@ -41,23 +39,6 @@ TEST_CASE("transport request validation rejects incomplete requests") {
   result = validate_request(request, missing_sink);
   REQUIRE_FALSE(result);
   CHECK(result.error().category == ErrorCategory::invalid_state);
-
-  request.timeouts.connect = 0ms;
-  result = validate_request(request, body_sink);
-  REQUIRE_FALSE(result);
-  CHECK(result.error().category == ErrorCategory::invalid_config);
-
-  request = valid_request();
-  request.timeouts.transfer = -1ms;
-  result = validate_request(request, body_sink);
-  REQUIRE_FALSE(result);
-  CHECK(result.error().category == ErrorCategory::invalid_config);
-
-  request = valid_request();
-  request.timeouts.shutdown = 0ms;
-  result = validate_request(request, body_sink);
-  REQUIRE_FALSE(result);
-  CHECK(result.error().category == ErrorCategory::invalid_config);
 }
 
 TEST_CASE("transport header validation accepts RFC tokens and rejects injection") {
@@ -91,8 +72,6 @@ TEST_CASE("transport header policy recognizes provider correlation fields") {
   CHECK(is_request_id_header("X-Request-ID"));
   CHECK(is_request_id_header("Anthropic-Request-Id"));
   CHECK_FALSE(is_request_id_header("trace-id"));
-  CHECK(is_content_length_header("CONTENT-LENGTH"));
-  CHECK_FALSE(is_content_length_header("transfer-encoding"));
 }
 
 TEST_CASE("transport size parsing rejects malformed and overflowing values") {
@@ -159,21 +138,15 @@ TEST_CASE("response policy rejects malformed and oversized metadata") {
     CHECK(result.error().category == ErrorCategory::protocol);
   }
 
-  for (const auto line :
-       {"missing-separator\r\n", " : value\r\n", "Content-Length: invalid\r\n"}) {
+  for (const auto line : {"missing-separator\r\n", " : value\r\n"}) {
     ResponseState response{.limit = 512};
     const auto result = response.accept_header(line);
     REQUIRE_FALSE(result);
     CHECK(result.error().category == ErrorCategory::protocol);
   }
 
-  ResponseState declared{.limit = 64};
-  auto result = declared.accept_header("Content-Length: 65");
-  REQUIRE_FALSE(result);
-  CHECK(result.error().category == ErrorCategory::resource_limit);
-
   ResponseState identifier{.limit = 1024};
-  result = identifier.accept_header("Request-Id: " + std::string(257, 'x'));
+  auto result = identifier.accept_header("Request-Id: " + std::string(257, 'x'));
   REQUIRE_FALSE(result);
   CHECK(result.error().category == ErrorCategory::protocol);
 

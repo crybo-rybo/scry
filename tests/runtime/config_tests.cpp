@@ -127,6 +127,21 @@ TEST_CASE("configuration applies provider-specific sampling bounds") {
   CHECK_FALSE(scry::detail::validate_config(config));
 }
 
+TEST_CASE("Anthropic sampling rejects every invalid numeric shape") {
+  auto config = valid_config();
+
+  for (const auto temperature : {std::numeric_limits<double>::quiet_NaN(), -0.1, 1.1}) {
+    config.sampling.temperature = temperature;
+    CHECK_FALSE(scry::detail::validate_config(config));
+  }
+
+  config.sampling.temperature = 0.5;
+  for (const auto top_p : {std::numeric_limits<double>::quiet_NaN(), 0.0, -0.1, 1.1}) {
+    config.sampling.top_p = top_p;
+    CHECK_FALSE(scry::detail::validate_config(config));
+  }
+}
+
 TEST_CASE("OpenAI-compatible sampling rejects every invalid numeric shape") {
   auto config = valid_config();
   config.dialect = scry::ProviderDialect::openai_compatible;
@@ -151,8 +166,18 @@ TEST_CASE("OpenAI-compatible sampling rejects every invalid numeric shape") {
 }
 
 TEST_CASE("configuration rejects zero timeouts and limits") {
+  using namespace std::chrono_literals;
+
   auto config = valid_config();
   config.timeouts.shutdown = {};
+  CHECK_FALSE(scry::detail::validate_config(config));
+
+  config = valid_config();
+  config.timeouts.connect = {};
+  CHECK_FALSE(scry::detail::validate_config(config));
+
+  config = valid_config();
+  config.timeouts.transfer = -1ms;
   CHECK_FALSE(scry::detail::validate_config(config));
 
   config = valid_config();

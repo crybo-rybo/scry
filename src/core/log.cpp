@@ -15,8 +15,6 @@
 namespace scry::detail {
 namespace {
 
-constexpr const char* default_log_path = "scry.log";
-
 [[nodiscard]] std::string timestamp_utc() {
   const auto now = std::chrono::system_clock::now();
   const auto seconds = std::chrono::system_clock::to_time_t(now);
@@ -43,7 +41,12 @@ struct LogFile {
     // The Meyers-singleton constructor runs exactly once, serialized by the
     // language, so the one-shot getenv read is safe here.
     const char* path = std::getenv("SCRY_LOG_FILE"); // NOLINT(concurrency-mt-unsafe)
-    stream.open(path != nullptr ? path : default_log_path, std::ios::app);
+    // Without an explicit destination there is no log file: a library must not
+    // drop one into the host application's working directory.
+    if (path == nullptr || *path == '\0') {
+      return;
+    }
+    stream.open(path, std::ios::app);
     if (stream.is_open()) {
       stream << std::format(
           "[{}] [t:{:04x}] Scry {}.{}.{} diagnostic logging started\n", timestamp_utc(),

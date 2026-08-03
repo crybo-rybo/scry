@@ -1,6 +1,7 @@
+#include "core/json_codec.hpp"
 #include "provider/openai.hpp"
 #include "provider/openai_content.hpp"
-#include "provider/wire_json.hpp"
+#include "provider/shared.hpp"
 
 #include <limits>
 #include <optional>
@@ -21,43 +22,18 @@ struct StreamEventView {
   std::string_view data;
 };
 
-[[nodiscard]] Result<OpenAiProviderDecodeState*>
-openai_decode_state(ProviderDecodeState& state) {
-  if (std::holds_alternative<std::monostate>(state.dialect)) {
-    state.dialect.emplace<OpenAiProviderDecodeState>();
-  }
-  auto* decode = std::get_if<OpenAiProviderDecodeState>(&state.dialect);
-  if (decode == nullptr) {
-    return std::unexpected(make_provider_error(
-        ErrorCategory::protocol,
-        "OpenAI stream received decode state owned by another dialect"));
-  }
-  return decode;
-}
-
-[[nodiscard]] Result<const WireValue*> required_object(const WireValue& owner,
-                                                       const std::string_view name) {
-  const auto* value = wire_field(owner, name);
-  if (value == nullptr || !value->is_object()) {
-    return std::unexpected(make_provider_error(
-        ErrorCategory::protocol,
-        "OpenAI payload field '" + std::string{name} + "' must be an object"));
-  }
-  return value;
-}
-
-[[nodiscard]] Result<std::size_t> tool_index(const WireValue& value) {
-  auto parsed = optional_wire_uint(value, "index");
+[[nodiscard]] Result<std::size_t> tool_index(const JsonValue& value) {
+  auto parsed = optional_json_uint(value, "index");
   if (!parsed) {
     return std::unexpected(std::move(parsed.error()));
   }
   if (!parsed->has_value()) {
-    return std::unexpected(make_provider_error(
+    return std::unexpected(make_error(
         ErrorCategory::protocol, "OpenAI streamed tool call requires a usable index"));
   }
   const auto index = parsed->value_or(0);
   if (index > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
-    return std::unexpected(make_provider_error(
+    return std::unexpected(make_error(
         ErrorCategory::protocol, "OpenAI streamed tool call requires a usable index"));
   }
   return static_cast<std::size_t>(index);
@@ -66,12 +42,12 @@ openai_decode_state(ProviderDecodeState& state) {
 [[nodiscard]] Status assign_metadata(std::optional<std::string>& destination,
                                      const MetadataFragment fragment) {
   if (fragment.value.empty()) {
-    return std::unexpected(make_provider_error(
+    return std::unexpected(make_error(
         ErrorCategory::protocol,
         "OpenAI streamed tool " + std::string{fragment.field} + " must not be empty"));
   }
   if (destination && *destination != fragment.value) {
-    return std::unexpected(make_provider_error(
+    return std::unexpected(make_error(
         ErrorCategory::protocol,
         "OpenAI streamed tool " + std::string{fragment.field} + " changed mid-stream"));
   }
@@ -79,10 +55,10 @@ openai_decode_state(ProviderDecodeState& state) {
   return {};
 }
 
-[[nodiscard]] Status apply_optional_metadata(const WireValue& owner,
+[[nodiscard]] Status apply_optional_metadata(const JsonValue& owner,
                                              const std::string_view field,
                                              std::optional<std::string>& destination) {
-  auto parsed = optional_wire_string(owner, field);
+  auto parsed = optional_json_string(owner, field);
   if (!parsed) {
     return std::unexpected(std::move(parsed.error()));
   }
@@ -97,32 +73,32 @@ openai_decode_state(ProviderDecodeState& state) {
 [[nodiscard]] Status append_arguments(OpenAiToolDecodeState& tool,
                                       const std::string_view fragment,
                                       const std::size_t limit) {
-  if (tool.arguments.size() > limit ||
-      fragment.size() > limit - tool.arguments.size()) {
-    return std::unexpected(
-        make_provider_error(ErrorCategory::resource_limit,
-                            "OpenAI tool arguments exceed the configured byte limit"));
+  if (auto status = accept_tool_argument_bytes(
+          tool.arguments.size(), fragment.size(), limit,
+          "OpenAI tool arguments exceed the configured byte limit");
+      !status) {
+    return status;
   }
   tool.arguments.append(fragment);
   return {};
 }
 
-[[nodiscard]] Status apply_function_fragment(const WireValue& owner,
+[[nodiscard]] Status apply_function_fragment(const JsonValue& owner,
                                              OpenAiToolDecodeState& tool,
                                              const std::size_t limit) {
-  const auto* function = wire_field(owner, "function");
+  const auto* function = json_field(owner, "function");
   if (function == nullptr || function->is_null()) {
     return {};
   }
   if (!function->is_object()) {
-    return std::unexpected(make_provider_error(
+    return std::unexpected(make_error(
         ErrorCategory::protocol, "OpenAI streamed tool function must be an object"));
   }
   auto name = apply_optional_metadata(*function, "name", tool.name);
   if (!name) {
     return name;
   }
-  auto arguments = optional_wire_string(*function, "arguments");
+  auto arguments = optional_json_string(*function, "arguments");
   if (!arguments) {
     return std::unexpected(std::move(arguments.error()));
   }
@@ -132,13 +108,13 @@ openai_decode_state(ProviderDecodeState& state) {
   return append_arguments(tool, arguments->value_or(std::string_view{}), limit);
 }
 
-[[nodiscard]] Status apply_tool_fragment(const WireValue& value,
+[[nodiscard]] Status apply_tool_fragment(const JsonValue& value,
                                          ProviderDecodeState& state,
                                          OpenAiProviderDecodeState& decode) {
   if (!value.is_object()) {
     return std::unexpected(
-        make_provider_error(ErrorCategory::protocol,
-                            "OpenAI streamed tool call fragment must be an object"));
+        make_error(ErrorCategory::protocol,
+                   "OpenAI streamed tool call fragment must be an object"));
   }
   auto index = tool_index(value);
   if (!index) {
@@ -154,7 +130,7 @@ openai_decode_state(ProviderDecodeState& state) {
     return type;
   }
   if (tool.type && *tool.type != "function") {
-    return std::unexpected(make_provider_error(
+    return std::unexpected(make_error(
         ErrorCategory::protocol, "OpenAI streamed tool call type must be function"));
   }
   auto function = apply_function_fragment(value, tool, state.max_tool_arguments_bytes);
@@ -165,16 +141,16 @@ openai_decode_state(ProviderDecodeState& state) {
   return {};
 }
 
-[[nodiscard]] Status apply_tool_fragments(const WireValue& delta,
+[[nodiscard]] Status apply_tool_fragments(const JsonValue& delta,
                                           ProviderDecodeState& state,
                                           OpenAiProviderDecodeState& decode) {
-  const auto* calls = wire_field(delta, "tool_calls");
+  const auto* calls = json_field(delta, "tool_calls");
   if (calls == nullptr || calls->is_null()) {
     return {};
   }
   if (!calls->is_array()) {
-    return std::unexpected(make_provider_error(
-        ErrorCategory::protocol, "OpenAI streamed tool_calls must be an array"));
+    return std::unexpected(make_error(ErrorCategory::protocol,
+                                      "OpenAI streamed tool_calls must be an array"));
   }
   for (const auto& value : calls->get_array()) {
     auto applied = apply_tool_fragment(value, state, decode);
@@ -191,18 +167,23 @@ openai_decode_state(ProviderDecodeState& state) {
   for (auto& [index, tool] : decode.tool_calls) {
     if (index != expected_index || !tool.id || !tool.name || !tool.type ||
         *tool.type != "function") {
-      return std::unexpected(make_provider_error(
-          ErrorCategory::protocol,
-          "OpenAI streamed tool calls are incomplete or noncontiguous"));
+      return std::unexpected(
+          make_error(ErrorCategory::protocol,
+                     "OpenAI streamed tool calls are incomplete or noncontiguous"));
     }
-    auto arguments = canonical_openai_arguments(tool.arguments);
-    if (!arguments) {
-      return std::unexpected(std::move(arguments.error()));
+    if (tool.arguments.empty()) {
+      tool.arguments = "{}";
+    }
+    // The stream layer only proves the arguments are a JSON object and
+    // forwards the bytes as received; TurnMachine owns the single
+    // canonicalization pass.
+    if (auto status = validate_openai_arguments(tool.arguments); !status) {
+      return std::unexpected(std::move(status.error()));
     }
     state.response.content.push_back(ToolCallBlock{
         .id = *tool.id,
         .name = *tool.name,
-        .arguments = Json{.text = std::move(*arguments)},
+        .arguments = Json{.text = std::move(tool.arguments)},
     });
     ++expected_index;
   }
@@ -211,14 +192,14 @@ openai_decode_state(ProviderDecodeState& state) {
 }
 
 [[nodiscard]] Result<std::vector<ProviderEvent>>
-apply_text_delta(const WireValue& delta, ProviderDecodeState& state,
+apply_text_delta(const JsonValue& delta, ProviderDecodeState& state,
                  OpenAiProviderDecodeState& decode) {
-  const auto* content = wire_field(delta, "content");
+  const auto* content = json_field(delta, "content");
   if (content == nullptr || content->is_null()) {
     return std::vector<ProviderEvent>{};
   }
   if (!content->is_string()) {
-    return std::unexpected(make_provider_error(
+    return std::unexpected(make_error(
         ErrorCategory::protocol, "OpenAI streamed content must be a string or null"));
   }
   const auto text = content->get_string();
@@ -233,8 +214,8 @@ apply_text_delta(const WireValue& delta, ProviderDecodeState& state,
       std::get_if<TextBlock>(&state.response.content[*decode.text_content_index]);
   if (destination == nullptr) {
     return std::unexpected(
-        make_provider_error(ErrorCategory::protocol,
-                            "OpenAI streamed text targeted a non-text content block"));
+        make_error(ErrorCategory::protocol,
+                   "OpenAI streamed text targeted a non-text content block"));
   }
   destination->text.append(text);
   state.semantic_output_consumed = true;
@@ -243,79 +224,79 @@ apply_text_delta(const WireValue& delta, ProviderDecodeState& state,
   };
 }
 
-[[nodiscard]] Status validate_delta_role(const WireValue& delta) {
-  auto role = optional_wire_string(delta, "role");
+[[nodiscard]] Status validate_delta_role(const JsonValue& delta) {
+  auto role = optional_json_string(delta, "role");
   if (!role) {
     return std::unexpected(std::move(role.error()));
   }
   if (role->has_value() && role->value_or(std::string_view{}) != "assistant") {
-    return std::unexpected(make_provider_error(
+    return std::unexpected(make_error(
         ErrorCategory::protocol, "OpenAI streamed response role must be assistant"));
   }
-  const auto* legacy = wire_field(delta, "function_call");
+  const auto* legacy = json_field(delta, "function_call");
   if (legacy != nullptr && !legacy->is_null()) {
-    return std::unexpected(make_provider_error(
-        ErrorCategory::protocol,
-        "OpenAI returned the unsupported deprecated function_call field"));
+    return std::unexpected(
+        make_error(ErrorCategory::protocol,
+                   "OpenAI returned the unsupported deprecated function_call field"));
   }
   return {};
 }
 
-[[nodiscard]] Status validate_chunk_envelope(const WireValue& root,
+[[nodiscard]] Status validate_chunk_envelope(const JsonValue& root,
                                              OpenAiProviderDecodeState& decode) {
-  auto type = required_wire_string(root, "object");
+  auto type = required_json_string(root, "object");
   if (!type) {
     return std::unexpected(std::move(type.error()));
   }
   if (*type != "chat.completion.chunk") {
-    return std::unexpected(make_provider_error(
+    return std::unexpected(make_error(
         ErrorCategory::protocol, "OpenAI stream data is not a Chat Completions chunk"));
   }
-  auto id = required_wire_string(root, "id");
+  auto id = required_json_string(root, "id");
   if (!id) {
     return std::unexpected(std::move(id.error()));
   }
   if (id->empty()) {
-    return std::unexpected(make_provider_error(
-        ErrorCategory::protocol, "OpenAI stream chunk ID must not be empty"));
+    return std::unexpected(make_error(ErrorCategory::protocol,
+                                      "OpenAI stream chunk ID must not be empty"));
   }
   if (decode.chunk_id && *decode.chunk_id != *id) {
-    return std::unexpected(make_provider_error(
-        ErrorCategory::protocol, "OpenAI stream chunk ID changed mid-stream"));
+    return std::unexpected(make_error(ErrorCategory::protocol,
+                                      "OpenAI stream chunk ID changed mid-stream"));
   }
   decode.chunk_id = *id;
   return {};
 }
 
-[[nodiscard]] Status validate_choice(const WireValue& choice) {
+[[nodiscard]] Status validate_choice(const JsonValue& choice) {
   if (!choice.is_object()) {
-    return std::unexpected(make_provider_error(
-        ErrorCategory::protocol, "OpenAI stream choice must be an object"));
+    return std::unexpected(
+        make_error(ErrorCategory::protocol, "OpenAI stream choice must be an object"));
   }
-  auto index = optional_wire_uint(choice, "index");
+  auto index = optional_json_uint(choice, "index");
   if (!index) {
     return std::unexpected(std::move(index.error()));
   }
   if (index->value_or(1) != 0) {
-    return std::unexpected(make_provider_error(
-        ErrorCategory::protocol, "OpenAI stream choice index must be zero"));
+    return std::unexpected(
+        make_error(ErrorCategory::protocol, "OpenAI stream choice index must be zero"));
   }
   return {};
 }
 
-[[nodiscard]] Result<const WireValue*>
-validated_choice_delta(const WireValue& choice,
+[[nodiscard]] Result<const JsonValue*>
+validated_choice_delta(const JsonValue& choice,
                        const OpenAiProviderDecodeState& decode) {
   auto valid = validate_choice(choice);
   if (!valid) {
     return std::unexpected(std::move(valid.error()));
   }
   if (decode.finish_observed) {
-    return std::unexpected(make_provider_error(
-        ErrorCategory::protocol,
-        "OpenAI stream emitted semantic data after its finish reason"));
+    return std::unexpected(
+        make_error(ErrorCategory::protocol,
+                   "OpenAI stream emitted semantic data after its finish reason"));
   }
-  auto delta = required_object(choice, "delta");
+  auto delta = required_json_object(choice, "delta");
   if (!delta) {
     return std::unexpected(std::move(delta.error()));
   }
@@ -326,10 +307,10 @@ validated_choice_delta(const WireValue& choice,
   return *delta;
 }
 
-[[nodiscard]] Status apply_finish_reason(const WireValue& choice,
+[[nodiscard]] Status apply_finish_reason(const JsonValue& choice,
                                          ProviderDecodeState& state,
                                          OpenAiProviderDecodeState& decode) {
-  auto reason = optional_wire_string(choice, "finish_reason");
+  auto reason = optional_json_string(choice, "finish_reason");
   if (!reason) {
     return std::unexpected(std::move(reason.error()));
   }
@@ -350,7 +331,7 @@ validated_choice_delta(const WireValue& choice,
 }
 
 [[nodiscard]] Result<std::vector<ProviderEvent>>
-apply_choice(const WireValue& choice, ProviderDecodeState& state, const WireValue& root,
+apply_choice(const JsonValue& choice, ProviderDecodeState& state, const JsonValue& root,
              OpenAiProviderDecodeState& decode) {
   auto delta = validated_choice_delta(choice, decode);
   if (!delta) {
@@ -376,13 +357,13 @@ apply_choice(const WireValue& choice, ProviderDecodeState& state, const WireValu
 }
 
 [[nodiscard]] Result<std::vector<ProviderEvent>>
-apply_usage_chunk(const WireValue& root, ProviderDecodeState& state,
+apply_usage_chunk(const JsonValue& root, ProviderDecodeState& state,
                   const OpenAiProviderDecodeState& decode) {
-  const auto* usage = wire_field(root, "usage");
+  const auto* usage = json_field(root, "usage");
   if (!decode.finish_observed || usage == nullptr || !usage->is_object()) {
     return std::unexpected(
-        make_provider_error(ErrorCategory::protocol,
-                            "OpenAI empty-choice chunk must carry post-finish usage"));
+        make_error(ErrorCategory::protocol,
+                   "OpenAI empty-choice chunk must carry post-finish usage"));
   }
   auto applied = apply_openai_usage(root, state.response.usage);
   if (!applied) {
@@ -392,13 +373,13 @@ apply_usage_chunk(const WireValue& root, ProviderDecodeState& state,
 }
 
 [[nodiscard]] Result<std::vector<ProviderEvent>>
-apply_chunk(const WireValue& root, ProviderDecodeState& state,
+apply_chunk(const JsonValue& root, ProviderDecodeState& state,
             OpenAiProviderDecodeState& decode) {
   auto envelope = validate_chunk_envelope(root, decode);
   if (!envelope) {
     return std::unexpected(std::move(envelope.error()));
   }
-  auto choices = required_wire_array(root, "choices");
+  auto choices = required_json_array(root, "choices");
   if (!choices) {
     return std::unexpected(std::move(choices.error()));
   }
@@ -407,8 +388,8 @@ apply_chunk(const WireValue& root, ProviderDecodeState& state,
   }
   if ((*choices)->size() != 1) {
     return std::unexpected(
-        make_provider_error(ErrorCategory::protocol,
-                            "OpenAI stream chunk must contain at most one choice"));
+        make_error(ErrorCategory::protocol,
+                   "OpenAI stream chunk must contain at most one choice"));
   }
   return apply_choice((*choices)->front(), state, root, decode);
 }
@@ -417,8 +398,8 @@ apply_chunk(const WireValue& root, ProviderDecodeState& state,
 complete_stream(ProviderDecodeState& state, const OpenAiProviderDecodeState& decode) {
   if (!decode.finish_observed || !decode.tools_finalized) {
     return std::unexpected(
-        make_provider_error(ErrorCategory::protocol,
-                            "OpenAI stream ended before a complete finish reason"));
+        make_error(ErrorCategory::protocol,
+                   "OpenAI stream ended before a complete finish reason"));
   }
   state.completed = true;
   // parse_stream_event rejects every later event once completed is set, so the
@@ -430,8 +411,8 @@ complete_stream(ProviderDecodeState& state, const OpenAiProviderDecodeState& dec
 
 [[nodiscard]] std::optional<Error> optional_root_error(const std::string_view data,
                                                        const std::string& request_id) {
-  auto root = parse_wire_json(data, ErrorCategory::protocol,
-                              "OpenAI SSE data is not valid JSON");
+  auto root =
+      parse_json(data, ErrorCategory::protocol, "OpenAI SSE data is not valid JSON");
   if (!root || !is_openai_error(*root)) {
     return std::nullopt;
   }
@@ -448,7 +429,7 @@ decode_stream_event(const StreamEventView event, ProviderDecodeState& state,
       return std::unexpected(std::move(*error));
     }
     if (decode.finish_observed) {
-      return std::unexpected(make_provider_error(
+      return std::unexpected(make_error(
           ErrorCategory::protocol,
           "OpenAI stream emitted an optional event after its finish reason"));
     }
@@ -458,14 +439,14 @@ decode_stream_event(const StreamEventView event, ProviderDecodeState& state,
   }
   if (event.data == "[DONE]") {
     if (event.name != "message") {
-      return std::unexpected(make_provider_error(
-          ErrorCategory::protocol,
-          "OpenAI named error event cannot contain the terminal marker"));
+      return std::unexpected(
+          make_error(ErrorCategory::protocol,
+                     "OpenAI named error event cannot contain the terminal marker"));
     }
     return complete_stream(state, decode);
   }
-  auto root = parse_wire_json(event.data, ErrorCategory::protocol,
-                              "OpenAI SSE data is not valid JSON");
+  auto root = parse_json(event.data, ErrorCategory::protocol,
+                         "OpenAI SSE data is not valid JSON");
   if (!root) {
     return std::unexpected(std::move(root.error()));
   }
@@ -486,12 +467,13 @@ OpenAiAdapter::parse_stream_event(const std::string_view event_name,
                                   const std::string_view data,
                                   ProviderDecodeState& state) const {
   // NOLINTEND(bugprone-easily-swappable-parameters)
-  if (state.completed) {
-    return std::unexpected(
-        make_provider_error(ErrorCategory::protocol,
-                            "OpenAI stream emitted data after its terminal event"));
+  if (auto status = reject_event_after_terminal(
+          state, "OpenAI stream emitted data after its terminal event");
+      !status) {
+    return std::unexpected(std::move(status.error()));
   }
-  auto decode = openai_decode_state(state);
+  auto decode = dialect_decode_state<OpenAiProviderDecodeState>(
+      state, "OpenAI stream received decode state owned by another dialect");
   if (!decode) {
     return std::unexpected(std::move(decode.error()));
   }

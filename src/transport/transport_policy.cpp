@@ -1,24 +1,16 @@
 #include "transport/transport_policy.hpp"
 
+#include "core/json_codec.hpp"
+
 #include <algorithm>
 #include <cctype>
 #include <charconv>
-#include <chrono>
 #include <cstdint>
 #include <string>
 #include <utility>
 
 namespace scry::detail::transport_policy {
 namespace {
-
-[[nodiscard]] Error make_error(const ErrorCategory category, std::string message,
-                               const bool retryable = false) {
-  return Error{
-      .category = category,
-      .message = std::move(message),
-      .retryable = retryable,
-  };
-}
 
 [[nodiscard]] bool valid_header_name(const std::string_view name) noexcept {
   if (name.empty()) {
@@ -84,27 +76,8 @@ namespace {
   return {};
 }
 
-[[nodiscard]] Status validate_content_length(const ResponseState& response,
-                                             const std::string_view value) {
-  const auto length = parse_size(value);
-  if (!length) {
-    return std::unexpected(
-        make_error(ErrorCategory::protocol, "invalid response length"));
-  }
-  if (*length > response.limit) {
-    return std::unexpected(
-        make_error(ErrorCategory::resource_limit, "response exceeds configured limit"));
-  }
-  return {};
-}
-
 [[nodiscard]] Status record_header(ResponseState& response, const std::string_view name,
                                    const std::string_view value) {
-  if (is_content_length_header(name)) {
-    if (auto status = validate_content_length(response, value); !status) {
-      return status;
-    }
-  }
   response.headers.push_back(
       HttpHeader{.name = std::string{name}, .value = std::string{value}});
   if (!is_request_id_header(name)) {
@@ -167,10 +140,6 @@ bool is_request_id_header(const std::string_view name) noexcept {
          header_name_equal(name, "anthropic-request-id");
 }
 
-bool is_content_length_header(const std::string_view name) noexcept {
-  return header_name_equal(name, "content-length");
-}
-
 std::optional<std::size_t> parse_size(const std::string_view value) noexcept {
   std::size_t parsed{};
   const auto result =
@@ -190,12 +159,6 @@ Status validate_request(const TransportRequest& request,
   if (!body_sink) {
     return std::unexpected(
         make_error(ErrorCategory::invalid_state, "response sink is missing"));
-  }
-  if (request.timeouts.connect <= std::chrono::milliseconds::zero() ||
-      request.timeouts.transfer <= std::chrono::milliseconds::zero() ||
-      request.timeouts.shutdown <= std::chrono::milliseconds::zero()) {
-    return std::unexpected(make_error(ErrorCategory::invalid_config,
-                                      "transport timeouts must be positive"));
   }
   return {};
 }

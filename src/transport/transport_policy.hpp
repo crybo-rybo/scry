@@ -26,8 +26,6 @@ struct ResponseState {
 
 [[nodiscard]] bool is_request_id_header(std::string_view name) noexcept;
 
-[[nodiscard]] bool is_content_length_header(std::string_view name) noexcept;
-
 [[nodiscard]] std::optional<std::size_t> parse_size(std::string_view value) noexcept;
 
 [[nodiscard]] Status validate_request(const TransportRequest& request,

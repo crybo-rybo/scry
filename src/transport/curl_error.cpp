@@ -1,5 +1,6 @@
 #include "transport/curl_error.hpp"
 
+#include "core/json_codec.hpp"
 #include "transport/transport_policy.hpp"
 
 #include <algorithm>
@@ -7,19 +8,9 @@
 #include <curl/curl.h>
 #include <limits>
 #include <string>
-#include <utility>
 
 namespace scry::detail::curl_error {
 namespace {
-
-[[nodiscard]] Error make_error(const ErrorCategory category, std::string message,
-                               const bool retryable = false) {
-  return Error{
-      .category = category,
-      .message = std::move(message),
-      .retryable = retryable,
-  };
-}
 
 [[nodiscard]] bool is_nonretryable_tls_error(const CURLcode code) noexcept {
   return code == CURLE_PEER_FAILED_VERIFICATION || code == CURLE_SSL_CERTPROBLEM ||

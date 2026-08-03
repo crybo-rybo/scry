@@ -6,34 +6,34 @@
 namespace scry::detail {
 namespace {
 
-[[nodiscard]] Result<ContentBlock> decode_text(const WireValue& value) {
-  auto text = required_wire_string(value, "text");
+[[nodiscard]] Result<ContentBlock> decode_text(const JsonValue& value) {
+  auto text = required_json_string(value, "text");
   if (!text) {
     return std::unexpected(std::move(text.error()));
   }
   return ContentBlock{TextBlock{.text = std::string{*text}}};
 }
 
-[[nodiscard]] Result<ContentBlock> decode_tool_call(const WireValue& value,
+[[nodiscard]] Result<ContentBlock> decode_tool_call(const JsonValue& value,
                                                     const bool streaming_start) {
-  auto id = required_wire_string(value, "id");
+  auto id = required_json_string(value, "id");
   if (!id) {
     return std::unexpected(std::move(id.error()));
   }
-  auto name = required_wire_string(value, "name");
+  auto name = required_json_string(value, "name");
   if (!name) {
     return std::unexpected(std::move(name.error()));
   }
 
-  const auto* input = wire_field(value, "input");
+  const auto* input = json_field(value, "input");
   if (input == nullptr || !input->is_object()) {
-    return std::unexpected(make_provider_error(
+    return std::unexpected(make_error(
         ErrorCategory::protocol, "Anthropic tool_use input must be a JSON object"));
   }
 
   std::string arguments{};
   if (!streaming_start) {
-    auto encoded = write_wire_json(*input, ErrorCategory::protocol,
+    auto encoded = write_json_text(*input, ErrorCategory::protocol,
                                    "Anthropic tool input could not be preserved");
     if (!encoded) {
       return std::unexpected(std::move(encoded.error()));
@@ -48,10 +48,13 @@ namespace {
   }};
 }
 
-[[nodiscard]] Status assign_usage_count(const WireValue& usage,
+// Deliberately divergent from the OpenAI adapter: Anthropic reports usage
+// incrementally, so a missing field preserves the previously observed count
+// instead of zeroing it.
+[[nodiscard]] Status assign_usage_count(const JsonValue& usage,
                                         const std::string_view field,
                                         std::uint64_t& destination) {
-  auto count = optional_wire_uint(usage, field);
+  auto count = optional_json_uint(usage, field);
   if (!count) {
     return std::unexpected(std::move(count.error()));
   }
@@ -64,9 +67,9 @@ namespace {
 
 } // namespace
 
-Result<ContentBlock> decode_anthropic_content(const WireValue& value,
+Result<ContentBlock> decode_anthropic_content(const JsonValue& value,
                                               const bool streaming_start) {
-  auto type = required_wire_string(value, "type");
+  auto type = required_json_string(value, "type");
   if (!type) {
     return std::unexpected(std::move(type.error()));
   }
@@ -77,8 +80,8 @@ Result<ContentBlock> decode_anthropic_content(const WireValue& value,
     return decode_tool_call(value, streaming_start);
   }
   return std::unexpected(
-      make_provider_error(ErrorCategory::protocol,
-                          "Anthropic returned an unsupported required content block"));
+      make_error(ErrorCategory::protocol,
+                 "Anthropic returned an unsupported required content block"));
 }
 
 Result<FinishReason>
@@ -98,14 +101,14 @@ decode_anthropic_finish(const std::optional<std::string_view> reason) {
   return FinishReason::unknown;
 }
 
-Status apply_anthropic_usage(const WireValue& owner, Usage& usage) {
-  const auto* value = wire_field(owner, "usage");
+Status apply_anthropic_usage(const JsonValue& owner, Usage& usage) {
+  const auto* value = json_field(owner, "usage");
   if (value == nullptr) {
     return {};
   }
   if (!value->is_object()) {
-    return std::unexpected(make_provider_error(ErrorCategory::protocol,
-                                               "Anthropic usage must be an object"));
+    return std::unexpected(
+        make_error(ErrorCategory::protocol, "Anthropic usage must be an object"));
   }
 
   auto input = assign_usage_count(*value, "input_tokens", usage.input_tokens);

@@ -245,17 +245,14 @@ TEST_CASE("HTTP error policy covers server-range boundaries") {
   CHECK(http_error(600, "").category == ErrorCategory::protocol);
 }
 
-TEST_CASE("curl global leases remain usable after moves") {
-  scry::detail::CurlGlobalLease shared;
-  REQUIRE_FALSE(shared.error());
-  scry::detail::CurlGlobalLease moved{std::move(shared)};
-  REQUIRE_FALSE(moved.error());
-  scry::detail::CurlGlobalLease assigned;
-  assigned = std::move(moved);
-  REQUIRE_FALSE(assigned.error());
+TEST_CASE("curl global initialization is process-wide and repeatable") {
+  REQUIRE(scry::detail::curl_global_status());
+  REQUIRE(scry::detail::curl_global_status());
 
-  const CurlTransport transport;
-  REQUIRE(transport.status());
+  const CurlTransport first;
+  REQUIRE(first.status());
+  const CurlTransport second;
+  REQUIRE(second.status());
 }
 
 TEST_CASE("curl runtime rejects capabilities that cannot honor host shutdown") {

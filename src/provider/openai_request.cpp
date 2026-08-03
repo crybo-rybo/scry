@@ -1,7 +1,6 @@
+#include "core/json_codec.hpp"
 #include "provider/openai.hpp"
-#include "provider/wire_json.hpp"
 
-#include <cmath>
 #include <string>
 #include <utility>
 #include <variant>
@@ -10,13 +9,13 @@ namespace scry::detail {
 namespace {
 
 [[nodiscard]] Error invalid_request(std::string message) {
-  return make_provider_error(ErrorCategory::invalid_config, std::move(message));
+  return make_error(ErrorCategory::invalid_config, std::move(message));
 }
 
-[[nodiscard]] Result<WireValue> boundary_json_object(const Json& json,
+[[nodiscard]] Result<JsonValue> boundary_json_object(const Json& json,
                                                      const std::string_view name) {
-  auto parsed = parse_wire_json(json.text, ErrorCategory::invalid_config,
-                                "OpenAI " + std::string{name} + " is not valid JSON");
+  auto parsed = parse_json(json.text, ErrorCategory::invalid_config,
+                           "OpenAI " + std::string{name} + " is not valid JSON");
   if (!parsed) {
     return std::unexpected(std::move(parsed.error()));
   }
@@ -29,16 +28,16 @@ namespace {
 
 [[nodiscard]] Result<std::string> boundary_json_string(const Json& json,
                                                        const std::string_view name) {
-  auto parsed = parse_wire_json(json.text, ErrorCategory::invalid_config,
-                                "OpenAI " + std::string{name} + " is not valid JSON");
+  auto parsed = parse_json(json.text, ErrorCategory::invalid_config,
+                           "OpenAI " + std::string{name} + " is not valid JSON");
   if (!parsed) {
     return std::unexpected(std::move(parsed.error()));
   }
-  return write_wire_json(*parsed, ErrorCategory::invalid_config,
+  return write_json_text(*parsed, ErrorCategory::invalid_config,
                          "OpenAI " + std::string{name} + " could not be encoded");
 }
 
-[[nodiscard]] Result<WireValue> encode_tool_call(const ToolCallBlock& call) {
+[[nodiscard]] Result<JsonValue> encode_tool_call(const ToolCallBlock& call) {
   if (call.id.empty() || call.name.empty()) {
     return std::unexpected(
         invalid_request("OpenAI assistant tool calls require nonempty IDs and names"));
@@ -47,25 +46,25 @@ namespace {
   if (!arguments) {
     return std::unexpected(std::move(arguments.error()));
   }
-  auto encoded = write_wire_json(*arguments, ErrorCategory::invalid_config,
+  auto encoded = write_json_text(*arguments, ErrorCategory::invalid_config,
                                  "OpenAI tool arguments could not be encoded");
   if (!encoded) {
     return std::unexpected(std::move(encoded.error()));
   }
 
-  WireValue function{};
+  JsonValue function{};
   function["name"] = call.name;
   // Glaze's assignment operators bind const&, so moving into the node's
   // variant is what transfers the payload instead of duplicating it.
   function["arguments"].data = std::move(*encoded);
-  WireValue value{};
+  JsonValue value{};
   value["id"] = call.id;
   value["type"] = "function";
   value["function"] = std::move(function);
   return value;
 }
 
-[[nodiscard]] Result<WireValue> encode_tool_result(const ToolResultBlock& result) {
+[[nodiscard]] Result<JsonValue> encode_tool_result(const ToolResultBlock& result) {
   if (result.tool_call_id.empty()) {
     return std::unexpected(
         invalid_request("OpenAI tool results require a nonempty call ID"));
@@ -74,14 +73,14 @@ namespace {
   if (!content) {
     return std::unexpected(std::move(content.error()));
   }
-  WireValue value{};
+  JsonValue value{};
   value["role"] = "tool";
   value["tool_call_id"] = result.tool_call_id;
   value["content"].data = std::move(*content);
   return value;
 }
 
-[[nodiscard]] Result<std::vector<WireValue>>
+[[nodiscard]] Result<std::vector<JsonValue>>
 encode_user_message(const Message& message) {
   std::string text{};
   std::vector<const ToolResultBlock*> results{};
@@ -101,9 +100,9 @@ encode_user_message(const Message& message) {
     return std::unexpected(
         invalid_request("OpenAI user messages cannot mix text and tool results"));
   }
-  std::vector<WireValue> encoded{};
+  std::vector<JsonValue> encoded{};
   if (results.empty()) {
-    WireValue value{};
+    JsonValue value{};
     value["role"] = "user";
     value["content"].data = std::move(text);
     encoded.push_back(std::move(value));
@@ -120,10 +119,10 @@ encode_user_message(const Message& message) {
   return encoded;
 }
 
-[[nodiscard]] Result<std::vector<WireValue>>
+[[nodiscard]] Result<std::vector<JsonValue>>
 encode_assistant_message(const Message& message) {
   std::string text{};
-  WireValue::array_t calls{};
+  JsonValue::array_t calls{};
   for (const auto& block : message.content) {
     if (const auto* text_block = std::get_if<TextBlock>(&block)) {
       text.append(text_block->text);
@@ -141,7 +140,7 @@ encode_assistant_message(const Message& message) {
     calls.push_back(std::move(*encoded));
   }
 
-  WireValue value{};
+  JsonValue value{};
   value["role"] = "assistant";
   if (text.empty() && !calls.empty()) {
     value["content"] = nullptr;
@@ -151,13 +150,13 @@ encode_assistant_message(const Message& message) {
   if (!calls.empty()) {
     value["tool_calls"].data = std::move(calls);
   }
-  return std::vector<WireValue>{std::move(value)};
+  return std::vector<JsonValue>{std::move(value)};
 }
 
-[[nodiscard]] Result<WireValue::array_t> encode_messages(const ModelRequest& request) {
-  WireValue::array_t encoded{};
+[[nodiscard]] Result<JsonValue::array_t> encode_messages(const ModelRequest& request) {
+  JsonValue::array_t encoded{};
   if (!request.system_prompt.empty()) {
-    WireValue system{};
+    JsonValue system{};
     system["role"] = "system";
     system["content"] = request.system_prompt;
     encoded.push_back(std::move(system));
@@ -175,7 +174,7 @@ encode_assistant_message(const Message& message) {
   return encoded;
 }
 
-[[nodiscard]] Result<WireValue> encode_tool(const ToolSchema& tool) {
+[[nodiscard]] Result<JsonValue> encode_tool(const ToolSchema& tool) {
   if (tool.name.empty()) {
     return std::unexpected(invalid_request("OpenAI tools require a nonempty name"));
   }
@@ -183,19 +182,19 @@ encode_assistant_message(const Message& message) {
   if (!parameters) {
     return std::unexpected(std::move(parameters.error()));
   }
-  WireValue function{};
+  JsonValue function{};
   function["name"] = tool.name;
   function["description"] = tool.description;
   function["parameters"] = std::move(*parameters);
-  WireValue value{};
+  JsonValue value{};
   value["type"] = "function";
   value["function"] = std::move(function);
   return value;
 }
 
-[[nodiscard]] Result<WireValue::array_t>
+[[nodiscard]] Result<JsonValue::array_t>
 encode_tools(const std::vector<ToolSchema>& tools) {
-  WireValue::array_t encoded{};
+  JsonValue::array_t encoded{};
   encoded.reserve(tools.size());
   for (const auto& tool : tools) {
     auto value = encode_tool(tool);
@@ -205,38 +204,6 @@ encode_tools(const std::vector<ToolSchema>& tools) {
     encoded.push_back(std::move(*value));
   }
   return encoded;
-}
-
-[[nodiscard]] Status validate_sampling(const SamplingConfig& sampling) {
-  if (!std::isfinite(sampling.temperature) || sampling.temperature < 0.0 ||
-      sampling.temperature > 2.0) {
-    return std::unexpected(
-        invalid_request("OpenAI temperature must be finite and between zero and two"));
-  }
-  if (sampling.top_p && (!std::isfinite(*sampling.top_p) || *sampling.top_p < 0.0 ||
-                         *sampling.top_p > 1.0)) {
-    return std::unexpected(
-        invalid_request("OpenAI top_p must be finite and between zero and one"));
-  }
-  if (!sampling.max_tokens || *sampling.max_tokens == 0) {
-    return std::unexpected(invalid_request("OpenAI max_tokens must be configured"));
-  }
-  return {};
-}
-
-[[nodiscard]] Status validate_request(const Config& config,
-                                      const ModelRequest& request) {
-  if (config.base_url.empty()) {
-    return std::unexpected(invalid_request("OpenAI base_url is required"));
-  }
-  if (config.api_key.find_first_of("\r\n") != std::string::npos) {
-    return std::unexpected(
-        invalid_request("OpenAI api_key must contain no line breaks"));
-  }
-  if (config.model.empty()) {
-    return std::unexpected(invalid_request("OpenAI model is required"));
-  }
-  return validate_sampling(request.sampling);
 }
 
 [[nodiscard]] std::string endpoint(std::string base_url) {
@@ -253,7 +220,7 @@ encode_tools(const std::vector<ToolSchema>& tools) {
   return base_url;
 }
 
-[[nodiscard]] Result<WireValue> make_request_body(const Config& config,
+[[nodiscard]] Result<JsonValue> make_request_body(const Config& config,
                                                   const ModelRequest& request) {
   auto messages = encode_messages(request);
   if (!messages) {
@@ -263,7 +230,7 @@ encode_tools(const std::vector<ToolSchema>& tools) {
   if (!tools) {
     return std::unexpected(std::move(tools.error()));
   }
-  WireValue root{};
+  JsonValue root{};
   root["model"] = config.model;
   root["messages"].data = std::move(*messages);
   root["temperature"] = request.sampling.temperature;
@@ -272,7 +239,7 @@ encode_tools(const std::vector<ToolSchema>& tools) {
   if (request.sampling.top_p) {
     root["top_p"] = *request.sampling.top_p;
   }
-  WireValue stream_options{};
+  JsonValue stream_options{};
   stream_options["include_usage"] = true;
   root["stream_options"] = std::move(stream_options);
   if (!tools->empty()) {
@@ -297,17 +264,16 @@ encode_tools(const std::vector<ToolSchema>& tools) {
 
 } // namespace
 
+// Config is immutable per Harness and validated once at Harness::create, so
+// this adapter encodes the request without re-checking endpoint, auth, or
+// sampling bounds.
 Result<TransportRequest>
 OpenAiAdapter::make_request(const Config& config, const ModelRequest& request) const {
-  auto status = validate_request(config, request);
-  if (!status) {
-    return std::unexpected(std::move(status.error()));
-  }
   auto body = make_request_body(config, request);
   if (!body) {
     return std::unexpected(std::move(body.error()));
   }
-  auto encoded = write_wire_json(*body, ErrorCategory::invalid_config,
+  auto encoded = write_json_text(*body, ErrorCategory::invalid_config,
                                  "OpenAI request body could not be encoded");
   if (!encoded) {
     return std::unexpected(std::move(encoded.error()));

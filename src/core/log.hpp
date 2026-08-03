@@ -15,10 +15,10 @@
 
 namespace scry::detail {
 
-// Appends one timestamped line to the diagnostic log file. The file is the
-// SCRY_LOG_FILE environment variable when set, otherwise "scry.log" in the
-// working directory. Logging failures are swallowed: diagnostics must never
-// alter library behavior.
+// Appends one timestamped line to the diagnostic log file named by the
+// SCRY_LOG_FILE environment variable. When that variable is unset or empty no
+// file is opened and every line is dropped. Logging failures are swallowed:
+// diagnostics must never alter library behavior.
 void log_line(std::string_view message) noexcept;
 
 [[nodiscard]] constexpr std::string_view

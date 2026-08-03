@@ -1,7 +1,6 @@
+#include "core/json_codec.hpp"
 #include "provider/anthropic.hpp"
-#include "provider/wire_json.hpp"
 
-#include <cmath>
 #include <string>
 #include <utility>
 #include <variant>
@@ -9,29 +8,25 @@
 namespace scry::detail {
 namespace {
 
-[[nodiscard]] Error invalid_request(std::string message) {
-  return make_provider_error(ErrorCategory::invalid_config, std::move(message));
-}
-
-[[nodiscard]] Result<WireValue>
+[[nodiscard]] Result<JsonValue>
 encode_boundary_json(const Json& json, const std::string_view failure_message) {
-  return parse_wire_json(json.text, ErrorCategory::invalid_config, failure_message);
+  return parse_json(json.text, ErrorCategory::invalid_config, failure_message);
 }
 
-[[nodiscard]] Result<WireValue> encode_text(const TextBlock& block) {
-  WireValue value{};
+[[nodiscard]] Result<JsonValue> encode_text(const TextBlock& block) {
+  JsonValue value{};
   value["type"] = "text";
   value["text"] = block.text;
   return value;
 }
 
-[[nodiscard]] Result<WireValue> encode_tool_call(const ToolCallBlock& block) {
+[[nodiscard]] Result<JsonValue> encode_tool_call(const ToolCallBlock& block) {
   auto input = encode_boundary_json(block.arguments, "Tool input is not valid JSON");
   if (!input) {
     return std::unexpected(std::move(input.error()));
   }
 
-  WireValue value{};
+  JsonValue value{};
   value["type"] = "tool_use";
   value["id"] = block.id;
   value["name"] = block.name;
@@ -39,18 +34,18 @@ encode_boundary_json(const Json& json, const std::string_view failure_message) {
   return value;
 }
 
-[[nodiscard]] Result<WireValue> encode_tool_result(const ToolResultBlock& block) {
+[[nodiscard]] Result<JsonValue> encode_tool_result(const ToolResultBlock& block) {
   auto result = encode_boundary_json(block.result, "Tool result is not valid JSON");
   if (!result) {
     return std::unexpected(std::move(result.error()));
   }
-  auto encoded = write_wire_json(*result, ErrorCategory::invalid_config,
+  auto encoded = write_json_text(*result, ErrorCategory::invalid_config,
                                  "Tool result could not be encoded");
   if (!encoded) {
     return std::unexpected(std::move(encoded.error()));
   }
 
-  WireValue value{};
+  JsonValue value{};
   value["type"] = "tool_result";
   value["tool_use_id"] = block.tool_call_id;
   // Glaze's assignment operators bind const&, so moving into the node's
@@ -60,7 +55,7 @@ encode_boundary_json(const Json& json, const std::string_view failure_message) {
   return value;
 }
 
-[[nodiscard]] Result<WireValue> encode_content(const ContentBlock& block) {
+[[nodiscard]] Result<JsonValue> encode_content(const ContentBlock& block) {
   if (const auto* text = std::get_if<TextBlock>(&block)) {
     return encode_text(*text);
   }
@@ -70,8 +65,8 @@ encode_boundary_json(const Json& json, const std::string_view failure_message) {
   return encode_tool_result(std::get<ToolResultBlock>(block));
 }
 
-[[nodiscard]] Result<WireValue> encode_message(const Message& message) {
-  WireValue::array_t content{};
+[[nodiscard]] Result<JsonValue> encode_message(const Message& message) {
+  JsonValue::array_t content{};
   content.reserve(message.content.size());
   for (const auto& block : message.content) {
     auto encoded = encode_content(block);
@@ -81,15 +76,15 @@ encode_boundary_json(const Json& json, const std::string_view failure_message) {
     content.push_back(std::move(*encoded));
   }
 
-  WireValue value{};
+  JsonValue value{};
   value["role"] = message.role == Role::user ? "user" : "assistant";
   value["content"].data = std::move(content);
   return value;
 }
 
-[[nodiscard]] Result<WireValue::array_t>
+[[nodiscard]] Result<JsonValue::array_t>
 encode_messages(const std::vector<Message>& messages) {
-  WireValue::array_t encoded{};
+  JsonValue::array_t encoded{};
   encoded.reserve(messages.size());
   for (const auto& message : messages) {
     auto value = encode_message(message);
@@ -101,23 +96,23 @@ encode_messages(const std::vector<Message>& messages) {
   return encoded;
 }
 
-[[nodiscard]] Result<WireValue> encode_tool(const ToolSchema& tool) {
+[[nodiscard]] Result<JsonValue> encode_tool(const ToolSchema& tool) {
   auto schema =
       encode_boundary_json(tool.input_schema, "Tool input schema is not valid JSON");
   if (!schema) {
     return std::unexpected(std::move(schema.error()));
   }
 
-  WireValue value{};
+  JsonValue value{};
   value["name"] = tool.name;
   value["description"] = tool.description;
   value["input_schema"] = std::move(*schema);
   return value;
 }
 
-[[nodiscard]] Result<WireValue::array_t>
+[[nodiscard]] Result<JsonValue::array_t>
 encode_tools(const std::vector<ToolSchema>& tools) {
-  WireValue::array_t encoded{};
+  JsonValue::array_t encoded{};
   encoded.reserve(tools.size());
   for (const auto& tool : tools) {
     auto value = encode_tool(tool);
@@ -127,37 +122,6 @@ encode_tools(const std::vector<ToolSchema>& tools) {
     encoded.push_back(std::move(*value));
   }
   return encoded;
-}
-
-[[nodiscard]] Status validate_sampling(const SamplingConfig& sampling) {
-  if (!std::isfinite(sampling.temperature) || sampling.temperature < 0.0 ||
-      sampling.temperature > 1.0) {
-    return std::unexpected(
-        invalid_request("Anthropic temperature must be between zero and one"));
-  }
-  if (sampling.top_p && (!std::isfinite(*sampling.top_p) || *sampling.top_p <= 0.0 ||
-                         *sampling.top_p > 1.0)) {
-    return std::unexpected(
-        invalid_request("Anthropic top_p must be greater than zero and at most one"));
-  }
-  if (!sampling.max_tokens || *sampling.max_tokens == 0) {
-    return std::unexpected(invalid_request("Anthropic max_tokens must be configured"));
-  }
-  return {};
-}
-
-[[nodiscard]] Status validate_request(const Config& config,
-                                      const ModelRequest& request) {
-  if (config.base_url.empty()) {
-    return std::unexpected(invalid_request("Anthropic base_url is required"));
-  }
-  if (config.api_key.empty()) {
-    return std::unexpected(invalid_request("Anthropic api_key is required"));
-  }
-  if (config.model.empty()) {
-    return std::unexpected(invalid_request("Anthropic model is required"));
-  }
-  return validate_sampling(request.sampling);
 }
 
 [[nodiscard]] std::string endpoint(std::string base_url) {
@@ -171,7 +135,7 @@ encode_tools(const std::vector<ToolSchema>& tools) {
   return base_url;
 }
 
-[[nodiscard]] Result<WireValue> make_request_body(const Config& config,
+[[nodiscard]] Result<JsonValue> make_request_body(const Config& config,
                                                   const ModelRequest& request) {
   auto messages = encode_messages(request.messages);
   if (!messages) {
@@ -182,7 +146,7 @@ encode_tools(const std::vector<ToolSchema>& tools) {
     return std::unexpected(std::move(tools.error()));
   }
 
-  WireValue root{};
+  JsonValue root{};
   root["model"] = config.model;
   root["max_tokens"] = request.sampling.max_tokens.value_or(0);
   root["temperature"] = request.sampling.temperature;
@@ -202,18 +166,17 @@ encode_tools(const std::vector<ToolSchema>& tools) {
 
 } // namespace
 
+// Config is immutable per Harness and validated once at Harness::create, so
+// this adapter encodes the request without re-checking endpoint, auth, or
+// sampling bounds.
 Result<TransportRequest>
 AnthropicAdapter::make_request(const Config& config,
                                const ModelRequest& request) const {
-  auto status = validate_request(config, request);
-  if (!status) {
-    return std::unexpected(std::move(status.error()));
-  }
   auto body = make_request_body(config, request);
   if (!body) {
     return std::unexpected(std::move(body.error()));
   }
-  auto encoded = write_wire_json(*body, ErrorCategory::invalid_config,
+  auto encoded = write_json_text(*body, ErrorCategory::invalid_config,
                                  "Anthropic request body could not be encoded");
   if (!encoded) {
     return std::unexpected(std::move(encoded.error()));
