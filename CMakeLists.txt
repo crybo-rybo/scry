@@ -549,16 +549,6 @@ if(SCRY_BUILD_TESTS)
       raw_json_handler.cpp
       "ToolHandlerFor"
     )
-    scry_add_reflection_compile_fail_test(
-      unknown-description
-      unknown_description.cpp
-      "naming distinct reflected members"
-    )
-    scry_add_reflection_compile_fail_test(
-      duplicate-description
-      duplicate_description.cpp
-      "naming distinct reflected members"
-    )
   endif()
 endif()
 

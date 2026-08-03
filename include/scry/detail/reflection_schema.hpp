@@ -6,7 +6,6 @@
 #include <limits>
 #include <meta>
 #include <optional>
-#include <ranges>
 #include <scry/detail/reflection_meta.hpp>
 #include <string_view>
 #include <type_traits>
@@ -96,63 +95,6 @@ consteval void append_integer(std::vector<char>& output, const Integer value) {
   }
 }
 
-template <typename Type> consteval bool known_member_name(const std::string_view name) {
-  bool known = false;
-  static constexpr auto members = declared_members_of<Type>();
-  template for (constexpr std::meta::info member : members) {
-    if (name == std::meta::identifier_of(member)) {
-      known = true;
-    }
-  }
-  return known;
-}
-
-template <typename Type> consteval bool valid_tool_traits() {
-  if constexpr (!requires { tool_traits<Type>::descriptions; }) {
-    return false;
-  } else {
-    using Descriptions = std::remove_cvref_t<decltype(tool_traits<Type>::descriptions)>;
-    if constexpr (!std::ranges::input_range<Descriptions> ||
-                  !std::ranges::sized_range<Descriptions> ||
-                  !std::ranges::random_access_range<Descriptions>) {
-      return false;
-    } else {
-      using Entry = std::ranges::range_value_t<Descriptions>;
-      if constexpr (!std::same_as<Entry, parameter_description>) {
-        return false;
-      } else {
-        constexpr auto& descriptions = tool_traits<Type>::descriptions;
-        for (std::size_t index = 0; index < std::ranges::size(descriptions); ++index) {
-          if (!known_member_name<Type>(descriptions[index].member)) {
-            return false;
-          }
-          for (std::size_t other = index + 1; other < std::ranges::size(descriptions);
-               ++other) {
-            if (descriptions[index].member == descriptions[other].member) {
-              return false;
-            }
-          }
-        }
-        return true;
-      }
-    }
-  }
-}
-
-template <typename Type, std::meta::info Member>
-consteval std::optional<std::string_view> trait_description_for() {
-  static_assert(valid_tool_traits<Type>(),
-                "scry::reflection::tool_traits<T>::descriptions must be a range of "
-                "parameter_description entries naming distinct reflected members");
-  constexpr auto name = std::meta::identifier_of(Member);
-  for (const auto& entry : tool_traits<Type>::descriptions) {
-    if (entry.member == name) {
-      return entry.text;
-    }
-  }
-  return std::nullopt;
-}
-
 consteval bool is_description_annotation(const std::meta::info annotation) {
   if (!std::meta::is_annotation(annotation)) {
     return false;
@@ -188,31 +130,26 @@ template <typename Type>
 consteval void append_schema(std::vector<char>& output,
                              std::optional<std::string_view> description_text);
 
-template <typename Owner, std::meta::info Member>
+template <std::meta::info Member>
 consteval void append_member_schema(std::vector<char>& output) {
   using MemberType = [:std::meta::type_of(Member):];
   static_assert(description_annotation_count<Member>() <= 1,
                 "a reflected member may have at most one "
                 "scry::reflection::description annotation");
 
-  constexpr auto trait_description = trait_description_for<Owner, Member>();
-  if constexpr (trait_description.has_value()) {
-    append_schema<MemberType>(output, trait_description);
-  } else {
-    static constexpr auto annotations =
-        std::define_static_array(std::meta::annotations_of(Member));
-    bool emitted = false;
-    template for (constexpr std::meta::info annotation : annotations) {
-      if constexpr (is_description_annotation(annotation)) {
-        using Annotation = [:std::meta::type_of(annotation):];
-        constexpr auto value = std::meta::extract<Annotation>(annotation);
-        append_schema<MemberType>(output, value.view());
-        emitted = true;
-      }
+  static constexpr auto annotations =
+      std::define_static_array(std::meta::annotations_of(Member));
+  bool emitted = false;
+  template for (constexpr std::meta::info annotation : annotations) {
+    if constexpr (is_description_annotation(annotation)) {
+      using Annotation = [:std::meta::type_of(annotation):];
+      constexpr auto value = std::meta::extract<Annotation>(annotation);
+      append_schema<MemberType>(output, value.view());
+      emitted = true;
     }
-    if (!emitted) {
-      append_schema<MemberType>(output, std::nullopt);
-    }
+  }
+  if (!emitted) {
+    append_schema<MemberType>(output, std::nullopt);
   }
 }
 
@@ -220,9 +157,6 @@ template <typename Type>
 consteval void
 append_aggregate_schema(std::vector<char>& output,
                         const std::optional<std::string_view> description_text) {
-  static_assert(valid_tool_traits<Type>(),
-                "scry::reflection::tool_traits<T>::descriptions is invalid");
-
   output.push_back('{');
   append_literal(output, "\"additionalProperties\":false");
   if (description_text.has_value()) {
@@ -239,7 +173,7 @@ append_aggregate_schema(std::vector<char>& output,
     }
     append_quoted(output, std::meta::identifier_of(member));
     output.push_back(':');
-    append_member_schema<Type, member>(output);
+    append_member_schema<member>(output);
     first = false;
   }
 
