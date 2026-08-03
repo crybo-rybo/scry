@@ -1,5 +1,5 @@
 #include <array>
-#include <charconv>
+#include <cerrno>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -100,10 +100,13 @@ parse_json_number_field(const std::string_view json, const std::string_view key)
     return std::nullopt;
   }
 
-  double value{};
-  const auto [ptr, ec] =
-      std::from_chars(cursor.data(), cursor.data() + cursor.size(), value);
-  if (ec != std::errc{} || ptr == cursor.data() || !std::isfinite(value)) {
+  // libc++ (Clang/AppleClang) does not provide floating-point std::from_chars.
+  // Copy to a null-terminated buffer so strtod can parse portably.
+  const std::string token{cursor};
+  char* end = nullptr;
+  errno = 0;
+  const double value = std::strtod(token.c_str(), &end);
+  if (end == token.c_str() || errno == ERANGE || !std::isfinite(value)) {
     return std::nullopt;
   }
   return value;
