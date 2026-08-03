@@ -138,8 +138,9 @@ ID scheme: `SCRY-<AREA>-NNN`, abbreviated to `<AREA>-NNN` in the tables below. I
 | ID | Level | Requirement | Milestone | Verification |
 |---|---|---|---|---|
 | SHOW-001 | MUST | An opt-in C++23 Dear ImGui chat-panel example consumes only the public `scry::scry` target and demonstrates non-blocking send, streamed text, completion, error, and cancellation. The host owns and outlives the Harness and Conversation, calls `update()`, and owns the ImGui context, platform/renderer backends, window, and main loop. Panel destruction requests cancellation and MUST NOT block. | M5 | **Live:** `scry_showcase_tests` fake-controller send/stream/terminal/cancel/stale-callback/destruction cases; `showcase.imgui-headless-frame`; source-boundary review; shared local/hosted showcase gate |
-| SHOW-002 | MUST | M5 adds no Scry public API, installed header, package target, export, or runtime dependency. Dear ImGui is a showcase-only MIT build dependency, pinned to `v1.92.8` commit `8936b58fe26e8c3da834b8f60b06511d537b4c63`, compiled only when `SCRY_BUILD_IMGUI_SHOWCASE=ON` (default `OFF`), and includes no window-system or renderer backend. A normal core build MUST NOT fetch or discover it. | M5 | **Live:** default-OFF configure audit; pinned-source check; public-header/target review; clean install and downstream `find_package(scry)` artifact-absence audit; shared local/hosted showcase gate |
-| SHOW-003 | MUST | The showcase gate builds with the repository warnings-as-errors policy and runs deterministic fake-controller panel behavior tests, a real Dear ImGui compile/link/headless-frame smoke, and the clean-package audit. It MUST be callable locally and by hosted CI before M5 is complete. | M5 | **Live:** `scripts/ci-showcase.sh` passes directly (`just showcase`) and in the hosted nightly `showcase` job (ADR 0012) |
+| SHOW-002 | — | Retired (2026-08 NPC showcase removal; ADR 0010 amendment). Was: The NPC showcase is a deterministic, ephemeral 5-by-5 in-memory grid with explicit-schema zero-argument `look`, `move_north`, `move_south`, `move_east`, and `move_west` tools. The tools execute on the app thread, reject nonempty arguments, return canonical JSON, leave blocked boundary moves unchanged, and rely on application-owned idempotency or reconciliation for any durable adaptation. | M5; retired 2026-08 | — |
+| SHOW-003 | MUST | M5 adds no Scry public API, installed header, package target, export, or runtime dependency. Dear ImGui is a showcase-only MIT build dependency, pinned to `v1.92.8` commit `8936b58fe26e8c3da834b8f60b06511d537b4c63`, compiled only when `SCRY_BUILD_IMGUI_SHOWCASE=ON` (default `OFF`), and includes no window-system or renderer backend. A normal core build MUST NOT fetch or discover it. | M5 | **Live:** default-OFF configure audit; pinned-source check; public-header/target review; clean install and downstream `find_package(scry)` artifact-absence audit; shared local/hosted showcase gate |
+| SHOW-004 | MUST | The showcase gate builds with the repository warnings-as-errors policy and runs deterministic fake-controller panel behavior tests, a real Dear ImGui compile/link/headless-frame smoke, and the clean-package audit. It MUST be callable locally and by hosted CI before M5 is complete. | M5; amended 2026-08 | **Live:** `scripts/ci-showcase.sh` passes directly (`just showcase`) and in the hosted nightly `showcase` job (ADR 0012) |
 
 ## Quality Gates (SCRY-QA) — binding form of ENGINEERING.md
 
@@ -163,7 +164,8 @@ ID scheme: `SCRY-<AREA>-NNN`, abbreviated to `<AREA>-NNN` in the tables below. I
 
 New gaps land here, not in prose. There are no known M0, M1, M2, M3, M4, or M5
 design requirement gaps. M5 implementation and verification are live under
-SHOW-001–003 and ADR 0010 through the shared local/hosted showcase gate. M4
+SHOW-001, SHOW-003, SHOW-004, and ADR 0010 through the shared local/hosted
+showcase gate (SHOW-002 retired). M4
 implementation and deterministic verification are live; the scheduled nightly
 pipeline is present, but no completed hosted nightly execution is claimed yet.
 The live M3 feature,
@@ -222,15 +224,16 @@ Amendment log:
   Ollama/model smoke pipeline is implemented; a completed hosted nightly run
   is not yet claimed.
 - **2026-07, M5 contract closure:** ratified the showcase-only public/package
-  boundary, host-owned ImGui lifecycle, non-blocking panel behavior, build-only
-  pinned Dear ImGui dependency, and the local/hosted acceptance gate
-  (SHOW-001–003; ADR 0010). Verification is intentionally deferred until
+  boundary, host-owned ImGui lifecycle, non-blocking panel behavior,
+  deterministic app-thread NPC tools, ephemeral side-effect policy,
+  build-only pinned Dear ImGui dependency, and the local/hosted acceptance gate
+  (SHOW-001–004; ADR 0010). Verification is intentionally deferred until
   implementation.
 - **2026-07, M5 implementation closure:** the host-owned ImGui panel,
-  pinned/default-OFF showcase build, deterministic panel suite, real headless
-  frame, clean package/consumer audit, and shared preflight/hosted entry point
-  are implemented and pass locally and in hosted CI. SHOW-001–003 and M5 are
-  live.
+  deterministic NPC world and explicit registrations, pinned/default-OFF
+  showcase build, 20-test deterministic suite, real headless frame, clean
+  package/consumer audit, and shared preflight/hosted entry point are
+  implemented and pass locally and in hosted CI. SHOW-001–004 and M5 are live.
 - **2026-07, quality-gate simplification (ADR 0011):** QA-007 rewritten from
   ratcheted metrics to absolute gates on the candidate tree; QA-002's M3
   codec gate moved to stock gcovr `--fail-under` thresholds, retiring the
@@ -259,12 +262,18 @@ Amendment log:
   development-era verification machinery built for unattended agent-driven
   work was retired in favor of behavioral gates a human maintainer reads.
   QA-001/QA-002/QA-007 amended: the bespoke coverage/CRAP analyzer, diff and
-  component coverage floors, and aggregate backstop are gone; their suites for
-  retained contracts remain in full. QA-003 (CRAP) retired. QA-010 amended:
-  mutation testing deleted, the local-model smoke demoted to
-  `workflow_dispatch`, the
+  component coverage floors, and aggregate backstop are gone; the suites they
+  demanded remain in full. QA-003 (CRAP) retired. QA-010 amended: mutation
+  testing deleted, the local-model smoke demoted to `workflow_dispatch`, the
   showcase gate moved from the per-commit ring to nightly, and per-commit
   short fuzzing folded into the nightly long-fuzz jobs. The libcurl and
   reflection feasibility spikes were deleted (their questions are answered by
   the shipped transport and reflection components). PORT-006's spike
   verification is superseded by the Curl transport integration tests.
+- **2026-08, NPC showcase retirement (ADR 0010 amendment):** SHOW-002 retired
+  in place; SHOW-003/SHOW-004 IDs retained. M5 gating is ImGui-only under
+  SHOW-001/003/004; SHOW-004's gate content drops NPC tests. The non-gating
+  `examples/tool_chat` developer shakedown is recorded outside the SHOW
+  contract and must consume only the public `scry::scry` surface. QA-001
+  verification clarified: suites for retained contracts remain, while feature
+  removal deletes tests that only specified the removed feature.

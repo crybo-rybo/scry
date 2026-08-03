@@ -8,7 +8,8 @@ registers three tools:
 - `add({"a": number, "b": number})`
 - `multiply({"a": number, "b": number})`
 
-The launcher defaults to a local Ollama server and `qwen3:8b`:
+The launcher defaults to a local Ollama server and `qwen3:8b` — intentionally
+heavier than the CI smoke model (`qwen3:1.7b`) for more reliable tool use:
 
 ```sh
 ./scripts/run-tool-chat.sh
@@ -34,5 +35,6 @@ Scry lifecycle diagnostics default to `build/dev-logging/tool-chat.log`; set
 `SCRY_LOG_FILE=/dev/stderr` to interleave them with the chat transcript.
 
 Use `/tools`, `/reset`, `/help`, and `/quit` while chatting. This is an
-exploratory developer tool, not a deterministic acceptance gate. Use
-`scripts/ci-local-model.sh` when a bounded pass/fail live-model check is needed.
+exploratory developer tool that links only `scry::scry`, not a deterministic
+acceptance gate. Use `scripts/ci-local-model.sh` when a bounded pass/fail
+live-model check is needed.

@@ -1,13 +1,12 @@
 #include <array>
+#include <charconv>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <ctime>
 #include <format>
-#include <glaze/glaze.hpp>
 #include <iostream>
-#include <memory>
 #include <optional>
 #include <scry/scry.hpp>
 #include <string>
@@ -19,15 +18,6 @@ namespace scry_tool_chat {
 
 constexpr std::string_view default_base_url = "http://127.0.0.1:11434/v1";
 constexpr std::string_view default_model = "qwen3:8b";
-
-struct BinaryArguments {
-  std::optional<double> a{};
-  std::optional<double> b{};
-};
-
-struct ArithmeticResult {
-  double result{};
-};
 
 [[nodiscard]] std::string environment_or(const char* name,
                                          const std::string_view fallback) {
@@ -48,38 +38,15 @@ struct ArithmeticResult {
   };
 }
 
-class ToolActivity final {
-public:
-  [[nodiscard]] scry::Result<scry::Json> observe(const std::string_view name,
-                                                 scry::Result<scry::Json> result) {
-    pending_ = Record{
-        .name = std::string{name},
-        .result = result ? result->text : result.error().message,
-        .succeeded = result.has_value(),
-    };
-    return result;
+void print_tool_outcome(const std::string_view name, const std::string_view arguments,
+                        const scry::Result<scry::Json>& result) {
+  std::cout << "tool> " << name << ' ' << arguments << '\n';
+  if (result) {
+    std::cout << "result> " << result->text << '\n';
+  } else {
+    std::cout << "error> " << result.error().message << '\n';
   }
-
-  void show(const scry::ToolCall& call) {
-    std::cout << "tool> " << call.name << ' ' << call.arguments.text << '\n';
-    if (pending_ && pending_->name == call.name) {
-      std::cout << (pending_->succeeded ? "result> " : "error> ") << pending_->result
-                << '\n';
-    } else {
-      std::cout << "result> unavailable\n";
-    }
-    pending_.reset();
-  }
-
-private:
-  struct Record {
-    std::string name{};
-    std::string result{};
-    bool succeeded{};
-  };
-
-  std::optional<Record> pending_{};
-};
+}
 
 [[nodiscard]] scry::Result<scry::Json> current_datetime(const scry::Json& arguments) {
   if (arguments.text != "{}") {
@@ -102,37 +69,71 @@ private:
       .text = std::format(R"({{"datetime":"{}","timezone":"UTC"}})", timestamp.data())};
 }
 
+[[nodiscard]] std::string_view trim_ascii_whitespace(std::string_view text) noexcept {
+  while (!text.empty() &&
+         (text.front() == ' ' || text.front() == '\t' || text.front() == '\n' ||
+          text.front() == '\r')) {
+    text.remove_prefix(1);
+  }
+  while (!text.empty() &&
+         (text.back() == ' ' || text.back() == '\t' || text.back() == '\n' ||
+          text.back() == '\r')) {
+    text.remove_suffix(1);
+  }
+  return text;
+}
+
+[[nodiscard]] std::optional<double> parse_json_number_field(const std::string_view json,
+                                                            const std::string_view key) {
+  const auto needle = std::format("\"{}\"", key);
+  const auto key_pos = json.find(needle);
+  if (key_pos == std::string_view::npos) {
+    return std::nullopt;
+  }
+
+  auto cursor = json.substr(key_pos + needle.size());
+  cursor = trim_ascii_whitespace(cursor);
+  if (cursor.empty() || cursor.front() != ':') {
+    return std::nullopt;
+  }
+  cursor.remove_prefix(1);
+  cursor = trim_ascii_whitespace(cursor);
+  if (cursor.empty()) {
+    return std::nullopt;
+  }
+
+  double value{};
+  const auto [ptr, ec] =
+      std::from_chars(cursor.data(), cursor.data() + cursor.size(), value);
+  if (ec != std::errc{} || ptr == cursor.data() || !std::isfinite(value)) {
+    return std::nullopt;
+  }
+  return value;
+}
+
 using ArithmeticOperation = double (*)(double, double);
 
 [[nodiscard]] scry::Result<scry::Json> calculate(const scry::Json& arguments,
                                                  const ArithmeticOperation operation) {
-  BinaryArguments parsed{};
-  if (glz::read_json(parsed, arguments.text) || !parsed.a || !parsed.b) {
-    return std::unexpected(
-        tool_error("arithmetic tools require finite numeric a and b fields"));
-  }
-  if (!std::isfinite(*parsed.a) || !std::isfinite(*parsed.b)) {
+  const auto a = parse_json_number_field(arguments.text, "a");
+  const auto b = parse_json_number_field(arguments.text, "b");
+  if (!a || !b) {
     return std::unexpected(
         tool_error("arithmetic tools require finite numeric a and b fields"));
   }
 
-  const double value = operation(*parsed.a, *parsed.b);
+  const double value = operation(*a, *b);
   if (!std::isfinite(value)) {
     return std::unexpected(tool_error("arithmetic result is not finite"));
   }
-  auto encoded = glz::write_json(ArithmeticResult{.result = value});
-  if (!encoded) {
-    return std::unexpected(tool_error("arithmetic result could not be encoded"));
-  }
-  return scry::Json{.text = std::move(*encoded)};
+  return scry::Json{.text = std::format(R"({{"result":{}}})", value)};
 }
 
 [[nodiscard]] double add(const double a, const double b) noexcept { return a + b; }
 
 [[nodiscard]] double multiply(const double a, const double b) noexcept { return a * b; }
 
-[[nodiscard]] scry::Status register_datetime_tool(scry::Harness& harness,
-                                                  ToolActivity& activity) {
+[[nodiscard]] scry::Status register_datetime_tool(scry::Harness& harness) {
   return harness.tools().add(
       scry::ToolDefinition{
           .name = "get_current_datetime",
@@ -145,19 +146,21 @@ using ArithmeticOperation = double (*)(double, double);
                       R"({"type":"object","properties":{},"additionalProperties":false})",
               },
       },
-      [&activity](scry::Json arguments) -> scry::Result<scry::Json> {
+      [](scry::Json arguments) -> scry::Result<scry::Json> {
         auto result = current_datetime(arguments);
-        return activity.observe("get_current_datetime", std::move(result));
+        print_tool_outcome("get_current_datetime", arguments.text, result);
+        return result;
       });
 }
 
-[[nodiscard]] scry::Status register_arithmetic_tool(
-    scry::Harness& harness, ToolActivity& activity, const std::string_view name,
-    const std::string_view description, const ArithmeticOperation operation) {
-  std::string observed_name{name};
+[[nodiscard]] scry::Status
+register_arithmetic_tool(scry::Harness& harness, const std::string_view name,
+                         const std::string_view description,
+                         const ArithmeticOperation operation) {
+  std::string tool_name{name};
   return harness.tools().add(
       scry::ToolDefinition{
-          .name = observed_name,
+          .name = tool_name,
           .description = std::string{description},
           .input_schema =
               {
@@ -165,27 +168,27 @@ using ArithmeticOperation = double (*)(double, double);
                       R"({"type":"object","properties":{"a":{"type":"number","description":"First operand"},"b":{"type":"number","description":"Second operand"}},"required":["a","b"],"additionalProperties":false})",
               },
       },
-      [&activity, observed_name = std::move(observed_name),
+      [tool_name = std::move(tool_name),
        operation](scry::Json arguments) -> scry::Result<scry::Json> {
         auto result = calculate(arguments, operation);
-        return activity.observe(observed_name, std::move(result));
+        print_tool_outcome(tool_name, arguments.text, result);
+        return result;
       });
 }
 
-[[nodiscard]] scry::Status register_tools(scry::Harness& harness,
-                                          ToolActivity& activity) {
-  if (auto status = register_datetime_tool(harness, activity); !status) {
+[[nodiscard]] scry::Status register_tools(scry::Harness& harness) {
+  if (auto status = register_datetime_tool(harness); !status) {
     return status;
   }
   if (auto status = register_arithmetic_tool(
-          harness, activity, "add",
+          harness, "add",
           "Add two numbers. Use this tool for addition instead of mental arithmetic.",
           add);
       !status) {
     return status;
   }
   return register_arithmetic_tool(
-      harness, activity, "multiply",
+      harness, "multiply",
       "Multiply two numbers. Use this tool for multiplication instead of mental "
       "arithmetic.",
       multiply);
@@ -202,11 +205,6 @@ public:
     }
     received_delta_ = true;
     std::cout << delta << std::flush;
-  }
-
-  void show_tool(const scry::ToolCall& call, ToolActivity& activity) {
-    finish_assistant_line();
-    activity.show(call);
   }
 
   void show_completion(const scry::Completion& completion) {
@@ -239,15 +237,9 @@ private:
   bool received_delta_{};
 };
 
-[[nodiscard]] bool attach_callbacks(scry::Turn& turn, TurnDisplay& display,
-                                    ToolActivity& activity) {
+[[nodiscard]] bool attach_callbacks(scry::Turn& turn, TurnDisplay& display) {
   auto status = turn.on_text_delta(
       [&display](const std::string_view delta) { display.show_delta(delta); });
-  if (status) {
-    status = turn.on_tool_call([&display, &activity](const scry::ToolCall& call) {
-      display.show_tool(call, activity);
-    });
-  }
   if (status) {
     status = turn.on_completion([&display](const scry::Completion& completion) {
       display.show_completion(completion);
@@ -351,7 +343,7 @@ enum class CommandResult : std::uint8_t {
 }
 
 [[nodiscard]] bool run_turn(scry::Harness& harness, scry::Conversation& conversation,
-                            ToolActivity& activity, std::string message) {
+                            std::string message) {
   auto turn_result = harness.send(conversation, std::move(message));
   if (!turn_result) {
     std::cerr << "Send failed: " << turn_result.error().message << '\n';
@@ -360,7 +352,7 @@ enum class CommandResult : std::uint8_t {
 
   auto turn = std::move(*turn_result);
   TurnDisplay display;
-  if (!attach_callbacks(turn, display, activity)) {
+  if (!attach_callbacks(turn, display)) {
     return false;
   }
   pump_until_terminal(harness, display);
@@ -377,8 +369,7 @@ enum class CommandResult : std::uint8_t {
   }
   auto harness = std::move(*harness_result);
 
-  ToolActivity activity;
-  if (auto status = register_tools(harness, activity); !status) {
+  if (auto status = register_tools(harness); !status) {
     std::cerr << "Tool registration failed: " << status.error().message << '\n';
     return 1;
   }
@@ -409,7 +400,7 @@ enum class CommandResult : std::uint8_t {
     if (command == CommandResult::handled) {
       continue;
     }
-    static_cast<void>(run_turn(harness, conversation, activity, std::move(message)));
+    static_cast<void>(run_turn(harness, conversation, std::move(message)));
   }
   std::cout << "\nGoodbye.\n";
   return 0;

@@ -2,14 +2,16 @@
 
 - Status: Accepted
 - Date: 2026-07-18
-- Amended: 2026-08-02
+- Amended: 2026-08-03
 
 ## Context
 
-M5 must demonstrate a GUI that pumps an asynchronous chat turn inside its
-existing frame loop. A useful showcase must exercise the real public C++23
-surface without quietly becoming a second supported API, moving host lifecycle
-into the library, or adding GUI dependencies to the package.
+M5 must demonstrate the two host shapes that motivated Scry: a GUI that pumps
+an asynchronous chat turn inside its existing frame loop, and a game-like
+application whose model observes and changes host state through tools. A useful
+showcase must exercise the real public C++23 surface without quietly becoming a
+second supported API, moving host lifecycle into the library, or adding GUI
+dependencies to the package.
 
 Dear ImGui is intentionally backend-agnostic. A complete desktop application
 would also need a window system, renderer, platform backend, and event loop,
@@ -18,16 +20,22 @@ integration example carry a large platform matrix. The showcase therefore
 needs a narrow panel boundary and a headless frame proof rather than another
 application framework.
 
+The NPC example also needs an honest side-effect boundary. Scry guarantees
+at-most-once dispatch per tool-call ID within one accepted turn, but a failed
+or cancelled turn commits no history and an application may submit a new turn.
+The showcase must not imply that arbitrary durable game mutations gain
+rollback or cross-turn idempotency merely by being exposed as tools.
+
 ## Decision
 
 ### Showcase-only boundary
 
-M5 adds one opt-in C++23 example. It consumes only the public `scry::scry`
-target and public headers. It may define example-local controllers and views,
-but none is installed, exported, or added to namespace `scry`. M5 adds no Scry
-public API.
+M5 adds two opt-in C++23 examples. Both consume only the public `scry::scry`
+target and public headers. They may define example-local controllers, views,
+and domain objects, but none is installed, exported, or added to namespace
+`scry`. M5 adds no Scry public API.
 
-The example remains a host-owned integration:
+The examples remain host-owned integrations:
 
 - the host creates and outlives the `Harness` and `Conversation`;
 - the host calls `Harness::update()` from its existing loop;
@@ -36,7 +44,7 @@ The example remains a host-owned integration:
 - the host selects configuration and model endpoints, including an
   OpenAI-compatible local server with an empty API key.
 
-This boundary is part of the showcase's value: the example proves that Scry
+This boundary is part of the showcase's value: the examples prove that Scry
 fits an application loop instead of replacing one.
 
 ### ImGui chat panel
@@ -63,6 +71,33 @@ fake controller to deliver text, completion, error, and cancellation without
 network access, real time, or Scry internals. This is a showcase test seam, not
 a new library abstraction.
 
+### Deterministic NPC
+
+The NPC showcase uses a fixed in-memory 5-by-5 grid. Coordinate `(0, 0)` is the
+northwest corner, the NPC begins at `(2, 2)`, north/south change `y`, and
+west/east change `x`. The host registers five explicit-schema, zero-argument
+tools:
+
+- `look`;
+- `move_north`;
+- `move_south`;
+- `move_east`; and
+- `move_west`.
+
+Each schema is a closed empty object, and handlers reject arguments other than
+`{}`. The tools explicitly retain the safe
+`ToolExecution::app_thread` policy because they mutate host-owned world state.
+`look` returns canonical JSON containing the grid bounds, position, and
+available moves in deterministic order. A move returns its direction, whether
+it moved, and the resulting position; a blocked boundary move also returns
+`"reason":"boundary"` and leaves the position unchanged.
+
+The example drives one model request from a host-owned update loop and reads a
+local OpenAI-compatible endpoint from environment configuration. World state is
+ephemeral and has no rollback. A durable side effect would require
+application-owned idempotency keys or reconciliation, exactly as required by
+LOOP-008.
+
 ### Dear ImGui dependency
 
 Dear ImGui is permitted only as a build-time showcase dependency:
@@ -84,6 +119,7 @@ must not download or discover Dear ImGui.
 M5 is complete only when one shared showcase gate:
 
 - builds the showcase code with the repository warnings-as-errors policy;
+- runs deterministic NPC world and registration tests;
 - runs fake-controller panel tests for send, streaming, completion, error,
   cancellation, stale callbacks, and destruction;
 - compiles and links the real panel with the pinned Dear ImGui sources and
@@ -101,7 +137,30 @@ Consumers bring whichever ImGui backend and host loop they already use. A
 future maintained standalone demo may choose a backend, but it must remain
 outside the Scry package boundary and earn its own portability contract.
 
+The NPC world is intentionally small and deterministic. It proves explicit
+schemas, app-thread tool ownership, automatic tool-result resend, and host
+state observation without inventing an engine abstraction. Persistence,
+rollback, pathfinding, parallel actors, and production idempotency remain
+application concerns.
+
 Dear ImGui does not join libcurl and Glaze as a Scry runtime dependency. If a
 future public UI component is proposed, it requires a separate API,
 installation, dependency, and platform-support decision rather than growing
 out of this showcase implicitly.
+
+## Amendment — 2026-08-03: NPC showcase retirement
+
+The Decision and Consequences above retain the ratified July M5 contract for
+audit. This amendment retires the deterministic NPC grid showcase:
+
+- `SHOW-002` is Retired. Its example, domain code, and NPC-only tests are
+  deleted with the feature.
+- M5's gating surface is the ImGui chat panel (`SHOW-001`) plus the
+  package-boundary and shared-gate requirements (`SHOW-003`, `SHOW-004`).
+  `SHOW-004`'s gate content no longer includes NPC tests.
+- `examples/tool_chat` is a non-gating developer shakedown surface. It is not
+  part of the M5 acceptance gate and consumes only the public `scry::scry`
+  C++23 surface (no private Glaze link).
+- ADR 0012's commitment to retain suites written for retired *gates* is
+  unchanged. Deleting a retired *feature* may delete tests that only
+  specified that feature.

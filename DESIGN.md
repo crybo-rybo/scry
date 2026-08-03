@@ -487,7 +487,8 @@ Dear ImGui is build-only showcase material, default OFF, pinned to `v1.92.8`
 commit `8936b58fe26e8c3da834b8f60b06511d537b4c63` under its MIT license.
 No platform or renderer backend is selected. No ImGui type, source, target, or
 dependency may enter Scry's public headers, install, exports, or normal runtime
-dependency set. SHOW-001–003 and ADR 0010 define the acceptance boundary; M5
+dependency set. SHOW-001, SHOW-003, SHOW-004, and ADR 0010 define the
+acceptance boundary (SHOW-002 retired); M5
 is not complete until the deterministic panel tests, real headless ImGui frame,
 warnings-as-errors build, package audit, and shared local/hosted gate pass.
 Those checks pass locally through

@@ -8,7 +8,7 @@ if(SCRY_BUILD_EXAMPLES)
   add_executable(scry_tool_chat tool_chat/main.cpp)
   target_link_libraries(
     scry_tool_chat
-    PRIVATE glaze::glaze scry::scry scry_project_options
+    PRIVATE scry::scry scry_project_options
   )
 
   if(SCRY_ENABLE_REFLECTION)

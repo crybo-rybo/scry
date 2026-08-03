@@ -37,7 +37,8 @@ removed (ARCHITECTURE.md §11 records the reintroduction condition). The
 development-era coverage/CRAP gating machinery was retired at the release
 posture ([ADR 0012](docs/adr/0012-release-infrastructure-simplification.md));
 its final full run measured 93.322% diff branch coverage and a maximum CRAP
-of 13.125. Its suites for retained contracts remain in full.
+of 13.125, and the test suites it demanded remain in full. Later feature
+retirements may delete tests that only specified the removed feature.
 
 The scheduled/manual nightly pipeline runs CodeQL, long
 SSE/Anthropic/OpenAI fuzzing, and the showcase gate, plus an on-demand
@@ -105,7 +106,8 @@ at `http://127.0.0.1:11434` with the `qwen3:1.7b` model installed.
 
 For human exploration, [the interactive tool chat](examples/tool_chat/README.md)
 starts a persistent terminal conversation with visible date/time, addition, and
-multiplication calls. It defaults to Ollama with `qwen3:8b`:
+multiplication calls. It is intentionally non-gating and defaults to a heavier
+local model (`qwen3:8b`) than the CI smoke (`qwen3:1.7b`) for tool reliability:
 
 ```sh
 ./scripts/run-tool-chat.sh
@@ -178,7 +180,7 @@ artifacts, and is not claimed as M3 verification.
 | [ADR 0007](docs/adr/0007-m3-reflection-contract.md) | Accepted M3 schema/type mapping, strict marshalling, description precedence, optional package component, and no-Glaze public boundary. |
 | [ADR 0008](docs/adr/0008-m4-openai-compatible-contract.md) | Accepted M4 endpoint, authentication, common request/response, streaming, error, and per-dialect state contract for OpenAI-compatible Chat Completions. |
 | [ADR 0009](docs/adr/0009-m4-worker-tool-execution.md) | Accepted M4 per-tool execution policy, handler ownership, ordered control flow, cancellation, observer, and teardown contract. |
-| [ADR 0010](docs/adr/0010-m5-showcase-contract.md) | Accepted M5 showcase-only boundary, host-owned ImGui lifecycle, pinned build-only dependency, and acceptance gates. |
+| [ADR 0010](docs/adr/0010-m5-showcase-contract.md) | Accepted M5 showcase-only boundary, host-owned ImGui lifecycle, deterministic NPC tools, pinned build-only dependency, and acceptance gates; amended 2026-08 to retire the NPC showcase. |
 | [ADR 0011](docs/adr/0011-absolute-quality-gates.md) | Historical: absolute quality gates from a single build replaced the merge-base ratchet, bespoke reflection coverage validator, nightly mutation schedule, and model manifest pin. Gating machinery since retired by ADR 0012. |
 | [ADR 0012](docs/adr/0012-release-infrastructure-simplification.md) | v0.0.1 release posture: the coverage/CRAP gating machinery, mutation testing, and feasibility spikes are retired; fuzzing and the showcase move to the nightly ring; behavioral gates (matrix, tests, sanitizers, tidy, package audits) remain. |
 

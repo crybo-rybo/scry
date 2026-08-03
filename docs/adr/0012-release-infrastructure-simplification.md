@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-07-20
+- Amended: 2026-08-03
 - Amends: [ADR 0011](0011-absolute-quality-gates.md) (retires its gating
   machinery), [ADR 0010](0010-m5-showcase-contract.md) (moves the showcase
   gate to the nightly ring)
@@ -64,9 +65,8 @@ Retained, unchanged:
 - The GCC 16 reflection leg: build, 27-test suite, clean component install,
   downstream component consumer, compiled core-surface proof, and the
   separate ASan+UBSan rerun — via `scripts/ci-reflection.sh`.
-- **Every test for the contracts retained by this decision.** The suites
-  written to satisfy the retired gates are real tests; this decision removes
-  gates, not tests.
+- **Every existing test.** The suites written to satisfy the retired gates
+  are real tests; the gates went, not the tests.
 - Nightly CodeQL and long fuzz on all three protocol targets.
 
 Retired or moved:
@@ -86,8 +86,7 @@ Retired or moved:
   arbitrary-split, and boundary wire suites remain per-commit; the checked
   corpus continues to seed the nightly fuzz targets.
 - **The showcase gate moves to the nightly ring** (`just showcase` locally).
-  At the time of this decision its content is unchanged; it no longer gates
-  PRs.
+  Its content is unchanged; it no longer gates PRs.
 - **The Ollama local-model smoke becomes `workflow_dispatch`-only.** It
   exercises a live model, not the deterministic protocol seams that gate
   correctness.
@@ -119,3 +118,16 @@ Retired or moved:
 - If the project returns to unattended agent-driven development at scale,
   the retired machinery remains in git history (`git log --diff-filter=D`)
   and this ADR is the map for restoring it.
+
+## Amendment — 2026-08-03: feature retirement vs gate retirement
+
+The Decision above retains the July release-posture text, including
+**Every existing test** for contracts covered by the retired coverage/CRAP
+gates. That commitment is about removing *gates*, not freezing every future
+product surface.
+
+When a later amendment retires a feature (for example the NPC showcase under
+[ADR 0010](0010-m5-showcase-contract.md)), tests that only specified the
+removed feature may be deleted with it. The showcase gate's content may also
+narrow when the retired feature leaves the gate; at the time of *this*
+decision the showcase content was unchanged and only its CI ring moved.
