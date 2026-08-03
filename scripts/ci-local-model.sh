@@ -40,20 +40,7 @@ run_with_timeout() {
     gtimeout "${seconds}" "$@"
     return
   fi
-  if command -v python3 >/dev/null 2>&1; then
-    python3 -c '
-import subprocess
-import sys
-
-try:
-    result = subprocess.run(sys.argv[2:], timeout=int(sys.argv[1]), check=False)
-except subprocess.TimeoutExpired:
-    raise SystemExit(124)
-raise SystemExit(result.returncode)
-' "${seconds}" "$@"
-    return
-  fi
-  echo "A timeout command or Python 3 is required." >&2
+  echo "GNU timeout is required (install coreutils on macOS)." >&2
   exit 2
 }
 
