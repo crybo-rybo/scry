@@ -2,14 +2,19 @@
 
 #include <string_view>
 
-// The single source of the release number. CMake refuses to configure when
-// these values disagree with the project version, and the public-api
-// contract test pins the resulting string.
+/// @brief Scry release major version.
+///
+/// These macros are the single source of the release number. CMake refuses to configure
+/// when they disagree with the project version.
 #define SCRY_VERSION_MAJOR 0
+/// @brief Scry release minor version.
 #define SCRY_VERSION_MINOR 0
+/// @brief Scry release patch version.
 #define SCRY_VERSION_PATCH 1
 
-// Encoded for consumer preprocessor gates: version 1.2.3 encodes as 10203.
+/// @brief Integer release version for consumer preprocessor gates.
+///
+/// Version 1.2.3 encodes as 10203.
 #define SCRY_VERSION                                                                   \
   (SCRY_VERSION_MAJOR * 10000 + SCRY_VERSION_MINOR * 100 + SCRY_VERSION_PATCH)
 
@@ -18,9 +23,13 @@
 
 namespace scry {
 
+/// Scry release major version.
 inline constexpr int version_major = SCRY_VERSION_MAJOR;
+/// Scry release minor version.
 inline constexpr int version_minor = SCRY_VERSION_MINOR;
+/// Scry release patch version.
 inline constexpr int version_patch = SCRY_VERSION_PATCH;
+/// Scry semantic version string.
 inline constexpr std::string_view version =
     SCRY_DETAIL_VERSION_EXPAND(SCRY_VERSION_MAJOR) "." SCRY_DETAIL_VERSION_EXPAND(
         SCRY_VERSION_MINOR) "." SCRY_DETAIL_VERSION_EXPAND(SCRY_VERSION_PATCH);

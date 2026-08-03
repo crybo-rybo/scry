@@ -133,6 +133,17 @@ Long protocol fuzzing and the M5 showcase gate run in the scheduled nightly
 workflow; `just showcase` runs the showcase gate locally.
 `just ci` is the optional convenience wrapper.
 
+Build the warning-clean API reference with Doxygen 1.9.8 or newer and Graphviz:
+
+```sh
+./scripts/ci-docs.sh
+```
+
+The styled HTML site is written to `build/docs/html/index.html`. Hosted CI runs
+the same command for pull requests and every push to `main`, then retains the
+site as the `scry-api-docs` artifact. These documentation tools are build-only
+and never enter Scry's installed or exported package surface.
+
 The reflection-OFF surface targets stable C++23 compilers. The accepted M3
 package shape keeps it that way: a reflection-enabled build uses GCC 16+ with
 `-std=c++26 -freflection`, and consumers opt in with

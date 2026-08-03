@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 
-# Local equivalent of the per-commit CI ring (ADR 0012): core, clang-tidy,
-# sanitizers, and the GCC 16 reflection component. Fuzzing, the showcase,
-# and the local-model smoke live in the scheduled/manual nightly workflow.
+# Local equivalent of the per-commit CI ring (ADR 0012): documentation, core,
+# clang-tidy, sanitizers, and the GCC 16 reflection component. Fuzzing, the
+# showcase, and the local-model smoke live in the scheduled/manual nightly workflow.
 
 set -uo pipefail
 
@@ -61,6 +61,7 @@ run_reflection() {
 }
 
 cd "${root_dir}"
+run_gate "Doxygen API site" ./scripts/ci-docs.sh
 run_gate "core" ./scripts/ci-local.sh
 run_gate "clang-tidy" run_tidy
 run_gate "ASan + UBSan" run_preset asan

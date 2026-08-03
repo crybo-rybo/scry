@@ -408,6 +408,8 @@ template <ToolArguments Args> consteval std::string_view make_input_schema() {
 
 namespace scry::reflection {
 
+/// Canonical provider-neutral JSON Schema generated for a reflected argument aggregate.
+/// @tparam Args Type satisfying ToolArguments.
 template <ToolArguments Args>
 inline constexpr std::string_view input_schema_v = detail::make_input_schema<Args>();
 

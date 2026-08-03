@@ -18,32 +18,53 @@
 
 namespace scry::reflection {
 
+/// Provider-visible metadata for a reflected tool registration.
 struct ToolMetadata {
+  /// Unique tool name exposed to the model.
   std::string name{};
+  /// Human-readable description exposed to the model.
   std::string description{};
 };
 
+/// Portable member-description entry used by tool_traits.
 struct parameter_description {
+  /// Exact reflected member name.
   std::string_view member{};
+  /// Description included in the generated parameter schema.
   std::string_view text{};
 };
 
+/// Portable customization point for reflected parameter descriptions.
+///
+/// Specialize this template for an argument aggregate and provide a `descriptions`
+/// array. Trait entries override matching Scry description annotations. Unknown or
+/// duplicate names are diagnosed at compile time.
 template <typename Args> struct tool_traits {
+  /// Parameter descriptions for Args, empty by default.
   static constexpr std::array<parameter_description, 0> descriptions{};
 };
 
+/// Fixed-string payload for Scry's P3394 parameter-description annotation.
+/// @tparam Size Character-array extent including the null terminator.
 template <std::size_t Size> struct description {
+  /// Owned null-terminated annotation text.
   char text[Size]{};
 
+  /// Captures a string literal at compile time.
+  /// @param value Null-terminated annotation text.
   consteval description(const char (&value)[Size]) { std::ranges::copy(value, text); }
 
+  /// Returns the annotation without its null terminator.
+  /// @return Non-owning view into text.
   [[nodiscard]] constexpr std::string_view view() const noexcept {
     static_assert(Size > 0);
     return {text, Size - 1};
   }
 };
 
-template <std::size_t Size> description(const char (&)[Size]) -> description<Size>;
+/// Deduces a description extent from a string literal.
+/// @param value Annotation text whose extent is deduced.
+template <std::size_t Size> description(const char (&value)[Size]) -> description<Size>;
 
 namespace detail {
 
@@ -283,12 +304,23 @@ template <typename Handler, typename Args> consteval bool tool_handler_impl() {
 
 } // namespace detail
 
+/// Values supported by reflected schema generation and strict marshalling.
+///
+/// Supported shapes are the closed matrix in SCRY-TOOL-010: booleans, bounded
+/// non-character integers, finite floats, strings, scoped enums, one optional layer,
+/// vectors except `vector<bool>`, fixed arrays, and recursively supported plain
+/// aggregates.
 template <typename Type>
 concept SupportedValue = detail::supported_value_impl<std::remove_cvref_t<Type>>();
 
+/// Complete plain aggregates accepted as reflected tool arguments.
 template <typename Type>
 concept ToolArguments = detail::tool_arguments_impl<Type>();
 
+/// Callables accepted for a particular reflected argument aggregate.
+///
+/// Handlers receive Args by value and may return a supported value directly or a Result
+/// of one.
 template <typename Handler, typename Args>
 concept ToolHandlerFor =
     ToolArguments<Args> && detail::tool_handler_impl<Handler, Args>();
