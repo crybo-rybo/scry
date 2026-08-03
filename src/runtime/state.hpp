@@ -7,7 +7,6 @@
 #include <scry/conversation.hpp>
 #include <scry/json.hpp>
 #include <scry/tool_registry.hpp>
-#include <string>
 #include <vector>
 
 namespace scry::detail {
@@ -21,7 +20,6 @@ struct ConversationState {
 
 struct RegisteredTool final {
   ToolDefinition definition{};
-  ToolExecution execution{ToolExecution::app_thread};
   std::shared_ptr<ToolHandler> handler{};
 };
 
@@ -34,7 +32,5 @@ struct ToolRegistryState {
 
 [[nodiscard]] ToolSnapshot snapshot_tools(const ToolRegistryState& state);
 [[nodiscard]] std::vector<ToolSchema> snapshot_schemas(const ToolSnapshot& snapshot);
-[[nodiscard]] std::vector<std::string>
-snapshot_worker_tool_names(const ToolSnapshot& snapshot);
 
 } // namespace scry::detail

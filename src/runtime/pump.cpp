@@ -3,8 +3,6 @@
 #include "core/log.hpp"
 #include "runtime/tool_dispatch.hpp"
 
-#include <algorithm>
-#include <cassert>
 #include <type_traits>
 #include <utility>
 
@@ -43,7 +41,6 @@ TurnRoute::TurnRoute(const TurnId turn_id, std::shared_ptr<std::atomic<bool>> ca
       commands_(std::move(commands)), conversation_(std::move(conversation)),
       user_message_(std::move(user_message)), tools_(std::move(options.tools)),
       max_tool_result_bytes_(options.max_tool_result_bytes),
-      remaining_exchange_bytes_(options.max_exchange_bytes),
       max_conversation_bytes_(options.max_conversation_bytes) {}
 
 TurnId TurnRoute::id() const noexcept { return turn_id_; }
@@ -97,9 +94,7 @@ bool TurnRoute::has_callback(const WorkerEvent& event) const noexcept {
         if constexpr (std::is_same_v<Event, TextDeltaEvent>) {
           return static_cast<bool>(on_text_);
         } else if constexpr (std::is_same_v<Event, ToolCallEvent>) {
-          return !terminal_ && !tool_dispatch_failed_ && !pending_worker_tool_;
-        } else if constexpr (std::is_same_v<Event, WorkerToolAcceptedEvent>) {
-          return pending_worker_tool_ && pending_worker_tool_->id == value.tool_call_id;
+          return !terminal_ && !tool_dispatch_failed_;
         } else if constexpr (std::is_same_v<Event, CompletionEvent>) {
           return static_cast<bool>(on_completion_);
         } else if constexpr (std::is_same_v<Event, ErrorEvent>) {
@@ -111,24 +106,11 @@ bool TurnRoute::has_callback(const WorkerEvent& event) const noexcept {
       event);
 }
 
-bool TurnRoute::should_retain(const WorkerEvent& event) const noexcept {
-  if (std::holds_alternative<ToolCallEvent>(event)) {
-    return !terminal_ && !tool_dispatch_failed_;
-  }
-  if (const auto* accepted = std::get_if<WorkerToolAcceptedEvent>(&event)) {
-    return pending_worker_tool_ && pending_worker_tool_->id == accepted->tool_call_id;
-  }
-  return has_callback(event);
-}
-
 bool TurnRoute::should_discard(const WorkerEvent& event) const noexcept {
-  if (std::holds_alternative<ToolCallEvent>(event)) {
-    return terminal_ || tool_dispatch_failed_;
-  }
-  if (const auto* accepted = std::get_if<WorkerToolAcceptedEvent>(&event)) {
-    return !pending_worker_tool_ || pending_worker_tool_->id != accepted->tool_call_id;
-  }
-  return false;
+  // Observer events wait for a callback the application may still register. A
+  // tool call is instead acted on by the route itself, so one it can no longer
+  // dispatch is dead rather than pending.
+  return std::holds_alternative<ToolCallEvent>(event) && !has_callback(event);
 }
 
 void TurnRoute::invoke(const WorkerEvent& event) {
@@ -139,8 +121,6 @@ void TurnRoute::invoke(const WorkerEvent& event) {
           on_text_(value.text);
         } else if constexpr (std::is_same_v<Event, ToolCallEvent>) {
           dispatch(value);
-        } else if constexpr (std::is_same_v<Event, WorkerToolAcceptedEvent>) {
-          accept_worker_tool(value);
         } else if constexpr (std::is_same_v<Event, CompletionEvent>) {
           // commit_completion captured the text before moving the exchange
           // into the Conversation.
@@ -166,33 +146,9 @@ void TurnRoute::dispatch(const ToolCallEvent& event) {
   if (cancelled_->load(std::memory_order_acquire)) {
     return;
   }
-  remaining_exchange_bytes_ =
-      std::min(remaining_exchange_bytes_, event.remaining_exchange_bytes);
-  const auto registration = find_tool_registration(tools_, event.call.name);
-  if (registration && registration->execution == ToolExecution::worker_thread) {
-    SCRY_LOG("Routing {} Tool to the worker thread (Turn {})", event.call.name,
-             turn_id_.value);
-    dispatch_on_worker(event);
-    return;
-  }
-  SCRY_LOG("Routing {} Tool to the app thread (Turn {})", event.call.name,
+  SCRY_LOG("Dispatching {} Tool on the app thread (Turn {})", event.call.name,
            turn_id_.value);
-  dispatch_on_app(event);
-}
-
-void TurnRoute::dispatch_on_app(const ToolCallEvent& event) {
   auto result = dispatch_tool(tools_, event.call, max_tool_result_bytes_);
-  if (result) {
-    const auto result_bytes = content_payload_bytes(*result);
-    if (result_bytes > remaining_exchange_bytes_) {
-      result = std::unexpected(Error{
-          .category = ErrorCategory::resource_limit,
-          .message = "tool results exceed the remaining Conversation byte limit",
-      });
-    } else {
-      remaining_exchange_bytes_ -= result_bytes;
-    }
-  }
   if (!result) {
     tool_dispatch_failed_ = true;
   }
@@ -208,33 +164,6 @@ void TurnRoute::dispatch_on_app(const ToolCallEvent& event) {
   }
   if (result_ready && on_tool_) {
     notify_tool_observer(event.call);
-  }
-}
-
-void TurnRoute::dispatch_on_worker(const ToolCallEvent& event) {
-  const auto commands = commands_.lock();
-  if (!commands) {
-    tool_dispatch_failed_ = true;
-    return;
-  }
-  pending_worker_tool_ = event.call;
-  commands->push(ExecuteWorkerToolCommand{
-      .turn_id = turn_id_,
-      .call = event.call,
-  });
-}
-
-void TurnRoute::accept_worker_tool(const WorkerToolAcceptedEvent& event) {
-  if (!pending_worker_tool_ || pending_worker_tool_->id != event.tool_call_id) {
-    return;
-  }
-  assert(event.result_payload_bytes <= remaining_exchange_bytes_);
-  remaining_exchange_bytes_ -=
-      std::min(event.result_payload_bytes, remaining_exchange_bytes_);
-  auto call = std::move(*pending_worker_tool_);
-  pending_worker_tool_.reset();
-  if (on_tool_) {
-    notify_tool_observer(call);
   }
 }
 

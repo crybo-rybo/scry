@@ -210,8 +210,7 @@ scry::Status register_world_tools(scry::ToolRegistry& registry,
   for (const auto& descriptor : tool_descriptors) {
     auto status = registry.add(tool_definition(std::string{descriptor.name},
                                                std::string{descriptor.description}),
-                               tool_handler(world, descriptor.tool, observer),
-                               {.execution = scry::ToolExecution::app_thread});
+                               tool_handler(world, descriptor.tool, observer));
     if (!status) {
       return status;
     }

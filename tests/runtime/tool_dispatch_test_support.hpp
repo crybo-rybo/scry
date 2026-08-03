@@ -7,7 +7,6 @@
 #include <catch2/catch_test_macros.hpp>
 #include <cstddef>
 #include <cstdint>
-#include <limits>
 #include <memory>
 #include <scry/error.hpp>
 #include <scry/json.hpp>
@@ -26,16 +25,11 @@ namespace scry::test_support {
 }
 
 [[nodiscard]] inline scry::detail::ToolRegistrationPtr
-registered_tool(std::string name, scry::ToolHandler handler,
-                const scry::ToolExecution execution = scry::ToolExecution::app_thread) {
-  auto stored_handler = execution == scry::ToolExecution::app_thread
-                            ? std::make_shared<scry::ToolHandler>(std::move(handler))
-                            : std::shared_ptr<scry::ToolHandler>{};
+registered_tool(std::string name, scry::ToolHandler handler) {
   return std::make_shared<const scry::detail::RegisteredTool>(
       scry::detail::RegisteredTool{
           .definition = tool_definition(std::move(name)),
-          .execution = execution,
-          .handler = std::move(stored_handler),
+          .handler = std::make_shared<scry::ToolHandler>(std::move(handler)),
       });
 }
 
@@ -50,12 +44,10 @@ tool_call(std::string name = "forecast", std::string id = "call-1") {
 
 [[nodiscard]] inline scry::detail::ToolCallEvent
 tool_event(const scry::TurnId turn_id, std::string name = "forecast",
-           std::string id = "call-1",
-           const std::size_t remaining = std::numeric_limits<std::size_t>::max()) {
+           std::string id = "call-1") {
   return {
       .turn_id = turn_id,
       .call = tool_call(std::move(name), std::move(id)),
-      .remaining_exchange_bytes = remaining,
   };
 }
 
@@ -81,16 +73,13 @@ struct PumpFixture {
 
   [[nodiscard]] std::shared_ptr<scry::detail::TurnRoute>
   route(const std::uint64_t id, scry::detail::ToolSnapshot tools,
-        const std::size_t result_limit = 1024,
-        const std::size_t exchange_limit =
-            std::numeric_limits<std::size_t>::max()) const {
+        const std::size_t result_limit = 1024) const {
     return std::make_shared<scry::detail::TurnRoute>(
         scry::TurnId{.value = id}, std::make_shared<std::atomic<bool>>(false), commands,
         conversation, "question",
         scry::detail::TurnRouteOptions{
             .tools = std::move(tools),
             .max_tool_result_bytes = result_limit,
-            .max_exchange_bytes = exchange_limit,
             .max_conversation_bytes = 1024,
         });
   }

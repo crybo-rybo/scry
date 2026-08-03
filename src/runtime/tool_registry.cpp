@@ -18,19 +18,13 @@ namespace {
 
 } // namespace
 
-Status add_tool_registration(ToolRegistryState& state, CommandQueue& commands,
-                             ToolDefinition definition, ToolHandler handler,
-                             const ToolRegistrationOptions options) {
+Status add_tool_registration(ToolRegistryState& state, ToolDefinition definition,
+                             ToolHandler handler) {
   if (definition.name.empty()) {
     return std::unexpected(invalid_registration("tool name must not be empty"));
   }
   if (!handler) {
     return std::unexpected(invalid_registration("tool handler must not be empty"));
-  }
-  if (options.execution != ToolExecution::app_thread &&
-      options.execution != ToolExecution::worker_thread) {
-    return std::unexpected(
-        invalid_registration("tool execution mode is not recognized"));
   }
   auto schema =
       canonicalize_json_object(definition.input_schema, ErrorCategory::invalid_state,
@@ -48,23 +42,8 @@ Status add_tool_registration(ToolRegistryState& state, CommandQueue& commands,
   }
 
   definition.input_schema = std::move(*schema);
-  const auto worker_name = definition.name;
-  if (options.execution == ToolExecution::worker_thread) {
-    state.entries.push_back(std::make_shared<const RegisteredTool>(RegisteredTool{
-        .definition = std::move(definition),
-        .execution = options.execution,
-        .handler = {},
-    }));
-    commands.push(RegisterWorkerToolCommand{
-        .name = worker_name,
-        .handler = std::move(handler),
-    });
-    return {};
-  }
-
   state.entries.push_back(std::make_shared<const RegisteredTool>(RegisteredTool{
       .definition = std::move(definition),
-      .execution = options.execution,
       .handler = std::make_shared<ToolHandler>(std::move(handler)),
   }));
   return {};
@@ -85,32 +64,13 @@ std::vector<ToolSchema> snapshot_schemas(const ToolSnapshot& snapshot) {
   return schemas;
 }
 
-std::vector<std::string> snapshot_worker_tool_names(const ToolSnapshot& snapshot) {
-  std::vector<std::string> names{};
-  names.reserve(snapshot.size());
-  for (const auto& registration : snapshot) {
-    if (registration->execution == ToolExecution::worker_thread) {
-      names.push_back(registration->definition.name);
-    }
-  }
-  return names;
-}
-
 } // namespace scry::detail
 
 namespace scry {
 
-Status ToolRegistry::Impl::add(ToolDefinition definition, ToolHandler handler,
-                               const ToolRegistrationOptions options) {
-  const auto commands = commands_.lock();
-  if (!commands) {
-    return std::unexpected(Error{
-        .category = ErrorCategory::invalid_state,
-        .message = "ToolRegistry is not active",
-    });
-  }
-  return detail::add_tool_registration(state, *commands, std::move(definition),
-                                       std::move(handler), options);
+Status ToolRegistry::Impl::add(ToolDefinition definition, ToolHandler handler) {
+  return detail::add_tool_registration(state, std::move(definition),
+                                       std::move(handler));
 }
 
 ToolRegistry::ToolRegistry(std::unique_ptr<Impl> impl) noexcept
@@ -121,18 +81,13 @@ ToolRegistry::ToolRegistry(ToolRegistry&&) noexcept = default;
 ToolRegistry& ToolRegistry::operator=(ToolRegistry&&) noexcept = default;
 
 Status ToolRegistry::add(ToolDefinition definition, ToolHandler handler) {
-  return add(std::move(definition), std::move(handler), ToolRegistrationOptions{});
-}
-
-Status ToolRegistry::add(ToolDefinition definition, ToolHandler handler,
-                         const ToolRegistrationOptions options) {
   if (impl_ == nullptr) {
     return std::unexpected(Error{
         .category = ErrorCategory::invalid_state,
         .message = "ToolRegistry is not active",
     });
   }
-  return impl_->add(std::move(definition), std::move(handler), options);
+  return impl_->add(std::move(definition), std::move(handler));
 }
 
 std::size_t ToolRegistry::size() const noexcept {

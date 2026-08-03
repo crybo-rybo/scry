@@ -433,10 +433,10 @@ TEST_CASE("reflected registration lowers into the additive registry") {
   status = scry::reflection::add<PresenceArguments>(
       harness.tools(),
       {
-          .name = "worker_presence",
-          .description = "Exercise reflected worker registration",
+          .name = "second_presence",
+          .description = "Exercise a second reflected registration",
       },
-      DirectHandler{}, {.execution = scry::ToolExecution::worker_thread});
+      DirectHandler{});
   REQUIRE(status);
   CHECK(harness.tools().size() == 2);
 }

@@ -151,7 +151,7 @@ void PumpState::accept_event(WorkerEvent event) {
   }
 
   apply_terminal(*route, event);
-  if (route->attached() || route->should_retain(event)) {
+  if (route->attached() || route->has_callback(event)) {
     if (const auto* delta = std::get_if<TextDeltaEvent>(&event);
         delta != nullptr && coalesce_pending_delta(*delta, accounted_bytes)) {
       return;
@@ -271,7 +271,7 @@ void PumpState::release_discarded() {
   std::erase_if(pending_callbacks_, [this](const auto& event) {
     const auto route = find_route(event_turn_id(event.event));
     const auto discard = !route || route->should_discard(event.event) ||
-                         (!route->attached() && !route->should_retain(event.event));
+                         (!route->attached() && !route->has_callback(event.event));
     if (discard) {
       events_->release(event_turn_id(event.event), event.accounted_bytes);
     }
