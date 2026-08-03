@@ -37,7 +37,7 @@ removed (ARCHITECTURE.md §11 records the reintroduction condition). The
 development-era coverage/CRAP gating machinery was retired at the release
 posture ([ADR 0012](docs/adr/0012-release-infrastructure-simplification.md));
 its final full run measured 93.322% diff branch coverage and a maximum CRAP
-of 13.125, and the test suites it demanded remain in full.
+of 13.125. Its suites for retained contracts remain in full.
 
 The scheduled/manual nightly pipeline runs CodeQL, long
 SSE/Anthropic/OpenAI fuzzing, and the showcase gate, plus an on-demand

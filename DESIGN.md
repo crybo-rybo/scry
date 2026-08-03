@@ -43,8 +43,9 @@ Scry lets an existing C++ application add LLM capabilities — chat *and* tool u
 
 - Not an inference engine. Scry talks to servers; it does not load weights.
 - Not a framework. Scry never owns `main()`, never spins an event loop the app must join, never demands ownership of app lifecycle.
-- Not a GUI framework. The showcase view remains example-local; applications
-  keep their window, rendering, input, state, and update-loop ownership.
+- Not a GUI or game engine. The ImGui showcase remains example-local;
+  applications keep their window, rendering, input, state, and update-loop
+  ownership.
 - No prompt-template/chain DSL (LangChain-style). Apps compose in C++.
 - MSVC support is deferred (no public P2996 support as of mid-2026 — see §9).
 
@@ -486,10 +487,10 @@ Dear ImGui is build-only showcase material, default OFF, pinned to `v1.92.8`
 commit `8936b58fe26e8c3da834b8f60b06511d537b4c63` under its MIT license.
 No platform or renderer backend is selected. No ImGui type, source, target, or
 dependency may enter Scry's public headers, install, exports, or normal runtime
-dependency set. SHOW-001, SHOW-003, SHOW-004, and ADR 0010 define the acceptance
-boundary; M5 is not complete until the deterministic panel tests, real
-headless ImGui frame, warnings-as-errors build, package audit, and shared
-local/hosted gate pass. Those checks pass locally through
+dependency set. SHOW-001–003 and ADR 0010 define the acceptance boundary; M5
+is not complete until the deterministic panel tests, real headless ImGui frame,
+warnings-as-errors build, package audit, and shared local/hosted gate pass.
+Those checks pass locally through
 `scripts/ci-showcase.sh` and in hosted CI through the same script. M5 is
 complete.
 

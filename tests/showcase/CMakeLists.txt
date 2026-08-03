@@ -1,13 +1,7 @@
-add_executable(
-  scry_showcase_tests
-  chat_panel_tests.cpp
-)
+add_executable(scry_showcase_tests chat_panel_tests.cpp)
 target_include_directories(
   scry_showcase_tests
-  PRIVATE
-    "${PROJECT_SOURCE_DIR}/examples/imgui"
-    "${PROJECT_SOURCE_DIR}/src"
-    "${PROJECT_SOURCE_DIR}/tests"
+  PRIVATE "${PROJECT_SOURCE_DIR}/examples/imgui"
 )
 target_link_libraries(
   scry_showcase_tests

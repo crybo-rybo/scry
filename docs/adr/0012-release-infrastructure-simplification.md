@@ -64,8 +64,9 @@ Retained, unchanged:
 - The GCC 16 reflection leg: build, 27-test suite, clean component install,
   downstream component consumer, compiled core-surface proof, and the
   separate ASan+UBSan rerun — via `scripts/ci-reflection.sh`.
-- **Every existing test.** The suites written to satisfy the retired gates
-  are real tests; the gates went, not the tests.
+- **Every test for the contracts retained by this decision.** The suites
+  written to satisfy the retired gates are real tests; this decision removes
+  gates, not tests.
 - Nightly CodeQL and long fuzz on all three protocol targets.
 
 Retired or moved:
@@ -85,7 +86,8 @@ Retired or moved:
   arbitrary-split, and boundary wire suites remain per-commit; the checked
   corpus continues to seed the nightly fuzz targets.
 - **The showcase gate moves to the nightly ring** (`just showcase` locally).
-  Its content is unchanged; it no longer gates PRs.
+  At the time of this decision its content is unchanged; it no longer gates
+  PRs.
 - **The Ollama local-model smoke becomes `workflow_dispatch`-only.** It
   exercises a live model, not the deterministic protocol seams that gate
   correctness.

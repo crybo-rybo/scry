@@ -35,8 +35,9 @@ still hold, while review checks that changed behavior has meaningful tests at
 the sanctioned seam. Coverage supplied a different signal, but preserving its
 bespoke analyzer was no longer worth the maintenance surface.
 (The merge-base ratchet that preceded it was demoted earlier, under
-[ADR 0011](docs/adr/0011-absolute-quality-gates.md).) The test suites written
-under those gates remain in full — the gates went, not the tests.
+[ADR 0011](docs/adr/0011-absolute-quality-gates.md).) Behavioral suites for
+retained contracts remain; deleting a feature also deletes tests that only
+specified that feature.
 
 ## 2. Testing Plan
 
@@ -151,7 +152,7 @@ Three rings, ordered by feedback speed; a failure in an inner ring stops the out
    builds installable or release artifacts.
 2. **Nightly:** deep static analysis (CodeQL), long fuzz on all three
    protocol targets, and the M5 showcase contract — a default-OFF leg that
-   enables the examples, builds them with warnings as errors, runs
+   enables the example, builds it with warnings as errors, runs
    deterministic fake-panel cases, executes a real Dear ImGui headless frame,
    and repeats the core package-absence audit. Showcase feedback is immediate
    when it breaks (§8), so it does not gate PRs (ADR 0012).
