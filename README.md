@@ -6,60 +6,23 @@ A C++ LLM harness for applications with their own main loops. The stable C++23
 surface supports explicit-schema tools and hides the full agentic loop — HTTP,
 streaming, tool dispatch, retries — behind a small, poll-friendly async API
 with an explicitly named synchronous convenience. C++26 reflection (P2996) is
-an isolated M3 component that lowers typed tools onto that same runtime
+an isolated optional component that lowers typed tools onto that same runtime
 registry. The name is the design: reflection (the mirror) +
 consulting an oracle (the LLM).
 
 Built for the apps that live in C++ — games, GUI tools, simulators — where you can't block a frame, can't shell out to Python, and want tool use, not just chat.
 
-**Status:** M4 breadth and the M5 showcase are complete. M5 is implemented under
-[ADR 0010](docs/adr/0010-m5-showcase-contract.md) with opt-in C++23 examples for
-a host-owned Dear ImGui chat panel and a deterministic grid NPC driven through
-explicit tools. These examples consume only `scry::scry`: they add no public
-API, installed artifact, or runtime dependency. The shared showcase gate passes
-locally and in hosted CI.
-
-The C++23 runtime selects Anthropic Messages or the strict OpenAI-compatible
-Chat Completions subset from `Config`, including local servers with no API key.
-Every explicit and reflected tool handler executes synchronously inside
-`Harness::update()` on its caller's thread. Provider order, accepted-turn
-snapshots, transactional resend and commit, cancellation semantics, and
-exclusive handler ownership remain part of that single execution model.
-
-M4's retained deterministic closure includes 50/50 provider tests, semantic
-OpenAI request cases, exact stream-boundary cases, a checked corpus
-and short `scry_openai_fuzz` target, a fragmented transactional OpenAI tool
-round, concurrent Anthropic/OpenAI isolation, a public Curl path/header/SSE
-round, and app-thread ordering, thread-ID, snapshot, cancellation,
-detached-turn, cumulative-budget, queue-atomicity, and shutdown coverage. The
-provider seam is streaming-only: the dead non-streaming decode path was
-removed (ARCHITECTURE.md §11 records the reintroduction condition). The
-development-era coverage/CRAP gating machinery was retired at the release
-posture ([ADR 0012](docs/adr/0012-release-infrastructure-simplification.md));
-its final full run measured 93.322% diff branch coverage and a maximum CRAP
-of 13.125. Its behavioral suites remain while they cover live production
-behavior; a test may leave with the implementation that was its only subject.
-
-The scheduled/manual nightly pipeline runs CodeQL, long
-SSE/Anthropic/OpenAI fuzzing, and the showcase gate, plus an on-demand
-OpenAI-compatible smoke using checksum-pinned Ollama v0.32.1 pulling
-`qwen3:1.7b-q4_K_M`. This records a live pipeline, not a claim that a hosted
-nightly execution has already completed. Separately,
-`scripts/ci-local-model.sh` passed locally through the public
-OpenAI-compatible chat and required-tool paths using Ollama 0.22.1 and
-`qwen3:1.7b-q4_K_M`; the checksum-pinned Ollama v0.32.1 hosted nightly
-remains unexecuted and unclaimed.
-
-The M3 reflection component remains complete. Typed P2996 schema generation,
-strict marshalling, and the optional reflection package component are
-implemented under
-[ADR 0007](docs/adr/0007-m3-reflection-contract.md). The supported GCC 16 gate
-builds the reflected example and standalone header, runs 26 schema, codec,
-bridge, registration, and compile-fail tests, audits a clean component install,
-runs a downstream
-`find_package(scry CONFIG REQUIRED COMPONENTS reflection)` consumer, and
-repeats the reflection suite under ASan+UBSan. The reflection-OFF install and
-consumer remain clean C++23 surfaces with no reflection artifacts.
+**Status:** Scry runs the streaming agentic tool loop end to end — model
+request, tool dispatch, automatic resend of results, final answer — with
+cancellation, bounded retries, and transactional conversation history. Two
+provider dialects are selected from `Config` alone: Anthropic Messages and a
+strict OpenAI-compatible Chat Completions subset that also drives local servers
+such as Ollama, vLLM, and llama.cpp server with no API key. The core is C++23
+and poll-friendly: `send()` never waits on network I/O, and every callback and
+tool handler runs inside the `update()` you call from the loop you already own.
+The reflected typed-tool layer is an optional, experimental component requiring
+GCC 16 or newer; this is a pre-1.0 release, so no API or ABI stability is
+promised and breaking changes land with a changelog notice.
 
 ## Using scry
 
@@ -100,21 +63,10 @@ target_link_libraries(app PRIVATE scry::scry)
 ```
 
 The canonical first program is [examples/main_loop.cpp](examples/main_loop.cpp):
-create a `Harness` from a `Config`, register a tool, `send()` a message, and
-pump `update()` from the loop you already own. It assumes a local Ollama server
-at `http://127.0.0.1:11434` with the `qwen3:1.7b` model installed.
-
-Runtime JSON is canonicalized through one sorted representation. Provider
-request fixtures promise JSON meaning, not byte-for-byte member order, and
-tool arguments/results committed to Conversation history use that same
-canonical ordering. Scry is pre-1.0: do not use those bytes as a stable signing
-or cache-key format without pinning the library version; an announced
-canonicalization change may alter bytes while preserving JSON meaning.
-
-libcurl global state is initialized on first transport use and owned once for
-the module/process. The first result is cached; a capability rejection cleans
-up immediately, while success remains active across Harness creation and
-destruction and is cleaned up once at static teardown.
+create a `Harness` from a `Config`, register a tool, `send()` a message with the
+callbacks you want, and pump `update()` from the loop you already own. It assumes
+a local Ollama server at `http://127.0.0.1:11434` with the `qwen3:1.7b` model
+installed.
 
 ## Build and preflight
 
@@ -137,25 +89,18 @@ Before handing off a pull request, run the complete local preflight:
 ```
 
 That one command adds clang-tidy, the ASan/UBSan and TSan suites, and the
-host-specific GCC 16 reflection leg — the same set the hosted per-commit CI
-ring enforces ([ADR 0012](docs/adr/0012-release-infrastructure-simplification.md)).
-It runs all available legs and reports host-specific toolchains that are
-unavailable locally; hosted CI is authoritative for those environments.
-Long protocol fuzzing and the M5 showcase gate run in the scheduled nightly
-workflow; `just showcase` runs the showcase gate locally.
-`just ci` is the optional convenience wrapper.
+host-specific GCC 16 reflection leg. It runs all available legs and reports
+host-specific toolchains that are unavailable locally; hosted CI is
+authoritative for those environments. Long protocol fuzzing, deep static
+analysis, the reflection leg, and the showcase gate run in the scheduled weekly
+workflow; `just showcase` runs the showcase gate locally. `just ci` is the
+optional convenience wrapper.
 
-Internal lifecycle logging is a separate compile-time diagnostic build:
-
-```sh
-cmake --preset dev-logging
-cmake --build build/dev-logging
-SCRY_LOG_FILE=/absolute/path/to/scry.log ctest --test-dir build/dev-logging
-```
-
-`SCRY_LOG_FILE` must name a nonempty explicit destination before the first log
-event. If it is unset or empty, Scry creates no default file. Diagnostic lines
-exclude prompts, tool arguments/results, and credentials.
+Internal diagnostics are opt-in at build time: configure with
+`-DSCRY_ENABLE_LOGGING=ON` (preset `dev-logging`) to compile the internal
+lifecycle logging, then set the `SCRY_LOG_FILE` environment variable to the
+destination path. With that variable unset, logging stays disabled and no file
+is written.
 
 Build the warning-clean API reference with Doxygen 1.9.8 or newer and Graphviz:
 
@@ -168,37 +113,32 @@ the same command for pull requests and every push to `main`, then retains the
 site as the `scry-api-docs` artifact. These documentation tools are build-only
 and never enter Scry's installed or exported package surface.
 
-The reflection-OFF surface targets stable C++23 compilers. The accepted M3
-package shape keeps it that way: a reflection-enabled build uses GCC 16+ with
+The reflection-OFF surface targets stable C++23 compilers, and the package
+shape keeps it that way: a reflection-enabled build uses GCC 16+ with
 `-std=c++26 -freflection`, and consumers opt in with
 `find_package(scry CONFIG REQUIRED COMPONENTS reflection)` and
 `scry::reflection`. Core-only builds and installations contain no reflection
-component or experimental language flags. The shared reflection build, test,
-ASan+UBSan, install-audit, and downstream-consumer gate is live.
-clang-p2996 remains manual, non-gating compatibility work, produces no package
-artifacts, and is not claimed as M3 verification.
+component or experimental language flags. clang-p2996 remains manual,
+non-gating compatibility work and produces no package artifacts.
 
 ## Documentation
 
 | Document | Contents |
 |---|---|
-| [DESIGN.md](DESIGN.md) | High-level design: vision, goals/non-goals, the five core public concepts, interaction and threading model (with diagrams), implemented explicit-schema and reflected-tool ergonomics, provider abstraction, open questions, and roadmap (M0–M5). **Start here.** |
+| [DESIGN.md](DESIGN.md) | High-level design: vision, goals/non-goals, the five core public concepts, interaction and threading model (with diagrams), explicit-schema and reflected-tool ergonomics, provider abstraction, open questions, and forward scope. **Start here.** |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | How the code is shaped: the C++ patterns and idioms each piece commits to — actor-model concurrency, sans-I/O state machine, type erasure, optional consteval codegen and JSON bridge, PImpl, error-as-value — plus the evolution register documenting every deliberate simplification and its intended end state. |
-| [ENGINEERING.md](ENGINEERING.md) | How we work: testing plan and pyramid, coverage habits, static and dynamic analysis (sanitizers, nightly fuzzing), CI shape, workflow, and the gates-are-behavioral philosophy of the v0.0.1 release posture. |
-| [REQUIREMENTS.md](REQUIREMENTS.md) | **The normative register.** Every binding requirement as a numbered RFC-2119 row with milestone and verification method. When prose elsewhere conflicts with the register, the register wins. |
-| [ADR 0001](docs/adr/0001-public-object-graph-and-lifetimes.md) | Accepted public ownership, registry snapshot, Turn detach, and callbacks-at-send lifetime decisions. |
-| [ADR 0002](docs/adr/0002-build-and-dependency-foundation.md) | Build, package, dependency-acquisition, and initial test-harness decisions. |
-| [ADR 0003](docs/adr/0003-test-framework-deferred.md) | Historical M0 decision deferring the test framework until M1. |
-| [ADR 0004](docs/adr/0004-live-quality-ratchet.md) | Historical merge-base quality ratchet; superseded by ADR 0011. |
-| [ADR 0005](docs/adr/0005-m1-runtime-and-test-foundation.md) | Compiled M1 runtime, pinned dependencies, internal contracts, and chat-only milestone boundary. |
-| [ADR 0006](docs/adr/0006-m2-agentic-tool-loop.md) | M2 registry snapshots, agentic tool rounds, app-thread dispatch, retry accounting, transactional commit, and Conversation persistence. |
-| [ADR 0007](docs/adr/0007-m3-reflection-contract.md) | Accepted M3 schema/type mapping, strict marshalling, P3394-only parameter descriptions, optional package component, and no-Glaze public boundary. |
-| [ADR 0008](docs/adr/0008-m4-openai-compatible-contract.md) | Accepted M4 endpoint, authentication, common request/response, streaming, error, and per-dialect state contract for OpenAI-compatible Chat Completions. |
-| [ADR 0009](docs/adr/0009-m4-worker-tool-execution.md) | Historical M4 worker-tool policy, superseded before v0.0.1 by the single app-thread execution contract. |
-| [ADR 0010](docs/adr/0010-m5-showcase-contract.md) | Accepted M5 showcase-only boundary, host-owned ImGui lifecycle, deterministic NPC tools, pinned build-only dependency, and acceptance gates. |
-| [ADR 0011](docs/adr/0011-absolute-quality-gates.md) | Historical: absolute quality gates from a single build replaced the merge-base ratchet, bespoke reflection coverage validator, nightly mutation schedule, and model manifest pin. Gating machinery since retired by ADR 0012. |
-| [ADR 0012](docs/adr/0012-release-infrastructure-simplification.md) | v0.0.1 release posture: the coverage/CRAP gating machinery, mutation testing, and feasibility spikes are retired; fuzzing and the showcase move to the nightly ring; behavioral gates (matrix, tests, sanitizers, tidy, package audits) remain. |
+| [ENGINEERING.md](ENGINEERING.md) | How we work: testing plan and pyramid, complexity limits, static and dynamic analysis, CI shape, workflow, and the gates-are-behavioral philosophy of the v0.0.1 release posture. |
+| [REQUIREMENTS.md](REQUIREMENTS.md) | **The normative register.** Every binding requirement as a numbered RFC-2119 row. When prose elsewhere conflicts with the register, the register wins. |
+
+Accepted architecture decisions live in [docs/adr/](docs/adr/), newest last;
+each records the context, decision, and consequences behind one fork in the road.
 
 ## Reading order
 
 DESIGN.md → ARCHITECTURE.md → ENGINEERING.md, then REQUIREMENTS.md as the binding summary. The first three explain *why*; the register states *what holds*.
+
+## License
+
+Scry is released under the MIT License ([LICENSE](LICENSE)). Third-party
+dependency licenses are recorded in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
