@@ -1,34 +1,33 @@
 # ADR 0009: M4 Worker-Thread Tool Execution
 
-- Status: Superseded
+- Status: Superseded (v0.0.1 simplification pass;
+  [ADR 0012](0012-release-infrastructure-simplification.md))
 - Date: 2026-07-18
-- Superseded: 2026-08-03
 
-## Supersession amendment (2026-08-03)
+**Superseded note.** Worker-mode tool execution was removed before the v0.0.1
+release, together with `ToolExecution`, `ToolRegistrationOptions`, and the
+three-argument `ToolRegistry::add` overload; requirement THR-021 is retired and
+THR-011 now states the single policy — every handler runs on the app thread
+inside `update()`. The mode bought latency isolation only, never parallelism:
+turns serialize on one worker regardless, so an opted-in handler moved the
+frame-budget cost rather than removing it, at the price of a second ownership
+regime, an acknowledgement gate, and a teardown carve-out excluding application
+code from Scry's shutdown bound. A future asynchronous/deferred tool-result API
+— the handler accepts a call, returns immediately, and completes its result on
+a later `update()` — is the intended replacement for genuinely slow tools; it
+keeps application callbacks on the application's own thread. The body below is
+retained unchanged as the record of what was decided and why.
 
-Before v0.0.1, Scry removed the worker-thread tool option described by this
-ADR. `ToolExecution`, `ToolRegistrationOptions`, their registration overloads,
-the worker-owned handler table, and the registration/execute/acknowledgement
-messages no longer exist. THR-021 and TOOL-014 retain their permanent IDs as
-retired requirements; THR-011 is again the sole execution contract: every tool
-handler executes synchronously inside `Harness::update()` on its caller's
-thread.
-
-The single app-thread model keeps one immutable accepted-turn snapshot and one
+The retained app-thread model has one immutable accepted-turn snapshot and one
 dispatch path. The worker publishes each provider batch atomically with the
 machine's remaining exchange budget. The pump reserves each canonical result
-against that budget and latches fatal failure before any later handler can run.
-This preserves ordered resend, observer delivery, cancellation, cumulative
-limits, and suffix-handler suppression without a mirrored acknowledgement
-protocol.
-
-If a real application needs long-running tool work, Scry will ratify a new
-app-owned deferred/async result contract. That decision must define result-token
-lifetime, cancellation, ordering, batch gating, backpressure, resource limits,
-and teardown. It will not restore a hidden worker pool or move arbitrary user
+against that budget and latches fatal failure before any later handler can run,
+preserving ordered resend, observer delivery, cancellation, cumulative limits,
+and suffix-handler suppression without a mirrored acknowledgement protocol.
+Any future deferred result design must define result-token lifetime,
+cancellation, ordering, batch gating, backpressure, resource limits, and
+teardown; it must not restore a hidden worker pool or move arbitrary user
 callables into the network actor.
-
-The original accepted decision follows unchanged as historical context.
 
 ## Context
 

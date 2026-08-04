@@ -6,9 +6,9 @@ Scry is a C++ LLM harness for applications that own their main loop. The
 stable surface is C++23; C++26 reflection is an explicitly isolated,
 experimental capability.
 
-The repository advances by milestones. Read the status in `README.md` and the
-milestone column in `REQUIREMENTS.md` before changing behavior. Do not
-silently implement or promise behavior assigned to a later milestone.
+Read the requirement tables in `REQUIREMENTS.md` and the relevant ADRs in
+`docs/adr/` before changing behavior. Those state what currently holds; do not
+implement or promise behavior no accepted requirement or decision covers.
 
 ## Sources of truth
 
@@ -44,11 +44,11 @@ Run the complete local preflight before a PR handoff:
 ```
 
 This adds clang-tidy, the ASan/UBSan and TSan suites, and the GCC 16
-reflection leg — the same set the hosted per-commit CI ring enforces
-(ADR 0012). It runs every leg and reports unavailable host
-toolchains explicitly; hosted CI remains authoritative for those legs.
-`just ci` is an optional equivalent. Fuzzing and the showcase gate run in
-the scheduled nightly workflow; `just showcase` runs the latter locally.
+reflection leg. It runs every leg and reports unavailable host toolchains
+explicitly; hosted CI remains authoritative for those legs. `just ci` is an
+optional equivalent. Fuzzing, deep static analysis, the reflection gate, and
+the showcase gate run in the scheduled weekly workflow (ENGINEERING.md §6);
+`just showcase` runs the showcase gate locally.
 
 For a normal edit/build loop:
 

@@ -1,300 +1,190 @@
 # Scry — Requirements Register
 
-**This document is normative.** Where prose in [DESIGN.md](DESIGN.md), [ARCHITECTURE.md](ARCHITECTURE.md), or [ENGINEERING.md](ENGINEERING.md) conflicts with this register, the register wins; the other documents provide rationale and context. Keywords MUST, MUST NOT, SHOULD, and MAY follow RFC 2119. Every requirement carries the milestone it lands in (per DESIGN.md §12) and how it is verified — "planned" until the verifying test or gate exists, at which point the row is updated to name it. A requirement with no credible verification path is a design smell and gets reworked, not waived.
+**This document is normative.** Where prose in [DESIGN.md](DESIGN.md), [ARCHITECTURE.md](ARCHITECTURE.md), or [ENGINEERING.md](ENGINEERING.md) conflicts with this register, the register wins; the other documents provide rationale and context. Keywords MUST, MUST NOT, SHOULD, and MAY follow RFC 2119. Every requirement is enforced through one of the gate classes in the [Verification map](#verification-map): most mechanically — deterministic suites, the compiler matrix, sanitizer legs, package audits, or scheduled gates — and a named minority as review obligations discharged through the pull-request Definition of Done. A requirement with no credible enforcement path is a design smell and gets reworked, not waived.
 
-ID scheme: `SCRY-<AREA>-NNN`, abbreviated to `<AREA>-NNN` in the tables below. IDs are permanent; withdrawn requirements are struck, never reused.
+ID scheme: `SCRY-<AREA>-NNN`, abbreviated to `<AREA>-NNN` in the tables below. IDs are permanent. A withdrawn requirement is moved to [Retired IDs](#retired-ids) with its reason and is never reused.
 
 ---
 
 ## API — Public Surface (SCRY-API)
 
-| ID | Level | Requirement | Milestone | Verification |
-|---|---|---|---|---|
-| API-001 | MUST | The public API is centered on five core concepts (Config, Conversation, ToolRegistry, Turn, Harness); no public type is designed for inheritance. | M0 | Header review; no virtual/protected in public headers (grep gate) |
-| API-002 | MUST | No third-party types or headers (curl, Glaze) appear in the public include path. The four stateful handles (Conversation, ToolRegistry, Turn, Harness) use PImpl; configuration, errors, options, enums, event payloads, and the Scry-owned JSON boundary type are plain value types. | M0 | Include audit + header review |
-| API-003 | MUST | Scry-originated semantic and operational failures surface via `std::expected` before acceptance or, after acceptance, the unified `TurnCallbacks::on_finished(Result<Completion>)` channel, never by throw. Allocation failure is excluded, and exceptions thrown by app callbacks propagate synchronously from `update()` per THR-020. | M1 | **Live:** `construction and synchronous admission failures are immediate`, `accepted failure uses one async error channel and commits nothing`, `worker exceptions are contained and reported through the turn`; ASan/UBSan suite |
-| API-004 | MUST | Server/model configuration (base URL, auth, model, sampling params, dialect) is a plain `Config` value aggregate; switching between Anthropic and the OpenAI-compatible common subset, including a local server with no API key, requires no code changes. | M1 (shape); M4 (second dialect proves it) | **Live:** `public-api-contract`; provider-specific config/sampling suites; `OpenAI endpoint normalization accepts only the documented base forms`; `OpenAI-compatible configuration accepts local servers without auth`; `OpenAI-compatible config drives a fragmented transactional tool round` |
-| API-005 | MUST | The library never owns `main()`, never spins an event loop the app must join, and imposes no lifecycle on the host. | M0 | Design invariant; example apps demonstrate integration into pre-existing loops |
-| API-006 | MUST | Multiple Harness instances in one process work independently; no singleton or mutable global carries Harness/provider state. The sole process-wide runtime owner is an internal function-static libcurl RAII object whose immutable first-initialization result is shared by all Harnesses. Different configured dialects share the same isolation guarantee. | M1 (instance isolation); M4 (cross-dialect proof) | **Live:** `two Harness workers can overlap independent transfers`; `two Harness instances keep provider and worker state isolated`; `concurrent Harnesses keep Anthropic and OpenAI dialect state isolated`; repeated curl-global status coverage |
-| API-007 | SHOULD | Conversation history is serializable/deserializable for app-side persistence as a canonical, versioned document. Canonical JSON object keys are lexicographically ordered; before 1.0 those bytes may change with an announced canonicalization change even when JSON meaning is preserved (PORT-007). | M2 | **Live:** `Conversation persistence uses a canonical versioned document`, `Conversation persistence rejects malformed document structure`, `Conversation persistence enforces tool block roles and shapes`, and `Conversation persistence excludes busy and uncommitted turn state` |
-| API-008 | MUST | A synchronous send-and-wait convenience exists, implemented on top of the async path (not a second code path). | M1 | **Live:** `send-and-wait layers over the async path`; implementation delegates to `send()` + `update()` |
-| API-009 | MUST NOT | The library does not provide prompt-template/chain DSLs and is not an inference engine. | — | Scope gate at review |
-| API-010 | MUST | Fallible construction (Harness from Config and Conversation from its config) uses factories returning `std::expected`; semantic failures never throw. Allocation failure (`std::bad_alloc`) is excluded from the failure-as-value contract. | M0 | API tests over invalid configs; header review |
-| API-011 | MUST | Conversation commits are transactional: history is mutated only by the pump at terminal-event delivery. Completion commits the full exchange atomically; error/cancellation commits nothing. M2 extends the committed exchange to include all tool rounds. | M1 (chat); M2 (tool rounds) | **Live:** M1 terminal commit/cancellation suites; M2 `multi-round completion carries the transactional exchange and totals` and `two-tool turn snapshots tools, resends results, and commits atomically` |
-| API-012 | MUST | Harness owns its ToolRegistry; there is no Conversation-local or process-global registry. M1 permits validated registry mutation as inert infrastructure: chat requests neither snapshot nor send tools. Beginning in M2, `send()` snapshots registrations for the accepted turn and registry changes affect subsequent turns only. | M0 (shape); M1 (storage); M2 (snapshot/use) | **Live:** ownership/validation suites, `tool snapshots retain immutable registrations across later additions`, and integration snapshot isolation in `two-tool turn snapshots tools, resends results, and commits atomically` |
-| API-013 | MUST | Callback reference and view arguments are borrowed and remain valid only for the callback invocation; an app that retains them MUST copy them. This applies to the `std::string_view` passed to `on_text_delta` and the `const ToolCall&` passed to `on_tool_call`. `on_finished` instead receives its `Result<Completion>` by value, owned by that invocation. | M0 (shape); M1 (behavior) | **Live:** callback delivery suites under ASan; `public-api-contract`; public signatures and ARCHITECTURE.md lifetime review |
+| ID | Level | Requirement |
+|---|---|---|
+| API-001 | MUST | The public API is centered on five core concepts (Config, Conversation, ToolRegistry, Turn, Harness); no public type is designed for inheritance. |
+| API-002 | MUST | No third-party types or headers (curl, Glaze) appear in the public include path. The four stateful handles (Conversation, ToolRegistry, Turn, Harness) use PImpl; configuration, errors, options, enums, event payloads, callback aggregates, and the Scry-owned JSON boundary type are plain value types. |
+| API-003 | MUST | Scry-originated semantic and operational failures surface via `std::expected` before acceptance or through the turn's terminal callback after acceptance, never by throw. Allocation failure is excluded, and exceptions thrown by app callbacks propagate synchronously from `update()` per THR-020. |
+| API-004 | MUST | Server/model configuration (base URL, auth, model, sampling params, dialect) is a plain `Config` value aggregate; switching between Anthropic and the OpenAI-compatible common subset, including a local server with no API key, requires no code changes. |
+| API-005 | MUST | The library never owns `main()`, never spins an event loop the app must join, and imposes no lifecycle on the host. |
+| API-006 | MUST | Multiple Harness instances in one process work independently; no singleton or mutable global carries Harness/provider state. The sole process-wide runtime owner is an internal function-static libcurl RAII object whose immutable first-initialization result is shared by all Harnesses and whose successful lifetime ends at static teardown. Different configured dialects share the same isolation guarantee. |
+| API-007 | SHOULD | Conversation history is serializable and deserializable for app-side persistence through `to_json()`/`from_json()`, which emit and strictly validate a canonical versioned Scry-owned document with lexicographically ordered object keys. **The document format is unstable before 1.0:** a document produced by one 0.x release is not guaranteed to be readable by another, and an announced canonicalization change may alter bytes while preserving JSON meaning. Applications MUST NOT treat it as a durable archival format across upgrades. |
+| API-008 | MUST | A synchronous send-and-wait convenience exists, implemented on top of the async path (not a second code path). |
+| API-009 | MUST NOT | The library does not provide prompt-template/chain DSLs and is not an inference engine. |
+| API-010 | MUST | Fallible construction (Harness from Config and Conversation from its config) uses factories returning `std::expected`; semantic failures never throw. Allocation failure (`std::bad_alloc`) is excluded from the failure-as-value contract. |
+| API-011 | MUST | Conversation commits are transactional: history is mutated only by the pump at terminal-event delivery. Success commits the full exchange — user message, every tool round, and the final answer — atomically; failure and cancellation commit nothing. |
+| API-012 | MUST | Harness owns its ToolRegistry; there is no Conversation-local or process-global registry. `send()` snapshots registrations for the accepted turn, and registry changes affect subsequent turns only. |
+| API-013 | MUST | Callback reference and view arguments are borrowed and remain valid only for the callback invocation; an app that retains them MUST copy them. This applies to the `std::string_view` passed to `on_text_delta` and the `const ToolCall&` passed to `on_tool_call`. `on_finished` instead receives its `Result<Completion>` by value, owned by that invocation. |
 
 ## Threading & Concurrency (SCRY-THR)
 
-| ID | Level | Requirement | Milestone | Verification |
-|---|---|---|---|---|
-| THR-001 | MUST | No async public API call blocks the calling thread on network I/O; all blocking work happens on a harness-owned worker thread. The explicitly named `send_and_wait` convenience is the sole blocking exception. | M1 | **Live:** held-transport async tests continue after `send()` while the worker is blocked; integration tests carry a 15 s watchdog |
-| THR-002 | MUST | All user callbacks and tool handlers execute only inside `update()`, on the thread calling it. | M1 (turn events); M2 (tool handlers) | **Live:** M1 callback thread-ID suite; M2 handler/observer thread IDs in `two-tool turn snapshots tools, resends results, and commits atomically`; TSan suite |
-| THR-003 | MUST | Exactly three internally-synchronized objects cross the thread boundary: command queue, event queue, and one atomic cancellation flag per turn. All other state is exclusively owned per the ARCHITECTURE.md §3 ownership table; the worker addresses turns only by immutable TurnId. | M1 | **Live:** TSan threaded suite plus ownership review against ARCHITECTURE.md §3 |
-| THR-004 | MUST | `update()` honors an optional caller-supplied time budget; undelivered events roll to the next call, none are lost. | M1 | **Live:** `pump budget is a soft deadline between callbacks` with fake clock and event count |
-| THR-005 | MUST | Streaming deltas are coalesced (at most one aggregated text event per pump interval) so token rate cannot flood the queue. | M1 | **Live:** EventQueue coalescing, capacity, and cross-turn component suites |
-| THR-006 | MUST | `Turn::cancel()` is safe to call from the app thread at any time, including after completion; cancellation is cooperative and aborts in-flight transfers promptly. It returns `true` only when that call issues the cancellation request, and `false` when cancellation was already requested or the pump has made the turn terminal. | M1 (chat); M2 (tool execution) | **Live:** M1 cancellation matrix including `post-completion cancellation is safe and idempotent`; M2 `cancellation during a handler suppresses its result and later calls` and `cancellation before a queued tool call suppresses its handler`; TSan suite |
-| THR-007 | MUST | Dropping a Turn handle detaches: the turn continues, the Conversation still commits on completion, and the callbacks supplied to `send()` remain route-owned and deliverable. It never blocks or cancels implicitly; the handle controls only identity and cancellation. | M1 | **Live:** `dropping a Turn detaches without cancelling its callbacks or commit` plus detached-route component cases |
-| THR-008 | MUST | Turn handles are move-only. | M0 | `static_assert` in tests |
-| THR-009 | MUST | `TurnCallbacks` MUST be attached infallibly and atomically as part of accepting `send()`, before the worker command becomes visible, so no event can precede them. The callback set is immutable after acceptance: there is no late registration or replay. An event with no matching callback is released immediately, while terminal processing still commits or rolls back the Conversation and clears its busy state. | M1 | **Live:** `a turn with empty callbacks still commits its history`; `text deltas arrive in order and coalesce within each pump`; full per-turn event-byte-budget callback-absence cases; source review of `Harness::Impl::send` ordering |
-| THR-010 | MUST | Nothing throws across the thread boundary; worker-side failures become error events. | M1 | **Live:** `worker exceptions are contained and reported through the turn`; ASan/UBSan/TSan suites |
-| THR-011 | MUST | Every tool handler executes synchronously on the app thread inside `update()`; there is no worker-thread execution mode. | M2 | **Live:** `pump executes tool handlers on the update caller thread` and thread-ID assertions in `two-tool turn snapshots tools, resends results, and commits atomically` |
-| THR-012 | MUST | Worker lifetime uses `std::jthread`; the worker `stop_token` signals Harness shutdown only — per-turn cancellation uses the per-turn atomic (THR-003), never the stop token. | M1 | **Live:** held-Curl destruction and cancellation-signal separation cases under ASan/TSan; source invariant review |
-| THR-013 | MUST | A Harness accepts up to `Config::limits.max_pending_turns`; accepted turns queue FIFO and exactly one HTTP transfer is active at a time (M1 baseline; evolution register governs multiplexing). Admission beyond the bound fails immediately with `resource_limit`. | M1 | **Live:** `pending-turn admission limit rejects before acceptance` and `serialized turns begin in FIFO order with one active transfer` |
-| THR-014 | MUST | A `send()` on a Conversation that already has a turn queued or in flight fails immediately with a distinct error category; the Conversation is untouched. | M1 | **Live:** `busy conversations and queued cancellation issue no second transfer` |
-| THR-015 | MUST | Cancelling a still-queued turn removes it before any I/O is issued; its terminal event is Cancelled. | M1 | **Live:** machine queued cancellation plus `busy conversations and queued cancellation issue no second transfer` |
-| THR-016 | MUST | While the active turn awaits an app-thread tool result it retains the serialized turn slot; queued turns wait. | M2 | **Live:** `a queued turn waits for the active turn's app-thread tool round` |
-| THR-017 | MUST | Harness destruction cancels all turns, aborts Scry-owned transfers, joins the worker within configured transport/shutdown bounds, and discards undelivered events; no callback or tool handler fires after destruction begins. Resolver behavior and every blocking curl phase MUST be covered by those bounds. | M1 | **Live:** timed held-transfer destruction under ASan/TSan; Curl progress-signal tests; `curl runtime rejects capabilities that cannot honor host shutdown`; `Harness destruction stops a worker awaiting an app-thread tool result`; source review of asynchronous DNS, Curl connect/total timeouts, and shutdown-bounded multi polling. Deliberately no nondeterministic DNS-blackhole test |
-| THR-018 | MUST | The `update()` budget is a soft deadline checked between callbacks; an individual callback or tool handler is never preempted and may overrun it. | M1 | **Live:** `pump budget is a soft deadline between callbacks` with a deliberately overrunning fake clock callback |
-| THR-019 | MUST | Callbacks may reentrantly call `send`, `cancel`, and tool registration. Reentrant `update()` MUST perform no work, leave its queue untouched, and return `UpdateStats` with `callbacks_delivered == 0` and `budget_exhausted == true`; it never recurses into delivery. M1 registration mutates only the inert registry foundation. Beginning in M2, such changes affect subsequent accepted turns only. | M1 (safe mutation); M2 (turn effect) | **Live:** `a rejected reentrant pump update reports an exhausted budget`; M1 reentrancy/nested-wait suite; M2 later and handler-reentrant registration isolation in `two-tool turn snapshots tools, resends results, and commits atomically` |
-| THR-020 | MUST | An exception escaping a user callback propagates out of `update()`; the harness remains valid and the event counts as delivered. Callbacks SHOULD NOT throw. | M1 | **Live:** `callback exceptions consume the event and leave the pump valid` |
-| THR-021 | — | ~~`ToolRegistrationOptions` selects app-thread or worker-thread execution per tool and defaults to app-thread behavior.~~ **Retired before v0.0.1:** worker-thread tool execution and its registration options were removed; THR-011 is the sole execution contract. A future deferred/async result boundary requires a new ratified requirement. | M4 (retired) | ADR 0009 supersession amendment; public-header and source-boundary audits |
+| ID | Level | Requirement |
+|---|---|---|
+| THR-001 | MUST | No async public API call blocks the calling thread on network I/O; all blocking work happens on a harness-owned worker thread. The explicitly named `send_and_wait` convenience is the sole blocking exception. |
+| THR-002 | MUST | All user callbacks and all tool handlers execute only inside `update()`, on the thread calling it. |
+| THR-003 | MUST | Exactly three internally-synchronized objects cross the thread boundary: command queue, event queue, and one atomic cancellation flag per turn. All other state is exclusively owned per the ARCHITECTURE.md §3 ownership table; the worker addresses turns only by immutable TurnId. |
+| THR-004 | MUST | `update()` honors an optional caller-supplied time budget; undelivered events roll to the next call, none are lost. |
+| THR-005 | MUST | Streaming deltas are coalesced (at most one aggregated text event per pump interval) so token rate cannot flood the queue. |
+| THR-006 | MUST | `Turn::cancel()` is safe to call from the app thread at any time, including after completion; cancellation is cooperative and aborts in-flight transfers promptly. |
+| THR-007 | MUST | Dropping a Turn handle detaches: the turn continues, the Conversation still commits on success, and the callbacks supplied to `send()` remain route-owned and deliverable. It never blocks or cancels implicitly; the handle controls only identity and cancellation. |
+| THR-008 | MUST | Turn handles are move-only and expose exactly two operations, `id()` and `cancel()`. Callbacks are supplied to `send()`; the handle has no callback-registration surface. |
+| THR-009 | MUST | `TurnCallbacks` MUST be attached infallibly and atomically as part of accepting `send()`, before the worker command becomes visible, so no event can precede the immutable callback set. There is no late registration or replay. An event with no matching callback is released immediately, while terminal processing still commits or rolls back the Conversation and clears its busy state. |
+| THR-010 | MUST | Nothing throws across the thread boundary; worker-side failures become error events. |
+| THR-011 | MUST | Tool handlers execute on the app thread inside `update()`. There is no worker-thread execution mode. |
+| THR-012 | MUST | Worker lifetime uses `std::jthread`; the worker `stop_token` signals Harness shutdown only — per-turn cancellation uses the per-turn atomic (THR-003), never the stop token. |
+| THR-013 | MUST | A Harness accepts up to `Config::limits.max_pending_turns`; accepted turns queue FIFO and exactly one HTTP transfer is active at a time (the evolution register governs multiplexing). Admission beyond the bound fails immediately with `resource_limit`. |
+| THR-014 | MUST | A `send()` on a Conversation that already has a turn queued or in flight fails immediately with a distinct error category; the Conversation is untouched. |
+| THR-015 | MUST | Cancelling a still-queued turn removes it before any I/O is issued; it terminates with an error carrying `ErrorCategory::cancelled`. |
+| THR-016 | MUST | While the active turn awaits an app-thread tool result it retains the serialized turn slot; queued turns wait. |
+| THR-017 | MUST | Harness destruction cancels all turns, aborts Scry-owned transfers, joins the worker within configured transport/shutdown bounds, and discards undelivered events; no callback or tool handler fires after destruction begins. Resolver behavior and every blocking curl phase MUST be covered by those bounds. |
+| THR-018 | MUST | The `update()` budget is a soft deadline checked between callbacks; an individual callback or tool handler is never preempted and may overrun it. |
+| THR-019 | MUST | Callbacks may reentrantly call `send`, `cancel`, and tool registration; such changes affect subsequently accepted turns only. Reentrant `update()` is forbidden: it performs no work, delivers no callbacks, and reports the rejection through `UpdateStats::budget_exhausted`. |
+| THR-020 | MUST | An exception escaping a user callback propagates out of `update()`; the harness remains valid and the event counts as delivered. Callbacks SHOULD NOT throw. |
 
 ## Agentic Loop (SCRY-LOOP)
 
-| ID | Level | Requirement | Milestone | Verification |
-|---|---|---|---|---|
-| LOOP-001 | MUST | The harness owns the full agentic loop (model → tool → result → resend, until final answer); the app never re-submits intermediate results. | M2 | **Live:** `multi-round completion carries the transactional exchange and totals` plus the two-tool automatic-resend integration |
-| LOOP-002 | MUST | The loop engine is sans-I/O: it performs no network, file, or clock access; it consumes events and emits commands only. M1 lands chat/retry/cancellation states; M2 extends the same machine with tool states. | M1/M2 | **Live:** `scry_turn_machine_tests` compiles the complete chat/tool machine and retry sources directly with no transport/provider library linked |
-| LOOP-003 | MUST | Loop rounds are bounded by configurable `max_tool_rounds`; exceeding it terminates the turn with a distinct error. | M2 | **Live:** `tool-round cap fails before publishing any call from excess round` and `zero tool-round cap rejects the first call batch` |
-| LOOP-004 | MUST | Loop states are explicit (variant/enum) with a documented transition diagram. Events that are illegal for the current state are diagnosed and MUST NOT mutate state or emit commands. The M1 subset is extended, not replaced, in M2. | M1/M2 | **Live:** `request phases diagnose illegal transitions without mutation` and `waiting phases diagnose illegal transitions without mutation` include `awaiting_tool`; model-completion consistency and tool-call identity/argument validation; `unknown and duplicate tool results do not mutate pending state`; ARCHITECTURE.md §3 diagram |
-| LOOP-005 | MUST | Time enters the machine only as injected events ("wake me at T"); retry backoff (exponential + jitter, configurable cap) is machine state. | M1 | **Live:** fake-time machine cases for monotonicity, early wake, jitter, attempt cap, and elapsed cap |
-| LOOP-006 | MUST | Retryability is decided by a pure classifier over error categories (429/5xx/transport retryable; auth/protocol not). | M1 | **Live:** table-driven `retry classifier accepts only transient categories`; pure retry target has no transport linked |
-| LOOP-007 | SHOULD | Intermediate loop activity (tool calls, text deltas) is observable via optional callbacks without requiring app participation. | M2 | **Live:** observer order and optional participation in `two-tool turn snapshots tools, resends results, and commits atomically` |
-| LOOP-008 | MUST | Within one turn, tool execution is at-most-once per tool-call ID: retry machinery never re-dispatches an ID already dispatched by that turn. A multi-call response is admitted to the event queue atomically, and a fatal framework dispatch failure suppresses every later handler in that batch before side effects. Failed/cancelled turns commit no tool rounds, so application-level resend of side-effecting tools requires an app-supplied idempotency or reconciliation policy. | M2 | **Live:** `model-request retries never redispatch completed tool calls`, full-turn tool-call ID uniqueness, `tool call batches fail atomically at the event queue boundary`, `fatal tool result failure suppresses every later handler`, `cumulative result failure suppresses remaining calls in the batch`, and the side-effect policy in DESIGN.md §8 |
+| ID | Level | Requirement |
+|---|---|---|
+| LOOP-001 | MUST | The harness owns the full agentic loop (model → tool → result → resend, until final answer); the app never re-submits intermediate results. |
+| LOOP-002 | MUST | The loop engine is sans-I/O: it performs no network, file, or clock access; it consumes events and emits commands only. One machine carries the chat, retry, cancellation, and tool states. |
+| LOOP-003 | MUST | Loop rounds are bounded by configurable `max_tool_rounds`; exceeding it terminates the turn with a distinct error. |
+| LOOP-004 | MUST | Loop states are explicit (variant/enum) with a documented transition diagram (ARCHITECTURE.md §3). Events that are illegal for the current state are diagnosed and MUST NOT mutate state or emit commands. |
+| LOOP-005 | MUST | Time enters the machine only as injected events ("wake me at T"); retry backoff (exponential + jitter, configurable cap) is machine state. |
+| LOOP-006 | MUST | Retryability is decided by a pure classifier over error categories (429/5xx/transport retryable; auth/protocol not). |
+| LOOP-007 | SHOULD | Intermediate loop activity (text deltas, tool calls) is observable through the optional `TurnCallbacks::on_text_delta` and `on_tool_call` members supplied at `send()`, without requiring app participation; omitting them changes no loop behavior. |
+| LOOP-008 | MUST | Within one turn, tool execution is at-most-once per tool-call ID: retry machinery never re-dispatches an ID already dispatched by that turn. A multi-call response is admitted to the event queue atomically, and a fatal framework dispatch or cumulative-result-budget failure suppresses every later handler in that batch before side effects. Failed/cancelled turns commit no tool rounds, so application-level resend of side-effecting tools requires an app-supplied idempotency or reconciliation policy. |
 
 ## Tool Registration (SCRY-TOOL)
 
-| ID | Level | Requirement | Milestone | Verification |
-|---|---|---|---|---|
-| TOOL-001 | MUST | Explicit-schema registration (schema string + type-erased `json → json` callable) is public API and is the substrate all registration lowers onto. M1 validates and stores registrations but does not snapshot, serialize, or dispatch them; those behaviors begin in M2. | M1 (registry foundation); M2 (use) | **Live:** `tool registration accepts only JSON object schemas and canonicalizes them`, `Anthropic request serializes multiple schemas and tool results in order`, `tool dispatch canonicalizes successful handler results`, reflection-OFF build, and `scry_canonical_example` |
-| TOOL-002 | MUST | The P2996 reflection layer derives a lexically canonical input schema and argument/return marshalling from plain aggregate structs. `scry::reflection::input_schema_v<Args>` is a `constexpr` artifact, and reflected registration lowers to TOOL-001 rather than creating a second registry or dispatch path. | M3 | **Live:** three exact `input_schema_v` compile-time goldens; `reflected registration lowers into the additive registry`; installed reflection consumer exercises both public entry points |
-| TOOL-003 | MUST | The reflection layer is severable: it is a separate optional `reflection` package component and `scry::reflection` target behind `SCRY_ENABLE_REFLECTION`. The C++23 core builds, tests, installs, and is consumable with it disabled; core-only consumers receive no C++26 flags, reflection headers/runtime, Glaze headers/types, or exported Glaze target. | M0/M3 | **Live:** reflection-OFF clean build/install/consumer plus artifact-absence audit in `scripts/ci-local.sh`; `scripts/ci-reflection.sh` clean install, compiled reflection-component consumer, and a core-only C++23 consumer compiled with non-reflection GCC 14 against the reflection-enabled install |
-| TOOL-004 | MUST | Reflected member names become parameter names. Presence and nullability are independent: only a default member initializer permits omission and removes a member from `required`; only `std::optional<T>` permits JSON `null`. Omission preserves the C++ initializer, and no JSON Schema `default` is emitted. | M3 | **Live:** `PresenceArguments` compile-time schema covers the four presence/nullability cells; `reflected decoding preserves defaults and required nullability` |
-| TOOL-005 | SHOULD | Reflected registration is concept-constrained. Root and nested objects are complete, default-initializable, non-union plain aggregates with no bases and public named non-bit-field writable members; unsupported roots, members, metadata, handlers, and returns fail at the call site with a stable, legible Scry diagnostic. | M3 | **Live:** positive/negative `SupportedValue`, `ToolArguments`, and `ToolHandlerFor` assertions plus the four `reflection.compile-fail.*` diagnostic tests |
-| TOOL-006 | MUST | Tool-handler exceptions are caught at dispatch and returned to the model as tool-error results; they never propagate to the app. | M2 | **Live:** `tool dispatch contains standard and non-standard handler exceptions` |
-| TOOL-007 | SHOULD | Parameter descriptions come only from Scry's P3394 `description` annotation. A member may carry at most one Scry description annotation; duplicates fail at compile time with a stable Scry diagnostic. Unrelated annotations are ignored, and an unannotated member omits `description`. | M3 | **Live:** the `PresenceArguments` schema golden proves annotation emission and omission; `reflection.compile-fail.duplicate-description` enforces the exact duplicate-annotation diagnostic; the reflection configure probe exercises the required P3394 query surface |
-| TOOL-008 | MAY | A reflected handler may return a direct TOOL-010 supported value or `Result` of one, including a reflected aggregate. The reflected overload does not accept `void`, `Status`, raw `Json`, references, futures, or awaitables; dynamic/unsupported returns use TOOL-001. | M3 | **Live:** positive/negative `ToolHandlerFor` assertions, `reflected erased handlers retain move-only captures and typed errors`, and the void/raw-JSON compile-fail tests |
-| TOOL-009 | MUST | The M2 registry is additive-only: registering a duplicate tool name is rejected via `std::expected`, not silent replacement, and there is no removal/replacement API. A future mutation surface requires an explicit snapshot/lifetime decision. | M1 (duplicate rejection); M2 (mutation policy) | **Live:** `ToolRegistry rejects invalid and duplicate registrations`, `tool registration is additive and duplicate names do not replace records`, and ADR 0006 |
-| TOOL-010 | MUST | M3 supported values are `bool`; non-character signed/unsigned integral types; finite `float`/`double`; `std::string`; scoped enums with unique underlying values encoded by exact enumerator name; one layer of `std::optional<T>`; `std::vector<T,Allocator>` except every `vector<bool,Allocator>` specialization; `std::array<T,N>`; and recursively supported plain aggregates. Integers carry exact C++ range bounds; fixed arrays carry exact length bounds. Nested optionals and enum aliases are rejected because their JSON decode/encode is ambiguous. Other C++ shapes are not inferred from Glaze support and remain unsupported until separately specified. | M3 | **Live:** compile-time supported/rejected type assertions; exact type-family schema goldens; composite round trip, numeric/enum/fixed-array boundary, and non-finite/unnamed-value tests |
-| TOOL-011 | MUST | Generated schemas use Scry's closed provider-neutral JSON Schema 2020-12 subset from ADR 0007: closed inline objects; the keywords `additionalProperties`, `anyOf`, `description`, `enum`, `items`, `maxItems`, `minItems`, `minimum`, `maximum`, `properties`, `required`, and `type`; minified JSON; lexicographically sorted object/property keys and `required` names; and enum declaration order. Generated schemas omit `$schema`, references/definitions, `title`, and `default`. This subset does not restrict explicit TOOL-001 schemas. | M3 | **Live:** exact `PresenceArguments`, `AllTypesArguments`, and `NumericArguments` compile-time schema goldens plus installed-consumer schema assertion |
-| TOOL-012 | MUST | Reflected decoding is strict and recursive: it rejects a non-object root, unknown fields, missing required fields, wrong JSON kinds (including a lexical number such as `1.0` for an integral member), disallowed null, numeric sign/range/non-finite errors, unknown enum names, and fixed-array length errors. The canonical parsed JSON value is authoritative, so duplicate lexical object keys are not separately observable at M3 dispatch. Decode failures become bounded model-visible tool errors; configured payload-limit failures remain fatal `resource_limit` errors. | M3 | **Live:** strict root/member/type test; numeric, enum, fixed-array, non-finite, and unnamed-value boundary tests; typed-handler error test; existing exact tool argument/result resource-limit tests |
-| TOOL-013 | MUST | `scry::reflection::add<Args>(ToolRegistry&, ToolMetadata, Handler&&)` invokes the handler with `std::move(args)`, preserves move-only captures, and lowers the typed wrapper and `input_schema_v<Args>` through the existing additive registry. | M3 | **Live:** `reflected erased handlers retain move-only captures and typed errors`; `reflected registration lowers into the additive registry`; compiled reflection example and installed consumer |
-| TOOL-014 | — | ~~Explicit and reflected registration accept the same `ToolRegistrationOptions`.~~ **Retired before v0.0.1:** the options type and overloads were removed. Explicit and reflected registration now lower directly to the single app-thread TOOL-001 path. | M4 (retired) | `scry_canonical_example`; `scry_reflection_example`; `reflected registration lowers into the additive registry`; public-header audit |
+| ID | Level | Requirement |
+|---|---|---|
+| TOOL-001 | MUST | Explicit-schema registration (schema string + type-erased `json → json` callable) is public API and is the substrate all registration lowers onto. Registrations are snapshotted per accepted turn, serialized to the provider, and dispatched from the pump. |
+| TOOL-002 | MUST | The P2996 reflection layer derives a lexically canonical input schema and argument/return marshalling from plain aggregate structs. `scry::reflection::input_schema_v<Args>` is a `constexpr` artifact, and reflected registration lowers to TOOL-001 rather than creating a second registry or dispatch path. |
+| TOOL-003 | MUST | The reflection layer is severable: it is a separate optional `reflection` package component and `scry::reflection` target behind `SCRY_ENABLE_REFLECTION`. The C++23 core builds, tests, installs, and is consumable with it disabled; core-only consumers receive no C++26 flags, reflection headers/runtime, Glaze headers/types, or exported Glaze target. |
+| TOOL-004 | MUST | Reflected member names become parameter names. Presence and nullability are independent: only a default member initializer permits omission and removes a member from `required`; only `std::optional<T>` permits JSON `null`. Omission preserves the C++ initializer, and no JSON Schema `default` is emitted. |
+| TOOL-005 | SHOULD | Reflected registration is concept-constrained. Root and nested objects are complete, default-initializable, non-union plain aggregates with no bases and public named non-bit-field writable members; unsupported roots, members, metadata, handlers, and returns fail at the call site with a stable, legible Scry diagnostic. |
+| TOOL-006 | MUST | Tool-handler exceptions are caught at dispatch and returned to the model as tool-error results; they never propagate to the app. |
+| TOOL-007 | MUST | Tool and parameter descriptions come from Scry's P3394 `[[=scry::reflection::description{"..."}]]` annotation and from no other source. Duplicate description annotations on one entity fail at compile time. There is no portable trait-based description fallback or override. |
+| TOOL-008 | MAY | A reflected handler may return a direct TOOL-010 supported value or `Result` of one, including a reflected aggregate. The reflected overload does not accept `void`, `Status`, raw `Json`, references, futures, or awaitables; dynamic/unsupported returns use TOOL-001. |
+| TOOL-009 | MUST | The registry is additive-only: registering a duplicate tool name is rejected via `std::expected`, not silent replacement, and there is no removal/replacement API. A future mutation surface requires an explicit snapshot/lifetime decision. |
+| TOOL-010 | MUST | Supported reflected values are `bool`; non-character signed/unsigned integral types; finite `float`/`double`; `std::string`; scoped enums with unique underlying values encoded by exact enumerator name; one layer of `std::optional<T>`; `std::vector<T,Allocator>` except every `vector<bool,Allocator>` specialization; `std::array<T,N>`; and recursively supported plain aggregates. Integers carry exact C++ range bounds; fixed arrays carry exact length bounds. Nested optionals and enum aliases are rejected because their JSON decode/encode is ambiguous. Other C++ shapes are not inferred from Glaze support and remain unsupported until separately specified. |
+| TOOL-011 | MUST | Generated schemas use Scry's closed provider-neutral JSON Schema 2020-12 subset from ADR 0007: closed inline objects; the keywords `additionalProperties`, `anyOf`, `description`, `enum`, `items`, `maxItems`, `minItems`, `minimum`, `maximum`, `properties`, `required`, and `type`; minified JSON; lexicographically sorted object/property keys and `required` names; and enum declaration order. Generated schemas omit `$schema`, references/definitions, `title`, and `default`. This subset does not restrict explicit TOOL-001 schemas. |
+| TOOL-012 | MUST | Reflected decoding is strict and recursive: it rejects a non-object root, unknown fields, missing required fields, wrong JSON kinds (including a lexical number such as `1.0` for an integral member), disallowed null, numeric sign/range/non-finite errors, unknown enum names, and fixed-array length errors. The canonical parsed JSON value is authoritative, so duplicate lexical object keys are not separately observable at dispatch. Decode failures become bounded model-visible tool errors; configured payload-limit failures remain fatal `resource_limit` errors. |
+| TOOL-013 | MUST | `scry::reflection::add<Args>(ToolRegistry&, ToolMetadata, Handler&&)` invokes the handler with `std::move(args)`, preserves move-only captures, and lowers the typed wrapper and `input_schema_v<Args>` through the existing additive registry. |
 
 ## Provider & Protocol (SCRY-PROV)
 
-| ID | Level | Requirement | Milestone | Verification |
-|---|---|---|---|---|
-| PROV-001 | MUST | An internal neutral message model (roles + content blocks incl. tool call/result) isolates provider wire-format mapping inside adapters. The generic JSON codec remains a provider-neutral bottom-layer facility. | M1 | **Live:** neutral model/request/response component suites; provider envelope and stream mapping remain confined to `src/provider/` |
-| PROV-002 | MUST | Anthropic Messages adapter. | M1 | **Live:** sanitized semantic request fixture, streaming lifecycle suite, and public Curl walking skeleton |
-| PROV-003 | MUST | An OpenAI-compatible Chat Completions adapter implements the common subset in ADR 0008 for OpenAI, vLLM, Ollama, llama.cpp server, and LM Studio. This is a tested compatibility subset, not complete parity with every server extension or model/chat template. | M4 | **Live:** 50/50 `scry_provider_tests`; `OpenAI-compatible config drives a fragmented transactional tool round`; `public Harness completes an OpenAI-compatible SSE turn through Curl`; `scry_openai_fuzz` with checked corpus; scheduled/manual pinned-Ollama local-model pipeline (no completed hosted run claimed yet) |
-| PROV-004 | MUST | Streaming (SSE) is supported on all adapters; the SSE parser is a pure incremental function tolerant of arbitrary chunk splits. | M1 | **Live:** every-split and fixed-seed random partition suites; direct no-I/O SSE target; `scry_sse_fuzz` and `scry_anthropic_fuzz` |
-| PROV-005 | MUST | Adapter selection is config-driven (dialect enum + factory); no public plugin API until a concrete third-party need exists (evolution register). | M4 | **Live:** `OpenAI-compatible config drives a fragmented transactional tool round`; `concurrent Harnesses keep Anthropic and OpenAI dialect state isolated`; factory/source boundary review |
-| PROV-006 | SHOULD | Adapters are stateless translators; stream-parse state lives in per-turn parser objects. | M1 | **Live:** adapter state-shape review; independent concurrent Harness/provider integration |
-| PROV-007 | MUST | The neutral model carries multiple tool calls per assistant message with stable tool-call IDs, and accumulates partially-streamed JSON tool arguments before dispatch. | M2 | **Live:** `Anthropic stream preserves multiple independently fragmented tool calls`, `Anthropic request serializes multiple schemas and tool results in order`, and `tool response publishes every call once in provider order` |
-| PROV-008 | MUST | Unknown/unmappable *optional* stream events are skipped and represented by an internal debug-observable provider event; the M1 worker intentionally consumes that marker because no public logging surface exists. Unmappable *required* content (e.g., an unrecognized block the turn depends on) fails the turn with a protocol error — never silently discarded. | M1 | **Live:** `Anthropic stream decoder observes optional unknown events` asserts the marker/name at the provider seam; required content/delta rejection matrix |
-| PROV-009 | SHOULD | Usage/token counts, finish reasons, and provider request IDs are surfaced on the completed turn. | M1 | **Live:** provider fixture suites plus `public Harness completes an Anthropic SSE turn through Curl` |
-| PROV-010 | MUST | OpenAI-compatible requests normalize an origin, `/v1` base, or full `/v1/chat/completions` endpoint; omit authorization for an empty key; use bearer auth for a safe nonempty key; encode system/text/function tools; and expand every neutral tool result into a separate ordered `role:"tool"` message. Sampling is validated per dialect. Request fixtures assert semantic JSON equivalence; the encoder currently emits lexicographically ordered object keys but does not promise exact wire bytes before 1.0. | M4 | **Live:** `OpenAI request is semantically equivalent to the common contract`; `OpenAI endpoint normalization accepts only the documented base forms`; `OpenAI authentication is optional for local servers`; `OpenAI-compatible configuration accepts local servers without auth`; `OpenAI-compatible sampling rejects every invalid numeric shape`; `OpenAI-compatible config drives a fragmented transactional tool round`; `public Harness completes an OpenAI-compatible SSE turn through Curl` |
-| PROV-011 | MUST | OpenAI-compatible streaming accepts arbitrary SSE chunk splits, accumulates bounded tool-call fragments by numeric index, requires contiguous complete function calls at finish, permits a trailing usage-only chunk, and emits exactly one completion only when `[DONE]` follows a finish reason. Missing/duplicate/early terminal markers and content after finish are protocol errors. | M4 | **Live:** `OpenAI stream preserves interleaved tool fragments in index order`; `OpenAI streamed argument limit rejects before appending`; `OpenAI stream enforces finish and terminal lifecycle`; `OpenAI stream maps errors and isolates dialect state`; one-byte fragmentation in `OpenAI-compatible config drives a fragmented transactional tool round`; `scry_openai_fuzz` with `tests/fuzz/corpus/openai` |
+| ID | Level | Requirement |
+|---|---|---|
+| PROV-001 | MUST | An internal neutral message model (roles + content blocks incl. tool call/result) isolates provider wire-format mapping inside adapters. The generic JSON codec remains a provider-neutral bottom-layer facility. |
+| PROV-002 | MUST | An Anthropic Messages adapter is supported. |
+| PROV-003 | MUST | An OpenAI-compatible Chat Completions adapter implements the common subset in ADR 0008 for OpenAI, vLLM, Ollama, llama.cpp server, and LM Studio. This is a tested compatibility subset, not complete parity with every server extension or model/chat template. |
+| PROV-004 | MUST | Streaming (SSE) is supported on all adapters; the SSE parser is a pure incremental function tolerant of arbitrary chunk splits. |
+| PROV-005 | MUST | Adapter selection is config-driven (dialect enum + factory); no public plugin API until a concrete third-party need exists (evolution register). |
+| PROV-006 | SHOULD | Adapters are stateless translators; stream-parse state lives in per-turn parser objects. |
+| PROV-007 | MUST | The neutral model carries multiple tool calls per assistant message with stable tool-call IDs, and accumulates partially-streamed JSON tool arguments before dispatch. |
+| PROV-008 | MUST | Unknown/unmappable *optional* stream events are skipped and represented by an internal debug-observable provider event; there is no public logging surface. Unmappable *required* content (e.g., an unrecognized block the turn depends on) fails the turn with a protocol error — never silently discarded. |
+| PROV-009 | SHOULD | Usage/token counts, finish reasons, and provider request IDs are surfaced on the completed turn. |
+| PROV-010 | MUST | OpenAI-compatible requests normalize an origin, `/v1` base, or full `/v1/chat/completions` endpoint; omit authorization for an empty key; use bearer auth for a safe nonempty key; encode system/text/function tools; and expand every neutral tool result into a separate ordered `role:"tool"` message. Sampling is validated per dialect. Request fixtures assert semantic JSON equivalence; the encoder currently emits lexicographically ordered object keys but does not promise exact wire bytes before 1.0. |
+| PROV-011 | MUST | OpenAI-compatible streaming accepts arbitrary SSE chunk splits, accumulates bounded tool-call fragments by numeric index, requires contiguous complete function calls at finish, permits a trailing usage-only chunk, and emits exactly one completion only when `[DONE]` follows a finish reason. Missing/duplicate/early terminal markers and content after finish are protocol errors. |
 
 ## Transport & Robustness (SCRY-NET)
 
-| ID | Level | Requirement | Milestone | Verification |
-|---|---|---|---|---|
-| NET-001 | MUST | Transport sits behind an injectable seam; the full harness runs against a fake transport in tests. | M1 | **Live:** threaded `scry_harness_integration_tests` use `FakeTransport`, controlled transports, and public Curl |
-| NET-002 | MUST | All curl objects are RAII-wrapped; curl types are confined to implementation files; C-callback trampolines catch all exceptions. Process-global libcurl initialization is owned once until static teardown and is never churned with Harness lifetime. | M1 | **Live:** public-header/include audit, Curl move/destructor cases, callback exception containment under ASan, repeated curl-global status coverage |
-| NET-003 | MUST | Curl progress callbacks check both the worker `stop_token` (Harness shutdown) and the active turn's atomic flag (per-turn cancellation), so either aborts transfers promptly without conflating their scopes. | M1 | **Live:** `curl progress callback independently observes both cancellation signals`, active Curl cancellation, and held-transfer destruction |
-| NET-004 | MUST | Malformed or hostile server output must never crash or corrupt the host app. Broken SSE, invalid JSON, and malformed or overflowing `Content-Length` response headers become `protocol` errors; a declared or received response above the configured bound becomes `resource_limit` per NET-008. | M1 | **Live:** bounded/malformed SSE + JSON matrices; deterministic malformed/overflowing/oversized response-header tests; `scry_sse_fuzz` and `scry_anthropic_fuzz` with checked-in corpus |
-| NET-005 | MUST | Transient failures retry with exponential backoff + jitter, honoring `Retry-After`, under configurable max-attempt and elapsed-time caps (see LOOP-005/006). | M1 | **Live:** fake-time machine/retry suites and `a transient failure retries once and reports the successful attempt` |
-| NET-006 | MUST | Retry eligibility: a request is retried only if no semantic output has been consumed (failure before the first content event). After partial output, the turn fails with a retryable-flagged error; the app decides. | M1 | **Live:** semantic-output machine cases and `semantic output prevents a retry after a transient transport failure` |
-| NET-007 | MUST | TLS certificate verification is on by default; disabling it is an explicit, named config option. | M1 | **Live:** `self-signed TLS is rejected unless explicitly disabled`; public default contract |
-| NET-008 | MUST | Resource bounds are configurable with documented defaults: pending-turn count, SSE-event bytes, response bytes, tool argument/result bytes, per-turn queued-event bytes, and Conversation bytes. Exceeding admission limits rejects `send()`; exceeding an accepted turn's limit fails it with `resource_limit`. For tool turns, the remaining Conversation budget cumulatively covers assistant tool-call messages, every tool result, and the final answer before dispatch/resend/commit. A stalled pump therefore bounds memory, not just event rate. | M1 (chat limits); M2 (tool payload limits) | **Live:** M1 bound suites; M2 streamed argument, exact tool argument/result, `tool exchange budget is exact across every ordered result`, cumulative-result, and final-completion boundary cases |
+| ID | Level | Requirement |
+|---|---|---|
+| NET-001 | MUST | Transport sits behind an injectable seam; the full harness runs against a fake transport in tests. |
+| NET-002 | MUST | All curl objects are RAII-wrapped; curl types are confined to implementation files; C-callback trampolines catch all exceptions. Process-global libcurl initialization is owned once until static teardown and is never churned with Harness lifetime. |
+| NET-003 | MUST | Curl progress callbacks check both the worker `stop_token` (Harness shutdown) and the active turn's atomic flag (per-turn cancellation), so either aborts transfers promptly without conflating their scopes. |
+| NET-004 | MUST | Malformed or hostile server output must never crash or corrupt the host app. Broken SSE, invalid JSON, and malformed or overflowing `Content-Length` response headers become `protocol` errors; a declared or received response above the configured bound becomes `resource_limit` per NET-008. |
+| NET-005 | MUST | Transient failures retry with exponential backoff + jitter, honoring `Retry-After`, under configurable max-attempt and elapsed-time caps (see LOOP-005/006). |
+| NET-006 | MUST | Retry eligibility: a request is retried only if no semantic output has been consumed (failure before the first content event). After partial output, the turn fails with a retryable-flagged error; the app decides. |
+| NET-007 | MUST | TLS certificate verification is on by default; disabling it is an explicit, named config option. |
+| NET-008 | MUST | Resource bounds are configurable with documented defaults: pending-turn count, SSE-event bytes, response bytes, tool argument/result bytes, per-turn queued-event bytes, and Conversation bytes. Exceeding admission limits rejects `send()`; exceeding an accepted turn's limit fails it with `resource_limit`. For tool turns, the remaining Conversation budget cumulatively covers assistant tool-call messages, every tool result, and the final answer before dispatch/resend/commit. A stalled pump therefore bounds memory, not just event rate. |
 
 ## Errors (SCRY-ERR)
 
-| ID | Level | Requirement | Milestone | Verification |
-|---|---|---|---|---|
-| ERR-001 | MUST | One error type end-to-end: category enum (`invalid_config`, `invalid_state`, `busy`, `authentication`, `rate_limit`, `network`, `protocol`, `resource_limit`, `tool`, `max_tool_rounds`, `cancelled`) plus message, sanitized provider detail, retryability/Retry-After metadata, and correlation fields. | M1 | **Live:** public contract plus transport/provider category, metadata, and sanitizer matrices; only `scry::Error` crosses public seams |
-| ERR-002 | MUST | Immediate validation/admission/registration failure returns `std::expected`. After a turn is accepted, exactly one asynchronous failure channel exists: its error event/callback. No status-polling API. | M1 | **Live:** construction/admission/registration suites and `accepted failure uses one async error channel and commits nothing`; API surface review |
-| ERR-003 | MUST | While its Harness remains alive, every accepted turn terminates in exactly one observable terminal event (complete, error, or cancelled) — never zero, never two. Harness destruction is the explicit exception: it aborts active work and discards all undelivered events, so teardown exposes no terminal callback. | M1 | **Live:** terminal idempotence across event orderings, duplicate-completion rejection, all public terminal-path suites, and held-transfer destruction with no callback |
-| ERR-004 | MUST | API keys and auth headers never appear in error messages, logs, or diagnostics — redacted at the transport boundary. Prompt/tool content is never logged. Diagnostic logging is compile-time opt-in and writes only when `SCRY_LOG_FILE` names a nonempty explicit destination; unset or empty creates no default file. | M1 | **Live:** `accepted results redact the configured API key from correlation fields`, Curl request-data leak checks, provider detail sanitization, process-isolated unset/empty/explicit logging destination tests |
-| ERR-005 | SHOULD | Errors and completed turns carry correlation identifiers (turn ID, attempt number, provider request ID where available). | M1 | **Live:** machine error correlation, stream-vs-transport request ID, public Curl completion, production SSE errors, and provider-correlated M2 exchange-budget failures |
+| ID | Level | Requirement |
+|---|---|---|
+| ERR-001 | MUST | One error type end-to-end: category enum (`invalid_config`, `invalid_state`, `busy`, `authentication`, `rate_limit`, `network`, `protocol`, `resource_limit`, `tool`, `max_tool_rounds`, `cancelled`) plus message, sanitized provider detail, retryability/Retry-After metadata, and correlation fields. |
+| ERR-002 | MUST | Immediate validation/admission/registration failure returns `std::expected`. After a turn is accepted, exactly one asynchronous outcome channel exists: `TurnCallbacks::on_finished`, which receives `Result<Completion>` — the completion on success or the `Error` on failure. Cancellation is delivered on that same channel as an `Error` carrying `ErrorCategory::cancelled`. There is no separate cancellation callback and no status-polling API. |
+| ERR-003 | MUST | While its Harness remains alive, every accepted turn reaches exactly one terminal state — never zero, never two — and terminal processing commits or rolls back the Conversation even when `on_finished` is empty. A non-empty `on_finished` receives exactly one delivery. Harness destruction is the explicit exception: it aborts active work and discards all undelivered callbacks. |
+| ERR-004 | MUST | API keys and auth headers never appear in error messages, logs, or diagnostics — redacted at the transport boundary. Prompt/tool content is never logged. Diagnostic logging is compile-time opt-in and writes only when `SCRY_LOG_FILE` names a nonempty explicit destination; unset or empty creates no default file. |
+| ERR-005 | SHOULD | Errors and completed turns carry correlation identifiers (turn ID, attempt number, provider request ID where available). |
 
 ## Portability & Toolchain (SCRY-PORT)
 
-| ID | Level | Requirement | Milestone | Verification |
-|---|---|---|---|---|
-| PORT-001 | MUST | Core library (reflection OFF) targets C++23 and builds on stable GCC/libstdc++ and Clang/libc++. | M0 | **Live:** `ci.yml` core matrix (Linux GCC 14/libstdc++, Linux Clang 18/libc++, macOS AppleClang/libc++) |
-| PORT-002 | MUST | The supported reflection component builds on GCC 16+ with `-std=c++26 -freflection` and a positive compiler-capability probe that compiles Scry's required P2996/P3394 annotation-query surface, including `annotations_of`, `is_annotation`, annotation-template identification, and payload extraction. clang-p2996 is deferred to manual, non-gating compatibility work: it is not a supported reflection configuration and MUST NOT produce installable or release artifacts. | M0/M3 | **Live:** `scripts/ci-reflection.sh` fresh GCC 16 capability-probed build, tests, install audit, and consumer; hosted `reflection` job calls the same script. No manual Clang result is claimed |
-| PORT-003 | MUST | Runtime dependencies are limited to libcurl + Glaze; any addition requires a written justification committed with the change. | M0 | Dependency manifest review gate |
-| PORT-004 | MUST | Glaze headers and types do not appear in public headers; the tool-boundary JSON type and reflection JSON-view bridge are Scry-owned. | M2/M3 | **Live:** public-header audit and include-first reflection header target; the installed reflection consumer builds without a Glaze include path, proving no Glaze/export leakage |
-| PORT-005 | MUST | The reflection-OFF C++23 core supports Linux and macOS from M0. The reflection-ON GCC 16 component is supported on Linux first; macOS reflection support follows when a production-grade toolchain is practically distributable (evolution register row). Windows is deferred to the evolution register. | M0/M3 | **Live:** stable reflection-OFF core matrix on Linux/macOS; Linux `reflection` job runs the shared component build/test/install/consumer gate |
-| PORT-006 | MUST | libcurl ≥ 7.84.0; `CURL_VERSION_THREADSAFE` and asynchronous DNS are verified after the process's single initialization attempt (host threads may exist before the first Harness). The first result is cached. Capability failure cleans up immediately; successful initialization is cleaned up exactly once by the function-static owner's destructor at module/process teardown. | M1 | **Live:** CMake 7.84 floor; runtime capability validation and rejection matrix; repeated status test; Curl transport and public-Harness integration tests (the retired feasibility spike is superseded — ADR 0012) |
-| PORT-007 | MUST | Pre-1.0: no API/ABI stability promises, breaking changes allowed with changelog notice. From 1.0: semver, inline-namespace ABI versioning. | M0 (documented) | Release checklist |
+| ID | Level | Requirement |
+|---|---|---|
+| PORT-001 | MUST | Core library (reflection OFF) targets C++23 and builds on stable GCC/libstdc++ and Clang/libc++. |
+| PORT-002 | MUST | The supported reflection component builds on GCC 16+ with `-std=c++26 -freflection` and a positive compiler-capability probe that compiles Scry's required P2996/P3394 annotation-query surface, including `annotations_of`, `is_annotation`, annotation-template identification, and payload extraction. clang-p2996 is deferred to manual, non-gating compatibility work: it is not a supported reflection configuration and MUST NOT produce installable or release artifacts. |
+| PORT-003 | MUST | Runtime dependencies are limited to libcurl + Glaze; any addition requires a written justification committed with the change. |
+| PORT-004 | MUST | Glaze headers and types do not appear in public headers; the tool-boundary JSON type and reflection JSON-view bridge are Scry-owned. |
+| PORT-005 | MUST | The reflection-OFF C++23 core supports Linux and macOS. The reflection-ON GCC 16 component is supported on Linux first; macOS reflection support follows when a production-grade toolchain is practically distributable (evolution register row). Windows is deferred to the evolution register. |
+| PORT-006 | MUST | libcurl ≥ 7.84.0; `CURL_VERSION_THREADSAFE` and asynchronous DNS are verified after the process's single initialization attempt (host threads may exist before the first Harness). The first result is cached. Capability failure cleans up immediately; successful initialization is cleaned up exactly once by the function-static owner's destructor at module/process teardown. |
+| PORT-007 | MUST | Pre-1.0: no API/ABI stability promises, breaking changes allowed with changelog notice. The Conversation persistence document format carries the same pre-1.0 instability (API-007). From 1.0: semver, inline-namespace ABI versioning. |
 
 ## Showcase Integrations (SCRY-SHOW)
 
-| ID | Level | Requirement | Milestone | Verification |
-|---|---|---|---|---|
-| SHOW-001 | MUST | An opt-in C++23 Dear ImGui chat-panel example consumes only the public `scry::scry` target and demonstrates non-blocking send, streamed text, completion, error, and cancellation. The host owns and outlives the Harness and Conversation, calls `update()`, and owns the ImGui context, platform/renderer backends, window, and main loop. Panel destruction requests cancellation and MUST NOT block. | M5 | **Live:** `scry_showcase_tests` fake-controller send/stream/terminal/cancel/stale-callback/destruction cases; `showcase.imgui-headless-frame`; source-boundary review; shared local/hosted showcase gate |
-| SHOW-002 | MUST | The NPC showcase is a deterministic, ephemeral 5-by-5 in-memory grid with explicit-schema zero-argument `look`, `move_north`, `move_south`, `move_east`, and `move_west` tools. The tools execute on the app thread, reject nonempty arguments, return canonical JSON, leave blocked boundary moves unchanged, and rely on application-owned idempotency or reconciliation for any durable adaptation. | M5 | **Live:** `scry_showcase_tests` NPC cases cover initial observation, deterministic move order, every direction, boundaries, argument rejection, canonical results, and explicit app-thread registration; fake-transport dispatch/resend proof; example build/run seam |
-| SHOW-003 | MUST | M5 adds no Scry public API, installed header, package target, export, or runtime dependency. Dear ImGui is a showcase-only MIT build dependency, pinned to `v1.92.8` commit `8936b58fe26e8c3da834b8f60b06511d537b4c63`, compiled only when `SCRY_BUILD_IMGUI_SHOWCASE=ON` (default `OFF`), and includes no window-system or renderer backend. A normal core build MUST NOT fetch or discover it. | M5 | **Live:** default-OFF configure audit; pinned-source check; public-header/target review; clean install and downstream `find_package(scry)` artifact-absence audit; shared local/hosted showcase gate |
-| SHOW-004 | MUST | The showcase gate builds with the repository warnings-as-errors policy and runs deterministic NPC tests, fake-controller panel behavior tests, a real Dear ImGui compile/link/headless-frame smoke, and the clean-package audit. It MUST be callable locally and by hosted CI before M5 is complete. | M5 | **Live:** `scripts/ci-showcase.sh` passes directly (`just showcase`) and in the hosted nightly `showcase` job (ADR 0012) |
+| ID | Level | Requirement |
+|---|---|---|
+| SHOW-001 | MUST | An opt-in C++23 Dear ImGui chat-panel example consumes only the public `scry::scry` target and demonstrates non-blocking send, streamed text, terminal completion, error, and cancellation. The host owns and outlives the Harness and Conversation, calls `update()`, and owns the ImGui context, platform/renderer backends, window, and main loop. Panel destruction requests cancellation and MUST NOT block. |
+| SHOW-002 | MUST | The NPC showcase is a deterministic, ephemeral 5-by-5 in-memory grid with explicit-schema zero-argument `look`, `move_north`, `move_south`, `move_east`, and `move_west` tools. The tools execute on the app thread, reject nonempty arguments, return canonical JSON, leave blocked boundary moves unchanged, and rely on application-owned idempotency or reconciliation for any durable adaptation. |
+| SHOW-003 | MUST | The showcase adds no Scry public API, installed header, package target, export, or runtime dependency. Dear ImGui is a showcase-only MIT build dependency, pinned to `v1.92.8` commit `8936b58fe26e8c3da834b8f60b06511d537b4c63`, compiled only when `SCRY_BUILD_IMGUI_SHOWCASE=ON` (default `OFF`), and includes no window-system or renderer backend. A normal core build MUST NOT fetch or discover it. |
+| SHOW-004 | MUST | The showcase gate builds with the repository warnings-as-errors policy and runs deterministic NPC tests, fake-controller panel behavior tests, a real Dear ImGui compile/link/headless-frame smoke, and the clean-package audit. It MUST be callable locally and by hosted CI. |
 
 ## Quality Gates (SCRY-QA) — binding form of ENGINEERING.md
 
-| ID | Level | Requirement | Milestone | Verification |
-|---|---|---|---|---|
-| QA-001 | MUST | New or changed behavior lands with tests at the sanctioned seam; coverage exclusions require an inline justification. The mechanical ≥ 90% diff branch-coverage gate is retired (ADR 0012). | M0; amended v0.0.1 | **Live:** PR-checklist test item and diff self-review; behavioral suites demanded by the retired gate remain while they cover live production behavior, but a test MAY be deleted with the implementation that was its only subject |
-| QA-002 | MUST | The sans-I/O machine, SSE parser, retry classifier, and reflection codec/bridge keep their near-total deterministic suites, including error paths. Type-directed constant-evaluation branches use the compile-time positive/negative matrix and MUST NOT be represented by a misleading runtime percentage. The mechanical branch-coverage floors are retired (ADR 0012). | M2 (runtime components); M3 (codec/bridge); amended v0.0.1 | **Live:** the machine/protocol/provider/reflection suites themselves; schema assertions plus four compile-fail diagnostics cover consteval paths |
-| QA-003 | — | Retired (ADR 0012). CRAP scoring was agent-era gating machinery; complexity limits remain under QA-004 and untested-complexity risk is caught in review. | M0; retired v0.0.1 | — |
-| QA-004 | MUST | Cyclomatic complexity ≤ 15 per function (warn at 10); cognitive complexity ≤ 25. Named suppressions only. | M0 | **Live:** cyclomatic via lizard in `scripts/ci-local.sh` (`-C 15`); cognitive via `.clang-tidy` threshold in the tidy job |
-| QA-005 | MUST | ASan, UBSan, and TSan suites pass per commit; threaded tests always run under TSan, and the supported reflection marshalling/JSON bridge runs under ASan+UBSan. | M0/M3 | **Live:** core `asan`/`tsan` jobs; `scripts/ci-reflection.sh` separate GCC 16 `address-undefined` build with all 26 reflection-labelled tests passing |
-| QA-006 | MUST | Warnings-as-errors (`-Wall -Wextra -Wconversion -Wshadow`) across the full compiler matrix. | M0 | **Live:** `scry_project_options` target + `ci.yml` core matrix |
-| QA-007 | MUST | Gates are behavioral: the compiler matrix with warnings-as-errors, the deterministic suites, sanitizers, clang-tidy, complexity limits, and the install/package-consumer audits gate every commit. The absolute metric floors (diff coverage, component floors, aggregate backstop, CRAP) and their bespoke analyzer are retired (ADR 0012; supersedes the ADR 0011 form, which superseded the M0 ratchet). | M0; amended v0.0.1 | **Live:** `ci.yml` per-commit ring; complexity and TODO checks in `scripts/ci-local.sh` |
-| QA-008 | MUST | Unit/machine tests are deterministic: no real time, sleeps, or network. Flaky tests are fixed or deleted immediately. | M0 | **Live:** the hosted TSan leg runs the suite with CTest `--repeat until-fail:3`, where nondeterminism actually surfaces; sanctioned-seam review remains required |
-| QA-009 | MUST | Every bug fix lands with a regression test (machine-level replay where applicable). | M1+ | **Live:** regression-test item in `.github/pull_request_template.md` |
-| QA-010 | SHOULD | Nightly: long fuzz runs, deep static analysis, and the showcase gate. The e2e smoke against a real local model runs on demand; mutation testing is retired (ADR 0012). | M4+; amended v0.0.1 | **Live pipeline:** scheduled/manual `.github/workflows/nightly.yml` runs CodeQL v4, long `scry_sse_fuzz`/`scry_anthropic_fuzz`/`scry_openai_fuzz`, and `scripts/ci-showcase.sh`; the bounded Ollama v0.32.1 `qwen3:1.7b-q4_K_M` chat/tool smoke is `workflow_dispatch`-only. **Local evidence:** `scripts/ci-local-model.sh` passed the public OpenAI-compatible chat and required-tool paths on Ollama 0.22.1 with `qwen3:1.7b-q4_K_M`. The checksum-pinned Ollama v0.32.1 hosted job remains unexecuted and unclaimed |
-| QA-011 | SHOULD | Everything CI enforces is runnable locally with one command. | M0/M3 | **Live:** `scripts/preflight.sh` calls the same `scripts/ci-reflection.sh` used by hosted CI and reports unavailable host toolchains; `just ci` remains the optional wrapper |
-| QA-012 | MUST | Definition of Done includes updating the four load-bearing docs — including this register — when behavior or a decision changes. | M0 | PR checklist gate |
-| QA-013 | MUST | Every exported public API declaration is documented, and the Doxygen HTML site builds without warnings on pull requests and every push to `main`. The documentation toolchain MUST remain build-only and outside installed/exported package metadata. | M5 | **Live:** `scripts/ci-docs.sh`; `ci.yml` `Doxygen API site` job retains the generated website artifact; core install/package-consumer audit proves dependency absence |
+| ID | Level | Requirement |
+|---|---|---|
+| QA-001 | MUST | New or changed behavior lands with tests at the sanctioned seam; a coverage exclusion requires an inline justification. Behavioral suites retained after the metric gates were retired remain while they cover live production behavior, but a test MAY be deleted with the implementation that was its only subject. |
+| QA-002 | MUST | The sans-I/O machine, SSE parser, retry classifier, and reflection codec/bridge keep their near-total deterministic suites, including error paths. Type-directed constant-evaluation branches are covered by the compile-time positive/negative matrix, including the four reflection compile-fail diagnostics, and MUST NOT be represented by a misleading runtime percentage. |
+| QA-004 | MUST | Cyclomatic complexity ≤ 15 per function (warn at 10); cognitive complexity ≤ 25. Named suppressions only. |
+| QA-005 | MUST | ASan, UBSan, and TSan suites pass on every pull request; threaded tests always run under TSan. The reflection component's marshalling and Scry-owned JSON bridge run under ASan+UBSan on every reflection-affecting pull request (path-aware gate) and unconditionally in the scheduled ring — this rerun is the component's only sanitizer coverage, because the core sanitizer legs build with reflection OFF. |
+| QA-006 | MUST | Warnings-as-errors (`-Wall -Wextra -Wconversion -Wshadow`) across the full compiler matrix. |
+| QA-007 | MUST | Gates are behavioral: the compiler matrix with warnings-as-errors, the deterministic suites, sanitizers, clang-tidy, complexity limits, and the install/package-consumer audits gate every pull request. No gate scores a coverage or complexity-risk metric. |
+| QA-008 | MUST | Unit/machine tests are deterministic: no real time, sleeps, or network. Flaky tests are fixed or deleted immediately. |
+| QA-009 | MUST | Every bug fix lands with a regression test (machine-level replay where applicable). |
+| QA-010 | SHOULD | The scheduled weekly ring runs deep static analysis (CodeQL), long fuzz runs on all protocol targets, the showcase gate, and the reflection component gate. The end-to-end smoke against a real local model runs on manual dispatch only, against a checksum-pinned server. |
+| QA-011 | SHOULD | Everything CI enforces is runnable locally with one command (`scripts/preflight.sh`), which reports any leg the host toolchain cannot provide. |
+| QA-012 | MUST | Definition of Done includes updating the four load-bearing docs — including this register — when behavior or a decision changes. |
+| QA-013 | MUST | Every exported public API declaration is documented, and the Doxygen HTML site builds without warnings on pull requests and every push to `main`. The documentation toolchain MUST remain build-only and outside installed/exported package metadata. |
 
-## Unratified / Known Gaps
+## Verification map
 
-New gaps land here, not in prose. There are no known M0, M1, M2, M3, M4, or M5
-design requirement gaps. M5 implementation and verification are live under
-SHOW-001–004 and ADR 0010 through the shared local/hosted showcase gate. M4
-implementation and deterministic verification are live; the scheduled nightly
-pipeline is present, but no completed hosted nightly execution is claimed yet.
-The live M3 feature,
-diagnostic, packaging, sanitizer, and runtime coverage evidence is named above.
-Randomized reflection property/fuzz testing and manual Clang compatibility
-remain unclaimed future hardening, not M3 completion evidence.
+Deliberately coarse: requirements map to gates and suites, not to individual
+test titles, so the map survives suite refactors without churn. Pull-request
+descriptions link the affected IDs (pull-request template), which is the
+per-change end of this traceability. IDs called out as **review** have no
+mechanical gate; they are discharged through the pull-request Definition of
+Done and human review.
 
-Amendment log:
+| Area | Mechanical enforcement | Review-enforced IDs |
+|---|---|---|
+| API | Public-header audit (`cmake/CheckPublicHeaders.cmake`), `public_api_contract` static assertions, runtime + integration suites, package-consumer audits | API-005, API-009 (design constraints) |
+| THR | Runtime and integration suites on every pull request, repeated in full under TSan; shutdown/teardown bounds via the curl and loopback transport suites | — |
+| LOOP | Deterministic sans-I/O machine suite (event-in/command-out replay, including retry and budget state) | — |
+| TOOL | Registry and dispatch suites (TOOL-001/006/009); reflection schema/codec/bridge/registration suites plus the compile-fail matrix (TOOL-002/004/005/007/008/010–013); both package consumers for severability (TOOL-003) | — |
+| PROV | Provider golden, stream, and edge suites; protocol fuzz targets in the scheduled ring | — |
+| NET | Transport policy/curl/loopback suites and fake-transport integration suites; fuzz for hostile-input robustness; NET-002 additionally via clang-tidy and the sanitizer legs | — |
+| ERR | Harness edge and integration suites, including the redaction assertions (ERR-004) | — |
+| PORT | The compiler matrix itself (PORT-001), the reflection gate's configure-time probe (PORT-002), package audits (PORT-004), the curl capability check at first init (PORT-006) | PORT-003 (dependency justification), PORT-005 (platform policy), PORT-007 (release policy) |
+| SHOW | Showcase gate (`ci-showcase.sh`): deterministic NPC and fake-panel suites, headless ImGui smoke, package-absence audit — weekly and on demand | — |
+| QA | The CI workflows are themselves the gate (matrix, sanitizers, tidy, complexity flags, Doxygen); QA-010/QA-011 are properties of the workflow and script set | QA-001, QA-009, QA-012 (habit clauses) |
 
-- **2026-08, provider/transport/JSON consolidation:** API-006, API-007,
-  PROV-001/002/010, NET-002/004, ERR-004, and PORT-006 now state the shared
-  bottom-layer JSON boundary, semantic request-fixture contract, canonical
-  object ordering and pre-1.0 byte-change notice, strict response-length
-  checks, explicit-only diagnostic destination, and one process-lifetime
-  libcurl RAII owner.
-- **2026-07, original extraction audit:** four gaps ratified — platform targets → PORT-005, versioning/ABI → PORT-007, resource ceilings → NET-008, security posture → ERR-004/NET-007.
-- **2026-07, pre-M0 contract-closure review:** ratified the public object graph (API-012, no Client — ADR 0001), Turn detach/registration lifetime (THR-007/009), exception scope (API-003/THR-020), bounded admission (THR-013/NET-008), cancellation signals (THR-012/NET-003), M1 machine scope (LOOP-002/004/005), side-effect retry boundary (LOOP-008), and the expanded ERR-001 category enum.
-- **2026-08, callbacks-at-send clean break:** superseded Turn-side callback registration and replay with infallible atomic `TurnCallbacks` attachment in `send()` (THR-007/009), unified success/failure/cancellation through optional `on_finished` (API-003/013), and folded reentrant-update rejection into the documented `budget_exhausted` signal (THR-019; ADR 0001 amendment).
-- **2026-07, M0 unification:** verification cells updated to name live gates (PORT-001/002/005, QA-004/005/006) and the partial QA-011 gate; test-framework decision recorded as deferred to M1 (ADR 0003).
-- **2026-07, M0 closure:** live merge-base coverage, CRAP, and quality ratchets added for QA-001/003/007 (ADR 0004); repeat-run verification added for QA-008; the one-command preflight closes QA-011.
-- **2026-07, M1 kickoff:** cross-milestone verification was split explicitly for API-006/011, THR-002/006/016, and NET-008; M1 remains chat-only while M2 owns executable tool behavior (ADR 0005).
-- **2026-07, M1 closure:** runtime, machine, provider, protocol, transport,
-  threading, resource-bound, security, packaging, sanitizer, fuzz, and quality
-  gates are live; M1 verification cells now name their concrete tests and CI
-  legs.
-- **2026-07, M1 closure audit:** ratified inert M1 registry mutation as early
-  M2 infrastructure (API-012/THR-019/TOOL-001/009), non-mutating illegal-event
-  diagnostics (LOOP-004), teardown's discarded-event exception (ERR-003), and
-  distinct malformed-input versus configured-limit categories (NET-004/008).
-- **2026-07, M2 closure:** explicit-schema snapshots, ordered multi-call and
-  multi-round execution, app-thread dispatch/cancellation, per-request retry
-  accounting, transactional tool history, and versioned Conversation
-  persistence are live. M2 verification cells now name the machine, provider,
-  runtime, integration, example, and quality gates that enforce them (ADR
-  0006).
-- **2026-07, M3 contract closure:** ratified the reflected registration surface,
-  lexical schema subset and type matrix, independent omission/nullability
-  semantics, strict canonical-value decoding, description precedence,
-  supported GCC/component boundary, and no-Glaze public firewall
-  (TOOL-002–005/007/008/010–013, PORT-002, QA-002; ADR 0007). Verification was
-  intentionally deferred until implementation.
-- **2026-07, M3 implementation closure:** the GCC 16 component, typed schema
-  and codec, five compile-fail diagnostics, reflection header/package firewall,
-  clean core and reflection consumers, and ASan+UBSan reflection suite are
-  live. The shared script runs locally and in hosted CI; manual Clang and
-  unimplemented reflection property/fuzz expansion are not claimed. The pinned
-  runtime coverage gate separately enforces adjusted codec source decisions,
-  codec functions, and compiled-bridge GCC/gcovr CFG branches while consteval
-  paths use the compile-time matrix.
-- **2026-08, M3 description-contract amendment:** removed the portable
-  `tool_traits` description surface and its two trait-validation fixtures in a
-  clean break. P3394 annotations are now the sole reflected-description source;
-  duplicate annotations retain an exact compile-fail diagnostic. The supported
-  configure gate now compiles the annotation-query API Scry actually uses, and
-  the live reflection suite is 26 tests: 22 runtime cases plus four
-  compile-fail diagnostics (TOOL-005/007, PORT-002, QA-002/005; ADR 0007).
-- **2026-07, M4 contract closure:** ratified the OpenAI-compatible common
-  Chat Completions subset, endpoint/auth/sampling policy, request and stream
-  lifecycle, config-only adapter proof, per-tool execution options, worker
-  handler ownership/order/cancellation, app-thread observers, and the honest
-  non-preemptive teardown boundary (API-004/006, THR-017/021, TOOL-014,
-  PROV-003/005/010/011; ADR 0008 and ADR 0009). Verification was intentionally
-  deferred until implementation.
-- **2026-07, M4 implementation closure:** the config-selected
-  OpenAI-compatible request/response/stream adapter, dialect-isolated decode
-  state, ordered worker execution policy, explicit/reflected registration
-  options, deterministic fake-transport and Curl integration, checked-corpus
-  short fuzzing, TSan worker coverage, and correct-base quality ratchet are
-  live. The scheduled/manual CodeQL, long-fuzz, Mull, and checksum-pinned
-  Ollama/model smoke pipeline is implemented; a completed hosted nightly run
-  is not yet claimed.
-- **2026-07, M5 contract closure:** ratified the showcase-only public/package
-  boundary, host-owned ImGui lifecycle, non-blocking panel behavior,
-  deterministic app-thread NPC tools, ephemeral side-effect policy,
-  build-only pinned Dear ImGui dependency, and the local/hosted acceptance gate
-  (SHOW-001–004; ADR 0010). Verification is intentionally deferred until
-  implementation.
-- **2026-07, M5 implementation closure:** the host-owned ImGui panel,
-  deterministic NPC world and explicit registrations, pinned/default-OFF
-  showcase build, 20-test deterministic suite, real headless frame, clean
-  package/consumer audit, and shared preflight/hosted entry point are
-  implemented and pass locally and in hosted CI. SHOW-001–004 and M5 are live.
-- **2026-07, quality-gate simplification (ADR 0011):** QA-007 rewritten from
-  ratcheted metrics to absolute gates on the candidate tree; QA-002's M3
-  codec gate moved to stock gcovr `--fail-under` thresholds, retiring the
-  exact-exclusion validator; QA-008's repeat-run verification consolidated on
-  the hosted TSan leg; QA-010's mutation job demoted to on-demand and the
-  model manifest pin dropped. The libcurl runtime spike folded into the core
-  GCC CI leg (PORT-006 unchanged).
-- **2026-07, ADR 0011 review follow-up:** an 88% aggregate branch-coverage
-  floor (with a policy unit test) closed the test-only-regression hole in
-  QA-007; the QA-004 warn-at-10 list returned to the quality gate's printed
-  summary; TOOL-003 regained a compiled core-isolation proof — the core-only
-  C++23 consumer built with non-reflection GCC 14 against the
-  reflection-enabled install; local preflight repeats consolidated on TSan;
-  DESIGN/ARCHITECTURE prose and ADR 0007's gate mechanics were aligned with
-  ADR 0011.
-- **2026-07, streaming-only provider seam:** the production-dead non-streaming
-  response path was removed — `ProviderAdapter::parse_response`, both response
-  decoders, the request-level streaming toggle, and the transitively dead
-  `decode_openai_tool_call` helper. The runtime has always hard-coded
-  streaming; adapters now encode `stream: true` unconditionally and all
-  responses decode through the gated stream path, with the shared OpenAI
-  error-descriptor decoding re-covered through stream-path tests.
-  PROV-002/003 verification cells updated; the evolution register records the
-  reintroduction condition.
-- **2026-07, v0.0.1 release-infrastructure simplification (ADR 0012):** the
-  development-era verification machinery built for unattended agent-driven
-  work was retired in favor of behavioral gates a human maintainer reads.
-  QA-001/QA-002/QA-007 amended: the bespoke coverage/CRAP analyzer, diff and
-  component coverage floors, and aggregate backstop are gone; the suites they
-  demanded remain while they cover live production behavior. QA-003 (CRAP)
-  retired. QA-010 amended: mutation
-  testing deleted, the local-model smoke demoted to `workflow_dispatch`, the
-  showcase gate moved from the per-commit ring to nightly, and per-commit
-  short fuzzing folded into the nightly long-fuzz jobs. The libcurl and
-  reflection feasibility spikes were deleted (their questions are answered by
-  the shipped transport and reflection components). PORT-006's spike
-  verification is superseded by the Curl transport integration tests.
-- **2026-08, retired-gate test-lifetime clarification:** QA-001 now makes the
-  forward-maintenance rule explicit: behavioral tests survive the metric gate,
-  but a test may be deleted with the implementation that was its only subject.
-  This preserves the release-posture decision without retaining tests for code
-  that no longer exists.
-- **2026-08, app-thread-only tool cleanup:** THR-021 and TOOL-014 are retired,
-  preserving their IDs while removing `ToolExecution`,
-  `ToolRegistrationOptions`, the worker-handler protocol, and its duplicate
-  ownership state. THR-002/011/016/017 now state the single app-thread tool
-  contract. LOOP-008 verification adds cumulative exchange-budget suffix
-  suppression, atomic queue overflow, serialized tool-wait, retry-command
-  intake, and destruction-during-tool-wait regressions. ADR 0009 records the
-  forward supersession; any deferred or asynchronous result design requires a
-  new contract rather than reviving the removed protocol.
+## Retired IDs
+
+Retired requirements are listed permanently so their IDs are never reused.
+
+| ID | Retired | Reason |
+|---|---|---|
+| THR-021 | v0.0.1 | Opt-in worker-thread tool execution. Removed with `ToolExecution`/`ToolRegistrationOptions` in the v0.0.1 simplification; all tools execute on the app thread under THR-011 ([ADR 0009](docs/adr/0009-m4-worker-tool-execution.md), superseded). |
+| TOOL-014 | v0.0.1 | Shared registration options across explicit and reflected registration. The option type it constrained no longer exists. |
+| QA-003 | v0.0.1 | Per-function CRAP ceiling. Development-era gating machinery; complexity limits remain under QA-004 and untested-complexity risk is caught in review ([ADR 0012](docs/adr/0012-release-infrastructure-simplification.md)). |

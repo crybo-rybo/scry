@@ -1,24 +1,21 @@
 # ADR 0007: M3 Reflected Tool Contract
 
 - Status: Accepted (parameter-description and compiler-capability contract
-  amended 2026-08-03; verification mechanics amended by
+  amended before v0.0.1; verification mechanics amended by
   [ADR 0011](0011-absolute-quality-gates.md) and
   [ADR 0012](0012-release-infrastructure-simplification.md))
 - Date: 2026-07-18
 
 ## Amendment: annotation-only descriptions (2026-08-03)
 
-This amendment supersedes only the parameter-description customization and
-compiler feature-probe portions of the original decision below. Those
-superseded decision passages remain intact to preserve the history; the live
-verification evidence later in this ADR is updated.
-
-The portable `parameter_description` and `tool_traits<Args>` surface is
-removed in a clean break. Reflected parameter descriptions now come only from
-Scry's P3394 `description` annotation; unannotated members omit the schema
-description. A member with more than one Scry description annotation fails at
-compile time with a stable Scry-owned diagnostic. No alias, deprecated form,
-or compatibility shim preserves the removed trait API.
+The portable `parameter_description` and `tool_traits<Args>` description
+surface was removed in a clean break before v0.0.1. Reflected parameter
+descriptions now come only from Scry's P3394 `description` annotation;
+unannotated members omit the schema description, and duplicate Scry description
+annotations fail at compile time with a stable Scry-owned diagnostic. No alias,
+deprecated form, or compatibility shim preserves the removed trait API. The
+original decision passages remain below as historical context rather than a
+live precedence rule.
 
 The supported reflection configuration must compile the P2996/P3394 operations
 schema generation actually uses: annotating a reflected member, querying it
@@ -30,8 +27,8 @@ inside `SCRY_ENABLE_REFLECTION`; the reflection-OFF core remains C++23.
 After the two trait-validation fixtures were removed and the annotation-only
 duplicate-description fixture retained, the live reflection suite contains 26
 tests: 22 runtime/schema/codec/bridge/registration cases and four compile-fail
-diagnostics. The original 27-test evidence below records the earlier accepted
-state; the current verification list later in this ADR reflects the amendment.
+diagnostics. The earlier 27-test evidence below records the acceptance-time
+state; the current verification list is updated to the live contract.
 
 ## Context
 
@@ -266,9 +263,10 @@ Glaze include directory or exported Glaze target.
 > [ADR 0012](0012-release-infrastructure-simplification.md):** the
 > `scripts/reflection-coverage.sh` gcovr coverage leg from the prior
 > verification amendments was retired at the v0.0.1 release posture. The
-> build, 27-test suite, install
+> build, then-27-test suite, install
 > audit, downstream component consumer, core-surface proof, and ASan+UBSan
-> rerun in `scripts/ci-reflection.sh` remain the live gate.
+> rerun in `scripts/ci-reflection.sh` remain the live gate. The current suite
+> membership is recorded below.
 
 The supported M3 path is live:
 
@@ -282,8 +280,8 @@ The supported M3 path is live:
   enforce the public boundary;
 - `scripts/ci-reflection.sh` performs a fresh GCC 16/P2996/P3394
   capability-probed build, runs the full configured suite, including all 26
-  reflection-labelled tests, installs and audits the optional component, and
-  builds/runs a
+  reflection-labelled tests,
+  installs and audits the optional component, and builds/runs a
   downstream `find_package(scry CONFIG REQUIRED COMPONENTS reflection)`
   consumer;
 - the same gate builds a core-only C++23 consumer with non-reflection GCC 14
