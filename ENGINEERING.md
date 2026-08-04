@@ -114,6 +114,11 @@ Three rings, ordered by feedback speed; a failure in an inner ring stops the out
    leg (which also compiles `SCRY_ENABLE_LOGGING=ON`), and a TSan leg. The core
    matrix installs to a clean prefix and builds a downstream
    `find_package(scry)` consumer, proving the reflection-OFF package surface.
+   A path-aware reflection gate additionally runs the full GCC 16 reflection
+   leg — including its ASan+UBSan rerun, the component's only sanitizer
+   coverage — on any pull request touching a reflection-affecting path, so
+   component regressions cannot merge untested while unrelated pull requests
+   skip the experimental toolchain (ADR 0012 amendment).
 2. **Scheduled weekly:** CodeQL, long fuzz runs on all three protocol targets,
    the showcase contract gate (a default-OFF leg that enables the examples,
    builds them with warnings as errors, runs the deterministic NPC and

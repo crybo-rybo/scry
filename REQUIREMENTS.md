@@ -1,6 +1,6 @@
 # Scry — Requirements Register
 
-**This document is normative.** Where prose in [DESIGN.md](DESIGN.md), [ARCHITECTURE.md](ARCHITECTURE.md), or [ENGINEERING.md](ENGINEERING.md) conflicts with this register, the register wins; the other documents provide rationale and context. Keywords MUST, MUST NOT, SHOULD, and MAY follow RFC 2119. Every requirement is verified by the deterministic suites in `tests/`, the package audits in `scripts/`, or the CI workflows; a requirement with no credible verification path is a design smell and gets reworked, not waived.
+**This document is normative.** Where prose in [DESIGN.md](DESIGN.md), [ARCHITECTURE.md](ARCHITECTURE.md), or [ENGINEERING.md](ENGINEERING.md) conflicts with this register, the register wins; the other documents provide rationale and context. Keywords MUST, MUST NOT, SHOULD, and MAY follow RFC 2119. Every requirement is enforced through one of the gate classes in the [Verification map](#verification-map): most mechanically — deterministic suites, the compiler matrix, sanitizer legs, package audits, or scheduled gates — and a named minority as review obligations discharged through the pull-request Definition of Done. A requirement with no credible enforcement path is a design smell and gets reworked, not waived.
 
 ID scheme: `SCRY-<AREA>-NNN`, abbreviated to `<AREA>-NNN` in the tables below. IDs are permanent. A withdrawn requirement is moved to [Retired IDs](#retired-ids) with its reason and is never reused.
 
@@ -15,7 +15,7 @@ ID scheme: `SCRY-<AREA>-NNN`, abbreviated to `<AREA>-NNN` in the tables below. I
 | API-003 | MUST | Scry-originated semantic and operational failures surface via `std::expected` before acceptance or through the turn's terminal callback after acceptance, never by throw. Allocation failure is excluded, and exceptions thrown by app callbacks propagate synchronously from `update()` per THR-020. |
 | API-004 | MUST | Server/model configuration (base URL, auth, model, sampling params, dialect) is a plain `Config` value aggregate; switching between Anthropic and the OpenAI-compatible common subset, including a local server with no API key, requires no code changes. |
 | API-005 | MUST | The library never owns `main()`, never spins an event loop the app must join, and imposes no lifecycle on the host. |
-| API-006 | MUST | Multiple Harness instances in one process work independently, including instances configured for different dialects; no singletons or mutable globals beyond the ref-counted curl-global guard, which initializes curl once per process. |
+| API-006 | MUST | Multiple Harness instances in one process work independently, including instances configured for different dialects; no singletons or mutable globals beyond the process-wide curl-global guard, which initializes curl exactly once per process and never tears it down. |
 | API-007 | SHOULD | Conversation history is serializable and deserializable for app-side persistence through `to_json()`/`from_json()`, which emit and strictly validate a canonical versioned Scry-owned document. **The document format is unstable before 1.0:** a document produced by one 0.x release is not guaranteed to be readable by another, and applications MUST NOT treat it as a durable archival format across upgrades. |
 | API-008 | MUST | A synchronous send-and-wait convenience exists, implemented on top of the async path (not a second code path). |
 | API-009 | MUST NOT | The library does not provide prompt-template/chain DSLs and is not an inference engine. |
@@ -147,7 +147,7 @@ ID scheme: `SCRY-<AREA>-NNN`, abbreviated to `<AREA>-NNN` in the tables below. I
 | QA-001 | MUST | New or changed behavior lands with tests at the sanctioned seam; a coverage exclusion requires an inline justification. |
 | QA-002 | MUST | The sans-I/O machine, SSE parser, retry classifier, and reflection codec/bridge keep their near-total deterministic suites, including error paths. Type-directed constant-evaluation branches are covered by the compile-time positive/negative matrix and MUST NOT be represented by a misleading runtime percentage. |
 | QA-004 | MUST | Cyclomatic complexity ≤ 15 per function (warn at 10); cognitive complexity ≤ 25. Named suppressions only. |
-| QA-005 | MUST | ASan, UBSan, and TSan suites pass on every pull request; threaded tests always run under TSan. The reflection component's marshalling and Scry-owned JSON bridge run under ASan+UBSan in the scheduled ring. |
+| QA-005 | MUST | ASan, UBSan, and TSan suites pass on every pull request; threaded tests always run under TSan. The reflection component's marshalling and Scry-owned JSON bridge run under ASan+UBSan on every reflection-affecting pull request (path-aware gate) and unconditionally in the scheduled ring — this rerun is the component's only sanitizer coverage, because the core sanitizer legs build with reflection OFF. |
 | QA-006 | MUST | Warnings-as-errors (`-Wall -Wextra -Wconversion -Wshadow`) across the full compiler matrix. |
 | QA-007 | MUST | Gates are behavioral: the compiler matrix with warnings-as-errors, the deterministic suites, sanitizers, clang-tidy, complexity limits, and the install/package-consumer audits gate every pull request. No gate scores a coverage or complexity-risk metric. |
 | QA-008 | MUST | Unit/machine tests are deterministic: no real time, sleeps, or network. Flaky tests are fixed or deleted immediately. |
@@ -156,6 +156,28 @@ ID scheme: `SCRY-<AREA>-NNN`, abbreviated to `<AREA>-NNN` in the tables below. I
 | QA-011 | SHOULD | Everything CI enforces is runnable locally with one command (`scripts/preflight.sh`), which reports any leg the host toolchain cannot provide. |
 | QA-012 | MUST | Definition of Done includes updating the four load-bearing docs — including this register — when behavior or a decision changes. |
 | QA-013 | MUST | Every exported public API declaration is documented, and the Doxygen HTML site builds without warnings on pull requests and every push to `main`. The documentation toolchain MUST remain build-only and outside installed/exported package metadata. |
+
+## Verification map
+
+Deliberately coarse: requirements map to gates and suites, not to individual
+test titles, so the map survives suite refactors without churn. Pull-request
+descriptions link the affected IDs (pull-request template), which is the
+per-change end of this traceability. IDs called out as **review** have no
+mechanical gate; they are discharged through the pull-request Definition of
+Done and human review.
+
+| Area | Mechanical enforcement | Review-enforced IDs |
+|---|---|---|
+| API | Public-header audit (`cmake/CheckPublicHeaders.cmake`), `public_api_contract` static assertions, runtime + integration suites, package-consumer audits | API-005, API-009 (design constraints) |
+| THR | Runtime and integration suites on every pull request, repeated in full under TSan; shutdown/teardown bounds via the curl and loopback transport suites | — |
+| LOOP | Deterministic sans-I/O machine suite (event-in/command-out replay, including retry and budget state) | — |
+| TOOL | Registry and dispatch suites (TOOL-001/006/009); reflection schema/codec/bridge/registration suites plus the compile-fail matrix (TOOL-002/004/005/007/008/010–013); both package consumers for severability (TOOL-003) | — |
+| PROV | Provider golden, stream, and edge suites; protocol fuzz targets in the scheduled ring | — |
+| NET | Transport policy/curl/loopback suites and fake-transport integration suites; fuzz for hostile-input robustness; NET-002 additionally via clang-tidy and the sanitizer legs | — |
+| ERR | Harness edge and integration suites, including the redaction assertions (ERR-004) | — |
+| PORT | The compiler matrix itself (PORT-001), the reflection gate's configure-time probe (PORT-002), package audits (PORT-004), the curl capability check at first init (PORT-006) | PORT-003 (dependency justification), PORT-005 (platform policy), PORT-007 (release policy) |
+| SHOW | Showcase gate (`ci-showcase.sh`): deterministic NPC and fake-panel suites, headless ImGui smoke, package-absence audit — weekly and on demand | — |
+| QA | The CI workflows are themselves the gate (matrix, sanitizers, tidy, complexity flags, Doxygen); QA-010/QA-011 are properties of the workflow and script set | QA-001, QA-009, QA-012 (habit clauses) |
 
 ## Retired IDs
 
