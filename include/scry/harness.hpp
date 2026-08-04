@@ -60,8 +60,10 @@ public:
   /// and returns without waiting for network I/O. The host must call update() to
   /// execute app-thread tools and deliver callbacks.
   ///
-  /// Callbacks are attached atomically as the turn is accepted, so no event can precede
-  /// them. An accepted turn always reaches TurnCallbacks::on_finished exactly once.
+  /// Callbacks are attached infallibly and atomically as the turn is accepted, so no
+  /// event can precede them and there is no later registration or replay step. When
+  /// TurnCallbacks::on_finished is non-empty, an accepted turn invokes it exactly once
+  /// unless this Harness is destroyed first; see ~Harness().
   /// @param conversation Conversation that receives the exchange on successful
   /// completion.
   /// @param user_message User text appended transactionally if the turn succeeds.

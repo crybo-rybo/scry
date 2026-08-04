@@ -159,24 +159,39 @@ TEST_CASE("a rejected reentrant pump update reports an exhausted budget") {
   PumpFixture fixture;
   scry::detail::PumpState pump{fixture.events};
   std::optional<scry::UpdateStats> nested;
+  bool queued_during_callback = false;
+  const auto turn_id = scry::TurnId{.value = 104};
   const auto route = fixture.route(
-      104, scry::TurnCallbacks{
-               .on_text_delta =
-                   [&pump, &nested](std::string_view) { nested = pump.update({}); },
-           });
+      turn_id.value,
+      scry::TurnCallbacks{
+          .on_text_delta =
+              [&pump, &nested, &queued_during_callback, events = fixture.events,
+               turn_id](const std::string_view text) {
+                if (text == "delta") {
+                  queued_during_callback = events->push(
+                      scry::detail::TextDeltaEvent{.turn_id = turn_id, .text = "later"},
+                      1024);
+                  nested = pump.update({});
+                }
+              },
+      });
   pump.add_route(route);
 
   REQUIRE(fixture.events->push(
       scry::detail::TextDeltaEvent{.turn_id = route->id(), .text = "delta"}, 1024));
 
   const auto outer = pump.update({});
+  CHECK(queued_during_callback);
   CHECK(outer.callbacks_delivered == 1);
+  CHECK(outer.events_remaining == 1);
   CHECK_FALSE(outer.budget_exhausted);
   REQUIRE(nested);
-  // The rejection is observable only through budget_exhausted, and it delivers
-  // nothing while the outer pump owns the event.
+  // The rejection is observable only through budget_exhausted. It delivers
+  // nothing and leaves an event queued while the outer pump owns delivery.
   CHECK(nested->budget_exhausted);
   CHECK(nested->callbacks_delivered == 0);
+  CHECK(nested->events_remaining == 1);
+  CHECK(pump.update({}).callbacks_delivered == 1);
 }
 
 TEST_CASE("a nonpositive pump budget expires before queued work") {

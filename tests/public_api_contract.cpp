@@ -33,6 +33,12 @@ static_assert(!std::is_copy_constructible_v<scry::UniqueFunction<void()>>);
 static_assert(std::is_default_constructible_v<scry::TurnCallbacks>);
 static_assert(std::is_move_constructible_v<scry::TurnCallbacks>);
 static_assert(!std::is_copy_constructible_v<scry::TurnCallbacks>);
+static_assert(std::same_as<decltype(scry::TurnCallbacks::on_text_delta),
+                           scry::TextDeltaCallback>);
+static_assert(
+    std::same_as<decltype(scry::TurnCallbacks::on_tool_call), scry::ToolCallCallback>);
+static_assert(std::same_as<decltype(scry::TurnCallbacks::on_finished),
+                           scry::UniqueFunction<void(scry::Result<scry::Completion>)>>);
 
 // Turn is a cancellation handle only; callbacks are supplied to send(). The
 // absence checks need a dependent type, or the missing member is a hard error.

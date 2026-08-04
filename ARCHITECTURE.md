@@ -13,8 +13,9 @@ cheap-to-move value types or lightweight handles. Exclusively owned resources
 use `std::unique_ptr` or dedicated RAII wrappers. Shared lifetime is deliberate
 and enumerated: command/event queues and the per-turn cancellation flag cross
 the worker boundary; a Conversation handle and its live pump route share
-Conversation state; and a pump-side registration route is owned by the Harness
-and observed weakly by the Turn handle. Tool definitions and callables remain
+Conversation state; and a pump-side turn route is owned by the Harness and
+observed weakly by the Turn handle. The route owns the immutable callbacks
+attached when `send()` accepts the turn. Tool definitions and callables remain
 in immutable pump-side snapshots; no user handler crosses the worker boundary.
 Raw pointers are non-owning observers only, never stored across a suspension
 point.
@@ -25,7 +26,7 @@ point.
 
 **No singletons, no globals, no static init order problems.** Everything hangs off a `Harness` instance. Two harnesses in one process (e.g., different providers) must just work. The one unavoidable global — libcurl's `curl_global_init` — is wrapped in a reference-counted RAII guard (Meyers-style function-local static, initialized on first Harness).
 
-**Semantic failures are values; callback exceptions stay synchronous.** Internals may use whatever is idiomatic for the dependency at hand, but Scry-originated semantic and operational failures never throw across the public boundary. Immediate rejection reports through `std::expected`; failure after a turn is accepted reports through its `on_error` callback. Allocation and standard-library construction failure (`std::bad_alloc`) are **excluded from the contract** — we do not pretend to survive OOM, and smearing `noexcept`+expected over every allocating call would buy nothing. Two hard rules stand regardless: nothing ever throws *across* the worker/main thread boundary, and tool-handler exceptions are caught at the dispatch site and converted into tool-error results returned to the model. User callbacks should not throw; if one does, the exception propagates synchronously out of `update()` to the app with the Harness left in a valid state and the event counted as delivered (see §3).
+**Semantic failures are values; callback exceptions stay synchronous.** Internals may use whatever is idiomatic for the dependency at hand, but Scry-originated semantic and operational failures never throw across the public boundary. Immediate rejection reports through `std::expected`; after acceptance, success, failure, and cancellation share `TurnCallbacks::on_finished(Result<Completion>)`. Allocation and standard-library construction failure (`std::bad_alloc`) are **excluded from the contract** — we do not pretend to survive OOM, and smearing `noexcept`+expected over every allocating call would buy nothing. Two hard rules stand regardless: nothing ever throws *across* the worker/main thread boundary, and tool-handler exceptions are caught at the dispatch site and converted into tool-error results returned to the model. User callbacks should not throw; if one does, the exception propagates synchronously out of `update()` to the app with the Harness left in a valid state and the event counted as delivered (see §3).
 
 **Concepts over inheritance in templates, interfaces only at seams.** Virtual dispatch appears in exactly two places (provider adapter, transport — §6, §7), both internal. The public API has no inheritable types; extension points are callables and config, not subclassing.
 
@@ -60,7 +61,7 @@ Practices that follow:
 
 ## 3. Turn Ownership, Lifecycle, and the Handle Pattern
 
-A `Turn` is a **handle**: a move-only PImpl value holding an immutable `TurnId`, a shared reference to the turn's cancellation flag, and a weak route to pump-side registration state — *not* the worker's turn state itself. The weak route makes callback registration and queued-turn cancellation safe when a Turn outlives its Harness: registration returns `invalid_state`, while `cancel()` remains a harmless atomic operation. Copying a handle to in-flight work invites double-cancel ambiguity, hence move-only. This is the `std::future`/`std::stop_source` school: small, thread-safe by narrowness, no behavior hidden in destructors beyond a documented detach.
+A `Turn` is a **handle**: a move-only PImpl value holding an immutable `TurnId`, a shared reference to the turn's cancellation flag, and a weak route to pump-side turn state — *not* the worker's turn state itself. The route, not the handle, owns the callback set supplied to `send()`. The weak route makes queued-turn cancellation and terminal-state checks safe without extending Harness lifetime; if a Turn outlives its Harness, `cancel()` remains a harmless atomic operation. Copying a handle to in-flight work invites double-cancel ambiguity, hence move-only. This is the `std::future`/`std::stop_source` school: small, thread-safe by narrowness, no behavior hidden in destructors beyond a documented detach.
 
 ### Ownership table (implemented invariant)
 
@@ -70,7 +71,7 @@ These rows describe the live app-thread-only tool system.
 |---|---|---|
 | Transport handles, curl state, wire buffers, SSE parser state | Worker | Never visible to any other thread |
 | Loop state machines (per turn) | Worker | Addressed by `TurnId` |
-| Callback registrations, buffered undelivered events per turn, Turn registration routes | Pump side (Harness main-thread state) | Written/read only inside API calls and `update()`; handles observe routes weakly |
+| Immutable send-time callbacks, retained deliverable events, Turn routes | Pump side (Harness main-thread state) | Callback attachment precedes worker command publication; absent observers cause immediate event release; handles observe routes weakly |
 | Conversation contents | App thread via pump | A live route retains shared lifetime on the pump side; contents are mutated only at terminal-event delivery |
 | Tool definitions and handlers | Pump side; immutable per accepted turn | Invoked only by `update()`; worker requests receive neutral schemas, never the live registry or a callable |
 | Tool-call route gate and cumulative-result accounting | Pump side | Latches a fatal dispatch failure and discards every later call in the batch before handler invocation |
@@ -78,7 +79,7 @@ These rows describe the live app-thread-only tool system.
 | Per-turn cancel flag (`atomic<bool>`) | Shared | Third sanctioned crossing point |
 | `TurnId` | Immutable value | Freely copied everywhere |
 
-The worker never touches callbacks or buffers; it emits events tagged with `TurnId`. The pump owns routing, buffering, and delivery. This split is what makes the §2 enumeration true.
+The worker never touches callbacks or pump retention; it emits events tagged with `TurnId`. The pump owns routing and delivery. It retains only events consumed by an attached callback or tool dispatch; an event with no matching callback is released on arrival because late registration does not exist. This split is what makes the §2 enumeration true.
 
 ### Send / cancel / shutdown
 
@@ -87,6 +88,7 @@ sequenceDiagram
     participant App as App thread (API + pump)
     participant CQ as Command queue
     participant W as Worker
+    App->>App: accept TurnCallbacks into route
     App->>CQ: SendTurn{id, request}
     W->>W: dequeue, run transfer (checks cancel flag at every I/O boundary)
     W-->>App: events{id, ...} via event queue, delivered in update()
@@ -140,23 +142,27 @@ Crossing the cumulative bound therefore fails the turn without partially
 committing history; resource errors retain the provider request ID that was
 available at the failing response boundary.
 
-While the Harness remains alive, exactly one observable terminal event is
-delivered per accepted turn — never zero, never two. Harness destruction is the
-explicit exception: shutdown aborts work and discards undelivered events, so it
-does not expose teardown callbacks. The remaining lifecycle contracts, each of
-which is a numbered requirement:
+The pump makes every accepted turn terminal exactly once. Terminal processing
+commits or rolls back the Conversation and clears its busy state even when no
+terminal observer exists. When `on_finished` is non-empty, it is invoked exactly
+once with success, failure, or cancellation while the Harness remains alive.
+Harness destruction is the explicit exception: shutdown aborts work and
+discards undelivered callbacks, so it does not expose teardown callbacks. The
+remaining lifecycle contracts, each of which is a numbered requirement:
 
 - **Conversation commits are transactional.** History is mutated only by the pump at terminal-event delivery: `Completed` commits the full exchange (user message, all tool rounds, final answer) atomically; `Failed`/`Cancelled` commit nothing. This keeps Conversation retry/resubmission mechanically clean, but does not make external handler side effects reversible or idempotent; side-effecting schemas need app-owned operation keys and reconciliation (DESIGN.md §8).
-- **Detach semantics.** Dropping the handle detaches: the turn runs to termination, the Conversation still commits on completion, and callbacks already registered in the Harness continue to receive events. Unclaimed buffered events may be discarded once no Turn handle remains; dropping loses future control and registration, not callbacks already registered.
-- **Late attachment.** While the handle remains attached, callbacks registered after events began arriving receive buffered prior events in order — no races, no missed deltas within configured buffer limits.
-- **Reentrancy.** Callbacks may call `send`, `cancel`, and registration APIs.
-  Reentrant `update()` performs no work and reports
-  `UpdateStats::reentrant_update_rejected`; it never recurses into callback
-  delivery. Accepted turns snapshot immutable registry records, so later or
-  reentrant changes affect subsequent turns rather than in-flight ones.
+- **Detach semantics.** Dropping the handle detaches: the turn runs to termination, the Conversation still commits on completion, and route-owned callbacks supplied to `send()` remain deliverable. Dropping loses identity and cancellation control, not callbacks.
+- **Atomic callback attachment.** `send()` moves `TurnCallbacks` infallibly into the pump route before it publishes the worker command. No event can precede the immutable callback set, and there is no late registration or replay. An absent callback makes its matching event dead on arrival and returns its bytes to the queue ledger immediately; terminal processing still occurs.
+- **Cancellation result.** `Turn::cancel()` returns `true` only for the call that issues the cooperative request. It returns `false` after a prior request or after pump-side terminal processing.
+- **Reentrancy.** Callbacks may call `send`, `cancel`, and tool registration APIs.
+  Reentrant `update()` performs no work, leaves the queue untouched, and returns
+  `callbacks_delivered == 0` with `budget_exhausted == true`; it never recurses
+  into callback delivery. Accepted turns snapshot immutable registry records,
+  so later or reentrant changes affect subsequent turns rather than in-flight
+  ones.
 - **Non-preemption.** The `update()` budget is a soft deadline checked *between* callbacks; an individual callback or tool handler is never preempted and may overrun the budget. The budget bounds Scry's scheduling, not user code.
 - **Callback exceptions** propagate out of `update()` with the harness valid and the event counted delivered (§1).
-- **Callback arguments are borrowed** for the invocation only; apps copy values or text views they retain.
+- **Callback ownership follows the signature.** The text-delta view and tool-call reference are borrowed for the invocation only; apps copy data they retain. `on_finished` receives its `Result<Completion>` by value.
 - **Shutdown.** `~Harness()` cancels all turns, aborts Scry-owned transport
   waits within their configured bound, joins the worker, and discards
   undelivered events. No callback or tool handler ever fires after destruction
@@ -322,7 +328,7 @@ The second sanctioned interface, existing for one reason: **dependency injection
 
 - Internal fallible paths return `std::expected<T, Error>`; `Error` is one struct with a category enum (`invalid_config`, `invalid_state`, `busy`, `authentication`, `rate_limit`, `network`, `protocol`, `resource_limit`, `tool`, `max_tool_rounds`, `cancelled`) plus message, sanitized provider detail, retryability, and correlation fields. One error type end-to-end — no per-layer error hierarchies to translate between.
 - The retry classifier (which categories are retryable) is a pure function owned by the loop state machine, tested as a table.
-- At the boundary, failures before work is accepted are returned immediately by `std::expected`. After acceptance, errors become the `on_error` event. `errno`-style status polling is deliberately absent; there is exactly one asynchronous failure channel.
+- At the boundary, failures before work is accepted are returned immediately by `std::expected`. After acceptance, errors and cancellation become unexpected values in `on_finished(Result<Completion>)`; success uses that same terminal callback. `errno`-style status polling is deliberately absent; there is exactly one asynchronous terminal channel.
 
 ## 9. JSON and Dependency Policy
 
@@ -439,6 +445,7 @@ Every "boring first" choice is recorded here with the condition that triggers ev
 | M5 ImGui panel has no platform/renderer backend and the NPC world is ephemeral | A maintained standalone demo or durable game integration becomes a real deliverable | Ratify its platform matrix and lifecycle separately; keep any backend, persistence, rollback, or idempotency machinery outside the Scry package |
 | Streaming-only provider seam: adapters always request `stream: true` and decode through the stream path; the parallel non-streaming response decoders were removed as production-dead | A supported deployment genuinely cannot serve SSE, or a consumer needs non-streaming completions | Reintroduce a `parse_response` seam together with a runtime mode that actually exercises it, plus its golden and fuzz coverage — never as untested parallel code |
 | Compile-time diagnostic file logger (`SCRY_ENABLE_LOGGING`): fixed line format, one file sink chosen by environment variable, no runtime configuration or public API | A consumer needs runtime-toggleable, structured, or callback-driven diagnostics | Ratify a public logging/observer surface (the one PROV-008 records as absent) and route the same call sites through it |
+| Immutable `TurnCallbacks` attached atomically at `send()`; no late registration or event replay | A real consumer needs to change observers after acceptance and cannot express that through callback-owned state | Ratify a separate subscription contract with explicit lifetime and backpressure semantics; do not restore callback methods on `Turn` implicitly |
 | Release-posture verification (ADR 0012): behavioral gates only — matrix, tests, sanitizers, tidy, package audits; no coverage/CRAP metric gating, no mutation testing, fuzz and showcase nightly | Unattended agent-driven development resumes at scale, or coverage erosion on the pure components is observed in review | Restore targeted pieces per ADR 0012 — starting with a single non-gating coverage report line, never the full retired apparatus by default |
 
 ## 12. Pattern Summary
@@ -448,11 +455,11 @@ Every "boring first" choice is recorded here with the condition that triggers ev
 | Public types | PImpl handles, plain contract values, Rule of Zero |
 | Concurrency | Actor model; message passing over variant commands/events; jthread + stop_token |
 | Delivery | Single-threaded-by-construction pump with time budget |
-| In-flight turns | Move-only PImpl handle + shared cancel flag + weak pump registration route |
+| In-flight turns | Move-only identity/cancel PImpl + shared cancel flag + weak pump route; immutable callbacks route-owned from `send()` |
 | Agentic loop | Sans-I/O explicit state machine; time as injected events |
 | Tool registry | Immutable app-thread ownership over one type-erased registration substrate; optional M3 consteval codegen and strict Scry-owned JSON bridge above it |
 | Providers | Config-selected Strategy at a narrow seam; stateless adapters with per-turn dialect state and golden-file tests |
 | Transport | RAII curl, C-callback trampolines, injectable seam; pure incremental SSE parser |
-| Errors | One categorized value type; expected before acceptance, one async error event after |
+| Errors | One categorized value type; expected before acceptance, unified `on_finished` result after |
 | Showcases | Outermost application adapters over public `scry::scry`; host-owned lifecycle and state; no install/export path |
 | Extensibility | Callables and config, not inheritance; YAGNI on plugin machinery |

@@ -386,27 +386,40 @@ TEST_CASE("a queued turn command is consumed before a zero-backoff retry wakes")
   REQUIRE(first_conversation);
   REQUIRE(second_conversation);
 
-  auto first_turn = harness->send(*first_conversation, "retry after queued command");
-  REQUIRE(first_turn);
   std::optional<scry::Completion> first_completion;
   std::optional<scry::Error> first_failure;
-  REQUIRE(first_turn->on_completion([&first_completion](const scry::Completion& value) {
-    first_completion = value;
-  }));
-  REQUIRE(first_turn->on_error(
-      [&first_failure](const scry::Error& error) { first_failure = error; }));
+  auto first_turn =
+      harness->send(*first_conversation, "retry after queued command",
+                    {
+                        .on_finished =
+                            [&first_completion,
+                             &first_failure](scry::Result<scry::Completion> finished) {
+                              if (finished) {
+                                first_completion = std::move(*finished);
+                              } else {
+                                first_failure = std::move(finished.error());
+                              }
+                            },
+                    });
+  REQUIRE(first_turn);
   observer->wait_for_first_call();
 
-  auto second_turn = harness->send(*second_conversation, "queued while retrying");
-  REQUIRE(second_turn);
   std::optional<scry::Completion> second_completion;
   std::optional<scry::Error> second_failure;
-  REQUIRE(
-      second_turn->on_completion([&second_completion](const scry::Completion& value) {
-        second_completion = value;
-      }));
-  REQUIRE(second_turn->on_error(
-      [&second_failure](const scry::Error& error) { second_failure = error; }));
+  auto second_turn =
+      harness->send(*second_conversation, "queued while retrying",
+                    {
+                        .on_finished =
+                            [&second_completion,
+                             &second_failure](scry::Result<scry::Completion> finished) {
+                              if (finished) {
+                                second_completion = std::move(*finished);
+                              } else {
+                                second_failure = std::move(finished.error());
+                              }
+                            },
+                    });
+  REQUIRE(second_turn);
 
   // The worker is still inside the held transfer, so the second SendTurnCommand
   // is queued when the zero-backoff retry wait evaluates its predicate.
@@ -471,7 +484,6 @@ TEST_CASE("post-completion cancellation is safe and idempotent") {
   REQUIRE(turn);
   REQUIRE(pump_until(*harness, [&completed] { return completed; }));
 
-  static_cast<void>(turn->cancel());
   CHECK_FALSE(turn->cancel());
   for (std::size_t pump = 0; pump < 32; ++pump) {
     static_cast<void>(harness->update());
@@ -542,7 +554,6 @@ TEST_CASE("callbacks may use public operations and nested update is diagnosed") 
                 if (!nested_wait) {
                   nested_wait_error = nested_wait.error();
                 }
-                static_cast<void>(first->cancel());
                 terminal_cancel_idempotent = !first->cancel();
                 auto nested = harness->send(
                     *second_conversation, "second",

@@ -7,8 +7,8 @@ namespace scry {
 
 /// Move-only cancellation handle for one accepted agentic exchange.
 ///
-/// Callbacks belong to the turn itself and are supplied to Harness::send(), so this
-/// handle only identifies and cancels. Dropping it detaches without cancelling or
+/// Callbacks belong to the accepted exchange and are supplied to Harness::send(), so
+/// this handle only identifies and cancels. Dropping it detaches without cancelling or
 /// blocking: the turn continues, successful history still commits, and the
 /// TurnCallbacks supplied at send remain deliverable.
 class Turn final {
@@ -35,8 +35,9 @@ public:
 
   /// Requests cooperative cancellation.
   ///
-  /// The turn still terminates through TurnCallbacks::on_finished, with an Error whose
-  /// category is ErrorCategory::cancelled.
+  /// When a non-empty TurnCallbacks::on_finished was supplied to Harness::send(), the
+  /// turn still terminates through it with an Error whose category is
+  /// ErrorCategory::cancelled, unless Harness destruction begins first.
   /// @return true only when this call issued the cancellation request; false if
   /// cancellation was already requested, the turn was terminal, or the handle is moved
   /// from.

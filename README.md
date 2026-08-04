@@ -162,7 +162,7 @@ artifacts, and is not claimed as M3 verification.
 | [ARCHITECTURE.md](ARCHITECTURE.md) | How the code is shaped: the C++ patterns and idioms each piece commits to — actor-model concurrency, sans-I/O state machine, type erasure, optional consteval codegen and JSON bridge, PImpl, error-as-value — plus the evolution register documenting every deliberate simplification and its intended end state. |
 | [ENGINEERING.md](ENGINEERING.md) | How we work: testing plan and pyramid, coverage habits, static and dynamic analysis (sanitizers, nightly fuzzing), CI shape, workflow, and the gates-are-behavioral philosophy of the v0.0.1 release posture. |
 | [REQUIREMENTS.md](REQUIREMENTS.md) | **The normative register.** Every binding requirement as a numbered RFC-2119 row with milestone and verification method. When prose elsewhere conflicts with the register, the register wins. |
-| [ADR 0001](docs/adr/0001-public-object-graph-and-lifetimes.md) | Accepted public ownership, registry snapshot, Turn detach, and callback-lifetime decisions. |
+| [ADR 0001](docs/adr/0001-public-object-graph-and-lifetimes.md) | Accepted public ownership, registry snapshot, Turn detach, and callbacks-at-send lifetime decisions. |
 | [ADR 0002](docs/adr/0002-build-and-dependency-foundation.md) | Build, package, dependency-acquisition, and initial test-harness decisions. |
 | [ADR 0003](docs/adr/0003-test-framework-deferred.md) | Historical M0 decision deferring the test framework until M1. |
 | [ADR 0004](docs/adr/0004-live-quality-ratchet.md) | Historical merge-base quality ratchet; superseded by ADR 0011. |

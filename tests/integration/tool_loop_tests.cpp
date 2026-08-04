@@ -137,17 +137,26 @@ TEST_CASE("a queued turn waits for the active turn's app-thread tool round") {
   auto second_conversation = scry::Conversation::create();
   REQUIRE(first_conversation);
   REQUIRE(second_conversation);
-  auto first_turn = harness.send(*first_conversation, "first queued turn");
-  auto second_turn = harness.send(*second_conversation, "second queued turn");
-  REQUIRE(first_turn);
-  REQUIRE(second_turn);
-
   bool first_completed = false;
   bool second_completed = false;
-  REQUIRE(first_turn->on_completion(
-      [&first_completed](const scry::Completion&) { first_completed = true; }));
-  REQUIRE(second_turn->on_completion(
-      [&second_completed](const scry::Completion&) { second_completed = true; }));
+  auto first_turn =
+      harness.send(*first_conversation, "first queued turn",
+                   {
+                       .on_finished =
+                           [&first_completed](scry::Result<scry::Completion> finished) {
+                             first_completed = finished.has_value();
+                           },
+                   });
+  auto second_turn = harness.send(
+      *second_conversation, "second queued turn",
+      {
+          .on_finished =
+              [&second_completed](scry::Result<scry::Completion> finished) {
+                second_completed = finished.has_value();
+              },
+      });
+  REQUIRE(first_turn);
+  REQUIRE(second_turn);
   REQUIRE(pump_until(harness, [&] { return first_completed && second_completed; }));
 
   REQUIRE(requests->requests().size() == 3);
@@ -183,10 +192,17 @@ TEST_CASE("tool call batches fail atomically at the event queue boundary") {
   REQUIRE(harness.tools().add(tool_definition(second_name), handler));
   auto conversation = scry::Conversation::create();
   REQUIRE(conversation);
-  auto turn = harness.send(*conversation, "run an oversized batch");
-  REQUIRE(turn);
   std::optional<scry::Error> failure;
-  REQUIRE(turn->on_error([&failure](const scry::Error& error) { failure = error; }));
+  auto turn = harness.send(*conversation, "run an oversized batch",
+                           {
+                               .on_finished =
+                                   [&failure](scry::Result<scry::Completion> finished) {
+                                     if (!finished) {
+                                       failure = std::move(finished.error());
+                                     }
+                                   },
+                           });
+  REQUIRE(turn);
 
   REQUIRE(pump_until(harness, [&failure] { return failure.has_value(); }));
 
@@ -212,12 +228,14 @@ TEST_CASE("Harness destruction stops a worker awaiting an app-thread tool result
   REQUIRE(harness.tools().add(tool_definition("second_tool"), handler));
   auto conversation = scry::Conversation::create();
   REQUIRE(conversation);
-  auto turn = harness.send(*conversation, "destroy during app-thread tool wait");
-  REQUIRE(turn);
   std::size_t callbacks = 0;
-  REQUIRE(turn->on_tool_call([&callbacks](const scry::ToolCall&) { ++callbacks; }));
-  REQUIRE(turn->on_error([&callbacks](const scry::Error&) { ++callbacks; }));
-  REQUIRE(turn->on_cancelled([&callbacks](const scry::Cancelled&) { ++callbacks; }));
+  auto turn = harness.send(
+      *conversation, "destroy during app-thread tool wait",
+      {
+          .on_tool_call = [&callbacks](const scry::ToolCall&) { ++callbacks; },
+          .on_finished = [&callbacks](scry::Result<scry::Completion>) { ++callbacks; },
+      });
+  REQUIRE(turn);
 
   constexpr std::size_t maximum_pumps = 100'000;
   bool tool_calls_pending = false;

@@ -10,6 +10,8 @@
 namespace scry::detail {
 namespace {
 
+template <typename> inline constexpr bool unhandled_worker_event = false;
+
 /// Terminal error reported to on_finished when a turn ends through cancellation.
 [[nodiscard]] Error cancellation_error(const TurnId turn_id) {
   return Error{
@@ -40,6 +42,9 @@ std::shared_ptr<std::atomic<bool>> TurnRoute::cancel_flag() const noexcept {
 }
 
 bool TurnRoute::cancel() noexcept {
+  if (terminal_) {
+    return false;
+  }
   const auto changed = !cancelled_->exchange(true, std::memory_order_relaxed);
   if (changed) {
     if (const auto commands = commands_.lock()) {
@@ -67,8 +72,13 @@ bool TurnRoute::has_callback(const WorkerEvent& event) const noexcept {
           // A tool call is acted on by the route itself rather than observed, so
           // one it can no longer dispatch is dead rather than pending.
           return !terminal_ && !tool_dispatch_failed_;
-        } else {
+        } else if constexpr (std::is_same_v<Event, CompletionEvent> ||
+                             std::is_same_v<Event, ErrorEvent> ||
+                             std::is_same_v<Event, CancelledEvent>) {
           return static_cast<bool>(callbacks_.on_finished);
+        } else {
+          static_assert(unhandled_worker_event<Event>,
+                        "TurnRoute::has_callback must classify every WorkerEvent");
         }
       },
       event);
@@ -97,6 +107,9 @@ void TurnRoute::invoke(const WorkerEvent& event) {
           callbacks_.on_finished(std::unexpected(value.error));
         } else if constexpr (std::is_same_v<Event, CancelledEvent>) {
           callbacks_.on_finished(std::unexpected(cancellation_error(value.turn_id)));
+        } else {
+          static_assert(unhandled_worker_event<Event>,
+                        "TurnRoute::invoke must handle every WorkerEvent");
         }
       },
       event);

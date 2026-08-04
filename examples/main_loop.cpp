@@ -88,11 +88,13 @@ int main() {
   auto conversation = std::move(*conversation_result);
 
   // Callbacks travel with the send, so nothing can be missed between acceptance and
-  // the first update(). on_finished always runs exactly once: with the completion, or
-  // with the terminal error, including an ErrorCategory::cancelled one.
+  // the first update(). This non-empty on_finished runs exactly once: with the
+  // completion, or with the terminal error, including an ErrorCategory::cancelled one,
+  // unless Harness destruction begins first.
   //
-  // The returned handle only cancels, and this example never does, so it is dropped
-  // right away. Dropping it detaches without cancelling; the callbacks still run.
+  // The returned handle only identifies and cancels. This example keeps it only long
+  // enough to inspect the admission result and never uses the accepted handle again;
+  // callbacks remain route-owned even after a handle is dropped.
   const auto turn =
       harness.send(conversation, "Is the host application main loop running?",
                    {

@@ -51,8 +51,8 @@ struct ToolCall {
 
 /// Final successful result of an accepted turn.
 ///
-/// Callback arguments are borrowed for the duration of the callback. Copy any fields
-/// that must outlive it.
+/// Harness::send() delivers a Result<Completion> by value to on_finished, so that
+/// callback owns its argument and may move or copy fields that must outlive it.
 struct Completion {
   /// Completed turn.
   TurnId turn_id{};
@@ -85,6 +85,9 @@ struct UpdateStats {
   /// Number of events still queued after this invocation.
   std::size_t events_remaining{};
   /// Whether a time/callback budget was exhausted or a reentrant update was rejected.
+  ///
+  /// A rejected reentrant update delivers no callbacks and leaves queued events
+  /// untouched, so callbacks_delivered is zero and this flag is true.
   bool budget_exhausted{false};
 };
 
@@ -106,12 +109,15 @@ struct TurnCallbacks {
   TextDeltaCallback on_text_delta{};
   /// Observes accepted tool calls after their results are applied.
   ToolCallCallback on_tool_call{};
-  /// Terminal callback invoked exactly once per accepted turn.
+  /// When non-empty, invoked exactly once per accepted turn unless Harness destruction
+  /// begins first.
   ///
   /// Delivery happens on the Harness::update() thread and carries the Completion on
   /// success, the terminal Error on failure, and on cancellation an Error whose
   /// category is ErrorCategory::cancelled and whose turn_id identifies the turn.
-  /// Dropping the Turn handle does not suppress it.
+  /// Dropping the Turn handle does not suppress it. An empty callback is legal and
+  /// requests no terminal delivery; the turn still terminates and commits or rolls back
+  /// its Conversation as usual.
   UniqueFunction<void(Result<Completion>)> on_finished{};
 };
 
