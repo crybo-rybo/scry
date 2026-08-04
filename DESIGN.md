@@ -231,15 +231,16 @@ behind the host's back.
 **Callbacks are part of the send.** `Harness::send()` takes a `TurnCallbacks`
 aggregate — `on_text_delta`, `on_tool_call`, and the terminal `on_finished` —
 and moves it into the turn before acceptance. Every member is optional;
-omitting one changes no loop behavior. Because the callbacks exist before the
-turn does, no event can arrive before its handler is registered, and the `Turn`
-handle needs no registration surface at all: it carries `id()` and `cancel()`.
+omitting one changes no loop behavior. The immutable callback set is installed
+before the worker command becomes visible, so no event can precede that set;
+an event with no matching callback is released immediately. The `Turn` handle
+needs no registration surface at all: it carries `id()` and `cancel()`.
 
-**One terminal outcome.** `on_finished` receives a
-`Result<Completion>` — the completion on success, or the `Error` on failure.
-Cancellation is not a separate event type: it arrives on that same channel as
-an `Error` with category `cancelled`. One callback, one delivery, one place for
-an app to release whatever the turn was holding.
+**One terminal outcome.** The turn becomes terminal exactly once whether or not
+it has a terminal observer. When non-empty, `on_finished` is invoked exactly
+once and receives a `Result<Completion>` by value — the completion on success,
+or the `Error` on failure. Cancellation is not a separate event type: it arrives
+on that same channel as an `Error` with category `cancelled`.
 
 **Frame budget.** `update()` accepts an optional time budget; excess events roll to the next tick. The budget is a soft deadline checked between callbacks. Scry never preempts user code, so one slow callback or tool handler can overrun it.
 
@@ -441,8 +442,8 @@ reflection support remains deferred.
 ## 10. Errors, Retries, Streaming
 
 - **Retries:** exponential backoff with jitter for 429/5xx/transport errors, honoring `Retry-After`, under configurable attempt and elapsed-time caps. Retry eligibility is strict: a request is retried only if **no semantic output has been consumed** (failure before the first content event). After partial output the turn fails with a retryable-flagged error and the app decides — automatic mid-stream resumption is later hardening. Within one turn, retry machinery never dispatches the same tool-call ID twice. A failed or cancelled turn commits no tool rounds, so resubmitting the user message is **not** automatically safe for side-effecting tools; applications must supply their own idempotency keys or reconciliation policy.
-- **Errors:** immediate API rejection (`create`, `send`, tool registration) returns `std::expected<..., scry::Error>`. Once a turn is accepted, every asynchronous outcome arrives on one channel: `on_finished(scry::Result<scry::Completion>)`, carrying the completion or the `scry::Error`. Categories include invalid configuration/state, busy, authentication, rate limit, network, protocol, resource limit, tool failure, maximum tool rounds, and cancellation. Tool-handler exceptions are caught and returned to the model as tool errors (the model can often recover), not thrown into the app. Exceptions thrown by app callbacks are different: they propagate synchronously out of `update()` after the event is counted delivered.
-- **Streaming:** SSE parsed on the worker; text deltas batched per `update()` tick rather than per-token, so a fast stream doesn't flood the queue. Callback arguments are borrowed for the duration of the invocation; apps copy any data they retain.
+- **Errors:** immediate API rejection (`create`, `send`, tool registration) returns `std::expected<..., scry::Error>`. Once a turn is accepted, every asynchronous outcome uses one channel: when supplied, `on_finished(scry::Result<scry::Completion>)` carries the completion or the `scry::Error`. Categories include invalid configuration/state, busy, authentication, rate limit, network, protocol, resource limit, tool failure, maximum tool rounds, and cancellation. Tool-handler exceptions are caught and returned to the model as tool errors (the model can often recover), not thrown into the app. Exceptions thrown by app callbacks are different: they propagate synchronously out of `update()` after the event is counted delivered.
+- **Streaming:** SSE parsed on the worker; text deltas batched per `update()` tick rather than per-token, so a fast stream doesn't flood the queue. The text-delta view and tool-call reference are borrowed for the invocation; apps copy data they retain. `on_finished` receives its result by value.
 
 ## 11. Open Questions
 

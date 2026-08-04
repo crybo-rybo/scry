@@ -1,19 +1,34 @@
 # ADR 0007: M3 Reflected Tool Contract
 
-- Status: Accepted (verification mechanics amended by
+- Status: Accepted (parameter-description and compiler-capability contract
+  amended before v0.0.1; verification mechanics amended by
   [ADR 0011](0011-absolute-quality-gates.md) and
-  [ADR 0012](0012-release-infrastructure-simplification.md); description
-  precedence amended pre-release, see below)
+  [ADR 0012](0012-release-infrastructure-simplification.md))
 - Date: 2026-07-18
 
-**Amendment note (v0.0.1).** The portable `tool_traits<Args>::descriptions`
-fallback and per-member override described below were removed before release.
-The P3394 `[[=scry::reflection::description{"..."}]]` annotation is now the
-only source of tool and parameter descriptions, so the precedence rule this ADR
-ratified no longer applies; TOOL-007 states the current contract. Nothing else
-in the schema, type-mapping, marshalling, diagnostic, or package boundary
-changed. The body below is retained unchanged as the record of what was decided
-and why.
+## Amendment: annotation-only descriptions (2026-08-03)
+
+The portable `parameter_description` and `tool_traits<Args>` description
+surface was removed in a clean break before v0.0.1. Reflected parameter
+descriptions now come only from Scry's P3394 `description` annotation;
+unannotated members omit the schema description, and duplicate Scry description
+annotations fail at compile time with a stable Scry-owned diagnostic. No alias,
+deprecated form, or compatibility shim preserves the removed trait API. The
+original decision passages remain below as historical context rather than a
+live precedence rule.
+
+The supported reflection configuration must compile the P2996/P3394 operations
+schema generation actually uses: annotating a reflected member, querying it
+with `annotations_of`, identifying its annotation and template type, and
+recovering its payload with `extract`. A compiler version check or baseline
+reflection feature macro alone is insufficient. This probe remains entirely
+inside `SCRY_ENABLE_REFLECTION`; the reflection-OFF core remains C++23.
+
+After the two trait-validation fixtures were removed and the annotation-only
+duplicate-description fixture retained, the live reflection suite contains 26
+tests: 22 runtime/schema/codec/bridge/registration cases and four compile-fail
+diagnostics. The earlier 27-test evidence below records the acceptance-time
+state; the current verification list is updated to the live contract.
 
 ## Context
 
@@ -248,9 +263,10 @@ Glaze include directory or exported Glaze target.
 > [ADR 0012](0012-release-infrastructure-simplification.md):** the
 > `scripts/reflection-coverage.sh` gcovr coverage leg from the prior
 > verification amendments was retired at the v0.0.1 release posture. The
-> build, 27-test suite, install
+> build, then-27-test suite, install
 > audit, downstream component consumer, core-surface proof, and ASan+UBSan
-> rerun in `scripts/ci-reflection.sh` remain the live gate.
+> rerun in `scripts/ci-reflection.sh` remain the live gate. The current suite
+> membership is recorded below.
 
 The supported M3 path is live:
 
@@ -258,19 +274,20 @@ The supported M3 path is live:
   assertions plus 17 runtime schema, decode, encode, typed-handler, and
   registration tests;
 - `json_bridge_tests.cpp` provides five focused Scry-owned JSON bridge tests;
-- five `reflection.compile-fail.*` tests require stable `ToolArguments`,
-  `ToolHandlerFor`, and invalid-description diagnostics;
+- four `reflection.compile-fail.*` tests require stable `ToolArguments`,
+  `ToolHandlerFor`, and duplicate-annotation diagnostics;
 - `scry_header_audit` and the include-first `scry_header_reflection` target
   enforce the public boundary;
-- `scripts/ci-reflection.sh` performs a fresh GCC 16/P2996-probed build, runs
-  the full configured suite, including all 27 reflection-labelled tests,
+- `scripts/ci-reflection.sh` performs a fresh GCC 16/P2996/P3394
+  capability-probed build, runs the full configured suite, including all 26
+  reflection-labelled tests,
   installs and audits the optional component, and builds/runs a
   downstream `find_package(scry CONFIG REQUIRED COMPONENTS reflection)`
   consumer;
 - the same gate builds a core-only C++23 consumer with non-reflection GCC 14
   against the reflection-enabled installation, proving that the stable core
   surface remains severable from the experimental component;
-- the same script creates a separate ASan+UBSan build and reruns all 27
+- the same script creates a separate ASan+UBSan build and reruns all 26
   reflection-labelled tests;
 - the reflection-OFF gate builds, installs, audits the absence of every
   reflection artifact, and builds/runs the stable C++23 downstream consumer.

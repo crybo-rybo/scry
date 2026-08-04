@@ -82,6 +82,11 @@ staging prefix, and runs a downstream `find_package(scry)` consumer. If
 [`just`](https://github.com/casey/just) is installed, `just ci-fast` is the
 equivalent convenience command.
 
+Behavioral tests retained after the old metric gates were retired remain while
+they cover live production behavior; a test may leave with the implementation
+that was its only subject, but metric-driven deletion alone remains out of
+bounds.
+
 Before handing off a pull request, run the complete local preflight:
 
 ```sh
@@ -99,8 +104,8 @@ optional convenience wrapper.
 Internal diagnostics are opt-in at build time: configure with
 `-DSCRY_ENABLE_LOGGING=ON` (preset `dev-logging`) to compile the internal
 lifecycle logging, then set the `SCRY_LOG_FILE` environment variable to the
-destination path. With that variable unset, logging stays disabled and no file
-is written.
+nonempty destination path. With that variable unset or empty, logging stays
+disabled and no default file is written.
 
 Build the warning-clean API reference with Doxygen 1.9.8 or newer and Graphviz:
 

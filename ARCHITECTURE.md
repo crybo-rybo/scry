@@ -22,7 +22,13 @@ non-owning observers only, never stored across a suspension point.
 
 **PImpl on stateful handles; plain values for contracts.** The four stateful handle types (Conversation, ToolRegistry, Turn, Harness) hold a single pointer to an implementation — ABI stays stable across internal refactors, and compile-time cost for consumers stays flat. Everything else the user touches is an ordinary value type: configuration aggregates (designated-initializer friendly), errors, options, enums, event payloads, and the Scry-owned JSON boundary type. The binding rule underneath both is: **no third-party types in public headers, ever** (enforced by include audit). `Harness` is constructed directly from `Config` and is the single owner of provider/auth/connection state; a separate Client handle would add lifetime ambiguity without an independent responsibility. The indirection cost is irrelevant next to network latency — this library's hot path is measured in milliseconds, not nanoseconds.
 
-**No singletons, no globals, no static init order problems.** Everything hangs off a `Harness` instance. Two harnesses in one process (e.g., different providers) must just work. The one unavoidable global — libcurl's `curl_global_init` — is wrapped in a reference-counted RAII guard (Meyers-style function-local static, initialized on first Harness).
+**No singleton carries library state.** Everything that can vary hangs off a
+`Harness` instance, so two Harnesses with different providers remain isolated.
+The one process-wide capability is libcurl global state: a function-static RAII
+owner performs one initialization attempt, caches that first result, cleans up
+immediately when post-init capability validation fails, and otherwise cleans
+up exactly once at static teardown. Harness construction and destruction never
+churn that global runtime.
 
 **Semantic failures are values; callback exceptions stay synchronous.** Internals may use whatever is idiomatic for the dependency at hand, but Scry-originated semantic and operational failures never throw across the public boundary. Immediate rejection reports through `std::expected`; failure after a turn is accepted reports through the `on_finished` callback supplied to `send()`, which receives the error in place of a completion. Allocation and standard-library construction failure (`std::bad_alloc`) are **excluded from the contract** — we do not pretend to survive OOM, and smearing `noexcept`+expected over every allocating call would buy nothing. Two hard rules stand regardless: nothing ever throws *across* the worker/main thread boundary, and tool-handler exceptions are caught at the dispatch site and converted into tool-error results returned to the model. User callbacks should not throw; if one does, the exception propagates synchronously out of `update()` to the app with the Harness left in a valid state and the event counted as delivered (see §3).
 
@@ -137,20 +143,20 @@ Crossing the cumulative bound therefore fails the turn without partially
 committing history; resource errors retain the provider request ID that was
 available at the failing response boundary.
 
-While the Harness remains alive, exactly one terminal outcome is delivered per
-accepted turn — never zero, never two. There is one terminal callback:
-`on_finished` receives a `Result<Completion>`, holding the completion on
-success or the `Error` on failure. Cancellation is not a separate event type;
-it arrives on that same channel as an `Error` carrying
-`ErrorCategory::cancelled`. Harness destruction is the
-explicit exception: shutdown aborts work and discards undelivered events, so it
-does not expose teardown callbacks. The remaining lifecycle contracts, each of
-which is a numbered requirement:
+The pump makes every accepted turn terminal exactly once. Terminal processing
+commits or rolls back the Conversation and clears its busy state even when no
+terminal observer exists. When `on_finished` is non-empty, it is invoked exactly
+once with a `Result<Completion>` holding the completion on success or the
+`Error` on failure. Cancellation uses that same result channel with
+`ErrorCategory::cancelled`. Harness destruction is the explicit exception:
+shutdown aborts work and discards undelivered callbacks, so it does not expose
+teardown callbacks. The remaining lifecycle contracts, each of which is a
+numbered requirement:
 
 - **Conversation commits are transactional.** History is mutated only by the pump at terminal-event delivery: `Completed` commits the full exchange (user message, all tool rounds, final answer) atomically; `Failed`/`Cancelled` commit nothing. This keeps Conversation retry/resubmission mechanically clean, but does not make external handler side effects reversible or idempotent; side-effecting schemas need app-owned operation keys and reconciliation (DESIGN.md §8).
-- **Detach semantics.** Dropping the handle detaches: the turn runs to termination, the Conversation still commits on success, and the callbacks supplied at `send()` continue to receive events. Unclaimed buffered events may be discarded once no Turn handle remains; dropping loses future control, not the callbacks the turn already owns.
-- **Callbacks belong to the turn, not the handle.** They are moved into the pump at `send()`, before the turn is accepted, so no event can be produced before its handler exists. There is no late-registration race to reason about and no registration API after acceptance. Per-turn buffering remains bounded by `ResourceLimits::max_queued_event_bytes_per_turn`, which bounds the inter-thread event queue.
-- **Reentrancy.** Callbacks may call `send`, `cancel`, and registration APIs.
+- **Detach semantics.** Dropping the handle detaches: the turn runs to termination, the Conversation still commits on success, and the callbacks supplied at `send()` remain route-owned and deliverable. Dropping loses identity and cancellation control, not callbacks.
+- **Atomic callback attachment.** `send()` moves `TurnCallbacks` infallibly into the pump route before it publishes the worker command. No event can precede the immutable callback set, and there is no late registration or replay. An absent callback makes its matching event dead on arrival and returns its bytes to the queue ledger immediately; terminal processing still occurs.
+- **Reentrancy.** Callbacks may call `send`, `cancel`, and tool registration APIs.
   Reentrant `update()` performs no work and never recurses into callback
   delivery; it returns immediately, reporting the rejection through
   `UpdateStats::budget_exhausted`. Accepted turns snapshot immutable registry
@@ -158,10 +164,10 @@ which is a numbered requirement:
   in-flight ones.
 - **Non-preemption.** The `update()` budget is a soft deadline checked *between* callbacks; an individual callback or tool handler is never preempted and may overrun the budget. The budget bounds Scry's scheduling, not user code.
 - **Callback exceptions** propagate out of `update()` with the harness valid and the event counted delivered (§1).
-- **Callback arguments are borrowed** for the invocation only; apps copy values or text views they retain.
+- **Callback ownership follows the signature.** The text-delta view and tool-call reference are borrowed for the invocation only; apps copy data they retain. `on_finished` receives its `Result<Completion>` by value.
 - **Shutdown.** `~Harness()` cancels all turns, aborts Scry-owned transport
   waits within their configured bound, joins the worker, and discards
-  undelivered events. No callback ever fires after destruction begins. Because
+  undelivered events. No callback or tool handler ever fires after destruction begins. Because
   every tool handler runs on the app thread inside `update()`, no application
   code is ever in flight on the worker at teardown, and the shutdown bound
   covers the whole join.
@@ -172,14 +178,17 @@ Persistence is a public serialization boundary, not a storage subsystem.
 `Conversation::to_json()` emits a canonical versioned document containing the
 system prompt and committed neutral messages; `Conversation::from_json()`
 strictly validates and restores it. Text, tool-call, and tool-result blocks
-round-trip without provider wire shapes or Glaze types. Busy state, callbacks,
-turn IDs, registry snapshots, and every uncommitted round are intentionally
-excluded. The app owns encryption, files/databases, retention, and migration
-between document versions.
+round-trip without provider wire shapes or Glaze types. Parsed object keys are
+sorted before tool arguments and results enter committed history, so canonical
+bytes represent JSON meaning rather than preserving lexical input order. Busy
+state, callbacks, turn IDs, registry snapshots, and every uncommitted round are
+intentionally excluded. The app owns encryption, files/databases, retention,
+and migration between document versions.
 
 **The document format is unstable before 1.0.** The version field exists, but
-0.x releases may change the shape without a migration path: a document written
-by one 0.x release is not guaranteed to load in another. Treat persistence as
+0.x releases may change the shape or canonical bytes without a migration path:
+a document written by one 0.x release is not guaranteed to load in another.
+Treat persistence as
 session continuity within a pinned Scry version, not an archival format.
 
 ## 4. The Agentic Loop: Sans-I/O State Machine
@@ -214,10 +223,12 @@ hot-reload contract defines their snapshot semantics.
 
 **Execution ownership.** There is one execution policy: every handler runs on
 the app thread inside `update()`. A provider batch is published atomically; the
-pump then walks it in provider order, invoking each handler directly, updating
-the exchange budget, running the tool observer, and feeding the canonical result
-to the turn's machine before admitting the next call. A fatal framework failure
-emits the terminal event and permanently suppresses the batch suffix. Nothing
+pump then walks it in provider order, invoking each handler directly, reserving
+the canonical result against the machine's authoritative remaining exchange
+budget, posting the result, and only then running the tool observer before
+admitting the next call. A fatal framework or cumulative-result-budget failure
+latches the route and permanently suppresses the batch suffix before any later
+handler can run. Nothing
 about a tool call crosses the worker boundary except the resulting neutral
 message content, which is why the shutdown bound in §3 needs no carve-out for
 application code. A slow handler therefore costs frame time; the intended answer
@@ -410,6 +421,7 @@ Every "boring first" choice is recorded here with the condition that triggers ev
 | Streaming-only provider seam: adapters always request `stream: true` and decode through the stream path; the parallel non-streaming response decoders were removed as production-dead | A supported deployment genuinely cannot serve SSE, or a consumer needs non-streaming completions | Reintroduce a `parse_response` seam together with a runtime mode that actually exercises it, plus its golden and fuzz coverage — never as untested parallel code |
 | Compile-time diagnostic file logger (`SCRY_ENABLE_LOGGING`): fixed line format, one file sink chosen by environment variable, no runtime configuration or public API | A consumer needs runtime-toggleable, structured, or callback-driven diagnostics | Ratify a public logging/observer surface (the one PROV-008 records as absent) and route the same call sites through it |
 | Release-posture verification (ADR 0012): behavioral gates only — matrix, tests, sanitizers, tidy, package audits; no coverage/CRAP metric gating, no mutation testing, fuzz and showcase on the scheduled ring | Unattended agent-driven development resumes at scale, or coverage erosion on the pure components is observed in review | Restore targeted pieces per ADR 0012 — starting with a single non-gating coverage report line, never the full retired apparatus by default |
+| Reflection CI gating is path-aware (ADR 0012 amendment): the GCC 16 leg — with its ASan+UBSan rerun, the component's only sanitizer coverage — gates reflection-affecting pull requests and runs unconditionally in the weekly scheduled ring | A reflection regression merges through a gap in the path filter, or the experimental toolchain stabilizes into a plain distribution package | Widen the path filter first; return the leg to the unconditional pull-request ring only if filtering itself proves unsound |
 | v0.0.1 runtime simplification (ADR 0012): worker-thread tool execution and its registration options removed, turn callbacks supplied once at `send()` with a single terminal outcome, one JSON codec with one canonical form | A slow tool, a coroutine host, or a second serialization shape presents a concrete need the simplified surface cannot express | Reintroduce capability by contract, not by restoring the old machinery: an async/deferred tool-result API for slow tools (row above), a `co_await`-able turn for coroutine hosts, and a ratified second document contract before any second canonical form |
 
 ## 12. Pattern Summary

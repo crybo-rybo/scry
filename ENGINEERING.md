@@ -26,7 +26,9 @@ ASan/UBSan/TSan, clang-tidy, cyclomatic complexity, and the
 install/package-consumer audits. Metric scoring — diff coverage, component
 floors, CRAP — is not a gate; [ADR 0012](docs/adr/0012-release-infrastructure-simplification.md)
 records why that apparatus was retired at the release posture and what would
-justify restoring any of it.
+justify restoring any of it. Behavioral tests remain while they cover live
+production behavior; a test may leave with the implementation that was its
+only subject, but metric-driven deletion alone remains out of bounds.
 
 ## 2. Testing Plan
 
@@ -114,12 +116,18 @@ Three rings, ordered by feedback speed; a failure in an inner ring stops the out
    leg (which also compiles `SCRY_ENABLE_LOGGING=ON`), and a TSan leg. The core
    matrix installs to a clean prefix and builds a downstream
    `find_package(scry)` consumer, proving the reflection-OFF package surface.
+   A path-aware reflection gate additionally runs the full GCC 16 reflection
+   leg — including its ASan+UBSan rerun, the component's only sanitizer
+   coverage — on any pull request touching a reflection-affecting path, so
+   component regressions cannot merge untested while unrelated pull requests
+   skip the experimental toolchain (ADR 0012 amendment).
 2. **Scheduled weekly:** CodeQL, long fuzz runs on all three protocol targets,
    the showcase contract gate (a default-OFF leg that enables the examples,
    builds them with warnings as errors, runs the deterministic NPC and
    fake-panel cases, executes a real Dear ImGui headless frame, and repeats the
    package-absence audit), and the experimental reflection component gate — a
-   fresh GCC 16/P2996-probed build, its schema/codec/bridge/registration and
+   fresh GCC 16/P2996/P3394 capability-probed build, its
+   schema/codec/bridge/registration and
    compile-fail suites, a clean component install, a downstream
    `find_package(scry CONFIG REQUIRED COMPONENTS reflection)` consumer, a
    core-only C++23 consumer compiled against the same reflection-enabled

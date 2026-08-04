@@ -18,6 +18,17 @@ a later `update()` — is the intended replacement for genuinely slow tools; it
 keeps application callbacks on the application's own thread. The body below is
 retained unchanged as the record of what was decided and why.
 
+The retained app-thread model has one immutable accepted-turn snapshot and one
+dispatch path. The worker publishes each provider batch atomically with the
+machine's remaining exchange budget. The pump reserves each canonical result
+against that budget and latches fatal failure before any later handler can run,
+preserving ordered resend, observer delivery, cancellation, cumulative limits,
+and suffix-handler suppression without a mirrored acknowledgement protocol.
+Any future deferred result design must define result-token lifetime,
+cancellation, ordering, batch gating, backpressure, resource limits, and
+teardown; it must not restore a hidden worker pool or move arbitrary user
+callables into the network actor.
+
 ## Context
 
 M2 executes every tool handler synchronously inside `Harness::update()`. That

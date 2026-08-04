@@ -60,15 +60,17 @@ programs and receive no reflection headers or compiler flags.
 
 ## Lifetime and error model
 
-Failures before a turn is accepted are returned as `scry::Result`; afterwards, every outcome
-arrives through the single terminal callback `scry::TurnCallbacks::on_finished`, which receives
-the completion on success or the `scry::Error` on failure — including cancellation, as
-`scry::ErrorCategory::cancelled`. Successful completion commits the full conversation exchange
-atomically. Error and cancellation commit nothing.
+Failures before a turn is accepted are returned as `scry::Result`; afterwards, every outcome uses
+the single terminal channel `scry::TurnCallbacks::on_finished`. When that optional callback is
+non-empty, it receives exactly one result by value: the completion on success or the `scry::Error`
+on failure — including cancellation, as `scry::ErrorCategory::cancelled`. Terminal processing
+still occurs when the callback is empty. Successful completion commits the full conversation
+exchange atomically; error and cancellation commit nothing.
 
 Dropping `scry::Turn` detaches without cancellation or blocking. `scry::Turn::cancel()` is an
-explicit cooperative request. Callback arguments and streamed `std::string_view` values are
-borrowed only for the callback invocation and must be copied if retained.
+explicit cooperative request. The streamed `std::string_view` and `const scry::ToolCall&` observer
+arguments are borrowed only for the callback invocation and must be copied if retained;
+`on_finished` receives its result by value.
 
 For complete working code, see `examples/main_loop.cpp` in the source repository. Architectural
 rationale and binding behavioral requirements remain in `DESIGN.md`, `ARCHITECTURE.md`, and
