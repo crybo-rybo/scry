@@ -146,7 +146,7 @@ ID scheme: `SCRY-<AREA>-NNN`, abbreviated to `<AREA>-NNN` in the tables below. I
 
 | ID | Level | Requirement | Milestone | Verification |
 |---|---|---|---|---|
-| QA-001 | MUST | New or changed behavior lands with tests at the sanctioned seam; coverage exclusions require an inline justification. The mechanical ≥ 90% diff branch-coverage gate is retired (ADR 0012). | M0; amended v0.0.1 | **Live:** PR-checklist test item and diff self-review; the suites the retired gate demanded remain in full |
+| QA-001 | MUST | New or changed behavior lands with tests at the sanctioned seam; coverage exclusions require an inline justification. The mechanical ≥ 90% diff branch-coverage gate is retired (ADR 0012). | M0; amended v0.0.1 | **Live:** PR-checklist test item and diff self-review; behavioral suites demanded by the retired gate remain while they cover live production behavior, but a test MAY be deleted with the implementation that was its only subject |
 | QA-002 | MUST | The sans-I/O machine, SSE parser, retry classifier, and reflection codec/bridge keep their near-total deterministic suites, including error paths. Type-directed constant-evaluation branches use the compile-time positive/negative matrix and MUST NOT be represented by a misleading runtime percentage. The mechanical branch-coverage floors are retired (ADR 0012). | M2 (runtime components); M3 (codec/bridge); amended v0.0.1 | **Live:** the machine/protocol/provider/reflection suites themselves; schema assertions plus five compile-fail diagnostics cover consteval paths |
 | QA-003 | — | Retired (ADR 0012). CRAP scoring was agent-era gating machinery; complexity limits remain under QA-004 and untested-complexity risk is caught in review. | M0; retired v0.0.1 | — |
 | QA-004 | MUST | Cyclomatic complexity ≤ 15 per function (warn at 10); cognitive complexity ≤ 25. Named suppressions only. | M0 | **Live:** cyclomatic via lizard in `scripts/ci-local.sh` (`-C 15`); cognitive via `.clang-tidy` threshold in the tidy job |
@@ -262,10 +262,16 @@ Amendment log:
   work was retired in favor of behavioral gates a human maintainer reads.
   QA-001/QA-002/QA-007 amended: the bespoke coverage/CRAP analyzer, diff and
   component coverage floors, and aggregate backstop are gone; the suites they
-  demanded remain in full. QA-003 (CRAP) retired. QA-010 amended: mutation
+  demanded remain while they cover live production behavior. QA-003 (CRAP)
+  retired. QA-010 amended: mutation
   testing deleted, the local-model smoke demoted to `workflow_dispatch`, the
   showcase gate moved from the per-commit ring to nightly, and per-commit
   short fuzzing folded into the nightly long-fuzz jobs. The libcurl and
   reflection feasibility spikes were deleted (their questions are answered by
   the shipped transport and reflection components). PORT-006's spike
   verification is superseded by the Curl transport integration tests.
+- **2026-08, retired-gate test-lifetime clarification:** QA-001 now makes the
+  forward-maintenance rule explicit: behavioral tests survive the metric gate,
+  but a test may be deleted with the implementation that was its only subject.
+  This preserves the release-posture decision without retaining tests for code
+  that no longer exists.

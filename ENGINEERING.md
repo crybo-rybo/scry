@@ -35,8 +35,10 @@ still hold, while review checks that changed behavior has meaningful tests at
 the sanctioned seam. Coverage supplied a different signal, but preserving its
 bespoke analyzer was no longer worth the maintenance surface.
 (The merge-base ratchet that preceded it was demoted earlier, under
-[ADR 0011](docs/adr/0011-absolute-quality-gates.md).) The test suites written
-under those gates remain in full — the gates went, not the tests.
+[ADR 0011](docs/adr/0011-absolute-quality-gates.md).) The behavioral suites
+written under those gates remain while they cover live production behavior. A
+test may leave with the implementation that was its only subject; metric-driven
+deletion alone remains out of bounds.
 
 ## 2. Testing Plan
 

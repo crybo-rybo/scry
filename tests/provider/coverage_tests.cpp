@@ -53,11 +53,15 @@ void require_protocol(StreamResult result) {
   CHECK(result.error().category == ErrorCategory::protocol);
 }
 void require_request_error(AnthropicAdapter& adapter, const Config& value,
-                           const ModelRequest& model_request) {
+                           const ModelRequest& model_request,
+                           const std::string_view expected_message = {}) {
   const auto result = adapter.make_request(value, model_request);
   REQUIRE_FALSE(result);
   CHECK(result.error().category == ErrorCategory::invalid_config);
   CHECK(result.error().message.find("sanitized-key") == std::string::npos);
+  if (!expected_message.empty()) {
+    CHECK(result.error().message == expected_message);
+  }
 }
 void start_message(AnthropicAdapter& adapter, ProviderDecodeState& state) {
   auto result = event(
@@ -164,8 +168,10 @@ TEST_CASE("Anthropic request validation rejects every invalid boundary") {
   invalid_config = valid_config;
   invalid_config.api_key.clear();
   require_request_error(adapter, invalid_config, valid_request);
+  invalid_config = valid_config;
   invalid_config.model.clear();
-  require_request_error(adapter, invalid_config, valid_request);
+  require_request_error(adapter, invalid_config, valid_request,
+                        "Anthropic model is required");
   auto invalid_request = valid_request;
   for (const auto temperature : {std::numeric_limits<double>::quiet_NaN(), -0.1, 1.1}) {
     invalid_request = valid_request;

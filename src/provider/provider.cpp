@@ -4,14 +4,18 @@
 #include "provider/openai.hpp"
 
 #include <memory>
+#include <utility>
 
 namespace scry::detail {
 
 std::unique_ptr<ProviderAdapter> make_provider_adapter(const ProviderDialect dialect) {
-  if (dialect == ProviderDialect::openai_compatible) {
+  switch (dialect) {
+  case ProviderDialect::anthropic:
+    return std::make_unique<AnthropicAdapter>();
+  case ProviderDialect::openai_compatible:
     return std::make_unique<OpenAiAdapter>();
   }
-  return std::make_unique<AnthropicAdapter>();
+  std::unreachable();
 }
 
 } // namespace scry::detail

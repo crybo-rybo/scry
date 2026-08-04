@@ -64,8 +64,9 @@ Retained, unchanged:
 - The GCC 16 reflection leg: build, 27-test suite, clean component install,
   downstream component consumer, compiled core-surface proof, and the
   separate ASan+UBSan rerun — via `scripts/ci-reflection.sh`.
-- **Every existing test.** The suites written to satisfy the retired gates
-  are real tests; the gates went, not the tests.
+- **Every existing behavioral test at acceptance.** The suites written to
+  satisfy the retired gates are real tests; the gates went, not the tests.
+  Their forward-maintenance lifetime is clarified below.
 - Nightly CodeQL and long fuzz on all three protocol targets.
 
 Retired or moved:
@@ -117,3 +118,13 @@ Retired or moved:
 - If the project returns to unattended agent-driven development at scale,
   the retired machinery remains in git history (`git log --diff-filter=D`)
   and this ADR is the map for restoring it.
+
+## Forward-maintenance clarification (2026-08-03)
+
+The acceptance-time phrase "Every existing test" recorded what this decision
+retained when it removed the metric machinery; it was not a promise to preserve
+tests after their only production subject ceased to exist. Behavioral tests
+remain while they exercise live behavior. A later reviewed change may delete a
+test together with the implementation detail that was its sole subject, while
+deleting a test merely because a retired metric once demanded it remains
+outside this decision.
