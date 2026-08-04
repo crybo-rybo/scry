@@ -1,6 +1,6 @@
 # ADR 0012: Release-Posture Infrastructure Simplification
 
-- Status: Accepted
+- Status: Accepted (amended 2026-08-03, see Amendment)
 - Date: 2026-07-20
 - Amends: [ADR 0011](0011-absolute-quality-gates.md) (retires its gating
   machinery), [ADR 0010](0010-m5-showcase-contract.md) (moves the showcase
@@ -117,3 +117,35 @@ Retired or moved:
 - If the project returns to unattended agent-driven development at scale,
   the retired machinery remains in git history (`git log --diff-filter=D`)
   and this ADR is the map for restoring it.
+
+## Amendment (2026-08-03)
+
+The v0.0.1 cleanup revised three decisions this ADR originally recorded:
+
+- **The reflection leg's PR gating is path-aware instead of unconditional.**
+  This ADR retained the GCC 16 reflection leg in the per-commit ring; in
+  practice its `ppa:ubuntu-toolchain-r/test` experimental-toolchain pin was
+  the ring's most rot-prone dependency and gated pull requests that could
+  not affect the component. The leg now runs from `reflection.yml` on every
+  pull request touching a reflection-affecting path (headers, sources,
+  tests, consumers, build wiring, or the script itself), so
+  supported-component regressions still cannot merge untested, while
+  unrelated pull requests skip the experimental toolchain entirely. An
+  unconditional run remains in the scheduled ring to catch toolchain drift.
+  The leg's ASan+UBSan rerun in `ci-reflection.sh` is retained in full — the
+  core ASan leg configures reflection OFF, so that rerun is the component's
+  only sanitizer coverage (QA-005).
+- **The scheduled ring is weekly, not nightly.** CodeQL, long fuzzing, the
+  showcase gate, and the unconditional reflection run fire Monday 06:00 UTC
+  (the workflow file keeps its `nightly.yml` name; its display name is
+  "Scheduled"). The per-commit deterministic suites remain the real gate;
+  a solo-maintained project does not triage scheduled reds daily, and a red
+  that waits six days is not meaningfully worse than one that waits one.
+- **Two per-commit legs consolidated.** The pinned clang-format check merged
+  into the documentation job (same runner class, seconds of work), and the
+  ASan+UBSan leg additionally configures `SCRY_ENABLE_LOGGING=ON` so the
+  opt-in diagnostic build can no longer rot uncompiled.
+
+`scripts/preflight.sh` remains the local superset (QA-011): it still runs
+the reflection leg whenever `g++-16` is available, independent of what a
+given pull request's path filter would select.
