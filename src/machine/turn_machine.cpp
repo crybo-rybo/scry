@@ -351,6 +351,7 @@ TransitionResult TurnMachine::begin_tool_round(ModelResponse response,
     result.commands.emplace_back(PublishToolCall{
         .turn_id = turn_id_,
         .call = call.call,
+        .remaining_exchange_bytes = remaining_exchange_bytes(),
     });
   }
   return result;
@@ -459,6 +460,10 @@ bool TurnMachine::reserve_exchange_bytes(const std::size_t bytes) noexcept {
   }
   exchange_payload_bytes_ += bytes;
   return true;
+}
+
+std::size_t TurnMachine::remaining_exchange_bytes() const noexcept {
+  return tool_policy_.max_exchange_bytes - exchange_payload_bytes_;
 }
 
 void TurnMachine::accumulate_usage(const Usage& usage) noexcept {

@@ -56,6 +56,9 @@ int main() {
               },
       },
       [&app](scry::Json arguments) -> scry::Result<scry::Json> {
+        // Every handler runs synchronously in harness.update() on this app
+        // thread. Keep it bounded; future long-running work needs an explicit
+        // deferred-result contract rather than a background handler mode.
         // Explicit-schema handlers own argument validation at the C++23 boundary.
         // Exact-text comparison only holds for this zero-argument schema; tools
         // with real arguments parse the JSON (or use the reflected overload in

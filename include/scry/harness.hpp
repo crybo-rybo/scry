@@ -15,7 +15,7 @@ namespace detail {
 class HarnessTestAccess;
 } // namespace detail
 
-/// Configured runtime that owns tools, network state, worker execution, and callback
+/// Configured runtime that owns tools, network state, worker I/O, and callback
 /// delivery.
 ///
 /// A Harness never owns the host's main loop. Asynchronous work progresses on its

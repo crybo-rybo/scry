@@ -37,7 +37,7 @@ while (application_is_running()) {
 }
 ```
 
-Every asynchronous callback, and every default-mode tool handler, runs inside
+Every asynchronous callback and every tool handler runs inside
 `scry::Harness::update()` on the thread that calls it. `scry::Harness::send()` never waits for
 network I/O. The explicitly named `scry::Harness::send_and_wait()` convenience is the sole
 blocking exception.

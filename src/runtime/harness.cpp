@@ -162,6 +162,7 @@ public:
         detail::TurnRouteOptions{
             .tools = std::move(tools),
             .max_tool_result_bytes = config_.limits.max_tool_result_bytes,
+            .max_exchange_bytes = max_exchange_bytes,
             .max_conversation_bytes = config_.limits.max_conversation_bytes,
         });
     auto request =

@@ -154,8 +154,8 @@ void WorkerActor::accept_command(WorkerCommand command) {
     return;
   }
   if (std::holds_alternative<ToolResultCommand>(command)) {
-    // Tool work is meaningful only while its turn owns the serialized worker
-    // slot. Values that arrive after terminal cancellation are stale.
+    // A tool result is meaningful only while its turn owns the serialized
+    // worker slot. Results arriving after terminal cancellation are stale.
     return;
   }
   const auto turn_id = std::get<CancelTurnCommand>(command).turn_id;
@@ -477,6 +477,7 @@ Status WorkerActor::publish_tool_batch(PublishToolCall first,
   events.emplace_back(ToolCallEvent{
       .turn_id = turn_id,
       .call = std::move(first.call),
+      .remaining_exchange_bytes = first.remaining_exchange_bytes,
   });
   while (!pending_commands.empty()) {
     auto* next = std::get_if<PublishToolCall>(&pending_commands.front());
@@ -486,6 +487,7 @@ Status WorkerActor::publish_tool_batch(PublishToolCall first,
     events.emplace_back(ToolCallEvent{
         .turn_id = turn_id,
         .call = std::move(next->call),
+        .remaining_exchange_bytes = next->remaining_exchange_bytes,
     });
     pending_commands.pop_front();
   }

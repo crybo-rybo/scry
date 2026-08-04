@@ -14,9 +14,10 @@ use `std::unique_ptr` or dedicated RAII wrappers. Shared lifetime is deliberate
 and enumerated: command/event queues and the per-turn cancellation flag cross
 the worker boundary; a Conversation handle and its live pump route share
 Conversation state; and a pump-side registration route is owned by the Harness
-and observed weakly by the Turn handle. ADR 0009 adds no shared handler:
-worker-mode callables move once into worker ownership. Raw pointers are
-non-owning observers only, never stored across a suspension point.
+and observed weakly by the Turn handle. Tool definitions and callables remain
+in immutable pump-side snapshots; no user handler crosses the worker boundary.
+Raw pointers are non-owning observers only, never stored across a suspension
+point.
 
 **Rule of Zero.** Types define no special member functions unless they manage a resource directly; resource management is pushed into dedicated RAII wrappers (curl handles, threads, queues) so everything above them defaults.
 
@@ -42,10 +43,9 @@ The single most important structural decision. The worker thread is an
 **actor**: it exclusively owns all mutable networking and loop state, and (bar
 the per-turn cancellation atomic, §3) the only way anything crosses the thread
 boundary is **message passing** through two queues. The live commands cover
-send, cancel, tool result, worker-handler registration/execution, and shutdown;
-events cover deltas, tool requests, worker-result acknowledgements,
-completions, and errors. ADR 0009 added those M4 worker messages to the existing
-queues, not another channel.
+send, cancel, tool result, and shutdown; events cover deltas, tool requests,
+completions, cancellations, and errors. Tool handlers stay outside that actor
+protocol and run only in the app-thread pump.
 
 Practices that follow:
 
@@ -64,8 +64,7 @@ A `Turn` is a **handle**: a move-only PImpl value holding an immutable `TurnId`,
 
 ### Ownership table (implemented invariant)
 
-These rows describe the live M4 system, including ADR 0009 worker-tool
-ownership.
+These rows describe the live app-thread-only tool system.
 
 | State | Exclusive owner | Notes |
 |---|---|---|
@@ -73,10 +72,8 @@ ownership.
 | Loop state machines (per turn) | Worker | Addressed by `TurnId` |
 | Callback registrations, buffered undelivered events per turn, Turn registration routes | Pump side (Harness main-thread state) | Written/read only inside API calls and `update()`; handles observe routes weakly |
 | Conversation contents | App thread via pump | A live route retains shared lifetime on the pump side; contents are mutated only at terminal-event delivery |
-| Tool definitions and execution modes | Pump side; immutable per accepted turn | Worker commands receive neutral schemas plus worker tool names/modes, never the live registry |
-| App-thread tool handlers | Pump side; immutable per accepted turn | Invoked only by `update()` |
-| Worker-thread tool handlers (M4) | Worker table after one FIFO move | Never shared back; registration precedes later send commands |
-| Worker-call route gate and acknowledged-result accounting (M4) | Pump side | Pauses later batch calls until the worker machine accepts the result |
+| Tool definitions and handlers | Pump side; immutable per accepted turn | Invoked only by `update()`; worker requests receive neutral schemas, never the live registry or a callable |
+| Tool-call route gate and cumulative-result accounting | Pump side | Latches a fatal dispatch failure and discards every later call in the batch before handler invocation |
 | Command queue, event queue | Shared, internally synchronized | Sanctioned crossing points |
 | Per-turn cancel flag (`atomic<bool>`) | Shared | Third sanctioned crossing point |
 | `TurnId` | Immutable value | Freely copied everywhere |
@@ -162,11 +159,9 @@ which is a numbered requirement:
 - **Callback arguments are borrowed** for the invocation only; apps copy values or text views they retain.
 - **Shutdown.** `~Harness()` cancels all turns, aborts Scry-owned transport
   waits within their configured bound, joins the worker, and discards
-  undelivered events. No callback ever fires after destruction begins. An M4
-  worker-mode application handler is non-preemptive and excluded from that
-  Scry-owned bound: opting in carries an application MUST that it return within
-  the application's teardown requirement. The destructor cannot safely force
-  arbitrary C++ user code to stop and joins after it returns.
+  undelivered events. No callback or tool handler ever fires after destruction
+  begins. A worker waiting for an app-thread tool result observes the Harness
+  stop request and exits before the destructor joins it.
 
 ### Conversation persistence
 
@@ -181,7 +176,7 @@ between future document versions.
 
 ## 4. The Agentic Loop: Sans-I/O State Machine
 
-The loop engine — the heart of the library — is written **sans-I/O**: a pure state machine that consumes events (*provider replied with content or a tool call*, *tool result ready*, *stream ended*, *transport failed*) and emits commands (*issue this request*, *run this tool*, *deliver this to the app*), and performs **no I/O itself**. The implemented machine covers chat, retry, cancellation, tool-await, and multi-round completion. The worker thread is a thin driver that feeds it transport events and executes its commands.
+The loop engine — the heart of the library — is written **sans-I/O**: a pure state machine that consumes events (*provider replied with content or a tool call*, *tool result ready*, *stream ended*, *transport failed*) and emits commands (*issue this request*, *publish this tool call*, *deliver this to the app*), and performs **no I/O itself**. The implemented machine covers chat, retry, cancellation, tool-await, and multi-round completion. The worker thread is a thin driver that feeds it transport events and publishes or performs machine commands; application tool handlers remain in the pump.
 
 Why this is the hill to defend:
 
@@ -203,26 +198,29 @@ Two layers, one table (as settled in DESIGN.md §8):
 The Registry is owned by its Harness. `send()` snapshots its immutable shared
 records for the accepted turn, so registration during `update()` never mutates
 an in-flight turn and the live registry never crosses the worker boundary.
-Copied neutral schemas, execution modes, and worker tool names cross while every
-handler remains exclusively owned. The public registry cannot be moved out of
-its Harness, and explicit schemas are parsed and canonicalized at registration.
+Copied neutral schemas cross while every handler remains exclusively pump-owned.
+The public registry cannot be moved out of its Harness, and explicit schemas
+are parsed and canonicalized at registration.
 Mutation is additive-only: duplicate names are rejected, and
 replacement/removal remain absent until a real hot-reload contract defines
 their snapshot semantics.
 
-**M4 execution ownership (implemented).** Execution policy is a
-registration option, not provider metadata. An app-mode record keeps its
-handler in the pump-side snapshot. A worker-mode handler moves once through a
-FIFO registration command into a worker-owned table; accepted turns snapshot
-the definition and mode and identify worker tools by name. A provider batch is
-still published atomically. The pump walks it in order: app calls run directly,
-while a worker call posts one execute command and closes a per-route gate. The
-worker invokes its owned handler, feeds the canonical result to the same
-`TurnMachine`, and publishes an acceptance acknowledgement. Only then does the
-pump update mirrored budget accounting, run the observer on the update thread,
-and admit the next call. A fatal failure emits the existing terminal event
-without an acknowledgement, permanently suppressing the batch suffix. Worker
-mode is serialized latency isolation, not parallel execution.
+**Tool execution ownership (implemented).** Every record keeps its handler in
+the pump-side accepted-turn snapshot, and every handler runs synchronously in
+`update()`. The worker publishes a provider batch atomically and includes the
+machine's remaining cumulative exchange budget with each call. Before each
+dispatch, the route narrows its local budget to that authoritative remainder;
+after canonicalization it reserves the result bytes before posting the result
+command. A fatal dispatch or cumulative-budget failure latches the route, posts
+one failed result for the active call, and discards the batch suffix before any
+later handler can run. The observer runs only after a successful result has
+been posted.
+
+ADR 0009's worker-handler messages, table, acknowledgements, execution modes,
+and overloads were removed before v0.0.1. A future deferred/async result must
+define an explicit app-owned token and its lifetime, cancellation, ordering,
+backpressure, and teardown rules; it must not smuggle application callables
+into the network actor.
 
 **Upper layer — consteval code generation (M3, implemented).**
 The accepted P2996 layer is a compile-time *code generator* targeting the lower
@@ -372,10 +370,11 @@ therefore remains libcurl plus internal Glaze.
 - M4 has deterministic OpenAI request/response/stream goldens, arbitrary-split
   and short `scry_openai_fuzz` coverage, config-only and concurrent
   cross-dialect integration, a full fragmented tool round, and a Curl
-  path/header/SSE case. Worker execution covers both thread IDs, FIFO
-  snapshots, mixed and all-worker ordered batches, acknowledgements and
-  cumulative budgets, failures, cancellation, detached execution, cooperating
-  teardown, and observer affinity under TSan.
+  path/header/SSE case. App-thread tool coverage includes caller-thread
+  affinity, immutable snapshots, ordered multi-call batches, cumulative-budget
+  suffix suppression, atomic event-queue admission, cancellation, detached
+  execution, queued-turn serialization, teardown during tool wait, and observer
+  ordering under TSan.
 - The scheduled/manual nightly pipeline is implemented with CodeQL, long
   SSE/Anthropic/OpenAI fuzz runs, and the showcase gate; the bounded local
   OpenAI-compatible chat/tool smoke runs on demand via `workflow_dispatch`,
@@ -435,8 +434,8 @@ Every "boring first" choice is recorded here with the condition that triggers ev
 | Additive-only ToolRegistry with immutable accepted-turn snapshots | A concrete hot-reload or dynamic-plugin use case needs mutation | Explicit replace/remove operations with documented snapshot and handler-lifetime semantics |
 | Linux + macOS only | Concrete Windows user demand | Windows reflection-OFF via clang; MSVC leg only if/when P2996 ships there |
 | Reflection-ON CI leg on Linux only (PORT-005) | A production-grade P2996 toolchain becomes practically distributable on macOS | Gating reflection legs on both platforms |
-| Serialized turns: M2 queued turns wait while the active turn awaits a main-thread tool | Serialized scheduling measurably limits a real app | Tool-await releases the slot under curl-multi multiplexing (same trigger as row 2) |
-| One serialized worker-mode handler with no injected stop token | A real handler needs cooperative cancellation or parallel execution | Ratify a stop-aware or async handler boundary plus explicit pool, ordering, resource, and teardown policy |
+| Serialized turns: M2 queued turns wait while the active turn awaits an app-thread tool | Serialized scheduling measurably limits a real app | Tool-await releases the slot under curl-multi multiplexing (same trigger as row 2) |
+| All tool handlers return synchronously from app-thread `update()`; no deferred result token or hidden worker pool | A real handler needs long-running or externally completed work without blocking a frame | Ratify an app-owned deferred/async result boundary with explicit lifetime, cancellation, ordering, backpressure, resource, and teardown policy |
 | M5 ImGui panel has no platform/renderer backend and the NPC world is ephemeral | A maintained standalone demo or durable game integration becomes a real deliverable | Ratify its platform matrix and lifecycle separately; keep any backend, persistence, rollback, or idempotency machinery outside the Scry package |
 | Streaming-only provider seam: adapters always request `stream: true` and decode through the stream path; the parallel non-streaming response decoders were removed as production-dead | A supported deployment genuinely cannot serve SSE, or a consumer needs non-streaming completions | Reintroduce a `parse_response` seam together with a runtime mode that actually exercises it, plus its golden and fuzz coverage — never as untested parallel code |
 | Compile-time diagnostic file logger (`SCRY_ENABLE_LOGGING`): fixed line format, one file sink chosen by environment variable, no runtime configuration or public API | A consumer needs runtime-toggleable, structured, or callback-driven diagnostics | Ratify a public logging/observer surface (the one PROV-008 records as absent) and route the same call sites through it |
@@ -451,7 +450,7 @@ Every "boring first" choice is recorded here with the condition that triggers ev
 | Delivery | Single-threaded-by-construction pump with time budget |
 | In-flight turns | Move-only PImpl handle + shared cancel flag + weak pump registration route |
 | Agentic loop | Sans-I/O explicit state machine; time as injected events |
-| Tool registry | Mode-aware ownership over one type-erased registration substrate; optional M3 consteval codegen and strict Scry-owned JSON bridge above it |
+| Tool registry | Immutable app-thread ownership over one type-erased registration substrate; optional M3 consteval codegen and strict Scry-owned JSON bridge above it |
 | Providers | Config-selected Strategy at a narrow seam; stateless adapters with per-turn dialect state and golden-file tests |
 | Transport | RAII curl, C-callback trampolines, injectable seam; pure incremental SSE parser |
 | Errors | One categorized value type; expected before acceptance, one async error event after |

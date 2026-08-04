@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cstddef>
 #include <deque>
+#include <limits>
 #include <memory>
 #include <scry/events.hpp>
 #include <scry/unique_function.hpp>
@@ -18,6 +19,7 @@ namespace scry::detail {
 struct TurnRouteOptions {
   ToolSnapshot tools{};
   std::size_t max_tool_result_bytes{};
+  std::size_t max_exchange_bytes{std::numeric_limits<std::size_t>::max()};
   std::size_t max_conversation_bytes{};
 };
 
@@ -62,6 +64,7 @@ private:
   std::string user_message_{};
   ToolSnapshot tools_{};
   std::size_t max_tool_result_bytes_{};
+  std::size_t remaining_exchange_bytes_{std::numeric_limits<std::size_t>::max()};
   std::size_t max_conversation_bytes_{};
   bool attached_{true};
   bool terminal_{false};

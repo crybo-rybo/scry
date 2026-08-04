@@ -135,6 +135,73 @@ private:
   std::size_t calls_{};
 };
 
+class HeldRetryTransport final : public scry::detail::Transport {
+public:
+  [[nodiscard]] scry::Result<scry::detail::TransportResult>
+  perform(const scry::detail::TransportRequest&, const std::stop_token stopped,
+          const std::atomic<bool>& cancelled,
+          scry::detail::BodyChunkSink& sink) override {
+    std::size_t call_number{};
+    {
+      std::unique_lock lock{mutex_};
+      call_number = ++calls_;
+      changed_.notify_all();
+      if (call_number == 1 &&
+          !changed_.wait(lock, stopped, [this] { return first_call_released_; })) {
+        return std::unexpected(cancelled_error());
+      }
+    }
+    if (cancelled.load(std::memory_order_acquire)) {
+      return std::unexpected(cancelled_error());
+    }
+    if (call_number == 1) {
+      return std::unexpected(scry::Error{
+          .category = scry::ErrorCategory::network,
+          .message = "held transient failure",
+          .retryable = true,
+      });
+    }
+    if (auto status = sink(completed_stream); !status) {
+      return std::unexpected(std::move(status.error()));
+    }
+    return scry::detail::TransportResult{
+        .status_code = 200,
+        .provider_request_id = "request-held-retry",
+    };
+  }
+
+  void wait_for_first_call() {
+    std::unique_lock lock{mutex_};
+    changed_.wait(lock, [this] { return calls_ != 0; });
+  }
+
+  void release_first_call() {
+    {
+      const std::scoped_lock lock{mutex_};
+      first_call_released_ = true;
+    }
+    changed_.notify_all();
+  }
+
+  [[nodiscard]] std::size_t calls() const {
+    const std::scoped_lock lock{mutex_};
+    return calls_;
+  }
+
+private:
+  [[nodiscard]] static scry::Error cancelled_error() {
+    return {
+        .category = scry::ErrorCategory::cancelled,
+        .message = "held retry transport cancelled",
+    };
+  }
+
+  mutable std::mutex mutex_{};
+  std::condition_variable_any changed_{};
+  std::size_t calls_{};
+  bool first_call_released_{false};
+};
+
 struct OverlapState {
   std::mutex mutex{};
   std::condition_variable_any changed{};
@@ -289,6 +356,61 @@ TEST_CASE("cancelling a pending retry wakes the worker without another attempt")
   CHECK_FALSE(turn->cancel());
   CHECK(observer->calls() == 1);
   CHECK(conversation->empty());
+}
+
+TEST_CASE("a queued turn command is consumed before a zero-backoff retry wakes") {
+  auto config = test_config();
+  config.retry.max_attempts = 2;
+  config.retry.initial_backoff = 0ms;
+  config.retry.max_backoff = 0ms;
+  auto transport = std::make_unique<HeldRetryTransport>();
+  auto* observer = transport.get();
+  auto harness =
+      scry::detail::HarnessTestAccess::create(config, provider(), std::move(transport));
+  auto first_conversation = scry::Conversation::create();
+  auto second_conversation = scry::Conversation::create();
+  REQUIRE(harness);
+  REQUIRE(first_conversation);
+  REQUIRE(second_conversation);
+
+  auto first_turn = harness->send(*first_conversation, "retry after queued command");
+  REQUIRE(first_turn);
+  std::optional<scry::Completion> first_completion;
+  std::optional<scry::Error> first_failure;
+  REQUIRE(first_turn->on_completion([&first_completion](const scry::Completion& value) {
+    first_completion = value;
+  }));
+  REQUIRE(first_turn->on_error(
+      [&first_failure](const scry::Error& error) { first_failure = error; }));
+  observer->wait_for_first_call();
+
+  auto second_turn = harness->send(*second_conversation, "queued while retrying");
+  REQUIRE(second_turn);
+  std::optional<scry::Completion> second_completion;
+  std::optional<scry::Error> second_failure;
+  REQUIRE(
+      second_turn->on_completion([&second_completion](const scry::Completion& value) {
+        second_completion = value;
+      }));
+  REQUIRE(second_turn->on_error(
+      [&second_failure](const scry::Error& error) { second_failure = error; }));
+
+  // The worker is still inside the held transfer, so the second SendTurnCommand
+  // is queued when the zero-backoff retry wait evaluates its predicate.
+  observer->release_first_call();
+
+  REQUIRE(pump_until(*harness, [&] {
+    return (first_completion || first_failure) && (second_completion || second_failure);
+  }));
+  REQUIRE_FALSE(first_failure);
+  REQUIRE_FALSE(second_failure);
+  REQUIRE(first_completion);
+  REQUIRE(second_completion);
+  CHECK(first_completion->attempt_count == 2);
+  CHECK(second_completion->attempt_count == 1);
+  CHECK(observer->calls() == 3);
+  CHECK(first_conversation->message_count() == 2);
+  CHECK(second_conversation->message_count() == 2);
 }
 
 TEST_CASE("a completion one byte over the Conversation limit is not committed") {

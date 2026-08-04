@@ -3,6 +3,7 @@
 #include "core/log.hpp"
 #include "runtime/tool_dispatch.hpp"
 
+#include <algorithm>
 #include <type_traits>
 #include <utility>
 
@@ -41,6 +42,7 @@ TurnRoute::TurnRoute(const TurnId turn_id, std::shared_ptr<std::atomic<bool>> ca
       commands_(std::move(commands)), conversation_(std::move(conversation)),
       user_message_(std::move(user_message)), tools_(std::move(options.tools)),
       max_tool_result_bytes_(options.max_tool_result_bytes),
+      remaining_exchange_bytes_(options.max_exchange_bytes),
       max_conversation_bytes_(options.max_conversation_bytes) {}
 
 TurnId TurnRoute::id() const noexcept { return turn_id_; }
@@ -146,9 +148,22 @@ void TurnRoute::dispatch(const ToolCallEvent& event) {
   if (cancelled_->load(std::memory_order_acquire)) {
     return;
   }
+  remaining_exchange_bytes_ =
+      std::min(remaining_exchange_bytes_, event.remaining_exchange_bytes);
   SCRY_LOG("Dispatching {} Tool on the app thread (Turn {})", event.call.name,
            turn_id_.value);
   auto result = dispatch_tool(tools_, event.call, max_tool_result_bytes_);
+  if (result) {
+    const auto result_bytes = content_payload_bytes(*result);
+    if (result_bytes > remaining_exchange_bytes_) {
+      result = std::unexpected(Error{
+          .category = ErrorCategory::resource_limit,
+          .message = "tool results exceed the remaining Conversation byte limit",
+      });
+    } else {
+      remaining_exchange_bytes_ -= result_bytes;
+    }
+  }
   if (!result) {
     tool_dispatch_failed_ = true;
   }

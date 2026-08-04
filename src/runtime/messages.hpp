@@ -40,6 +40,7 @@ struct TextDeltaEvent {
 struct ToolCallEvent {
   TurnId turn_id{};
   ToolCallBlock call{};
+  std::size_t remaining_exchange_bytes{std::numeric_limits<std::size_t>::max()};
 };
 
 // The pump commits `exchange` into the Conversation by moving it, then keeps

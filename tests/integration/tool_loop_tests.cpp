@@ -112,3 +112,120 @@ TEST_CASE("two-tool turn snapshots tools, resends results, and commits atomicall
   require_order(resend_body, R"({\"handled\":\"first\"})",
                 R"({\"handled\":\"second\"})");
 }
+
+TEST_CASE("a queued turn waits for the active turn's app-thread tool round") {
+  auto fake = std::make_unique<scry::test::FakeTransport>();
+  auto* requests = fake.get();
+  fake->enqueue(scripted_exchange(two_tool_stream, "tool-request"));
+  fake->enqueue(scripted_exchange(final_stream, "first-final-request"));
+  fake->enqueue(scripted_exchange(final_stream, "second-final-request"));
+  auto harness_result = scry::detail::HarnessTestAccess::create(
+      test_config(), provider(), std::move(fake));
+  REQUIRE(harness_result);
+  auto harness = std::move(*harness_result);
+  REQUIRE(harness.tools().add(tool_definition("first_tool"),
+                              static_handler(R"({"queue":1})")));
+  REQUIRE(harness.tools().add(tool_definition("second_tool"),
+                              static_handler(R"({"queue":2})")));
+
+  auto first_conversation = scry::Conversation::create();
+  auto second_conversation = scry::Conversation::create();
+  REQUIRE(first_conversation);
+  REQUIRE(second_conversation);
+  auto first_turn = harness.send(*first_conversation, "first queued turn");
+  auto second_turn = harness.send(*second_conversation, "second queued turn");
+  REQUIRE(first_turn);
+  REQUIRE(second_turn);
+
+  bool first_completed = false;
+  bool second_completed = false;
+  REQUIRE(first_turn->on_completion(
+      [&first_completed](const scry::Completion&) { first_completed = true; }));
+  REQUIRE(second_turn->on_completion(
+      [&second_completed](const scry::Completion&) { second_completed = true; }));
+  REQUIRE(pump_until(harness, [&] { return first_completed && second_completed; }));
+
+  REQUIRE(requests->requests().size() == 3);
+  CHECK(requests->requests()[0].body.find("first queued turn") != std::string::npos);
+  CHECK(requests->requests()[1].body.find("first queued turn") != std::string::npos);
+  CHECK(requests->requests()[1].body.find(R"("tool_use_id":"call-a")") !=
+        std::string::npos);
+  CHECK(requests->requests()[2].body.find("second queued turn") != std::string::npos);
+  CHECK(requests->requests()[2].body.find("call-a") == std::string::npos);
+  CHECK(first_conversation->message_count() == 4);
+  CHECK(second_conversation->message_count() == 2);
+}
+
+TEST_CASE("tool call batches fail atomically at the event queue boundary") {
+  const std::string first_name(250, 'a');
+  const std::string second_name(250, 'b');
+  auto fake = std::make_unique<scry::test::FakeTransport>();
+  auto* requests = fake.get();
+  fake->enqueue(scripted_exchange(large_tool_batch_stream(first_name, second_name),
+                                  "tool-request"));
+  auto config = test_config();
+  config.limits.max_queued_event_bytes_per_turn = 1024;
+  auto harness_result =
+      scry::detail::HarnessTestAccess::create(config, provider(), std::move(fake));
+  REQUIRE(harness_result);
+  auto harness = std::move(*harness_result);
+  std::size_t handler_calls = 0;
+  const auto handler = [&handler_calls](scry::Json) -> scry::Result<scry::Json> {
+    ++handler_calls;
+    return scry::Json{.text = "{}"};
+  };
+  REQUIRE(harness.tools().add(tool_definition(first_name), handler));
+  REQUIRE(harness.tools().add(tool_definition(second_name), handler));
+  auto conversation = scry::Conversation::create();
+  REQUIRE(conversation);
+  auto turn = harness.send(*conversation, "run an oversized batch");
+  REQUIRE(turn);
+  std::optional<scry::Error> failure;
+  REQUIRE(turn->on_error([&failure](const scry::Error& error) { failure = error; }));
+
+  REQUIRE(pump_until(harness, [&failure] { return failure.has_value(); }));
+
+  CHECK(failure->category == scry::ErrorCategory::resource_limit);
+  CHECK(handler_calls == 0);
+  CHECK(conversation->empty());
+  CHECK(requests->requests().size() == 1);
+}
+
+TEST_CASE("Harness destruction stops a worker awaiting an app-thread tool result") {
+  auto fake = std::make_unique<scry::test::FakeTransport>();
+  fake->enqueue(scripted_exchange(two_tool_stream, "tool-request"));
+  auto harness_result = scry::detail::HarnessTestAccess::create(
+      test_config(), provider(), std::move(fake));
+  REQUIRE(harness_result);
+  auto harness = std::move(*harness_result);
+  std::size_t handler_calls = 0;
+  const auto handler = [&handler_calls](scry::Json) -> scry::Result<scry::Json> {
+    ++handler_calls;
+    return scry::Json{.text = "{}"};
+  };
+  REQUIRE(harness.tools().add(tool_definition("first_tool"), handler));
+  REQUIRE(harness.tools().add(tool_definition("second_tool"), handler));
+  auto conversation = scry::Conversation::create();
+  REQUIRE(conversation);
+  auto turn = harness.send(*conversation, "destroy during app-thread tool wait");
+  REQUIRE(turn);
+  std::size_t callbacks = 0;
+  REQUIRE(turn->on_tool_call([&callbacks](const scry::ToolCall&) { ++callbacks; }));
+  REQUIRE(turn->on_error([&callbacks](const scry::Error&) { ++callbacks; }));
+  REQUIRE(turn->on_cancelled([&callbacks](const scry::Cancelled&) { ++callbacks; }));
+
+  constexpr std::size_t maximum_pumps = 100'000;
+  bool tool_calls_pending = false;
+  for (std::size_t pump = 0; pump < maximum_pumps && !tool_calls_pending; ++pump) {
+    tool_calls_pending = harness.update({.max_callbacks = 0}).events_remaining == 2;
+    std::this_thread::yield();
+  }
+  REQUIRE(tool_calls_pending);
+
+  auto owned = std::optional<scry::Harness>{std::move(harness)};
+  owned.reset();
+
+  CHECK(handler_calls == 0);
+  CHECK(callbacks == 0);
+  CHECK(conversation->empty());
+}

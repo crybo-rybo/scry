@@ -172,7 +172,7 @@ sequenceDiagram
     LLM-->>H: stream: text deltas
     H-->>App: on_text_delta (via update())
     LLM-->>H: stop_reason: tool_use
-    H->>H: execute registered tool<br/>(main thread by default, §7)
+    H->>H: execute registered tool<br/>(app thread in update(), §7)
     H-->>App: on_tool_call (informational,<br/>after result is posted)
     H->>LLM: POST /messages (+ tool result)
     LLM-->>H: stream: final answer
@@ -205,36 +205,29 @@ graph TB
     AL --> EQ --> U --> CB
 ```
 
-**Tool execution policy.** App-thread execution inside `update()` remains the
-default: it is the safe mode for handlers that touch host state. M4 implements
-ADR 0009's `ToolExecution::app_thread` / `ToolExecution::worker_thread` through
-`ToolRegistrationOptions`; execution policy stays separate from
-provider-visible `ToolDefinition` metadata, and reflected registration
-forwards the same option.
+**Tool execution policy.** Every explicit and reflected handler executes
+synchronously inside `update()` on the calling thread. The immutable
+accepted-turn snapshot owns the handlers, provider-visible `ToolDefinition`
+contains no execution policy, and no application callable crosses to the
+network worker. This is the safe, inspectable contract for host-owned game,
+GUI, and simulator state.
 
-Worker mode does not create a pool or a second agent loop. An app-thread
-handler remains in the pump-side accepted-turn snapshot. A
-worker-thread handler moves once, through FIFO registration, into a
-worker-owned table; subsequent accepted turns cross the boundary with neutral
-schemas, execution modes, and worker tool names, never a shared callable. The
-complete provider batch is still admitted atomically. `update()` dispatches
-calls in provider order, posts an opted-in call to the worker, and pauses later
-calls until the worker applies the canonical result to the same machine and
-the pump receives an accepted-result acknowledgement. Tool observers still run
-only in `update()` after that acceptance.
+There is intentionally no background handler mode. A handler that performs
+long work can overrun the current update call and should therefore remain
+bounded. If real applications need deferred work, the next design is an
+explicit app-owned deferred/async result boundary: it must specify result-token
+lifetime, cancellation, ordering, backpressure, teardown, and how later calls
+in a provider batch remain gated. It will be a new contract, not a hidden
+thread pool or a revival of the retired worker-handler command protocol.
 
 **Frame budget.** `update()` accepts an optional time budget; excess events roll to the next tick. The budget is a soft deadline checked between callbacks. Scry never preempts user code, so one slow callback or tool handler can overrun it.
 
 **Cancellation.** `Turn::cancel()` sets an atomic flag; the worker aborts the HTTP transfer at the next opportunity and posts a `Cancelled` event. Cancelling a still-queued turn removes it before any I/O is issued. `Turn` handles are safe to drop (detach semantics); dropping does not join, block, or cancel.
 
-Tool handlers are non-preemptive in either mode. Cancellation observed before
+Tool handlers are non-preemptive. Cancellation observed before
 dispatch skips the handler. Cancellation requested while one runs takes effect
 when it returns: Scry suppresses that result and the remaining calls, does not
-resend to the model, and terminates the turn as cancelled. Scry can bound its
-own transport shutdown, but cannot safely terminate arbitrary C++ user code.
-Opting into worker execution therefore requires the application handler to
-return within the application's teardown bound; the configured Scry-owned
-shutdown bound excludes time spent inside that handler.
+resend to the model, and terminates the turn as cancelled.
 
 **Batch and payload atomicity.** All tool calls from one assistant response are
 admitted to the worker-to-pump event queue as one batch. If the whole batch
@@ -245,17 +238,16 @@ Conversation byte limit is one cumulative exchange budget: assistant tool-call
 messages, every tool result, and the final answer are reserved before
 dispatch, resend, or commit. It is not a per-message limit.
 
-**M2 scheduling baseline (ratified).** A Harness accepts up to `Config::limits.max_pending_turns`; accepted turns queue FIFO and exactly **one HTTP transfer is active at a time**. Admission beyond that bound fails immediately with `resource_limit`. A second `send()` on a Conversation that already has a turn queued or in flight fails immediately with `busy`. While the active turn awaits a main-thread tool result, it retains the serialized turn slot, so queued turns wait (deliberate simplification; trigger and end state in the ARCHITECTURE.md evolution register, which moves to curl-multi multiplexing when serialized scheduling measurably limits a real app).
+**M2 scheduling baseline (ratified).** A Harness accepts up to `Config::limits.max_pending_turns`; accepted turns queue FIFO and exactly **one HTTP transfer is active at a time**. Admission beyond that bound fails immediately with `resource_limit`. A second `send()` on a Conversation that already has a turn queued or in flight fails immediately with `busy`. While the active turn awaits an app-thread tool result, it retains the serialized turn slot, so queued turns wait (deliberate simplification; trigger and end state in the ARCHITECTURE.md evolution register, which moves to curl-multi multiplexing when serialized scheduling measurably limits a real app).
 
 **Registry ownership and snapshots.** A Harness owns exactly one `ToolRegistry`;
 there is no Conversation-local or process-global registry. `send()` snapshots
 immutable registrations into the accepted turn, so later or reentrant
 registration remains safe and affects only subsequently accepted turns. The
-public surface cannot move the Harness-owned registry out. In the M4
-implementation, definitions and execution modes are snapshotted; app handlers
-remain pump-owned while worker handlers remain in the worker table installed
-before the send by FIFO command order. Explicit schemas are parsed when
-registered, must be JSON objects, and are stored canonically.
+public surface cannot move the Harness-owned registry out. Definitions and
+handlers remain pump-owned in that snapshot; only neutral schemas cross to the
+worker with the model request. Explicit schemas are parsed when registered,
+must be JSON objects, and are stored canonically.
 
 **Runtime configuration defaults.** Limits count payload bytes (not allocator
 overhead); implementations may reject earlier when a provider's own limit is
@@ -462,7 +454,7 @@ ARCHITECTURE.md §7). Remaining:
 | **M1 — Chat (complete)** | Config + Conversation + Harness + Turn; worker actor + update() pump; minimal sans-I/O request/turn machine including retries; Anthropic adapter; blocking + streaming text. ToolRegistry validation/storage is inert infrastructure only. |
 | **M2 — Tools (complete)** | Snapshot and serialize explicit-schema registrations; multi-round tool states in the sans-I/O machine; main-thread ordered dispatch and automatic resend; transactional tool history and versioned Conversation persistence. |
 | **M3 — Reflection (complete)** | Optional GCC 16 `scry::reflection` component; P2996 lexical schema generation and strict typed marshalling; `scry::reflection::add<Args>()`; annotation/trait descriptions; package consumer and docs demo. |
-| **M4 — Breadth (complete)** | ADR 0008 OpenAI-compatible Chat Completions subset and ADR 0009 ordered per-tool worker execution; retries/backoff polish, cancellation hardening, and their deterministic, fuzz, sanitizer, Curl, and scheduled bounded local-model gates. |
+| **M4 — Breadth (complete)** | ADR 0008 OpenAI-compatible Chat Completions subset; retries/backoff polish, cancellation hardening, and their deterministic, fuzz, sanitizer, Curl, and scheduled bounded local-model gates. ADR 0009's worker-tool experiment was subsequently retired before v0.0.1. |
 | **M5 — Showcase (complete)** | ADR 0010 examples: an opt-in Dear ImGui chat panel and a deterministic grid world where the LLM drives an NPC through explicit tools, with no new public/package surface. |
 
 ### M5 showcase contract

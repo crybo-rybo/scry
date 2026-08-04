@@ -7,6 +7,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <scry/error.hpp>
 #include <scry/json.hpp>
@@ -44,10 +45,12 @@ tool_call(std::string name = "forecast", std::string id = "call-1") {
 
 [[nodiscard]] inline scry::detail::ToolCallEvent
 tool_event(const scry::TurnId turn_id, std::string name = "forecast",
-           std::string id = "call-1") {
+           std::string id = "call-1",
+           const std::size_t remaining = std::numeric_limits<std::size_t>::max()) {
   return {
       .turn_id = turn_id,
       .call = tool_call(std::move(name), std::move(id)),
+      .remaining_exchange_bytes = remaining,
   };
 }
 
@@ -73,13 +76,16 @@ struct PumpFixture {
 
   [[nodiscard]] std::shared_ptr<scry::detail::TurnRoute>
   route(const std::uint64_t id, scry::detail::ToolSnapshot tools,
-        const std::size_t result_limit = 1024) const {
+        const std::size_t result_limit = 1024,
+        const std::size_t exchange_limit =
+            std::numeric_limits<std::size_t>::max()) const {
     return std::make_shared<scry::detail::TurnRoute>(
         scry::TurnId{.value = id}, std::make_shared<std::atomic<bool>>(false), commands,
         conversation, "question",
         scry::detail::TurnRouteOptions{
             .tools = std::move(tools),
             .max_tool_result_bytes = result_limit,
+            .max_exchange_bytes = exchange_limit,
             .max_conversation_bytes = 1024,
         });
   }

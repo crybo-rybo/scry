@@ -1,5 +1,6 @@
 #include "tool_dispatch_test_support.hpp"
 
+#include <array>
 #include <thread>
 #include <variant>
 
@@ -129,6 +130,44 @@ TEST_CASE("fatal tool result failure suppresses every later handler") {
   const auto& result = std::get<scry::detail::ToolResultCommand>(*command).result;
   REQUIRE_FALSE(result);
   CHECK(result.error().category == scry::ErrorCategory::resource_limit);
+}
+
+TEST_CASE("cumulative result failure suppresses remaining calls in the batch") {
+  PumpFixture fixture;
+  std::array<std::size_t, 3> calls{};
+  const auto handler = [&calls](const std::size_t index) {
+    return [&calls, index](scry::Json) -> scry::Result<scry::Json> {
+      ++calls[index];
+      return scry::Json{.text = "{}"};
+    };
+  };
+  const scry::detail::ToolSnapshot tools{
+      registered_tool("first", handler(0)),
+      registered_tool("second", handler(1)),
+      registered_tool("third", handler(2)),
+  };
+  const auto route = fixture.route(307, tools);
+  scry::detail::PumpState pump{fixture.events};
+  pump.add_route(route);
+  constexpr std::size_t two_results_minus_one = 17;
+  REQUIRE(fixture.events->push(
+      tool_event(route->id(), "first", "call-1", two_results_minus_one), 1024));
+  REQUIRE(fixture.events->push(
+      tool_event(route->id(), "second", "call-2", two_results_minus_one), 1024));
+  REQUIRE(fixture.events->push(
+      tool_event(route->id(), "third", "call-3", two_results_minus_one), 1024));
+
+  const auto stats = pump.update({});
+
+  CHECK(stats.events_remaining == 0);
+  CHECK(calls == std::array<std::size_t, 3>{1, 1, 0});
+  CHECK(fixture.commands->size() == 2);
+  auto accepted = fixture.commands->try_pop();
+  auto rejected = fixture.commands->try_pop();
+  REQUIRE(accepted);
+  REQUIRE(rejected);
+  CHECK(std::get<scry::detail::ToolResultCommand>(*accepted).result.has_value());
+  CHECK_FALSE(std::get<scry::detail::ToolResultCommand>(*rejected).result.has_value());
 }
 
 TEST_CASE("detached routes continue dispatching tool calls") {

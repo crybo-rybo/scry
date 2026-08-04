@@ -21,18 +21,17 @@ locally and in hosted CI.
 
 The C++23 runtime selects Anthropic Messages or the strict OpenAI-compatible
 Chat Completions subset from `Config`, including local servers with no API key.
-Explicit and reflected tools accept `ToolRegistrationOptions`: app-thread
-execution remains the default, while an explicit worker-thread opt-in preserves
-provider order, app-thread observer delivery, accepted-turn snapshots,
-transactional resend and commit, cancellation semantics, and exclusive handler
-ownership.
+Every explicit and reflected tool handler executes synchronously inside
+`Harness::update()` on its caller's thread. Provider order, accepted-turn
+snapshots, transactional resend and commit, cancellation semantics, and
+exclusive handler ownership remain part of that single execution model.
 
-M4's deterministic closure passes 277/277 development tests and 48/48 provider
-tests. It includes exact OpenAI request/stream cases, a checked corpus
+M4's retained deterministic closure includes the 48/48 provider tests, exact
+OpenAI request/stream cases, a checked corpus
 and short `scry_openai_fuzz` target, a fragmented transactional OpenAI tool
 round, concurrent Anthropic/OpenAI isolation, a public Curl path/header/SSE
-round, and worker-mode mixed/all-worker ordering, thread-ID, snapshot,
-cancellation, detached-turn, budget, and cooperating-shutdown coverage. The
+round, and app-thread ordering, thread-ID, snapshot, cancellation,
+detached-turn, cumulative-budget, queue-atomicity, and shutdown coverage. The
 provider seam is streaming-only: the dead non-streaming decode path was
 removed (ARCHITECTURE.md §11 records the reintroduction condition). The
 development-era coverage/CRAP gating machinery was retired at the release
@@ -171,7 +170,7 @@ artifacts, and is not claimed as M3 verification.
 | [ADR 0006](docs/adr/0006-m2-agentic-tool-loop.md) | M2 registry snapshots, agentic tool rounds, app-thread dispatch, retry accounting, transactional commit, and Conversation persistence. |
 | [ADR 0007](docs/adr/0007-m3-reflection-contract.md) | Accepted M3 schema/type mapping, strict marshalling, description precedence, optional package component, and no-Glaze public boundary. |
 | [ADR 0008](docs/adr/0008-m4-openai-compatible-contract.md) | Accepted M4 endpoint, authentication, common request/response, streaming, error, and per-dialect state contract for OpenAI-compatible Chat Completions. |
-| [ADR 0009](docs/adr/0009-m4-worker-tool-execution.md) | Accepted M4 per-tool execution policy, handler ownership, ordered control flow, cancellation, observer, and teardown contract. |
+| [ADR 0009](docs/adr/0009-m4-worker-tool-execution.md) | Historical M4 worker-tool policy, superseded before v0.0.1 by the single app-thread execution contract. |
 | [ADR 0010](docs/adr/0010-m5-showcase-contract.md) | Accepted M5 showcase-only boundary, host-owned ImGui lifecycle, deterministic NPC tools, pinned build-only dependency, and acceptance gates. |
 | [ADR 0011](docs/adr/0011-absolute-quality-gates.md) | Historical: absolute quality gates from a single build replaced the merge-base ratchet, bespoke reflection coverage validator, nightly mutation schedule, and model manifest pin. Gating machinery since retired by ADR 0012. |
 | [ADR 0012](docs/adr/0012-release-infrastructure-simplification.md) | v0.0.1 release posture: the coverage/CRAP gating machinery, mutation testing, and feasibility spikes are retired; fuzzing and the showcase move to the nightly ring; behavioral gates (matrix, tests, sanitizers, tidy, package audits) remain. |

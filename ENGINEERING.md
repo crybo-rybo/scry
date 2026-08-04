@@ -193,8 +193,8 @@ clean reflection-OFF install and downstream consumer. M3 evidence does not
 claim a manual clang-p2996 run, randomized reflection property generation, or
 a reflection fuzz target.
 
-M4's per-commit evidence is live. The current development suite passes 277/277
-tests, including exact OpenAI request/stream cases; endpoint, auth,
+M4's retained per-commit evidence is live. The development suite includes
+exact OpenAI request/stream cases; endpoint, auth,
 sampling, usage, error, lifecycle, fragmentation, and byte-limit matrices; the
 fragmented transactional tool round; concurrent cross-dialect isolation; and
 the public Curl path/header/SSE case. The provider slice passes 48/48 tests,
@@ -202,13 +202,17 @@ and `scry_openai_fuzz` joins the existing checked-corpus short fuzz ring. The
 provider seam is streaming-only: the dead non-streaming decode path was
 removed with its tests (see the evolution register in ARCHITECTURE.md §11).
 
-ADR 0009 verification covers default and opted-in thread IDs, FIFO registration
-and accepted-turn snapshots, all-worker and mixed batches, result
-acknowledgements and cumulative budgets, exception/failure suppression,
-cancellation, observer thread affinity, detached execute/resend/commit, queued
-turns, and a bounded cooperating teardown handler under TSan. A deliberately
-non-cooperating user handler remains outside Scry's enforceable shutdown bound
-and is documented rather than represented by a hanging test.
+The app-thread-only tool contract is verified at both component and threaded
+integration seams. `cumulative result failure suppresses remaining calls in the
+batch` proves route-level cumulative-budget gating before suffix side effects;
+`tool call batches fail atomically at the event queue boundary` proves an
+oversized provider batch exposes no dispatchable prefix; and `a queued turn
+waits for the active turn's app-thread tool round` proves serialized ownership
+through tool await. `Harness destruction stops a worker awaiting an app-thread
+tool result` covers teardown without handlers or callbacks, while `a queued
+turn command is consumed before a zero-backoff retry wakes` retains the worker
+actor's command-intake regression after the worker-handler protocol removal.
+The full threaded suite remains covered by TSan.
 
 The scheduled/manual `.github/workflows/nightly.yml` pipeline runs CodeQL
 v4, long SSE/Anthropic/OpenAI fuzz jobs, and the showcase contract; the
