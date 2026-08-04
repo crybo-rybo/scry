@@ -195,10 +195,11 @@ toolchain failure from changing the C++23 library configuration surface while
 remaining part of `preflight.sh` and the definition of done (QA-013).
 
 The shared `scripts/ci-reflection.sh` gate is called by local preflight and
-hosted CI. It performs a fresh GCC 16/P2996 build, runs the full configured
-suite (27 reflection-labelled tests: 22 runtime/schema/codec/bridge cases plus
-five compile-fail diagnostics), audits and consumes a clean reflection
-install, then reruns the reflection tests in a separate ASan+UBSan build.
+hosted CI. It performs a fresh GCC 16/P2996+P3394 capability-probed build, runs
+the full configured suite (26 reflection-labelled tests: 22 runtime, schema,
+codec, bridge, and registration cases plus four compile-fail diagnostics),
+audits and consumes a clean reflection install, then reruns the reflection
+tests in a separate ASan+UBSan build.
 The core gate separately audits a
 clean reflection-OFF install and downstream consumer. M3 evidence does not
 claim a manual clang-p2996 run, randomized reflection property generation, or

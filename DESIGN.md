@@ -367,11 +367,12 @@ turn failures. The canonical parsed JSON value is the dispatch boundary:
 duplicate lexical keys have already been collapsed by canonical parsing and
 are not separately observable to the reflected decoder.
 
-Parameter descriptions use Scry's P3394 `description` annotation when
-supported. `tool_traits<Args>::descriptions` is the portable path and explicit
-override; a matching trait entry wins while an absent entry falls back to the
-annotation. Unknown/duplicate trait names and duplicate Scry description
-annotations are compile-time errors.
+Parameter descriptions use only Scry's P3394 `description` annotation. A
+member may have at most one Scry description annotation; duplicates are a
+compile-time error with a stable Scry diagnostic. Unrelated annotations are
+ignored, and an unannotated member omits `description`. Reflection
+configuration compiles the annotation-query API Scry uses rather than
+accepting a compiler from its version or baseline reflection macro alone.
 
 Handlers receive a moved `Args` and may return a supported value directly or
 inside `scry::Result`. Raw `Json`, `void`, `Status`, references, futures, and
@@ -397,8 +398,8 @@ canonical `get_application_status` example, need no such policy.
 reflection header and installed target expose only Scry-owned and standard
 types; compiled implementation reaches Glaze through a Scry-owned JSON bridge.
 
-The live M3 verification path runs 27 reflection-labelled tests: 22 runtime,
-schema, codec, bridge, and registration cases plus five stable-diagnostic
+The live M3 verification path runs 26 reflection-labelled tests: 22 runtime,
+schema, codec, bridge, and registration cases plus four stable-diagnostic
 compile failures, repeated under a separate GCC 16 ASan+UBSan build. The
 milestone-era gcovr coverage floors on the codec and bridge were retired at
 the release posture
@@ -483,7 +484,7 @@ ARCHITECTURE.md §7). Remaining:
 | **M0 — Skeleton (complete)** | Compile-only public header sketch + canonical example; target-based build/install/package layout; stable Linux + macOS core CI; GCC 16 reflection feasibility with Glaze; clang-p2996 as a non-gating experiment; libcurl SSE feasibility probe. No runtime loop. |
 | **M1 — Chat (complete)** | Config + Conversation + Harness + Turn; worker actor + update() pump; minimal sans-I/O request/turn machine including retries; Anthropic adapter; blocking + streaming text. ToolRegistry validation/storage is inert infrastructure only. |
 | **M2 — Tools (complete)** | Snapshot and serialize explicit-schema registrations; multi-round tool states in the sans-I/O machine; main-thread ordered dispatch and automatic resend; transactional tool history and versioned Conversation persistence. |
-| **M3 — Reflection (complete)** | Optional GCC 16 `scry::reflection` component; P2996 lexical schema generation and strict typed marshalling; `scry::reflection::add<Args>()`; annotation/trait descriptions; package consumer and docs demo. |
+| **M3 — Reflection (complete)** | Optional GCC 16 `scry::reflection` component; P2996 lexical schema generation and strict typed marshalling; `scry::reflection::add<Args>()`; P3394 annotation descriptions; package consumer and docs demo. |
 | **M4 — Breadth (complete)** | ADR 0008 OpenAI-compatible Chat Completions subset; retries/backoff polish, cancellation hardening, and their deterministic, fuzz, sanitizer, Curl, and scheduled bounded local-model gates. ADR 0009's worker-tool experiment was subsequently retired before v0.0.1. |
 | **M5 — Showcase (complete)** | ADR 0010 examples: an opt-in Dear ImGui chat panel and a deterministic grid world where the LLM drives an NPC through explicit tools, with no new public/package surface. |
 

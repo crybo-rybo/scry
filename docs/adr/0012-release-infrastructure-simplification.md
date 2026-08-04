@@ -2,6 +2,8 @@
 
 - Status: Accepted
 - Date: 2026-07-20
+- Amended: 2026-08-03 — reflection suite membership follows the live M3
+  contract while the retained gate remains unchanged
 - Amends: [ADR 0011](0011-absolute-quality-gates.md) (retires its gating
   machinery), [ADR 0010](0010-m5-showcase-contract.md) (moves the showcase
   gate to the nightly ring)
@@ -61,9 +63,10 @@ Retained, unchanged:
 - ASan+UBSan and TSan suites per commit (TSan keeps the
   `--repeat until-fail:3` flake detection).
 - clang-format (pinned) and clang-tidy.
-- The GCC 16 reflection leg: build, 27-test suite, clean component install,
-  downstream component consumer, compiled core-surface proof, and the
-  separate ASan+UBSan rerun — via `scripts/ci-reflection.sh`.
+- The GCC 16 reflection leg: build, the then-27-test suite (current membership
+  is governed by the amendment below), clean component install, downstream
+  component consumer, compiled core-surface proof, and the separate
+  ASan+UBSan rerun — via `scripts/ci-reflection.sh`.
 - **Every existing behavioral test at acceptance.** The suites written to
   satisfy the retired gates are real tests; the gates went, not the tests.
   Their forward-maintenance lifetime is clarified below.
@@ -97,6 +100,19 @@ Retired or moved:
   tidy, ASan+UBSan, TSan, reflection), preserving QA-011's one-command local
   equivalence. The `.agents/` preflight skill is deleted; AGENTS.md carries
   the workflow.
+
+## Amendment: Reflection suite membership (2026-08-03)
+
+The retained reflection gate is unchanged, but its live suite now contains 26
+tests: 22 runtime/schema/codec/bridge/registration cases and four compile-fail
+diagnostics. The annotation-only description contract retired two
+trait-validation fixtures whose production surface was removed and added one
+duplicate-annotation diagnostic. ADR 0007 records that clean-break contract.
+
+The original 27-test count above remains as the acceptance-time snapshot for
+this decision. This amendment governs the current `scripts/ci-reflection.sh`
+membership; build, component installation, downstream consumption, compiled
+core-surface isolation, and the separate ASan+UBSan rerun remain retained.
 
 ## Consequences
 

@@ -54,7 +54,7 @@ The M3 reflection component remains complete. Typed P2996 schema generation,
 strict marshalling, and the optional reflection package component are
 implemented under
 [ADR 0007](docs/adr/0007-m3-reflection-contract.md). The supported GCC 16 gate
-builds the reflected example and standalone header, runs 27 schema, codec,
+builds the reflected example and standalone header, runs 26 schema, codec,
 bridge, registration, and compile-fail tests, audits a clean component install,
 runs a downstream
 `find_package(scry CONFIG REQUIRED COMPONENTS reflection)` consumer, and
@@ -192,7 +192,7 @@ artifacts, and is not claimed as M3 verification.
 | [ADR 0004](docs/adr/0004-live-quality-ratchet.md) | Historical merge-base quality ratchet; superseded by ADR 0011. |
 | [ADR 0005](docs/adr/0005-m1-runtime-and-test-foundation.md) | Compiled M1 runtime, pinned dependencies, internal contracts, and chat-only milestone boundary. |
 | [ADR 0006](docs/adr/0006-m2-agentic-tool-loop.md) | M2 registry snapshots, agentic tool rounds, app-thread dispatch, retry accounting, transactional commit, and Conversation persistence. |
-| [ADR 0007](docs/adr/0007-m3-reflection-contract.md) | Accepted M3 schema/type mapping, strict marshalling, description precedence, optional package component, and no-Glaze public boundary. |
+| [ADR 0007](docs/adr/0007-m3-reflection-contract.md) | Accepted M3 schema/type mapping, strict marshalling, P3394-only parameter descriptions, optional package component, and no-Glaze public boundary. |
 | [ADR 0008](docs/adr/0008-m4-openai-compatible-contract.md) | Accepted M4 endpoint, authentication, common request/response, streaming, error, and per-dialect state contract for OpenAI-compatible Chat Completions. |
 | [ADR 0009](docs/adr/0009-m4-worker-tool-execution.md) | Historical M4 worker-tool policy, superseded before v0.0.1 by the single app-thread execution contract. |
 | [ADR 0010](docs/adr/0010-m5-showcase-contract.md) | Accepted M5 showcase-only boundary, host-owned ImGui lifecycle, deterministic NPC tools, pinned build-only dependency, and acceptance gates. |

@@ -289,9 +289,10 @@ Additional practices:
   reflection controls omission; `std::optional` controls nullability. The
   decoder constructs normal C++ defaults and validates the canonical parsed
   object before invocation.
-- **Descriptions have explicit precedence.** P3394 Scry annotations are the
-  primary inline source when supported; `tool_traits<Args>` is the portable
-  path and per-member override.
+- **Descriptions have one source.** P3394 Scry annotations are the only
+  reflected parameter-description source. The reflection configure gate
+  compiles the annotation-query operations used by schema generation; no
+  portable trait or parallel metadata path crosses this boundary.
 - **Canonical parsed input is the seam.** Unknown/missing/type/range checks run
   on the canonical unique-key object. Detecting duplicate lexical JSON keys
   would require a different parser boundary and is not smuggled into M3.
@@ -418,14 +419,14 @@ therefore remains libcurl plus internal Glaze.
   showcase script passes locally and in hosted CI.
 - CI matrix: GCC 16 with `-std=c++26 -freflection` is the supported M3
   component toolchain. The live `scripts/ci-reflection.sh` gate performs a
-  fresh P2996-probed build, the reflection header audit, the 27-test schema,
-  codec, bridge, registration, and compile-fail suite, a clean component
-  install audit, a downstream
+  fresh P2996/P3394 capability-probed build, the reflection header audit, the
+  26-test schema, codec, bridge, registration, and compile-fail suite, a clean
+  component install audit, a downstream
   `find_package(scry CONFIG REQUIRED COMPONENTS reflection)` consumer, and a
   core-only C++23 consumer compiled with non-reflection GCC 14 against the
   same reflection-enabled installation — the compiled proof that the core
   surface stays C++23 and reflection never leaks unrequested (TOOL-003). A
-  separate GCC 16 ASan+UBSan build reruns all 27 reflection-labelled tests.
+  separate GCC 16 ASan+UBSan build reruns all 26 reflection-labelled tests.
   Stable GCC/Clang continue to build, test, install, and
   consume the
   reflection-OFF C++23 core on Linux and macOS; its clean-install audit rejects
@@ -456,7 +457,7 @@ Every "boring first" choice is recorded here with the condition that triggers ev
 | Blocking `send`-and-wait built on pump-until-complete | Coroutine-scheduler apps appear as users | `co_await`-able turn awaitable layered on the event queue; core remains callback/pump-based |
 | Provider factory keyed on internal enum, no plugin API | A third-party provider that can't be upstreamed | Public adapter concept + registration hook; only then |
 | OpenAI-compatible common Chat Completions subset only | A supported deployment requires Azure, Responses API, structured output, or another extension | Ratify a separate adapter/contract; never grow compatibility by wire-format guessing |
-| Closed M3 reflected-value matrix; P3394 descriptions plus `tool_traits` override | A concrete tool needs an unsupported type/constraint or metadata source | Add one schema/decode/encode/diagnostic contract at a time; keep the trait as portable fallback and deliberate override |
+| Closed M3 reflected-value matrix; P3394-only member descriptions with no portable reflection-metadata fallback | A concrete tool needs an unsupported type/constraint, a supported toolchain cannot provide P3394, or production use needs another metadata source | Ratify one schema/decode/encode/diagnostic or metadata contract at a time; do not reintroduce compatibility shims or parallel description authorities |
 | No connection pooling beyond curl defaults | Measured connect/TLS overhead in streaming-heavy use | curl share/multi connection reuse, invisible above the transport seam |
 | Scry-owned `UniqueFunction` at callable boundaries | All supported macOS/Linux standard libraries ship a conforming `std::move_only_function` and a pre-1.0 API change is acceptable | Replace the small owned erasure with the standard facility after ABI and allocation benchmarks |
 | Additive-only ToolRegistry with immutable accepted-turn snapshots | A concrete hot-reload or dynamic-plugin use case needs mutation | Explicit replace/remove operations with documented snapshot and handler-lifetime semantics |
