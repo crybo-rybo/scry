@@ -160,9 +160,9 @@ while remaining part of `preflight.sh` and the definition of done (QA-013).
 
 ## 7. Workflow & Change Hygiene
 
-- **Trunk-based; every change lands through a PR.** The PR is the unit of review: a forced read of the diff, a written description, and green gates before merge. Squash-merge, conventional-commit messages (the changelog is generated, not written).
+- **Trunk-based; every change lands through a PR.** The PR is the unit of review: a forced read of the diff, a written description, and green gates before merge. Squash-merge, conventional-commit messages. User-visible changes add an entry under **Unreleased** in [CHANGELOG.md](CHANGELOG.md); a release rolls that section into a dated version heading ([RELEASING.md](RELEASING.md)).
 - **Decisions get ADRs.** Anything that would surprise a future contributor gets a short Architecture Decision Record in `docs/adr/`. The evolution register in ARCHITECTURE.md §11 is the standing index of "deliberately simple" decisions; ADRs capture the one-off forks in the road.
-- **Definition of Done** for any change: gates green; docs updated if behavior or a decision changed (the load-bearing docs — including [REQUIREMENTS.md](REQUIREMENTS.md), the normative register — are not ceremonial; a stale doc is a bug); public API changes come with a compiling example; deliberate simplifications added a row to the evolution register.
+- **Definition of Done** for any change: gates green; docs updated if behavior or a decision changed (the load-bearing docs — including [REQUIREMENTS.md](REQUIREMENTS.md), the normative register — are not ceremonial; a stale doc is a bug); user-visible changes recorded in [CHANGELOG.md](CHANGELOG.md); public API changes come with a compiling example; deliberate simplifications added a row to the evolution register.
 - **Dependency policy** (restating ARCHITECTURE.md §9 as process): new dependencies require a written justification committed with the change. Toolchains are pinned and upgraded deliberately — on this project the reflection compiler is experimental, so "toolchain drift" is a first-class risk tracked like a dependency.
 
 ## 8. Right-Sized Process

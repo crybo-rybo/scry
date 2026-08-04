@@ -78,6 +78,7 @@ ctest --test-dir build/dev --output-on-failure
 ## Definition of done
 
 A change is done only when its relevant tests pass, the core local gate passes,
-load-bearing documentation is current, and the final diff has been reviewed
+load-bearing documentation is current, user-visible changes have an entry under
+Unreleased in `CHANGELOG.md`, and the final diff has been reviewed
 for correctness, scope, and accidental artifacts. Report any check that could
 not run and why.

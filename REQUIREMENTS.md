@@ -154,7 +154,7 @@ ID scheme: `SCRY-<AREA>-NNN`, abbreviated to `<AREA>-NNN` in the tables below. I
 | QA-009 | MUST | Every bug fix lands with a regression test (machine-level replay where applicable). |
 | QA-010 | SHOULD | The scheduled weekly ring runs deep static analysis (CodeQL), long fuzz runs on all protocol targets, the showcase gate, and the reflection component gate. The end-to-end smoke against a real local model runs on manual dispatch only, against a checksum-pinned server. |
 | QA-011 | SHOULD | Everything CI enforces is runnable locally with one command (`scripts/preflight.sh`), which reports any leg the host toolchain cannot provide. |
-| QA-012 | MUST | Definition of Done includes updating the four load-bearing docs — including this register — when behavior or a decision changes. |
+| QA-012 | MUST | Definition of Done includes updating the four load-bearing docs — including this register — when behavior or a decision changes, and recording user-visible changes in `CHANGELOG.md`. |
 | QA-013 | MUST | Every exported public API declaration is documented, and the Doxygen HTML site builds without warnings on pull requests and every push to `main`. The documentation toolchain MUST remain build-only and outside installed/exported package metadata. |
 
 ## Verification map

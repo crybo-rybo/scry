@@ -31,7 +31,7 @@ Built for the apps that live in C++ — games, GUI tools, simulators — where y
   onto the same registry.
 
 Scry is pre-1.0: no API or ABI stability is promised yet, and breaking changes
-land with a changelog notice.
+land with a notice in [CHANGELOG.md](CHANGELOG.md).
 
 ## Requirements
 
