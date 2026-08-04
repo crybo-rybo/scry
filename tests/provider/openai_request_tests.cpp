@@ -127,7 +127,18 @@ TEST_CASE("OpenAI request is semantically equivalent to the common contract") {
           R"({"model":"chat-model","messages":[{"role":"system","content":"Be concise"},{"role":"user","content":"Hello"},{"role":"assistant","content":"Working","tool_calls":[{"id":"call-weather","type":"function","function":{"name":"weather","arguments":"{\"city\":\"Paris\"}"}}]},{"role":"tool","tool_call_id":"call-weather","content":"{\"temperature\":21}"},{"role":"tool","tool_call_id":"call-other","content":"{\"error\":\"closed\"}"}],"temperature":1.5,"max_tokens":64,"stream":true,"top_p":0.0,"stream_options":{"include_usage":true},"tools":[{"type":"function","function":{"name":"weather","description":"Get weather","parameters":{"type":"object","required":["city"]}}}]})"));
   CHECK(encoded->body.find("is_error") == std::string::npos);
   CHECK(encoded->body.find("parallel_tool_calls") == std::string::npos);
+  CHECK(encoded->body.find("reasoning_effort") == std::string::npos);
   CHECK(encoded->body.find("\"strict\"") == std::string::npos);
+}
+
+TEST_CASE("OpenAI request can disable reasoning without changing the default") {
+  OpenAiAdapter adapter;
+  auto no_reasoning = config();
+  no_reasoning.reasoning_mode = ReasoningMode::disabled;
+
+  const auto encoded = adapter.make_request(no_reasoning, request());
+  REQUIRE(encoded);
+  CHECK(encoded->body.find(R"("reasoning_effort":"none")") != std::string::npos);
 }
 
 TEST_CASE("OpenAI endpoint normalization accepts only the documented base forms") {

@@ -4,6 +4,7 @@
 - Date: 2026-07-18
 - Amended: 2026-07-19 — the production provider seam is streaming-only
 - Amended: 2026-08-03 — shared canonical JSON and semantic request fixtures
+- Amended: 2026-08-04 — narrow optional reasoning disablement
 
 ## Context
 
@@ -21,7 +22,7 @@ provider-specific guessing.
 
 ## Decision
 
-### Endpoint, authentication, and sampling
+### Endpoint, authentication, sampling, and reasoning
 
 For `ProviderDialect::openai_compatible`, Scry removes trailing slashes from
 `Config::base_url` and normalizes exactly these forms:
@@ -44,8 +45,15 @@ provider seam has no request-mode toggle.
 OpenAI-compatible sampling accepts finite `temperature` in `[0, 2]`, optional
 finite `top_p` in `[0, 1]`, and a present positive `max_tokens`. Anthropic keeps
 its existing, narrower validation. M4 sends the legacy `max_tokens` field
-because it is the broadest local-server denominator; newer reasoning-model
-fields are outside this compatibility contract.
+because it is the broadest local-server denominator.
+
+`Config::reasoning_mode` is deliberately narrower than a general reasoning
+configuration. `provider_default` is the default and adds no request field.
+`disabled` is accepted only with `ProviderDialect::openai_compatible` and emits
+`reasoning_effort: "none"`; selecting it makes endpoint support an explicit host
+deployment responsibility. Anthropic rejects `disabled` rather than silently
+ignoring it. Scry does not expose low/medium/high effort levels, reasoning token
+budgets, summaries, or provider-specific request extension maps.
 
 ### Request mapping
 
@@ -53,12 +61,13 @@ The adapter sends only the common subset:
 
 - model, messages, temperature, optional top-p, positive max-tokens, and
   `stream: true`;
-- `stream_options: {"include_usage": true}`; and
+- `stream_options: {"include_usage": true}`;
+- optional `reasoning_effort: "none"` only when reasoning is disabled; and
 - optional function tools with name, description, and parameters.
 
 Scry does not send `n`, `strict`, `parallel_tool_calls`, `tool_choice`, response
-formats, log probabilities, or provider-specific extensions. Optional values
-are omitted rather than encoded as `null`.
+formats, log probabilities, reasoning effort levels, or generic provider-specific
+extensions. Optional values are omitted rather than encoded as `null`.
 
 The system prompt becomes the first `role: "system"` message. Neutral user and
 assistant text blocks are concatenated in block order without inserted
@@ -149,8 +158,9 @@ different-dialect Harness instances.
 
 M4 verification includes:
 
-- semantic request fixtures for endpoint, headers, auth, sampling, system/text,
-  tools, tool calls, and expanded tool-result messages;
+- semantic request fixtures for endpoint, headers, auth, sampling, default-omitted
+  and explicitly disabled reasoning, system/text, tools, tool calls, and expanded
+  tool-result messages;
 - streaming fixtures for role/text/usage, finish-reason mapping, `[DONE]`,
   fragmented and interleaved tool calls, exact byte limits, metadata conflicts,
   sparse indices, malformed arguments, error objects, rejected legacy fields,
@@ -176,8 +186,8 @@ sign or hash requests must pin a Scry version or canonicalize independently.
 
 The adapter supports a documented compatibility subset, not every OpenAI or
 local-server extension. Adding Responses API, Azure endpoint shapes, reasoning
-model token fields, structured outputs, or provider-specific tool controls
-requires a new contract rather than silent wire drift.
+effort levels or token fields, structured outputs, or provider-specific tool
+controls requires a new contract rather than silent wire drift.
 
 Supported deployments must expose Chat Completions SSE. A target that genuinely
 cannot serve SSE triggers the explicit evolution path above; it does not add an

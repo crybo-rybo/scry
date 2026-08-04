@@ -33,7 +33,8 @@ Scry lets an existing C++ application add LLM capabilities — chat *and* tool u
 - Provider abstraction at the message level, not the HTTP level: Anthropic and
   the ADR 0008 OpenAI-compatible common subset for vLLM, Ollama, llama.cpp
   server, and LM Studio sit behind a config-only switch.
-- Server/model configuration (base URL, auth, model, sampling params) as simple declarative config.
+- Server/model configuration (base URL, auth, model, sampling params, optional
+  reasoning disablement) as simple declarative config.
 - Streaming, cancellation, and retries handled internally with clear thread guarantees.
 - Examples that prove the public C++23 surface embeds in a real immediate-mode
   GUI and a small stateful game loop without expanding Scry's API or lifecycle.
@@ -62,7 +63,7 @@ The app touches five core concepts:
 
 | Type | Responsibility |
 |------|---------------|
-| `scry::Config` | Plain value aggregate: base URL, API key, model, sampling params, provider dialect. Designated-initializer friendly. |
+| `scry::Config` | Plain value aggregate: base URL, API key, model, sampling params, reasoning mode, provider dialect. Designated-initializer friendly. |
 | `scry::Conversation` | Owns message history (system prompt, user/assistant turns, tool calls/results). Serializable for persistence. |
 | `scry::ToolRegistry` | Named tools: description + schema + callable. Owned by a Harness and snapshotted when a turn is accepted. |
 | `scry::Turn` | Move-only handle to one in-flight agentic exchange. Exposes `id()` and `cancel()`; the callbacks for the turn are supplied to `send()`. |
@@ -412,12 +413,14 @@ remain entirely inside the adapter, and every adapter receives a `Config` that
 `Harness::create` already validated. The OpenAI-compatible dialect deliberately
 targets a *common subset*, not parity: it normalizes an origin, a `/v1` base,
 or a full `/v1/chat/completions` endpoint without Azure inference; makes
-authentication optional so local servers need no key; sends only the fields
-every listed server honors; and expands each neutral tool result into its own
-ordered `role: "tool"` message. ADR 0008 fixes that contract and PROV-010/011
-state its binding form, including the strict streaming lifecycle: bounded
-index-accumulated tool fragments, a required finish reason, and `[DONE]` as the
-sole successful terminal marker, with anything else a protocol error.
+authentication optional so local servers need no key; keeps the portable
+request baseline free of provider extensions; and expands each neutral tool
+result into its own ordered `role: "tool"` message. One explicit opt-in exists:
+`ReasoningMode::disabled` sends `reasoning_effort: "none"` for endpoints that
+support it, while the default omits the field. ADR 0008 fixes that contract and
+PROV-010/011 state its binding form, including the strict streaming lifecycle:
+bounded index-accumulated tool fragments, a required finish reason, and `[DONE]`
+as the sole successful terminal marker, with anything else a protocol error.
 
 The adapter seam is streaming-only: the runtime always requests
 `stream: true` and decodes every response through the stream path, so there is

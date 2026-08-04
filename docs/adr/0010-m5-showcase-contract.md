@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-07-18
+- Amended: 2026-08-04 — live NPC reasoning control and fail-closed completion
 
 ## Context
 
@@ -96,6 +97,13 @@ local OpenAI-compatible endpoint from environment configuration. World state is
 ephemeral and has no rollback. A durable side effect would require
 application-owned idempotency keys or reconciliation, exactly as required by
 LOOP-008.
+
+The documented Qwen-backed executable selects `ReasoningMode::disabled`, which
+uses ADR 0008's narrow OpenAI-compatible request control so the model spends its
+output budget on the tool loop instead of an unobserved reasoning trace. It
+prints every completed tool call and treats a truncated response, empty final
+answer, or completion with no tool calls as failure. These are host-side
+configuration and acceptance choices; they add no showcase-specific Scry API.
 
 ### Dear ImGui dependency
 

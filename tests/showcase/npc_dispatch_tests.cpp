@@ -40,6 +40,7 @@ data: [DONE]
       .base_url = "http://127.0.0.1:1/v1",
       .model = "showcase-test-model",
       .dialect = scry::ProviderDialect::openai_compatible,
+      .reasoning_mode = scry::ReasoningMode::disabled,
   };
   config.retry.max_attempts = 1;
   config.retry.jitter_ratio = 0.0;
@@ -103,6 +104,7 @@ TEST_CASE("NPC registrations execute on the update thread and resend observation
     CHECK(initial.find(name) != std::string::npos);
   }
   CHECK(initial.find(R"("additionalProperties":false)") != std::string::npos);
+  CHECK(initial.find(R"("reasoning_effort":"none")") != std::string::npos);
 
   const auto& resend = requests->requests().back().body;
   CHECK(resend.find(R"("tool_call_id":"call-look")") != std::string::npos);

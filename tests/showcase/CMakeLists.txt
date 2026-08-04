@@ -1,6 +1,7 @@
 add_executable(
   scry_showcase_tests
   chat_panel_tests.cpp
+  npc_completion_tests.cpp
   npc_dispatch_tests.cpp
   npc_world_tests.cpp
   "${PROJECT_SOURCE_DIR}/examples/npc/world.cpp"
