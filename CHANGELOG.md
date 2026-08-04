@@ -35,6 +35,11 @@ promised stable — see the pre-1.0 notes below.
   a strict OpenAI-compatible Chat Completions subset covering OpenAI, vLLM,
   Ollama, llama.cpp server, and LM Studio, with authentication optional so
   local servers need no API key.
+- Optional typed reasoning control: `Config::reasoning_mode` defaults to
+  `ReasoningMode::provider_default`, which leaves the portable request
+  unchanged; `ReasoningMode::disabled` sends `reasoning_effort: "none"` and is
+  validated at `Harness::create()` as supported only on the OpenAI-compatible
+  dialect.
 - Cooperative cancellation (`Turn::cancel()`), bounded retries with
   exponential backoff and jitter honoring `Retry-After`, configurable
   resource bounds on payloads and pending work, and TLS peer verification on
