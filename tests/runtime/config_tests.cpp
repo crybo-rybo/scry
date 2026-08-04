@@ -1,12 +1,14 @@
 #include "runtime/config.hpp"
 #include "runtime/startup.hpp"
 
+#include <array>
 #include <catch2/catch_test_macros.hpp>
 #include <chrono>
 #include <cstdint>
 #include <limits>
 #include <new>
 #include <scry/config.hpp>
+#include <scry/error.hpp>
 #include <string>
 #include <system_error>
 
@@ -41,6 +43,10 @@ TEST_CASE("configuration rejects missing endpoint and model") {
 
   config = valid_config();
   config.base_url = "https://example.test#fragment";
+  CHECK_FALSE(scry::detail::validate_config(config));
+
+  config = valid_config();
+  config.base_url = "https://example .test";
   CHECK_FALSE(scry::detail::validate_config(config));
 
   config = valid_config();
@@ -165,7 +171,8 @@ TEST_CASE("OpenAI-compatible sampling rejects every invalid numeric shape") {
   CHECK_FALSE(scry::detail::validate_config(config));
 }
 
-TEST_CASE("configuration rejects zero timeouts and limits") {
+TEST_CASE("configuration rejects zero timeouts, undersized limits, and zero tool "
+          "rounds") {
   using namespace std::chrono_literals;
 
   auto config = valid_config();
@@ -177,15 +184,66 @@ TEST_CASE("configuration rejects zero timeouts and limits") {
   CHECK_FALSE(scry::detail::validate_config(config));
 
   config = valid_config();
+  config.timeouts.transfer = {};
+  CHECK_FALSE(scry::detail::validate_config(config));
+
+  config = valid_config();
   config.timeouts.transfer = -1ms;
   CHECK_FALSE(scry::detail::validate_config(config));
 
   config = valid_config();
-  config.limits.max_queued_event_bytes_per_turn = 0;
+  config.limits.max_queued_event_bytes_per_turn = 1023;
   CHECK_FALSE(scry::detail::validate_config(config));
 
   config = valid_config();
-  config.limits.max_queued_event_bytes_per_turn = 1023;
+  config.max_tool_rounds = 0;
+  CHECK_FALSE(scry::detail::validate_config(config));
+}
+
+TEST_CASE("configuration rejects a zero value for every resource limit") {
+  constexpr std::array limits{
+      &scry::ResourceLimits::max_pending_turns,
+      &scry::ResourceLimits::max_sse_event_bytes,
+      &scry::ResourceLimits::max_response_bytes,
+      &scry::ResourceLimits::max_tool_arguments_bytes,
+      &scry::ResourceLimits::max_tool_result_bytes,
+      &scry::ResourceLimits::max_queued_event_bytes_per_turn,
+      &scry::ResourceLimits::max_conversation_bytes,
+  };
+  for (const auto member : limits) {
+    auto config = valid_config();
+    config.limits.*member = 0;
+    const auto status = scry::detail::validate_config(config);
+    REQUIRE_FALSE(status);
+    CHECK(status.error().category == scry::ErrorCategory::invalid_config);
+  }
+}
+
+TEST_CASE("configuration rejects negative retry backoffs and out-of-range jitter") {
+  using namespace std::chrono_literals;
+
+  auto config = valid_config();
+  config.retry.initial_backoff = -1ms;
+  CHECK_FALSE(scry::detail::validate_config(config));
+
+  config = valid_config();
+  config.retry.max_backoff = -1ms;
+  CHECK_FALSE(scry::detail::validate_config(config));
+
+  config = valid_config();
+  config.retry.max_elapsed = -1ms;
+  CHECK_FALSE(scry::detail::validate_config(config));
+
+  config = valid_config();
+  config.retry.jitter_ratio = std::numeric_limits<double>::infinity();
+  CHECK_FALSE(scry::detail::validate_config(config));
+
+  config = valid_config();
+  config.retry.jitter_ratio = -0.1;
+  CHECK_FALSE(scry::detail::validate_config(config));
+
+  config = valid_config();
+  config.retry.jitter_ratio = 1.1;
   CHECK_FALSE(scry::detail::validate_config(config));
 }
 

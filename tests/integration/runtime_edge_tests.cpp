@@ -1,6 +1,5 @@
-#include "core/provider.hpp"
 #include "runtime/test_access.hpp"
-#include "support/transport/fake_transport.hpp"
+#include "support/harness_test_support.hpp"
 
 #include <atomic>
 #include <catch2/catch_test_macros.hpp>
@@ -18,6 +17,7 @@
 #include <utility>
 
 using namespace std::chrono_literals;
+using namespace scry::test_support;
 
 namespace {
 
@@ -53,18 +53,12 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
 
 )";
 
-[[nodiscard]] scry::Config test_config() {
-  auto config = scry::Config{
-      .base_url = "http://127.0.0.1:1",
-      .api_key = "sanitized-test-key",
-      .model = "test-model",
-  };
-  config.retry.jitter_ratio = 0.0;
+// These cases are about retrying, so unlike the shared single-attempt config
+// this one leaves the retry budget at its default and only pins the jitter.
+[[nodiscard]] scry::Config retrying_config() {
+  auto config = scry::test_support::test_config();
+  config.retry.max_attempts = scry::RetryPolicy{}.max_attempts;
   return config;
-}
-
-[[nodiscard]] std::unique_ptr<scry::detail::ProviderAdapter> provider() {
-  return scry::detail::make_provider_adapter(scry::ProviderDialect::anthropic);
 }
 
 [[nodiscard]] scry::test::ScriptedExchange success() {
@@ -87,19 +81,6 @@ transient_failure(const std::string_view message = "transient failure") {
           .retryable = true,
       }),
   };
-}
-
-template <typename Predicate>
-[[nodiscard]] bool pump_until(scry::Harness& harness, Predicate&& predicate) {
-  constexpr std::size_t maximum_pumps = 100'000;
-  for (std::size_t pump = 0; pump < maximum_pumps; ++pump) {
-    static_cast<void>(harness.update());
-    if (std::forward<Predicate>(predicate)()) {
-      return true;
-    }
-    std::this_thread::yield();
-  }
-  return false;
 }
 
 class RetrySignalTransport final : public scry::detail::Transport {
@@ -194,16 +175,10 @@ private:
   };
 }
 
-[[nodiscard]] scry::ToolHandler handler() {
-  return [](scry::Json) -> scry::Result<scry::Json> {
-    return scry::Json{.text = R"({"ok":true})"};
-  };
-}
-
 } // namespace
 
 TEST_CASE("a transient failure retries once and reports the successful attempt") {
-  auto config = test_config();
+  auto config = retrying_config();
   config.retry.initial_backoff = 0ms;
   config.retry.max_backoff = 0ms;
   auto fake = std::make_unique<scry::test::FakeTransport>();
@@ -228,7 +203,7 @@ TEST_CASE("a transient failure retries once and reports the successful attempt")
 }
 
 TEST_CASE("semantic output prevents a retry after a transient transport failure") {
-  auto config = test_config();
+  auto config = retrying_config();
   config.retry.initial_backoff = 0ms;
   config.retry.max_backoff = 0ms;
   auto fake = std::make_unique<scry::test::FakeTransport>();
@@ -272,7 +247,7 @@ TEST_CASE("semantic output prevents a retry after a transient transport failure"
 }
 
 TEST_CASE("cancelling a pending retry wakes the worker without another attempt") {
-  auto config = test_config();
+  auto config = retrying_config();
   config.retry.initial_backoff = 30s;
   config.retry.max_backoff = 30s;
   config.retry.max_elapsed = 60s;
@@ -306,7 +281,7 @@ TEST_CASE("cancelling a pending retry wakes the worker without another attempt")
 
 TEST_CASE("a completion one byte over the Conversation limit is not committed") {
   constexpr std::string_view question = "limit";
-  auto config = test_config();
+  auto config = retrying_config();
   config.limits.max_conversation_bytes = question.size() + answer.size() - 1;
   auto fake = std::make_unique<scry::test::FakeTransport>();
   fake->enqueue(success());
@@ -329,7 +304,7 @@ TEST_CASE("a completion one byte over the Conversation limit is not committed") 
 TEST_CASE("post-completion cancellation is safe and idempotent") {
   auto fake = std::make_unique<scry::test::FakeTransport>();
   fake->enqueue(success());
-  auto harness = scry::detail::HarnessTestAccess::create(test_config(), provider(),
+  auto harness = scry::detail::HarnessTestAccess::create(retrying_config(), provider(),
                                                          std::move(fake));
   auto conversation = scry::Conversation::create();
   REQUIRE(harness);
@@ -369,7 +344,7 @@ TEST_CASE("send-and-wait maps transport cancellation to a cancelled result") {
           .message = "scripted cancellation",
       }),
   });
-  auto harness = scry::detail::HarnessTestAccess::create(test_config(), provider(),
+  auto harness = scry::detail::HarnessTestAccess::create(retrying_config(), provider(),
                                                          std::move(fake));
   auto conversation = scry::Conversation::create();
   REQUIRE(harness);
@@ -387,7 +362,7 @@ TEST_CASE("callbacks may use public operations and nested update is diagnosed") 
   auto fake = std::make_unique<scry::test::FakeTransport>();
   fake->enqueue(success());
   fake->enqueue(success());
-  auto harness = scry::detail::HarnessTestAccess::create(test_config(), provider(),
+  auto harness = scry::detail::HarnessTestAccess::create(retrying_config(), provider(),
                                                          std::move(fake));
   auto first_conversation = scry::Conversation::create();
   auto second_conversation = scry::Conversation::create();
@@ -413,8 +388,8 @@ TEST_CASE("callbacks may use public operations and nested update is diagnosed") 
                 // A reentrant update is rejected, and budget_exhausted is the
                 // only signal of it.
                 nested_update_rejected = harness->update().budget_exhausted;
-                registration_succeeded =
-                    static_cast<bool>(harness->tools().add(tool(), handler()));
+                registration_succeeded = static_cast<bool>(
+                    harness->tools().add(tool(), static_handler(R"({"ok":true})")));
                 auto nested_wait =
                     harness->send_and_wait(*second_conversation, "blocking second");
                 if (!nested_wait) {
@@ -454,9 +429,9 @@ TEST_CASE("callbacks may use public operations and nested update is diagnosed") 
 TEST_CASE("two Harness workers can overlap independent transfers") {
   auto overlap = std::make_shared<OverlapState>();
   auto first = scry::detail::HarnessTestAccess::create(
-      test_config(), provider(), std::make_unique<OverlapTransport>(overlap));
+      retrying_config(), provider(), std::make_unique<OverlapTransport>(overlap));
   auto second = scry::detail::HarnessTestAccess::create(
-      test_config(), provider(), std::make_unique<OverlapTransport>(overlap));
+      retrying_config(), provider(), std::make_unique<OverlapTransport>(overlap));
   auto first_conversation = scry::Conversation::create();
   auto second_conversation = scry::Conversation::create();
   REQUIRE(first);
@@ -505,15 +480,16 @@ TEST_CASE("two Harness workers can overlap independent transfers") {
 
 TEST_CASE("ToolRegistry rejects invalid and duplicate registrations") {
   auto harness = scry::detail::HarnessTestAccess::create(
-      test_config(), provider(), std::make_unique<scry::test::FakeTransport>());
+      retrying_config(), provider(), std::make_unique<scry::test::FakeTransport>());
   REQUIRE(harness);
   auto& tools = harness->tools();
 
-  auto status = tools.add(tool("", R"({"type":"object"})"), handler());
+  auto status =
+      tools.add(tool("", R"({"type":"object"})"), static_handler(R"({"ok":true})"));
   REQUIRE_FALSE(status);
   CHECK(status.error().category == scry::ErrorCategory::invalid_state);
 
-  status = tools.add(tool("missing_schema", ""), handler());
+  status = tools.add(tool("missing_schema", ""), static_handler(R"({"ok":true})"));
   REQUIRE_FALSE(status);
   CHECK(status.error().category == scry::ErrorCategory::invalid_state);
 
@@ -521,8 +497,8 @@ TEST_CASE("ToolRegistry rejects invalid and duplicate registrations") {
   REQUIRE_FALSE(status);
   CHECK(status.error().category == scry::ErrorCategory::invalid_state);
 
-  REQUIRE(tools.add(tool(), handler()));
-  status = tools.add(tool(), handler());
+  REQUIRE(tools.add(tool(), static_handler(R"({"ok":true})")));
+  status = tools.add(tool(), static_handler(R"({"ok":true})"));
   REQUIRE_FALSE(status);
   CHECK(status.error().category == scry::ErrorCategory::invalid_state);
   CHECK(tools.size() == 1);

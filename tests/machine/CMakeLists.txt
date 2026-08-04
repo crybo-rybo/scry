@@ -1,5 +1,6 @@
 add_executable(
   scry_turn_machine_tests
+  retry_tests.cpp
   tool_budget_tests.cpp
   tool_loop_tests.cpp
   turn_machine_tests.cpp

@@ -1,18 +1,14 @@
 #pragma once
 
-#include "core/provider.hpp"
 #include "runtime/test_access.hpp"
-#include "support/transport/fake_transport.hpp"
+#include "support/harness_test_support.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 #include <cstddef>
-#include <memory>
 #include <scry/scry.hpp>
 #include <string>
 #include <string_view>
-#include <thread>
 #include <utility>
-#include <vector>
 
 namespace scry::test_support {
 
@@ -65,33 +61,6 @@ data: {"type":"message_stop"}
 
 )";
 
-[[nodiscard]] inline scry::Config test_config() {
-  auto config = scry::Config{
-      .base_url = "http://127.0.0.1:1",
-      .api_key = "sanitized-test-key",
-      .model = "test-model",
-  };
-  config.retry.max_attempts = 1;
-  config.retry.jitter_ratio = 0.0;
-  return config;
-}
-
-[[nodiscard]] inline std::unique_ptr<scry::detail::ProviderAdapter> provider() {
-  return scry::detail::make_provider_adapter(scry::ProviderDialect::anthropic);
-}
-
-[[nodiscard]] inline scry::test::ScriptedExchange
-scripted_exchange(const std::string_view stream, std::string request_id) {
-  return {
-      .body_chunks = {std::string{stream}},
-      .result =
-          scry::detail::TransportResult{
-              .status_code = 200,
-              .provider_request_id = std::move(request_id),
-          },
-  };
-}
-
 [[nodiscard]] inline scry::ToolDefinition tool_definition(std::string name) {
   return {
       .name = std::move(name),
@@ -101,12 +70,6 @@ scripted_exchange(const std::string_view stream, std::string request_id) {
               .text =
                   R"({"type":"object","properties":{"ordinal":{"type":"integer"}},"required":["ordinal"],"additionalProperties":false})",
           },
-  };
-}
-
-[[nodiscard]] inline scry::ToolHandler static_handler(std::string result) {
-  return [result = std::move(result)](scry::Json) -> scry::Result<scry::Json> {
-    return scry::Json{.text = result};
   };
 }
 
@@ -136,32 +99,6 @@ event: message_stop
 data: {"type":"message_stop"}
 
 )";
-}
-
-template <typename Predicate>
-[[nodiscard]] bool pump_until(scry::Harness& harness, Predicate&& predicate) {
-  constexpr std::size_t maximum_pumps = 100'000;
-  for (std::size_t pump = 0; pump < maximum_pumps; ++pump) {
-    static_cast<void>(harness.update());
-    if (std::forward<Predicate>(predicate)()) {
-      return true;
-    }
-    std::this_thread::yield();
-  }
-  return false;
-}
-
-template <typename Predicate>
-[[nodiscard]] bool pump_one_until(scry::Harness& harness, Predicate&& predicate) {
-  constexpr std::size_t maximum_pumps = 100'000;
-  for (std::size_t pump = 0; pump < maximum_pumps; ++pump) {
-    static_cast<void>(harness.update({.max_callbacks = 1}));
-    if (std::forward<Predicate>(predicate)()) {
-      return true;
-    }
-    std::this_thread::yield();
-  }
-  return false;
 }
 
 inline void require_order(const std::string& text, const std::string_view first,
