@@ -1,3 +1,4 @@
+#include "core/error.hpp"
 #include "core/json_codec.hpp"
 #include "provider/anthropic.hpp"
 #include "provider/anthropic_content.hpp"

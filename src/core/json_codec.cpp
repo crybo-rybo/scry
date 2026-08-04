@@ -1,5 +1,7 @@
 #include "core/json_codec.hpp"
 
+#include "core/error.hpp"
+
 #include <utility>
 
 namespace scry::detail {
@@ -7,21 +9,11 @@ namespace {
 
 [[nodiscard]] Error field_error(const std::string_view name,
                                 const std::string_view expected) {
-  return make_error(ErrorCategory::protocol, "Provider payload field '" +
-                                                 std::string{name} + "' must be " +
-                                                 std::string{expected});
+  return make_error(ErrorCategory::protocol, "JSON field '" + std::string{name} +
+                                                 "' must be " + std::string{expected});
 }
 
 } // namespace
-
-Error make_error(const ErrorCategory category, std::string message,
-                 const bool retryable) {
-  return Error{
-      .category = category,
-      .message = std::move(message),
-      .retryable = retryable,
-  };
-}
 
 Result<JsonValue> parse_json(const std::string_view input, const ErrorCategory category,
                              const std::string_view failure_message) {

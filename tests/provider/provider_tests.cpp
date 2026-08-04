@@ -22,6 +22,8 @@ using namespace scry::detail;
 }
 
 [[nodiscard]] std::string canonical(const std::string_view json) {
+  // Request fixtures assert JSON meaning. They deliberately do not promise
+  // byte-for-byte wire spelling or member order.
   auto parsed = parse_json(json, ErrorCategory::protocol, "Fixture is invalid");
   REQUIRE(parsed.has_value());
   auto encoded =
@@ -75,7 +77,7 @@ TEST_CASE("provider factory exposes both supported dialects") {
   CHECK(make_provider_adapter(ProviderDialect::openai_compatible) != nullptr);
 }
 
-TEST_CASE("Anthropic request encoding matches the sanitized golden fixture") {
+TEST_CASE("Anthropic request is semantically equivalent to its sanitized fixture") {
   const auto adapter = make_provider_adapter(ProviderDialect::anthropic);
   REQUIRE(adapter);
 

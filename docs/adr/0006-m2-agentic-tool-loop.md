@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-07-18
+- Amended: 2026-08-03 — shared canonical JSON representation
 
 ## Context
 
@@ -97,6 +98,20 @@ history.
   exposing Glaze types. Busy state and uncommitted turn data are never
   serialized. Malformed documents, unknown versions or fields, and
   role/content mismatches return `invalid_config`.
+
+### 2026-08-03 canonicalization amendment
+
+Tool schemas, tool-call arguments, tool results, committed history, and
+Conversation persistence now pass through one sorted JSON representation.
+Object keys are emitted lexicographically, so a tool argument received as
+`{"b":2,"a":1}` is dispatched and committed as `{"a":1,"b":2}`. The
+semantic document is preserved; original lexical key order is not.
+
+This is an announced pre-1.0 byte-level change under PORT-007. Apps must not
+treat version-1 persistence or request bytes as a stable signature format
+without pinning Scry. A future byte-stability requirement must introduce an
+explicit versioned serializer or raw-preserving boundary rather than splitting
+the runtime back into competing JSON types.
 
 ## Consequences
 

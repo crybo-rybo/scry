@@ -3,6 +3,7 @@
 // Small helpers both dialect adapters need. The two stream state machines stay
 // independent; only the pieces that are byte-for-byte identical live here.
 
+#include "core/error.hpp"
 #include "core/json_codec.hpp"
 #include "core/provider.hpp"
 

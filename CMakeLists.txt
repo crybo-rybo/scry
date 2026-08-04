@@ -41,7 +41,7 @@ option(SCRY_USE_LIBCXX "Use libc++ with a Clang-family compiler" OFF)
 option(SCRY_ENABLE_REFLECTION "Build the supported GCC 16+ reflection component" OFF)
 option(
   SCRY_ENABLE_LOGGING
-  "Compile internal lifecycle diagnostics that append to a log file"
+  "Compile lifecycle diagnostics written only to an explicit SCRY_LOG_FILE"
   OFF
 )
 option(SCRY_BUILD_FUZZERS "Build short protocol fuzz targets" OFF)
@@ -82,6 +82,7 @@ FetchContent_MakeAvailable(glaze)
 add_library(
   scry
   STATIC
+    src/core/error.cpp
     src/core/retry.cpp
     src/core/json_codec.cpp
     src/runtime/config.cpp
@@ -469,6 +470,9 @@ if(SCRY_BUILD_TESTS)
   )
   catch_discover_tests(scry_runtime_tests TEST_PREFIX "runtime.")
   add_subdirectory(tests/machine)
+  if(SCRY_ENABLE_LOGGING)
+    add_subdirectory(tests/logging)
+  endif()
   add_subdirectory(tests/protocol)
   add_subdirectory(tests/provider)
   add_subdirectory(tests/transport)

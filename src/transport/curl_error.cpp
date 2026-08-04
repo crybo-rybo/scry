@@ -1,6 +1,6 @@
 #include "transport/curl_error.hpp"
 
-#include "core/json_codec.hpp"
+#include "core/error.hpp"
 #include "transport/transport_policy.hpp"
 
 #include <algorithm>

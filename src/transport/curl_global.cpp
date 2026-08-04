@@ -1,6 +1,6 @@
 #include "transport/curl_global.hpp"
 
-#include "core/json_codec.hpp"
+#include "core/error.hpp"
 
 #include <curl/curl.h>
 
@@ -9,19 +9,49 @@ namespace {
 
 constexpr auto minimum_curl_version = CURL_VERSION_BITS(7, 84, 0);
 
-[[nodiscard]] Status initialize_curl_global() {
-  if (curl_global_init(CURL_GLOBAL_DEFAULT) != CURLE_OK) {
-    return std::unexpected(
-        make_error(ErrorCategory::network, "libcurl global initialization failed"));
+class CurlGlobalOwner final {
+public:
+  CurlGlobalOwner() {
+    if (curl_global_init(CURL_GLOBAL_DEFAULT) != CURLE_OK) {
+      status_ = std::unexpected(
+          make_error(ErrorCategory::network, "libcurl global initialization failed"));
+      return;
+    }
+    initialized_ = true;
+
+    const auto* version = curl_version_info(CURLVERSION_NOW);
+    status_ = validate_curl_runtime_capabilities({
+        .version_number = version == nullptr ? 0U : version->version_num,
+        .thread_safe =
+            version != nullptr && (version->features & CURL_VERSION_THREADSAFE) != 0,
+        .asynchronous_dns =
+            version != nullptr && (version->features & CURL_VERSION_ASYNCHDNS) != 0,
+    });
+    if (!status_) {
+      curl_global_cleanup();
+      initialized_ = false;
+    }
   }
-  const auto* version = curl_version_info(CURLVERSION_NOW);
-  return validate_curl_runtime_capabilities({
-      .version_number = version == nullptr ? 0U : version->version_num,
-      .thread_safe =
-          version != nullptr && (version->features & CURL_VERSION_THREADSAFE) != 0,
-      .asynchronous_dns =
-          version != nullptr && (version->features & CURL_VERSION_ASYNCHDNS) != 0,
-  });
+
+  CurlGlobalOwner(const CurlGlobalOwner&) = delete;
+  CurlGlobalOwner& operator=(const CurlGlobalOwner&) = delete;
+
+  ~CurlGlobalOwner() {
+    if (initialized_) {
+      curl_global_cleanup();
+    }
+  }
+
+  [[nodiscard]] Status status() const { return status_; }
+
+private:
+  Status status_{};
+  bool initialized_{false};
+};
+
+[[nodiscard]] CurlGlobalOwner& curl_global_owner() {
+  static CurlGlobalOwner owner{};
+  return owner;
 }
 
 } // namespace
@@ -45,13 +75,11 @@ Status validate_curl_runtime_capabilities(const CurlRuntimeCapabilities capabili
 }
 
 Status curl_global_status() {
-  // The required libcurl (7.84 with CURL_VERSION_THREADSAFE) initializes its
-  // global state safely from any thread, so one process-wide initialization is
-  // enough. There is deliberately no matching curl_global_cleanup: releasing
-  // the last transport must not tear down TLS state a host still needs when it
-  // cycles harnesses.
-  static const Status status = initialize_curl_global();
-  return status;
+  // Function-static initialization serializes the one process-wide attempt.
+  // Its result, including the first failure, is stable for the rest of the
+  // process. The owner's destructor pairs a successful initialization with
+  // exactly one cleanup after ordinary library objects have been destroyed.
+  return curl_global_owner().status();
 }
 
 } // namespace scry::detail

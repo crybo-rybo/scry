@@ -1,6 +1,6 @@
 #include "transport/curl_transport.hpp"
 
-#include "core/json_codec.hpp"
+#include "core/error.hpp"
 #include "transport/curl_error.hpp"
 #include "transport/curl_global.hpp"
 #include "transport/transport_policy.hpp"
@@ -263,11 +263,11 @@ private:
       .status();
 }
 
-[[nodiscard]] Status validate_execution(const std::optional<Error>& startup_error,
+[[nodiscard]] Status validate_execution(const Status& startup_status,
                                         const std::stop_token& shutdown,
                                         const std::atomic<bool>& cancelled) {
-  if (startup_error) {
-    return std::unexpected(*startup_error);
+  if (!startup_status) {
+    return std::unexpected(startup_status.error());
   }
   if (shutdown.stop_requested()) {
     return std::unexpected(
@@ -395,7 +395,7 @@ Result<TransportResult> CurlTransport::perform(const TransportRequest& request,
                                                const std::stop_token shutdown,
                                                const std::atomic<bool>& cancelled,
                                                BodyChunkSink& body_sink) {
-  if (auto status = validate_execution(impl_->startup_error(), shutdown, cancelled);
+  if (auto status = validate_execution(impl_->startup_status(), shutdown, cancelled);
       !status) {
     return std::unexpected(std::move(status.error()));
   }

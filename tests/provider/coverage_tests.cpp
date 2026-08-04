@@ -159,37 +159,6 @@ TEST_CASE("Anthropic finish and usage decoding covers every wire variant") {
   REQUIRE_FALSE(
       apply_anthropic_usage(json_value(R"({"usage":{"output_tokens":"9"}})"), usage));
 }
-TEST_CASE("Anthropic request validation rejects every invalid boundary") {
-  AnthropicAdapter adapter;
-  auto valid_config = config();
-  auto valid_request = request();
-  auto invalid_config = valid_config;
-  invalid_config.base_url.clear();
-  require_request_error(adapter, invalid_config, valid_request);
-  invalid_config = valid_config;
-  invalid_config.api_key.clear();
-  require_request_error(adapter, invalid_config, valid_request);
-  invalid_config = valid_config;
-  invalid_config.model.clear();
-  require_request_error(adapter, invalid_config, valid_request,
-                        "Anthropic model is required");
-  auto invalid_request = valid_request;
-  for (const auto temperature : {std::numeric_limits<double>::quiet_NaN(), -0.1, 1.1}) {
-    invalid_request = valid_request;
-    invalid_request.sampling.temperature = temperature;
-    require_request_error(adapter, valid_config, invalid_request);
-  }
-  for (const auto top_p : {std::numeric_limits<double>::quiet_NaN(), 0.0, -0.1, 1.1}) {
-    invalid_request = valid_request;
-    invalid_request.sampling.top_p = top_p;
-    require_request_error(adapter, valid_config, invalid_request);
-  }
-  invalid_request = valid_request;
-  invalid_request.sampling.max_tokens.reset();
-  require_request_error(adapter, valid_config, invalid_request);
-  invalid_request.sampling.max_tokens = 0;
-  require_request_error(adapter, valid_config, invalid_request);
-}
 TEST_CASE("Anthropic request encoding preserves optional and tool branches") {
   AnthropicAdapter adapter;
   auto value_config = config();

@@ -24,7 +24,13 @@ point.
 
 **PImpl on stateful handles; plain values for contracts.** The four stateful handle types (Conversation, ToolRegistry, Turn, Harness) hold a single pointer to an implementation — ABI stays stable across internal refactors, and compile-time cost for consumers stays flat. Everything else the user touches is an ordinary value type: configuration aggregates (designated-initializer friendly), errors, options, enums, event payloads, and the Scry-owned JSON boundary type. The binding rule underneath both is: **no third-party types in public headers, ever** (enforced by include audit). `Harness` is constructed directly from `Config` and is the single owner of provider/auth/connection state; a separate Client handle would add lifetime ambiguity without an independent responsibility. The indirection cost is irrelevant next to network latency — this library's hot path is measured in milliseconds, not nanoseconds.
 
-**No singletons, no globals, no static init order problems.** Everything hangs off a `Harness` instance. Two harnesses in one process (e.g., different providers) must just work. The one unavoidable global — libcurl's `curl_global_init` — is wrapped in a reference-counted RAII guard (Meyers-style function-local static, initialized on first Harness).
+**No singleton carries library state.** Everything that can vary hangs off a
+`Harness` instance, so two Harnesses with different providers remain isolated.
+The one process-wide capability is libcurl global state: a function-static RAII
+owner performs one initialization attempt, caches that first result, cleans up
+immediately when post-init capability validation fails, and otherwise cleans
+up exactly once at static teardown. Harness construction/destruction never
+churns that global runtime.
 
 **Semantic failures are values; callback exceptions stay synchronous.** Internals may use whatever is idiomatic for the dependency at hand, but Scry-originated semantic and operational failures never throw across the public boundary. Immediate rejection reports through `std::expected`; after acceptance, success, failure, and cancellation share `TurnCallbacks::on_finished(Result<Completion>)`. Allocation and standard-library construction failure (`std::bad_alloc`) are **excluded from the contract** — we do not pretend to survive OOM, and smearing `noexcept`+expected over every allocating call would buy nothing. Two hard rules stand regardless: nothing ever throws *across* the worker/main thread boundary, and tool-handler exceptions are caught at the dispatch site and converted into tool-error results returned to the model. User callbacks should not throw; if one does, the exception propagates synchronously out of `update()` to the app with the Harness left in a valid state and the event counted as delivered (see §3).
 
@@ -175,10 +181,13 @@ Persistence is a public serialization boundary, not a storage subsystem.
 `Conversation::to_json()` emits a canonical versioned document containing the
 system prompt and committed neutral messages; `Conversation::from_json()`
 strictly validates and restores it. Text, tool-call, and tool-result blocks
-round-trip without provider wire shapes or Glaze types. Busy state, callbacks,
-turn IDs, registry snapshots, and every uncommitted round are intentionally
-excluded. The app owns encryption, files/databases, retention, and migration
-between future document versions.
+round-trip without provider wire shapes or Glaze types. Parsed object keys are
+sorted before tool arguments/results enter committed history, so canonical
+bytes represent JSON meaning rather than preserving lexical input order. Before
+1.0, an announced canonicalization change may alter those bytes. Busy state,
+callbacks, turn IDs, registry snapshots, and every uncommitted round are
+intentionally excluded. The app owns encryption, files/databases, retention,
+and migration between future document versions.
 
 ## 4. The Agentic Loop: Sans-I/O State Machine
 
@@ -299,7 +308,11 @@ Discipline that keeps it clean:
 - **The neutral model is the API of this seam.** Adapters see `Message`/`ContentBlock`/`ToolSchema` and nothing above; nothing above sees JSON or HTTP. Wire-format knowledge concentrated in one file per provider.
 - **Adapters are stateless translators** where possible; stream-parsing state (partial SSE event, current content block index) is an explicit per-turn parser object, not adapter member state — one adapter instance serves many turns.
 - Selection is config-driven via an internal factory keyed on dialect enum. No plugin registration machinery until a third-party provider actually needs it — **YAGNI applies to extension points too.**
-- **Golden-file tests** per adapter: captured real wire payloads checked into the repo, asserted against neutral-model round-trips. This is the layer where upstream API drift bites, so tests are data, easy to re-capture.
+- **Boundary fixtures** per adapter: outgoing requests compare parsed JSON
+  meaning, while inbound response/stream fixtures preserve adversarial wire
+  spelling and split behavior. Request fixtures are not byte-for-byte wire
+  contracts; this is the layer where upstream API drift bites, so tests remain
+  data and easy to re-capture.
 
 The OpenAI strategy owns endpoint normalization, optional Bearer auth,
 the common request envelope, one-choice response validation, function-tool
@@ -322,6 +335,10 @@ The second sanctioned interface, existing for one reason: **dependency injection
   split byte chunks (the classic bug in SSE parsers is
   delimiter-across-chunk; the test generator targets it directly).
 - Curl's progress callback checks both the worker `stop_token` (Harness shutdown) and the active turn's atomic cancellation flag. Neither signal is repurposed for the other.
+- One function-static owner pairs the process-wide `curl_global_init` with
+  cleanup. Its immutable first result is shared by every transport. Capability
+  rejection cleans up immediately; success remains active across Harness churn
+  and cleans up once when the owner is destroyed during module/process teardown.
 - Connection reuse (curl multi/share) is an internal optimization invisible above the seam.
 
 ## 8. Errors as Values, Categorized Once
@@ -339,6 +356,11 @@ The second sanctioned interface, existing for one reason: **dependency injection
   Scry-owned JSON-view bridge whose implementation alone includes Glaze. A
   downstream core or reflection consumer never discovers or links an exported
   Glaze target.
+- One private sorted JSON document type and codec serve runtime persistence,
+  tool boundaries, and provider adapters. Generic error construction remains
+  below that codec in `core/error`, so transport never depends on JSON merely
+  to create an `Error`. Canonical serialization sorts object keys; semantic
+  request fixtures intentionally do not promise exact pre-1.0 wire bytes.
 - Dependency bar is high: curl, Glaze, and test frameworks. Each new dependency needs a written justification in this doc. Header hygiene enforced (IWYU in CI) so the PImpl firewall stays real.
 
 **M5 showcase boundary (ADR 0010).** Showcase code depends inward on the
@@ -371,7 +393,7 @@ therefore remains libcurl plus internal Glaze.
 
 ## 10. Testing & Tooling Practices
 
-- **The test pyramid mirrors the architecture:** sans-I/O machine tests (majority, no network, no threads) → adapter golden-file tests → transport tests against a local mock HTTP/SSE server → a thin end-to-end smoke suite against a real local model (Ollama/llama.cpp in CI, nightly not per-commit).
+- **The test pyramid mirrors the architecture:** sans-I/O machine tests (majority, no network, no threads) → adapter semantic-request and wire-response fixtures → transport tests against a local mock HTTP/SSE server → a thin end-to-end smoke suite against a real local model (Ollama/llama.cpp in CI, nightly not per-commit).
 - Threaded code tested under **TSan and ASan in CI** from M0 — sanitizers are cheap the day the code is written and impossible to retrofit onto a flaky foundation. UBSan on the reflection layer especially.
 - M4 has deterministic OpenAI request/response/stream goldens, arbitrary-split
   and short `scry_openai_fuzz` coverage, config-only and concurrent
@@ -417,8 +439,8 @@ therefore remains libcurl plus internal Glaze.
   (`src/core/log.*`); every other build compiles the macro to nothing. It
   appends timestamped lifecycle lines — turn start/completion/failure,
   model-request attempts and retries, tool routing and `<name> Tool Called`
-  dispatch, ignored provider stream events — to `scry.log` (override with the
-  `SCRY_LOG_FILE` environment variable). Lines carry only turn ids, tool
+  dispatch, ignored provider stream events — only when `SCRY_LOG_FILE` names a
+  nonempty explicit path. Unset or empty creates no default file. Lines carry only turn ids, tool
   names, attempt counts, and error categories; prompt/tool content and
   credentials never reach the log (ERR-004), and this remains an internal
   diagnostic, not the public logging surface PROV-008 notes is absent.
@@ -444,8 +466,10 @@ Every "boring first" choice is recorded here with the condition that triggers ev
 | All tool handlers return synchronously from app-thread `update()`; no deferred result token or hidden worker pool | A real handler needs long-running or externally completed work without blocking a frame | Ratify an app-owned deferred/async result boundary with explicit lifetime, cancellation, ordering, backpressure, resource, and teardown policy |
 | M5 ImGui panel has no platform/renderer backend and the NPC world is ephemeral | A maintained standalone demo or durable game integration becomes a real deliverable | Ratify its platform matrix and lifecycle separately; keep any backend, persistence, rollback, or idempotency machinery outside the Scry package |
 | Streaming-only provider seam: adapters always request `stream: true` and decode through the stream path; the parallel non-streaming response decoders were removed as production-dead | A supported deployment genuinely cannot serve SSE, or a consumer needs non-streaming completions | Reintroduce a `parse_response` seam together with a runtime mode that actually exercises it, plus its golden and fuzz coverage — never as untested parallel code |
-| Compile-time diagnostic file logger (`SCRY_ENABLE_LOGGING`): fixed line format, one file sink chosen by environment variable, no runtime configuration or public API | A consumer needs runtime-toggleable, structured, or callback-driven diagnostics | Ratify a public logging/observer surface (the one PROV-008 records as absent) and route the same call sites through it |
+| Compile-time diagnostic file logger (`SCRY_ENABLE_LOGGING`): fixed line format, no output unless `SCRY_LOG_FILE` supplies an explicit nonempty path, no runtime configuration or public API | A consumer needs runtime-toggleable, structured, or callback-driven diagnostics | Ratify a public logging/observer surface (the one PROV-008 records as absent) and route the same call sites through it |
 | Immutable `TurnCallbacks` attached atomically at `send()`; no late registration or event replay | A real consumer needs to change observers after acceptance and cannot express that through callback-owned state | Ratify a separate subscription contract with explicit lifetime and backpressure semantics; do not restore callback methods on `Turn` implicitly |
+| Function-static libcurl owner: one initialization attempt/result for the module/process, no retry after failure, cleanup only on rejected capabilities or static teardown | A supported host needs recoverable runtime reconfiguration or controls libcurl lifetime across dynamically loaded modules | Ratify an explicit host/runtime ownership contract; do not reintroduce per-Harness reference-count churn |
+| One sorted canonical JSON representation across tools, history, persistence, and provider requests; original object-key spelling/order is not retained | A supported consumer requires byte-preserving round trips or a stable signed serialization | Ratify a versioned byte-level serializer or preserve raw lexical input at that explicit boundary; do not weaken semantic validation globally |
 | Release-posture verification (ADR 0012): behavioral gates only — matrix, tests, sanitizers, tidy, package audits; no coverage/CRAP metric gating, no mutation testing, fuzz and showcase nightly | Unattended agent-driven development resumes at scale, or coverage erosion on the pure components is observed in review | Restore targeted pieces per ADR 0012 — starting with a single non-gating coverage report line, never the full retired apparatus by default |
 
 ## 12. Pattern Summary
@@ -458,8 +482,8 @@ Every "boring first" choice is recorded here with the condition that triggers ev
 | In-flight turns | Move-only identity/cancel PImpl + shared cancel flag + weak pump route; immutable callbacks route-owned from `send()` |
 | Agentic loop | Sans-I/O explicit state machine; time as injected events |
 | Tool registry | Immutable app-thread ownership over one type-erased registration substrate; optional M3 consteval codegen and strict Scry-owned JSON bridge above it |
-| Providers | Config-selected Strategy at a narrow seam; stateless adapters with per-turn dialect state and golden-file tests |
-| Transport | RAII curl, C-callback trampolines, injectable seam; pure incremental SSE parser |
+| Providers | Config-selected Strategy at a narrow seam; stateless adapters with per-turn dialect state, semantic request fixtures, and wire response fixtures |
+| Transport | RAII curl including one process-global owner, C-callback trampolines, injectable seam; pure incremental SSE parser |
 | Errors | One categorized value type; expected before acceptance, unified `on_finished` result after |
 | Showcases | Outermost application adapters over public `scry::scry`; host-owned lifecycle and state; no install/export path |
 | Extensibility | Callables and config, not inheritance; YAGNI on plugin machinery |

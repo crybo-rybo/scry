@@ -33,6 +33,7 @@ if(SCRY_BUILD_FUZZERS)
   endif()
   set(
     scry_provider_fuzz_sources
+    "${PROJECT_SOURCE_DIR}/src/core/error.cpp"
     "${PROJECT_SOURCE_DIR}/src/core/json_codec.cpp"
     "${PROJECT_SOURCE_DIR}/src/provider/anthropic_content.cpp"
     "${PROJECT_SOURCE_DIR}/src/provider/anthropic_request.cpp"

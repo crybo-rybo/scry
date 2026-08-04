@@ -15,6 +15,8 @@ using namespace scry;
 using namespace scry::detail;
 
 [[nodiscard]] std::string canonical(const std::string_view json) {
+  // Request fixtures assert JSON meaning. They deliberately do not promise
+  // byte-for-byte wire spelling or member order.
   auto parsed = parse_json(json, ErrorCategory::protocol, "test JSON is invalid");
   REQUIRE(parsed);
   auto encoded = write_json_text(*parsed, ErrorCategory::protocol,
@@ -111,7 +113,7 @@ void require_invalid_request(const Config& value, const ModelRequest& model_requ
 
 } // namespace
 
-TEST_CASE("OpenAI request maps the common text and tool contract") {
+TEST_CASE("OpenAI request is semantically equivalent to the common contract") {
   OpenAiAdapter adapter;
   const auto encoded = adapter.make_request(config(), request());
   REQUIRE(encoded);

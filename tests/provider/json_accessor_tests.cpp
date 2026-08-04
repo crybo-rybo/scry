@@ -34,7 +34,8 @@ TEST_CASE("JSON field accessors distinguish absence, null, type, and value") {
   for (const auto name : {"missing", "wrong"}) {
     REQUIRE_FALSE(required_json_array(object, name));
   }
-  REQUIRE(required_json_object(json_value(R"({"nested":{}})"), "nested"));
+  const auto nested = json_value(R"({"nested":{}})");
+  REQUIRE(required_json_object(nested, "nested"));
   for (const auto name : {"missing", "wrong"}) {
     const auto result = required_json_object(object, name);
     REQUIRE_FALSE(result);

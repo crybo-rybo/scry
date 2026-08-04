@@ -15,12 +15,6 @@ namespace scry::detail {
 // always produce equal bytes no matter which layer parsed them.
 using JsonValue = glz::generic_sorted_u64;
 
-// The library's single Error factory. It lives in the bottom layer so the
-// codec, the provider adapters, and the transport all build errors the same
-// way instead of each keeping a private copy.
-[[nodiscard]] Error make_error(ErrorCategory category, std::string message,
-                               bool retryable = false);
-
 [[nodiscard]] Result<JsonValue> parse_json(std::string_view input,
                                            ErrorCategory category,
                                            std::string_view failure_message);

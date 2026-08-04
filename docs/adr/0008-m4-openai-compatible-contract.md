@@ -3,6 +3,7 @@
 - Status: Accepted
 - Date: 2026-07-18
 - Amended: 2026-07-19 — the production provider seam is streaming-only
+- Amended: 2026-08-03 — shared canonical JSON and semantic request fixtures
 
 ## Context
 
@@ -148,7 +149,7 @@ different-dialect Harness instances.
 
 M4 verification includes:
 
-- exact request goldens for endpoint, headers, auth, sampling, system/text,
+- semantic request fixtures for endpoint, headers, auth, sampling, system/text,
   tools, tool calls, and expanded tool-result messages;
 - streaming fixtures for role/text/usage, finish-reason mapping, `[DONE]`,
   fragmented and interleaved tool calls, exact byte limits, metadata conflicts,
@@ -160,6 +161,16 @@ M4 verification includes:
   and
 - a scheduled, bounded local-model smoke test. Per-commit tests remain
   deterministic and network-free.
+
+### 2026-08-03 request-serialization amendment
+
+The request contract is the mapped JSON meaning, headers, and endpoint—not an
+exact sequence of object-member bytes. Provider request tests parse actual and
+expected bodies into the shared canonical representation before comparison.
+The encoder currently emits object keys lexicographically, including nested
+tool schemas, arguments, and history. That ordering is deliberate and
+documented, but exact request bytes are not stable before 1.0; consumers that
+sign or hash requests must pin a Scry version or canonicalize independently.
 
 ## Consequences
 

@@ -1,5 +1,7 @@
 #include "provider/anthropic_content.hpp"
 
+#include "core/error.hpp"
+
 #include <limits>
 #include <utility>
 

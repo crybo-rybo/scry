@@ -1,5 +1,6 @@
 #include "provider/openai_content.hpp"
 
+#include "core/error.hpp"
 #include "provider/shared.hpp"
 
 #include <cstdint>

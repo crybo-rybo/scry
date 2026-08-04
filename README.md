@@ -26,8 +26,8 @@ Every explicit and reflected tool handler executes synchronously inside
 snapshots, transactional resend and commit, cancellation semantics, and
 exclusive handler ownership remain part of that single execution model.
 
-M4's retained deterministic closure includes the 48/48 provider tests, exact
-OpenAI request/stream cases, a checked corpus
+M4's retained deterministic closure includes 50/50 provider tests, semantic
+OpenAI request cases, exact stream-boundary cases, a checked corpus
 and short `scry_openai_fuzz` target, a fragmented transactional OpenAI tool
 round, concurrent Anthropic/OpenAI isolation, a public Curl path/header/SSE
 round, and app-thread ordering, thread-ID, snapshot, cancellation,
@@ -104,6 +104,18 @@ create a `Harness` from a `Config`, register a tool, `send()` a message, and
 pump `update()` from the loop you already own. It assumes a local Ollama server
 at `http://127.0.0.1:11434` with the `qwen3:1.7b` model installed.
 
+Runtime JSON is canonicalized through one sorted representation. Provider
+request fixtures promise JSON meaning, not byte-for-byte member order, and
+tool arguments/results committed to Conversation history use that same
+canonical ordering. Scry is pre-1.0: do not use those bytes as a stable signing
+or cache-key format without pinning the library version; an announced
+canonicalization change may alter bytes while preserving JSON meaning.
+
+libcurl global state is initialized on first transport use and owned once for
+the module/process. The first result is cached; a capability rejection cleans
+up immediately, while success remains active across Harness creation and
+destruction and is cleaned up once at static teardown.
+
 ## Build and preflight
 
 Run the fast, platform-stable core workflow:
@@ -132,6 +144,18 @@ unavailable locally; hosted CI is authoritative for those environments.
 Long protocol fuzzing and the M5 showcase gate run in the scheduled nightly
 workflow; `just showcase` runs the showcase gate locally.
 `just ci` is the optional convenience wrapper.
+
+Internal lifecycle logging is a separate compile-time diagnostic build:
+
+```sh
+cmake --preset dev-logging
+cmake --build build/dev-logging
+SCRY_LOG_FILE=/absolute/path/to/scry.log ctest --test-dir build/dev-logging
+```
+
+`SCRY_LOG_FILE` must name a nonempty explicit destination before the first log
+event. If it is unset or empty, Scry creates no default file. Diagnostic lines
+exclude prompts, tool arguments/results, and credentials.
 
 Build the warning-clean API reference with Doxygen 1.9.8 or newer and Graphviz:
 

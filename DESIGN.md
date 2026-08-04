@@ -139,10 +139,14 @@ dispatch system.
 versioned Scry-owned JSON document suitable for app-managed storage;
 `Conversation::from_json()` validates and restores one. Version 1 preserves
 the system prompt and every committed neutral text, tool-call, and tool-result
-block. Busy state and uncommitted turns are deliberately excluded, so saving
-an active Conversation captures its last committed boundary. Scry does no file
-I/O and rejects malformed documents, unknown fields or versions, and invalid
-role/content combinations with `invalid_config`.
+block. Canonicalization sorts JSON object keys, including tool arguments and
+results re-emitted into history. That makes semantic equality deterministic,
+not the original lexical spelling; before 1.0 an announced canonicalization
+change may alter persisted bytes without altering JSON meaning. Busy state and
+uncommitted turns are deliberately excluded, so saving an active Conversation
+captures its last committed boundary. Scry does no file I/O and rejects
+malformed documents, unknown fields or versions, and invalid role/content
+combinations with `invalid_config`.
 
 ## 5. Architecture Overview
 
@@ -288,9 +292,12 @@ TLS peer verification defaults on. The runtime uses Curl with asynchronous DNS,
 applies Curl's connect timeout (which covers name resolution and connection)
 and total transfer timeout, and caps each multi-poll wait by the shutdown
 timeout. A runtime that cannot provide the required resolver/global
-capabilities is rejected. Deterministic tests cover held transfers, cancellation,
-and capability rejection; the timeout wiring is source-reviewed rather than
-tested against a flaky DNS black hole.
+capabilities is rejected. The first process-wide libcurl initialization result
+is cached independently of Harness lifetime: failed capability validation is
+cleaned up immediately, while success is cleaned up once at static teardown.
+Deterministic tests cover held transfers, cancellation, and capability
+rejection; the timeout wiring is source-reviewed rather than tested against a
+flaky DNS black hole.
 
 ## 8. Tool Registration: C++23 Now, Reflection in M3
 
@@ -417,6 +424,9 @@ messages, finite `temperature` in `[0,2]`, optional `top_p`, positive legacy
 `max_tokens`, `stream`, streaming `include_usage`, and function tools. System
 text becomes a system message, assistant tool calls retain stable IDs, and
 each neutral tool result expands into one ordered `role: "tool"` message.
+Request fixtures compare parsed JSON meaning rather than exact wire bytes. The
+shared canonical encoder currently sorts every object key; consumers must not
+use pre-1.0 request bytes as a stable signature input.
 
 The adapter seam is streaming-only: the runtime always requests
 `stream: true` and decodes every response through the stream path, so there is
@@ -451,6 +461,10 @@ reflection support remains deferred.
 
 - **Retries:** exponential backoff with jitter for 429/5xx/transport errors, honoring `Retry-After`, under configurable attempt and elapsed-time caps. Retry eligibility is strict: a request is retried only if **no semantic output has been consumed** (failure before the first content event). After partial output the turn fails with a retryable-flagged error and the app decides — automatic mid-stream resumption is later hardening, not M1. Within one turn, retry machinery never dispatches the same tool-call ID twice. A failed or cancelled turn commits no tool rounds, so resubmitting the user message is **not** automatically safe for side-effecting tools; applications must supply their own idempotency keys or reconciliation policy.
 - **Errors:** immediate API rejection (`create`, `send`, tool registration) returns `std::expected<..., scry::Error>`. Callback attachment is an infallible part of accepting `send()`. Once a turn is accepted, asynchronous success, failure, and cancellation share one terminal channel: `on_finished(Result<Completion>)`. Categories include invalid configuration/state, busy, authentication, rate limit, network, protocol, resource limit, tool failure, maximum tool rounds, and cancellation. Tool-handler exceptions are caught and returned to the model as tool errors (the model can often recover), not thrown into the app. Exceptions thrown by app callbacks are different: they propagate synchronously out of `update()` after the event is counted delivered.
+- **Diagnostics:** ordinary builds contain no logger. `SCRY_ENABLE_LOGGING=ON`
+  compiles bounded lifecycle diagnostics, but no file is created unless
+  `SCRY_LOG_FILE` is set to a nonempty explicit path. Prompt/tool content and
+  credentials never enter those lines.
 - **Streaming:** SSE parsed on the worker; text deltas batched per `update()` tick rather than per-token, so a fast stream doesn't flood the queue. The `std::string_view` passed to `on_text_delta` and the `const ToolCall&` passed to `on_tool_call` are borrowed for the invocation; apps copy data they retain. `on_finished` receives its `Result<Completion>` by value.
 
 ## 11. Open Questions
