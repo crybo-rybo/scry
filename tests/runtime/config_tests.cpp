@@ -83,6 +83,19 @@ TEST_CASE("configuration rejects unknown provider dialects") {
   CHECK(result.error().category == scry::ErrorCategory::invalid_config);
 }
 
+TEST_CASE("reasoning disablement is restricted to OpenAI-compatible requests") {
+  auto config = valid_config();
+  config.reasoning_mode = scry::ReasoningMode::disabled;
+  CHECK_FALSE(scry::detail::validate_config(config));
+
+  config.dialect = scry::ProviderDialect::openai_compatible;
+  CHECK(scry::detail::validate_config(config));
+
+  config.reasoning_mode =
+      static_cast<scry::ReasoningMode>(std::numeric_limits<std::uint8_t>::max());
+  CHECK_FALSE(scry::detail::validate_config(config));
+}
+
 TEST_CASE("configuration validates sampling and retries") {
   auto config = valid_config();
   config.sampling.temperature = std::numeric_limits<double>::infinity();

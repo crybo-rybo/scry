@@ -313,8 +313,12 @@ Discipline that keeps it clean:
 The OpenAI strategy owns endpoint normalization, optional Bearer auth,
 the common request envelope, one-choice response validation, function-tool
 translation, usage/finish mapping, and strict `[DONE]`-terminated streaming.
-It deliberately omits Azure shapes, Responses API, structured output,
-reasoning-specific token fields, and provider extensions. Adapter objects stay
+Its portable baseline omits Azure shapes, Responses API, structured output,
+reasoning-specific token fields, and provider extensions. The sole optional
+reasoning control is the typed `Config::reasoning_mode`: the default preserves
+the baseline by omitting a wire field, while `disabled` maps to OpenAI-compatible
+`reasoning_effort: "none"`; unsupported endpoints remain a configuration or
+deployment choice rather than an adapter capability probe. Adapter objects stay
 stateless; `ProviderDecodeState` carries a dialect-specific alternative so
 OpenAI chunk IDs, indexed tool fragments, finish state, and usage cannot leak
 into the Anthropic lifecycle. HTTP classification and sanitized request IDs

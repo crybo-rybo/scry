@@ -88,6 +88,7 @@ create_harness(std::string base_url, std::string api_key, std::string model) {
               .shutdown = std::chrono::seconds{2},
           },
       .max_tool_rounds = 2,
+      .reasoning_mode = scry::ReasoningMode::disabled,
   });
 }
 
@@ -113,7 +114,7 @@ create_harness(std::string base_url, std::string api_key, std::string model) {
 [[nodiscard]] scry::Result<scry::Conversation> create_conversation() {
   return scry::Conversation::create({
       .system_prompt =
-          "/no_think You are a deterministic protocol conformance agent. Before any "
+          "You are a deterministic protocol conformance agent. Before any "
           "final answer, call nightly_required_check exactly once with {}. "
           "After the tool result, reply with exactly NIGHTLY_SMOKE_OK.",
   });

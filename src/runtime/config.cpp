@@ -63,6 +63,20 @@ namespace {
   return {};
 }
 
+[[nodiscard]] Status validate_reasoning(const Config& config) {
+  switch (config.reasoning_mode) {
+  case ReasoningMode::provider_default:
+    return {};
+  case ReasoningMode::disabled:
+    if (config.dialect == ProviderDialect::openai_compatible) {
+      return {};
+    }
+    return invalid(
+        "reasoning disablement requires the OpenAI-compatible provider dialect");
+  }
+  return invalid("reasoning_mode is invalid");
+}
+
 [[nodiscard]] Status validate_anthropic_sampling(const SamplingConfig& sampling) {
   if (!std::isfinite(sampling.temperature) || sampling.temperature < 0.0 ||
       sampling.temperature > 1.0) {
@@ -97,6 +111,10 @@ namespace {
   auto auth = validate_auth(config);
   if (!auth) {
     return auth;
+  }
+  auto reasoning = validate_reasoning(config);
+  if (!reasoning) {
+    return reasoning;
   }
   switch (config.dialect) {
   case ProviderDialect::anthropic:

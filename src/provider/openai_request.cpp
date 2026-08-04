@@ -240,6 +240,9 @@ encode_tools(const std::vector<ToolSchema>& tools) {
   if (request.sampling.top_p) {
     root["top_p"] = *request.sampling.top_p;
   }
+  if (config.reasoning_mode == ReasoningMode::disabled) {
+    root["reasoning_effort"] = "none";
+  }
   JsonValue stream_options{};
   stream_options["include_usage"] = true;
   root["stream_options"] = std::move(stream_options);

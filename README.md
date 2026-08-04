@@ -17,7 +17,9 @@ request, tool dispatch, automatic resend of results, final answer — with
 cancellation, bounded retries, and transactional conversation history. Two
 provider dialects are selected from `Config` alone: Anthropic Messages and a
 strict OpenAI-compatible Chat Completions subset that also drives local servers
-such as Ollama, vLLM, and llama.cpp server with no API key. The core is C++23
+such as Ollama, vLLM, and llama.cpp server with no API key. Its optional,
+typed reasoning disablement leaves the portable request unchanged by default.
+The core is C++23
 and poll-friendly: `send()` never waits on network I/O, and every callback and
 tool handler runs inside the `update()` you call from the loop you already own.
 The reflected typed-tool layer is an optional, experimental component requiring

@@ -17,6 +17,14 @@ enum class ProviderDialect : std::uint8_t {
   openai_compatible,
 };
 
+/// Controls whether a provider may use its default reasoning behavior.
+enum class ReasoningMode : std::uint8_t {
+  /// Omit reasoning controls and use the provider or model default.
+  provider_default,
+  /// Request that reasoning be disabled when the selected dialect supports it.
+  disabled,
+};
+
 /// Sampling parameters sent with each model request.
 ///
 /// Values are validated by Harness::create() for the selected provider dialect.
@@ -101,6 +109,8 @@ struct Config {
   /// Disabling verification is intended only for explicitly trusted development
   /// endpoints.
   bool tls_verify_peer{true};
+  /// Reasoning behavior requested from the provider.
+  ReasoningMode reasoning_mode{ReasoningMode::provider_default};
 };
 
 } // namespace scry
