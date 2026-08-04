@@ -51,7 +51,7 @@ cmake --install scry/build --prefix /your/prefix
 ```
 
 ```cmake
-find_package(scry 0.0.1 CONFIG REQUIRED)
+find_package(scry 0.1.0 CONFIG REQUIRED)
 target_link_libraries(app PRIVATE scry::scry)
 ```
 
@@ -65,7 +65,7 @@ include(FetchContent)
 FetchContent_Declare(
   scry
   GIT_REPOSITORY https://github.com/crybo-rybo/scry.git
-  GIT_TAG v0.0.1
+  GIT_TAG v0.1.0
 )
 FetchContent_MakeAvailable(scry)
 target_link_libraries(app PRIVATE scry::scry)
@@ -110,7 +110,7 @@ credentials never reach the log.
 |---|---|
 | [DESIGN.md](DESIGN.md) | High-level design: vision, goals/non-goals, the five core public concepts, interaction and threading model (with diagrams), explicit-schema and reflected-tool ergonomics, provider abstraction, future directions, and forward scope. **Start here.** |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | How the code is shaped: the C++ patterns and idioms each piece commits to — actor-model concurrency, sans-I/O state machine, type erasure, optional consteval codegen and JSON bridge, PImpl, error-as-value — plus the evolution register documenting every deliberate simplification and its intended end state. |
-| [ENGINEERING.md](ENGINEERING.md) | How the project is engineered: testing plan and pyramid, complexity limits, static and dynamic analysis, CI shape, workflow, and the gates-are-behavioral philosophy of the v0.0.1 release posture. |
+| [ENGINEERING.md](ENGINEERING.md) | How the project is engineered: testing plan and pyramid, complexity limits, static and dynamic analysis, CI shape, workflow, and the gates-are-behavioral philosophy of the v0.1.0 release posture. |
 | [REQUIREMENTS.md](REQUIREMENTS.md) | **The normative register.** Every binding requirement as a numbered RFC-2119 row. When prose elsewhere conflicts with the register, the register wins. |
 
 Recommended reading order: DESIGN.md → ARCHITECTURE.md → ENGINEERING.md, then

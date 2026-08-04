@@ -9,7 +9,7 @@ here.
 
 ## [Unreleased]
 
-## [0.0.1] - 2026-08-04
+## [0.1.0] - 2026-08-04
 
 The first release of Scry: a C++ LLM harness for applications with their own
 main loops. The C++23 surface is complete and tested; nothing about it is yet
@@ -74,5 +74,5 @@ promised stable — see the pre-1.0 notes below.
 - The reflection component is experimental and supported on Linux only.
 - Windows is not supported.
 
-[Unreleased]: https://github.com/crybo-rybo/scry/compare/v0.0.1...HEAD
-[0.0.1]: https://github.com/crybo-rybo/scry/releases/tag/v0.0.1
+[Unreleased]: https://github.com/crybo-rybo/scry/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/crybo-rybo/scry/releases/tag/v0.1.0

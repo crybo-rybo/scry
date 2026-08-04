@@ -185,6 +185,6 @@ Retired requirements are listed permanently so their IDs are never reused.
 
 | ID | Retired | Reason |
 |---|---|---|
-| THR-021 | v0.0.1 | Opt-in worker-thread tool execution. Removed with `ToolExecution`/`ToolRegistrationOptions` in the v0.0.1 simplification; all tools execute on the app thread under THR-011 ([ADR 0009](docs/adr/0009-m4-worker-tool-execution.md), superseded). |
-| TOOL-014 | v0.0.1 | Shared registration options across explicit and reflected registration. The option type it constrained no longer exists. |
-| QA-003 | v0.0.1 | Per-function CRAP ceiling. Development-era gating machinery; complexity limits remain under QA-004 and untested-complexity risk is caught in review ([ADR 0012](docs/adr/0012-release-infrastructure-simplification.md)). |
+| THR-021 | v0.1.0 | Opt-in worker-thread tool execution. Removed with `ToolExecution`/`ToolRegistrationOptions` in the v0.1.0 simplification; all tools execute on the app thread under THR-011 ([ADR 0009](docs/adr/0009-m4-worker-tool-execution.md), superseded). |
+| TOOL-014 | v0.1.0 | Shared registration options across explicit and reflected registration. The option type it constrained no longer exists. |
+| QA-003 | v0.1.0 | Per-function CRAP ceiling. Development-era gating machinery; complexity limits remain under QA-004 and untested-complexity risk is caught in review ([ADR 0012](docs/adr/0012-release-infrastructure-simplification.md)). |

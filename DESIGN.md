@@ -463,7 +463,7 @@ ARCHITECTURE.md §7). What remains under consideration:
 
 ## 12. Scope
 
-**Shipped in v0.0.1.** The C++23 runtime — Config, Conversation, ToolRegistry,
+**Shipped in v0.1.0.** The C++23 runtime — Config, Conversation, ToolRegistry,
 Turn, Harness — with the streaming agentic tool loop on a sans-I/O machine,
 explicit-schema tools dispatched from `update()`, retries and cancellation,
 transactional history with versioned (pre-1.0 unstable) persistence, and two
