@@ -68,7 +68,7 @@ The app touches five core concepts:
 | `scry::Turn` | Move-only handle to one in-flight agentic exchange. Exposes `id()` and `cancel()`; the callbacks for the turn are supplied to `send()`. |
 | `scry::Harness` | Created from `Config`; owns provider/auth state, the tool registry, worker thread, and event queue. `send()` starts a turn; `update()` pumps completions into the app thread. |
 
-Intended feel:
+A complete integration looks like this:
 
 ```cpp
 // Config is a plain aggregate; Harness is the single configured runtime owner.
@@ -445,11 +445,12 @@ reflection support remains deferred.
 - **Errors:** immediate API rejection (`create`, `send`, tool registration) returns `std::expected<..., scry::Error>`. Once a turn is accepted, every asynchronous outcome uses one channel: when supplied, `on_finished(scry::Result<scry::Completion>)` carries the completion or the `scry::Error`. Categories include invalid configuration/state, busy, authentication, rate limit, network, protocol, resource limit, tool failure, maximum tool rounds, and cancellation. Tool-handler exceptions are caught and returned to the model as tool errors (the model can often recover), not thrown into the app. Exceptions thrown by app callbacks are different: they propagate synchronously out of `update()` after the event is counted delivered.
 - **Streaming:** SSE parsed on the worker; text deltas batched per `update()` tick rather than per-token, so a fast stream doesn't flood the queue. The text-delta view and tool-call reference are borrowed for the invocation; apps copy data they retain. `on_finished` receives its result by value.
 
-## 11. Open Questions
+## 11. Future Directions
 
-Resolved and removed from this list: concurrency baseline (§7), JSON library
-(Glaze — ARCHITECTURE.md §9), and HTTP library (libcurl direct —
-ARCHITECTURE.md §7). Remaining:
+These are directions under consideration, not commitments. Earlier open
+questions are settled and documented: the concurrency baseline (§7), the JSON
+library (Glaze — ARCHITECTURE.md §9), and the HTTP library (libcurl direct —
+ARCHITECTURE.md §7). What remains under consideration:
 
 1. **Asynchronous / deferred tool results** — a handler that accepts a call,
    returns immediately, and completes its result on a later `update()`. This is
@@ -457,7 +458,7 @@ ARCHITECTURE.md §7). Remaining:
    the app thread (§7): it keeps app callbacks on the app's own thread instead
    of hiding a worker behind them, but it needs its own cancellation, ordering,
    and budget rules ratified before it ships.
-2. **Structured output** — reflected structs also enable "answer as this type" (schema-constrained responses). Natural v2 feature; keep the door open in `Turn`.
+2. **Structured output** — reflected structs also enable "answer as this type" (schema-constrained responses). A natural post-1.0 feature; the `Turn` surface keeps the door open.
 3. **Coroutine sugar** — `co_await harness.send(...)` for apps with coroutine schedulers. Tracked in the evolution register; layered over the event queue later.
 
 ## 12. Scope
