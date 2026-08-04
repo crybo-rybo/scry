@@ -24,7 +24,8 @@ Built for the apps that live in C++ — games, GUI tools, simulators — where y
   required in application code.
 - **Two provider dialects from `Config` alone.** Anthropic Messages, plus a
   strict OpenAI-compatible Chat Completions subset that also drives local
-  servers such as Ollama, vLLM, and llama.cpp server with no API key.
+  servers such as Ollama, vLLM, and llama.cpp server with no API key. Optional
+  typed reasoning disablement leaves the portable request unchanged by default.
 - **Typed tools, optionally.** The stable surface registers explicit-schema
   tools; an optional, experimental C++26 reflection component (GCC 16 or
   newer) derives schemas and argument marshalling from plain structs and lowers

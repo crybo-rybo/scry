@@ -124,7 +124,8 @@ Three rings, ordered by feedback speed; a failure in an inner ring stops the out
 2. **Scheduled weekly:** CodeQL, long fuzz runs on all three protocol targets,
    the showcase contract gate (a default-OFF leg that enables the examples,
    builds them with warnings as errors, runs the deterministic NPC and
-   fake-panel cases, executes a real Dear ImGui headless frame, and repeats the
+   fake-panel cases (including the NPC reasoning-control request), executes a
+   real Dear ImGui headless frame, and repeats the
    package-absence audit), and the experimental reflection component gate — a
    fresh GCC 16/P2996/P3394 capability-probed build, its
    schema/codec/bridge/registration and

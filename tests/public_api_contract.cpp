@@ -10,6 +10,7 @@
 #include <utility>
 
 static_assert(std::is_aggregate_v<scry::Config>);
+static_assert(std::is_enum_v<scry::ReasoningMode>);
 static_assert(std::is_aggregate_v<scry::Error>);
 static_assert(std::is_aggregate_v<scry::Json>);
 static_assert(std::is_aggregate_v<scry::ToolDefinition>);
@@ -122,6 +123,7 @@ int main() {
       config.limits.max_conversation_bytes == 16 * kibibyte * kibibyte,
       config.max_tool_rounds == 8,
       config.sampling.max_tokens == 1024,
+      config.reasoning_mode == scry::ReasoningMode::provider_default,
       config.retry.max_attempts == 3,
       config.retry.initial_backoff == std::chrono::milliseconds{250},
       config.retry.max_backoff == std::chrono::seconds{10},

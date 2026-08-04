@@ -1,6 +1,8 @@
+#include "completion_validation.hpp"
 #include "world.hpp"
 
 #include <chrono>
+#include <cstddef>
 #include <cstdlib>
 #include <iostream>
 #include <memory>
@@ -21,7 +23,21 @@ public:
     std::cout << delta << std::flush;
   }
 
+  void show_tool_call(const scry::ToolCall& call) {
+    ++tool_call_count_;
+    std::cout << "Tool executed: " << call.name << '\n';
+  }
+
   void show_completion(const scry::Completion& completion) {
+    if (const auto failure =
+            scry_showcase::npc::completion_failure(completion, tool_call_count_);
+        !failure.empty()) {
+      if (streamed_) {
+        std::cout << '\n';
+      }
+      show_error(failure);
+      return;
+    }
     if (!streamed_) {
       std::cout << completion.text;
     }
@@ -40,6 +56,7 @@ public:
 private:
   bool running_{true};
   bool streamed_{false};
+  std::size_t tool_call_count_{};
   int exit_code_{};
 };
 
@@ -70,12 +87,14 @@ private:
       .model = std::move(model),
       .dialect = scry::ProviderDialect::openai_compatible,
       .sampling = {.temperature = 0.0},
+      .reasoning_mode = scry::ReasoningMode::disabled,
   });
 }
 
 [[nodiscard]] scry::TurnCallbacks npc_callbacks(Application& app) {
   return {
       .on_text_delta = [&app](const std::string_view delta) { app.show_delta(delta); },
+      .on_tool_call = [&app](const scry::ToolCall& call) { app.show_tool_call(call); },
       .on_finished =
           [&app](scry::Result<scry::Completion> finished) {
             if (finished) {
