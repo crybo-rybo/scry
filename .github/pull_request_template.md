@@ -5,8 +5,7 @@
 ## Definition of done
 
 - [ ] `just ci` passes locally, or unavailable hosted-only toolchain legs are identified
-- [ ] Behavior and architecture changes update the load-bearing documentation
+- [ ] Tests are added or updated; bug fixes include a regression test
+- [ ] Behavior, architecture, and policy changes update the load-bearing documentation, the evolution register, and the affected ADRs
 - [ ] Public API changes include a compiling example
-- [ ] Deliberate simplifications are recorded in the evolution register
-- [ ] Bug fixes include a regression test
 - [ ] New dependencies include a written justification

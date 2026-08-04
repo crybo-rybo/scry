@@ -1,8 +1,9 @@
 #include "provider/openai_content.hpp"
 
-#include <algorithm>
-#include <cctype>
-#include <cstddef>
+#include "core/error.hpp"
+#include "provider/shared.hpp"
+
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <utility>
@@ -10,27 +11,18 @@
 namespace scry::detail {
 namespace {
 
-[[nodiscard]] Status assign_usage_count(const WireValue& usage,
+// Deliberately divergent from the Anthropic adapter: OpenAI usage objects
+// replace the running totals, so a missing field zeroes the count instead of
+// preserving the previous value.
+[[nodiscard]] Status assign_usage_count(const JsonValue& usage,
                                         const std::string_view field,
                                         std::uint64_t& destination) {
-  auto count = optional_wire_uint(usage, field);
+  auto count = optional_json_uint(usage, field);
   if (!count) {
     return std::unexpected(std::move(count.error()));
   }
   destination = count->value_or(0);
   return {};
-}
-
-[[nodiscard]] std::string sanitize_error_token(const std::string_view value) {
-  constexpr std::size_t maximum_bytes = 96;
-  if (value.empty() || value.size() > maximum_bytes) {
-    return "unknown_error";
-  }
-  const auto safe = std::ranges::all_of(value, [](const char character) {
-    const auto byte = static_cast<unsigned char>(character);
-    return std::isalnum(byte) != 0 || character == '_';
-  });
-  return safe ? std::string{value} : std::string{"unknown_error"};
 }
 
 [[nodiscard]] ErrorCategory error_category(const std::string_view token) noexcept {
@@ -54,8 +46,8 @@ struct ErrorDescriptor {
 };
 
 [[nodiscard]] std::optional<std::string>
-string_error_token(const WireValue& error, const std::string_view field) {
-  const auto* value = wire_field(error, field);
+string_error_token(const JsonValue& error, const std::string_view field) {
+  const auto* value = json_field(error, field);
   if (value == nullptr || !value->is_string()) {
     return std::nullopt;
   }
@@ -79,7 +71,7 @@ recognized_descriptor(const std::optional<std::string>& token) {
 }
 
 [[nodiscard]] ErrorDescriptor
-fallback_descriptor(const WireValue& error, const std::optional<std::string>& type,
+fallback_descriptor(const JsonValue& error, const std::optional<std::string>& type,
                     const std::optional<std::string>& code) {
   if (type) {
     return ErrorDescriptor{.token = *type, .category = ErrorCategory::protocol};
@@ -87,7 +79,7 @@ fallback_descriptor(const WireValue& error, const std::optional<std::string>& ty
   if (code) {
     return ErrorDescriptor{.token = *code, .category = ErrorCategory::protocol};
   }
-  const auto* numeric_code = wire_field(error, "code");
+  const auto* numeric_code = json_field(error, "code");
   if (numeric_code != nullptr && numeric_code->is_uint64()) {
     return ErrorDescriptor{
         .token =
@@ -101,8 +93,8 @@ fallback_descriptor(const WireValue& error, const std::optional<std::string>& ty
   };
 }
 
-[[nodiscard]] ErrorDescriptor error_descriptor(const WireValue& root) {
-  const auto* error = wire_field(root, "error");
+[[nodiscard]] ErrorDescriptor error_descriptor(const JsonValue& root) {
+  const auto* error = json_field(root, "error");
   if (error == nullptr || !error->is_object()) {
     return ErrorDescriptor{
         .token = "unknown_error",
@@ -126,19 +118,17 @@ fallback_descriptor(const WireValue& error, const std::optional<std::string>& ty
 
 } // namespace
 
-Result<std::string> canonical_openai_arguments(const std::string_view arguments) {
-  const auto normalized = arguments.empty() ? std::string_view{"{}"} : arguments;
-  auto parsed = parse_wire_json(normalized, ErrorCategory::protocol,
-                                "OpenAI tool arguments are not valid JSON");
+Status validate_openai_arguments(const std::string_view arguments) {
+  auto parsed = parse_json(arguments, ErrorCategory::protocol,
+                           "OpenAI tool arguments are not valid JSON");
   if (!parsed) {
     return std::unexpected(std::move(parsed.error()));
   }
   if (!parsed->is_object()) {
-    return std::unexpected(make_provider_error(
-        ErrorCategory::protocol, "OpenAI tool arguments must be a JSON object"));
+    return std::unexpected(make_error(ErrorCategory::protocol,
+                                      "OpenAI tool arguments must be a JSON object"));
   }
-  return write_wire_json(*parsed, ErrorCategory::protocol,
-                         "OpenAI tool arguments could not be preserved");
+  return {};
 }
 
 Result<FinishReason>
@@ -156,21 +146,21 @@ decode_openai_finish(const std::optional<std::string_view> reason) {
     return FinishReason::tool_use;
   }
   if (*reason == "function_call") {
-    return std::unexpected(make_provider_error(
+    return std::unexpected(make_error(
         ErrorCategory::protocol,
         "OpenAI returned the unsupported deprecated function_call finish reason"));
   }
   return FinishReason::unknown;
 }
 
-Status apply_openai_usage(const WireValue& owner, Usage& usage) {
-  const auto* value = wire_field(owner, "usage");
+Status apply_openai_usage(const JsonValue& owner, Usage& usage) {
+  const auto* value = json_field(owner, "usage");
   if (value == nullptr || value->is_null()) {
     return {};
   }
   if (!value->is_object()) {
-    return std::unexpected(make_provider_error(
-        ErrorCategory::protocol, "OpenAI usage must be an object or null"));
+    return std::unexpected(
+        make_error(ErrorCategory::protocol, "OpenAI usage must be an object or null"));
   }
   auto input = assign_usage_count(*value, "prompt_tokens", usage.input_tokens);
   if (!input) {
@@ -179,15 +169,15 @@ Status apply_openai_usage(const WireValue& owner, Usage& usage) {
   return assign_usage_count(*value, "completion_tokens", usage.output_tokens);
 }
 
-bool is_openai_error(const WireValue& root) noexcept {
-  return wire_field(root, "error") != nullptr;
+bool is_openai_error(const JsonValue& root) noexcept {
+  return json_field(root, "error") != nullptr;
 }
 
-Error decode_openai_error(const WireValue& root, const std::string_view message,
+Error decode_openai_error(const JsonValue& root, const std::string_view message,
                           std::string request_id) {
   const auto descriptor = error_descriptor(root);
-  Error error = make_provider_error(descriptor.category, std::string{message},
-                                    retryable_category(descriptor.category));
+  Error error = make_error(descriptor.category, std::string{message},
+                           retryable_category(descriptor.category));
   error.provider_detail = "openai:" + descriptor.token;
   error.provider_request_id = std::move(request_id);
   return error;

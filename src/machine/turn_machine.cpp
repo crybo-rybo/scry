@@ -384,10 +384,6 @@ TransitionResult TurnMachine::finish_error(Error error) {
   return applied(PublishError{.error = std::move(error)});
 }
 
-TransitionResult TurnMachine::fail(const ErrorCategory category, std::string message) {
-  return finish_error(correlate(response_error(category, std::move(message))));
-}
-
 TransitionResult TurnMachine::fail_response(const ErrorCategory category,
                                             std::string message,
                                             std::string provider_request_id) {
@@ -421,14 +417,14 @@ bool TurnMachine::retry_is_allowed(const Error& error,
 }
 
 Result<std::vector<ToolCallBlock>>
-TurnMachine::validate_response(const ModelResponse& response) const {
+TurnMachine::validate_response(ModelResponse& response) const {
   std::vector<ToolCallBlock> calls;
   std::vector<std::string> response_ids;
-  for (const auto& block : response.content) {
+  for (auto& block : response.content) {
     if (std::holds_alternative<TextBlock>(block)) {
       continue;
     }
-    const auto* call = std::get_if<ToolCallBlock>(&block);
+    auto* call = std::get_if<ToolCallBlock>(&block);
     if (call == nullptr) {
       return std::unexpected(response_error(
           ErrorCategory::protocol, "assistant response contains a tool-result block"));
@@ -439,7 +435,8 @@ TurnMachine::validate_response(const ModelResponse& response) const {
       return std::unexpected(std::move(validated.error()));
     }
     response_ids.push_back(call->id);
-    calls.push_back(std::move(*validated));
+    *call = std::move(*validated);
+    calls.push_back(*call);
   }
 
   const auto declares_tools = response.finish_reason == FinishReason::tool_use;

@@ -47,7 +47,6 @@ struct ToolSchema {
 };
 
 struct ModelRequest {
-  std::string model{};
   std::string system_prompt{};
   std::vector<Message> messages{};
   std::vector<ToolSchema> tools{};

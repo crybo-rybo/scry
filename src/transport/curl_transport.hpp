@@ -11,11 +11,10 @@ public:
   CurlTransport();
   ~CurlTransport() override;
 
-  CurlTransport(CurlTransport&&) noexcept;
-  CurlTransport& operator=(CurlTransport&&) noexcept;
-
   CurlTransport(const CurlTransport&) = delete;
   CurlTransport& operator=(const CurlTransport&) = delete;
+  CurlTransport(CurlTransport&&) = delete;
+  CurlTransport& operator=(CurlTransport&&) = delete;
 
   [[nodiscard]] Status status() const;
 

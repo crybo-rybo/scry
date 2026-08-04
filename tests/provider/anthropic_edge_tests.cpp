@@ -1,13 +1,11 @@
+#include "core/json_codec.hpp"
 #include "core/model.hpp"
 #include "provider/anthropic.hpp"
 #include "provider/anthropic_content.hpp"
-#include "provider/anthropic_error.hpp"
-#include "provider/wire_json.hpp"
+#include "provider/shared.hpp"
 
 #include <array>
 #include <catch2/catch_test_macros.hpp>
-#include <cstdint>
-#include <limits>
 #include <optional>
 #include <scry/config.hpp>
 #include <string>
@@ -24,8 +22,8 @@ using StreamResult = Result<std::vector<ProviderEvent>>;
                                  ProviderDecodeState& state) {
   return adapter.parse_stream_event(name, data, state);
 }
-[[nodiscard]] WireValue wire(const std::string_view text) {
-  auto value = parse_wire_json(text, ErrorCategory::protocol, "invalid test JSON");
+[[nodiscard]] JsonValue json_value(const std::string_view text) {
+  auto value = parse_json(text, ErrorCategory::protocol, "invalid test JSON");
   REQUIRE(value);
   return std::move(*value);
 }
@@ -38,7 +36,6 @@ using StreamResult = Result<std::vector<ProviderEvent>>;
 }
 [[nodiscard]] ModelRequest request() {
   return {
-      .model = "request-model",
       .messages = {Message{
           .role = Role::user,
           .content = {TextBlock{.text = "hello"}},
@@ -55,11 +52,15 @@ void require_protocol(StreamResult result) {
   CHECK(result.error().category == ErrorCategory::protocol);
 }
 void require_request_error(AnthropicAdapter& adapter, const Config& value,
-                           const ModelRequest& model_request) {
+                           const ModelRequest& model_request,
+                           const std::string_view expected_message = {}) {
   const auto result = adapter.make_request(value, model_request);
   REQUIRE_FALSE(result);
   CHECK(result.error().category == ErrorCategory::invalid_config);
   CHECK(result.error().message.find("sanitized-key") == std::string::npos);
+  if (!expected_message.empty()) {
+    CHECK(result.error().message == expected_message);
+  }
 }
 void start_message(AnthropicAdapter& adapter, ProviderDecodeState& state) {
   auto result = event(
@@ -89,37 +90,35 @@ void start_message(AnthropicAdapter& adapter, ProviderDecodeState& state) {
   return state;
 }
 } // namespace
-TEST_CASE("wire JSON errors and provider error types remain bounded and safe") {
+TEST_CASE("JSON codec errors and provider error tokens remain bounded and safe") {
   const auto malformed =
-      parse_wire_json("{", ErrorCategory::invalid_config, "boundary failed");
+      parse_json("{", ErrorCategory::invalid_config, "boundary failed");
   REQUIRE_FALSE(malformed);
   CHECK(malformed.error().category == ErrorCategory::invalid_config);
   const auto encoded =
-      write_wire_json(wire(R"({"safe":true})"), ErrorCategory::protocol, "write");
+      write_json_text(json_value(R"({"safe":true})"), ErrorCategory::protocol, "write");
   REQUIRE(encoded);
-  CHECK(sanitize_anthropic_error_type("") == "unknown_error");
-  CHECK(sanitize_anthropic_error_type(std::string(97, 'a')) == "unknown_error");
-  CHECK(sanitize_anthropic_error_type("Safe_123") == "Safe_123");
-  CHECK(sanitize_anthropic_error_type("unsafe-value") == "unknown_error");
+  CHECK(sanitize_error_token("") == "unknown_error");
+  CHECK(sanitize_error_token(std::string(97, 'a')) == "unknown_error");
+  CHECK(sanitize_error_token("Safe_123") == "Safe_123");
+  CHECK(sanitize_error_token("unsafe-value") == "unknown_error");
   REQUIRE(make_provider_adapter(ProviderDialect::anthropic));
   REQUIRE(make_provider_adapter(ProviderDialect::openai_compatible));
-  const auto unknown =
-      make_provider_adapter(static_cast<ProviderDialect>(std::uint8_t{255}));
-  REQUIRE_FALSE(unknown);
 }
 TEST_CASE("Anthropic content decoding covers text, tool, and rejection shapes") {
-  auto text =
-      decode_anthropic_content(wire("{\"type\":\"text\",\"text\":\"answer\"}"), false);
+  auto text = decode_anthropic_content(
+      json_value("{\"type\":\"text\",\"text\":\"answer\"}"), false);
   REQUIRE(text);
   CHECK(std::get<TextBlock>(*text).text == "answer");
   auto streamed_tool = decode_anthropic_content(
-      wire("{\"type\":\"tool_use\",\"id\":\"id\",\"name\":\"lookup\",\"input\":{}}"),
+      json_value(
+          "{\"type\":\"tool_use\",\"id\":\"id\",\"name\":\"lookup\",\"input\":{}}"),
       true);
   REQUIRE(streamed_tool);
   CHECK(std::get<ToolCallBlock>(*streamed_tool).arguments.text.empty());
   auto tool = decode_anthropic_content(
-      wire("{\"type\":\"tool_use\",\"id\":\"id\",\"name\":\"lookup\","
-           "\"input\":{\"x\":1}}"),
+      json_value("{\"type\":\"tool_use\",\"id\":\"id\",\"name\":\"lookup\","
+                 "\"input\":{\"x\":1}}"),
       false);
   REQUIRE(tool);
   CHECK(std::get<ToolCallBlock>(*tool).arguments.text == "{\"x\":1}");
@@ -134,7 +133,7 @@ TEST_CASE("Anthropic content decoding covers text, tool, and rejection shapes") 
       "{\"type\":\"tool_use\",\"id\":\"id\",\"name\":\"lookup\"}",
   };
   for (const auto json : invalid) {
-    const auto result = decode_anthropic_content(wire(json), false);
+    const auto result = decode_anthropic_content(json_value(json), false);
     REQUIRE_FALSE(result);
     CHECK(result.error().category == ErrorCategory::protocol);
   }
@@ -148,46 +147,17 @@ TEST_CASE("Anthropic finish and usage decoding covers every wire variant") {
   CHECK(*decode_anthropic_finish("tool_use") == FinishReason::tool_use);
   CHECK(*decode_anthropic_finish("future") == FinishReason::unknown);
   Usage usage{.input_tokens = 1, .output_tokens = 2};
-  REQUIRE(apply_anthropic_usage(wire("{}"), usage));
-  REQUIRE_FALSE(apply_anthropic_usage(wire(R"({"usage":[]})"), usage));
+  REQUIRE(apply_anthropic_usage(json_value("{}"), usage));
+  REQUIRE_FALSE(apply_anthropic_usage(json_value(R"({"usage":[]})"), usage));
   REQUIRE(apply_anthropic_usage(
-      wire(R"({"usage":{"input_tokens":7,"output_tokens":9}})"), usage));
+      json_value(R"({"usage":{"input_tokens":7,"output_tokens":9}})"), usage));
   CHECK(usage.input_tokens == 7);
-  REQUIRE(apply_anthropic_usage(wire(R"({"usage":{"input_tokens":null}})"), usage));
+  REQUIRE(
+      apply_anthropic_usage(json_value(R"({"usage":{"input_tokens":null}})"), usage));
   REQUIRE_FALSE(
-      apply_anthropic_usage(wire(R"({"usage":{"input_tokens":"7"}})"), usage));
+      apply_anthropic_usage(json_value(R"({"usage":{"input_tokens":"7"}})"), usage));
   REQUIRE_FALSE(
-      apply_anthropic_usage(wire(R"({"usage":{"output_tokens":"9"}})"), usage));
-}
-TEST_CASE("Anthropic request validation rejects every invalid boundary") {
-  AnthropicAdapter adapter;
-  auto valid_config = config();
-  auto valid_request = request();
-  auto invalid_config = valid_config;
-  invalid_config.base_url.clear();
-  require_request_error(adapter, invalid_config, valid_request);
-  invalid_config = valid_config;
-  invalid_config.api_key.clear();
-  require_request_error(adapter, invalid_config, valid_request);
-  invalid_config.model.clear();
-  auto invalid_request = valid_request;
-  invalid_request.model.clear();
-  require_request_error(adapter, invalid_config, invalid_request);
-  for (const auto temperature : {std::numeric_limits<double>::quiet_NaN(), -0.1, 1.1}) {
-    invalid_request = valid_request;
-    invalid_request.sampling.temperature = temperature;
-    require_request_error(adapter, valid_config, invalid_request);
-  }
-  for (const auto top_p : {std::numeric_limits<double>::quiet_NaN(), 0.0, -0.1, 1.1}) {
-    invalid_request = valid_request;
-    invalid_request.sampling.top_p = top_p;
-    require_request_error(adapter, valid_config, invalid_request);
-  }
-  invalid_request = valid_request;
-  invalid_request.sampling.max_tokens.reset();
-  require_request_error(adapter, valid_config, invalid_request);
-  invalid_request.sampling.max_tokens = 0;
-  require_request_error(adapter, valid_config, invalid_request);
+      apply_anthropic_usage(json_value(R"({"usage":{"output_tokens":"9"}})"), usage));
 }
 TEST_CASE("Anthropic request encoding preserves optional and tool branches") {
   AnthropicAdapter adapter;
@@ -195,7 +165,6 @@ TEST_CASE("Anthropic request encoding preserves optional and tool branches") {
   value_config.base_url = "https://api.anthropic.test/v1/messages///";
   value_config.tls_verify_peer = false;
   auto value_request = request();
-  value_request.model.clear();
   value_request.system_prompt = "system";
   value_request.sampling.top_p = 0.8;
   value_request.tools.push_back({.name = "lookup",

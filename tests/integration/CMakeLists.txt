@@ -1,14 +1,12 @@
 add_executable(
   scry_harness_integration_tests
-  conversation_persistence_tests.cpp
   curl_harness_tests.cpp
+  harness_edge_tests.cpp
   harness_tests.cpp
   openai_integration_tests.cpp
-  runtime_coverage_tests.cpp
+  persistence_during_turn_tests.cpp
   runtime_edge_tests.cpp
   tool_loop_tests.cpp
-  worker_tool_edge_tests.cpp
-  worker_tool_loop_tests.cpp
   "${PROJECT_SOURCE_DIR}/tests/support/transport/loopback_server.cpp"
 )
 target_include_directories(

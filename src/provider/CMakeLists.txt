@@ -8,5 +8,4 @@ target_sources(
     openai_request.cpp
     openai_stream.cpp
     provider.cpp
-    wire_json.cpp
 )

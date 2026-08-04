@@ -114,12 +114,6 @@ template <scry::reflection::SupportedValue Type>
 
 } // namespace
 
-template <> struct scry::reflection::tool_traits<PresenceArguments> {
-  static constexpr std::array descriptions{
-      scry::reflection::parameter_description{"required", "Trait override"},
-  };
-};
-
 static_assert(scry::reflection::SupportedValue<bool>);
 static_assert(scry::reflection::SupportedValue<std::vector<std::int32_t>>);
 static_assert(scry::reflection::SupportedValue<AllTypesArguments>);
@@ -138,7 +132,7 @@ static_assert(!scry::reflection::ToolArguments<UnscopedEnumArguments>);
 
 static_assert(
     scry::reflection::input_schema_v<PresenceArguments> ==
-    R"({"additionalProperties":false,"properties":{"defaulted":{"description":"C++ default","type":"string"},"nullable":{"anyOf":[{"maximum":32767,"minimum":-32768,"type":"integer"},{"type":"null"}]},"optional_nullable":{"anyOf":[{"maximum":32767,"minimum":-32768,"type":"integer"},{"type":"null"}]},"required":{"description":"Trait override","type":"string"}},"required":["nullable","required"],"type":"object"})");
+    R"({"additionalProperties":false,"properties":{"defaulted":{"description":"C++ default","type":"string"},"nullable":{"anyOf":[{"maximum":32767,"minimum":-32768,"type":"integer"},{"type":"null"}]},"optional_nullable":{"anyOf":[{"maximum":32767,"minimum":-32768,"type":"integer"},{"type":"null"}]},"required":{"description":"Annotation text","type":"string"}},"required":["nullable","required"],"type":"object"})");
 static_assert(
     scry::reflection::input_schema_v<AllTypesArguments> ==
     R"({"additionalProperties":false,"properties":{"fixed":{"items":{"maximum":2147483647,"minimum":-2147483648,"type":"integer"},"maxItems":2,"minItems":2,"type":"array"},"flag":{"type":"boolean"},"nested":{"additionalProperties":false,"properties":{"label":{"type":"string"}},"required":[],"type":"object"},"ratio":{"type":"number"},"unit":{"enum":["celsius","fahrenheit"],"type":"string"},"values":{"items":{"maximum":2147483647,"minimum":-2147483648,"type":"integer"},"type":"array"}},"required":[],"type":"object"})");
@@ -433,10 +427,10 @@ TEST_CASE("reflected registration lowers into the additive registry") {
   status = scry::reflection::add<PresenceArguments>(
       harness.tools(),
       {
-          .name = "worker_presence",
-          .description = "Exercise reflected worker registration",
+          .name = "second_presence",
+          .description = "Exercise a second reflected registration",
       },
-      DirectHandler{}, {.execution = scry::ToolExecution::worker_thread});
+      DirectHandler{});
   REQUIRE(status);
   CHECK(harness.tools().size() == 2);
 }

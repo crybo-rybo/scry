@@ -1,12 +1,14 @@
 # Scheduled/manual ring (ENGINEERING.md §6, ADR 0012 release posture):
-# CodeQL, long protocol fuzzing, and the opt-in showcase run nightly; the
-# Ollama local-model smoke is workflow_dispatch-only because it exercises
-# a live model, not the deterministic protocol seams that gate PRs.
-name: Nightly quality
+# CodeQL, the GCC 16 reflection leg, long protocol fuzzing, and the opt-in
+# showcase run weekly; the Ollama local-model smoke is workflow_dispatch-only
+# because it exercises a live model, not the deterministic protocol seams that
+# gate PRs. The reflection leg lives here rather than in ci.yml so an
+# experimental-compiler PPA pin cannot gate unrelated pull requests.
+name: Scheduled
 
 on:
   schedule:
-    - cron: "17 5 * * *"
+    - cron: "0 6 * * 1"
   workflow_dispatch:
 
 permissions:
@@ -50,6 +52,22 @@ jobs:
         uses: github/codeql-action/analyze@v4
         with:
           category: /language:c-cpp/nightly
+
+  reflection:
+    name: GCC 16 supported reflection component
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - name: Install GCC 16 (and GCC 14 for the core-surface proof)
+        run: |
+          sudo add-apt-repository --yes ppa:ubuntu-toolchain-r/test
+          sudo apt-get update
+          sudo apt-get install -y g++-14 g++-16 libcurl4-openssl-dev ninja-build
+      - name: Lower ASLR entropy for sanitizers
+        run: sudo sysctl vm.mmap_rnd_bits=28
+      - name: Build, test, install, and consume reflection component
+        run: ./scripts/ci-reflection.sh
 
   long-fuzz:
     name: Long fuzz (${{ matrix.target }})

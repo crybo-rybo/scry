@@ -54,33 +54,11 @@ template <ToolArguments Args, typename Handler>
 
 namespace scry::reflection {
 
-/// Registers a typed reflected tool with an explicit execution policy.
+/// Registers a typed reflected tool.
 ///
 /// The argument schema is generated as input_schema_v<Args>, incoming JSON is decoded
 /// strictly, and the typed return is encoded back to JSON. Registration lowers to the
 /// same additive ToolRegistry used by explicit-schema tools.
-/// @tparam Args Complete reflected argument aggregate.
-/// @tparam Handler Move-constructible callable satisfying ToolHandlerFor<Handler,
-/// Args>.
-/// @param registry Harness-owned registry that receives the lowered tool.
-/// @param metadata Provider-visible tool name and description.
-/// @param handler Callable invoked with Args moved by value.
-/// @param options App-thread or worker-thread execution policy.
-/// @return Success, or the explicit registry's immediate validation error.
-template <ToolArguments Args, typename Handler>
-  requires ToolHandlerFor<Handler, Args>
-[[nodiscard]] Status add(ToolRegistry& registry, ToolMetadata metadata,
-                         Handler&& handler, ToolRegistrationOptions options) {
-  return registry.add(
-      ToolDefinition{
-          .name = std::move(metadata.name),
-          .description = std::move(metadata.description),
-          .input_schema = Json{.text = std::string{input_schema_v<Args>}},
-      },
-      detail::make_tool_handler<Args>(std::forward<Handler>(handler)), options);
-}
-
-/// Registers a typed reflected tool for default app-thread execution.
 /// @tparam Args Complete reflected argument aggregate.
 /// @tparam Handler Move-constructible callable satisfying ToolHandlerFor<Handler,
 /// Args>.
@@ -92,8 +70,13 @@ template <ToolArguments Args, typename Handler>
   requires ToolHandlerFor<Handler, Args>
 [[nodiscard]] Status add(ToolRegistry& registry, ToolMetadata metadata,
                          Handler&& handler) {
-  return add<Args>(registry, std::move(metadata), std::forward<Handler>(handler),
-                   ToolRegistrationOptions{});
+  return registry.add(
+      ToolDefinition{
+          .name = std::move(metadata.name),
+          .description = std::move(metadata.description),
+          .input_schema = Json{.text = std::string{input_schema_v<Args>}},
+      },
+      detail::make_tool_handler<Args>(std::forward<Handler>(handler)));
 }
 
 } // namespace scry::reflection

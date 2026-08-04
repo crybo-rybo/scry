@@ -84,8 +84,8 @@ tools:
 - `move_west`.
 
 Each schema is a closed empty object, and handlers reject arguments other than
-`{}`. The tools explicitly retain the safe
-`ToolExecution::app_thread` policy because they mutate host-owned world state.
+`{}`. Like every Scry tool, these handlers execute in `Harness::update()` on
+the app thread, which is required because they mutate host-owned world state.
 `look` returns canonical JSON containing the grid bounds, position, and
 available moves in deterministic order. A move returns its direction, whether
 it moved, and the resulting position; a blocked boundary move also returns

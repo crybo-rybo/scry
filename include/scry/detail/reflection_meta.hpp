@@ -26,24 +26,6 @@ struct ToolMetadata {
   std::string description{};
 };
 
-/// Portable member-description entry used by tool_traits.
-struct parameter_description {
-  /// Exact reflected member name.
-  std::string_view member{};
-  /// Description included in the generated parameter schema.
-  std::string_view text{};
-};
-
-/// Portable customization point for reflected parameter descriptions.
-///
-/// Specialize this template for an argument aggregate and provide a `descriptions`
-/// array. Trait entries override matching Scry description annotations. Unknown or
-/// duplicate names are diagnosed at compile time.
-template <typename Args> struct tool_traits {
-  /// Parameter descriptions for Args, empty by default.
-  static constexpr std::array<parameter_description, 0> descriptions{};
-};
-
 /// Fixed-string payload for Scry's P3394 parameter-description annotation.
 /// @tparam Size Character-array extent including the null terminator.
 template <std::size_t Size> struct description {

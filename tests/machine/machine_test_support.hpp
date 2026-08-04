@@ -22,7 +22,6 @@ inline constexpr TurnId turn_id{42};
 
 [[nodiscard]] inline ModelRequest request() {
   return {
-      .model = "test-model",
       .system_prompt = "Be concise.",
       .messages =
           {

@@ -24,15 +24,12 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data,
   }
   const auto input =
       std::string_view{reinterpret_cast<const char*>(bytes.data()), bytes.size()};
-  auto adapter =
+  const auto adapter =
       scry::detail::make_provider_adapter(scry::ProviderDialect::openai_compatible);
-  if (!adapter) {
-    return 0;
-  }
 
-  parse_stream_payload(**adapter, "message", input, {});
-  parse_stream_payload(**adapter, "error", input, {});
-  parse_stream_payload(**adapter, "future_optional", input, {});
+  parse_stream_payload(*adapter, "message", input, {});
+  parse_stream_payload(*adapter, "error", input, {});
+  parse_stream_payload(*adapter, "future_optional", input, {});
 
   scry::detail::ProviderDecodeState active{};
   auto& openai = active.dialect.emplace<scry::detail::OpenAiProviderDecodeState>();
@@ -43,12 +40,12 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data,
       .type = "function",
   };
   active.max_tool_arguments_bytes = 1024;
-  parse_stream_payload(**adapter, "message", input, active);
+  parse_stream_payload(*adapter, "message", input, active);
 
   openai.tool_calls.clear();
   openai.finish_observed = true;
   openai.tools_finalized = true;
-  parse_stream_payload(**adapter, "message", input, active);
-  parse_stream_payload(**adapter, "future_optional", input, active);
+  parse_stream_payload(*adapter, "message", input, active);
+  parse_stream_payload(*adapter, "future_optional", input, active);
   return 0;
 }

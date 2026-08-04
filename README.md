@@ -21,24 +21,24 @@ locally and in hosted CI.
 
 The C++23 runtime selects Anthropic Messages or the strict OpenAI-compatible
 Chat Completions subset from `Config`, including local servers with no API key.
-Explicit and reflected tools accept `ToolRegistrationOptions`: app-thread
-execution remains the default, while an explicit worker-thread opt-in preserves
-provider order, app-thread observer delivery, accepted-turn snapshots,
-transactional resend and commit, cancellation semantics, and exclusive handler
-ownership.
+Every explicit and reflected tool handler executes synchronously inside
+`Harness::update()` on its caller's thread. Provider order, accepted-turn
+snapshots, transactional resend and commit, cancellation semantics, and
+exclusive handler ownership remain part of that single execution model.
 
-M4's deterministic closure passes 277/277 development tests and 48/48 provider
-tests. It includes exact OpenAI request/stream cases, a checked corpus
+M4's retained deterministic closure includes 50/50 provider tests, semantic
+OpenAI request cases, exact stream-boundary cases, a checked corpus
 and short `scry_openai_fuzz` target, a fragmented transactional OpenAI tool
 round, concurrent Anthropic/OpenAI isolation, a public Curl path/header/SSE
-round, and worker-mode mixed/all-worker ordering, thread-ID, snapshot,
-cancellation, detached-turn, budget, and cooperating-shutdown coverage. The
+round, and app-thread ordering, thread-ID, snapshot, cancellation,
+detached-turn, cumulative-budget, queue-atomicity, and shutdown coverage. The
 provider seam is streaming-only: the dead non-streaming decode path was
 removed (ARCHITECTURE.md §11 records the reintroduction condition). The
 development-era coverage/CRAP gating machinery was retired at the release
 posture ([ADR 0012](docs/adr/0012-release-infrastructure-simplification.md));
 its final full run measured 93.322% diff branch coverage and a maximum CRAP
-of 13.125, and the test suites it demanded remain in full.
+of 13.125. Its behavioral suites remain while they cover live production
+behavior; a test may leave with the implementation that was its only subject.
 
 The scheduled/manual nightly pipeline runs CodeQL, long
 SSE/Anthropic/OpenAI fuzzing, and the showcase gate, plus an on-demand
@@ -54,7 +54,7 @@ The M3 reflection component remains complete. Typed P2996 schema generation,
 strict marshalling, and the optional reflection package component are
 implemented under
 [ADR 0007](docs/adr/0007-m3-reflection-contract.md). The supported GCC 16 gate
-builds the reflected example and standalone header, runs 27 schema, codec,
+builds the reflected example and standalone header, runs 26 schema, codec,
 bridge, registration, and compile-fail tests, audits a clean component install,
 runs a downstream
 `find_package(scry CONFIG REQUIRED COMPONENTS reflection)` consumer, and
@@ -104,6 +104,18 @@ create a `Harness` from a `Config`, register a tool, `send()` a message, and
 pump `update()` from the loop you already own. It assumes a local Ollama server
 at `http://127.0.0.1:11434` with the `qwen3:1.7b` model installed.
 
+Runtime JSON is canonicalized through one sorted representation. Provider
+request fixtures promise JSON meaning, not byte-for-byte member order, and
+tool arguments/results committed to Conversation history use that same
+canonical ordering. Scry is pre-1.0: do not use those bytes as a stable signing
+or cache-key format without pinning the library version; an announced
+canonicalization change may alter bytes while preserving JSON meaning.
+
+libcurl global state is initialized on first transport use and owned once for
+the module/process. The first result is cached; a capability rejection cleans
+up immediately, while success remains active across Harness creation and
+destruction and is cleaned up once at static teardown.
+
 ## Build and preflight
 
 Run the fast, platform-stable core workflow:
@@ -132,6 +144,18 @@ unavailable locally; hosted CI is authoritative for those environments.
 Long protocol fuzzing and the M5 showcase gate run in the scheduled nightly
 workflow; `just showcase` runs the showcase gate locally.
 `just ci` is the optional convenience wrapper.
+
+Internal lifecycle logging is a separate compile-time diagnostic build:
+
+```sh
+cmake --preset dev-logging
+cmake --build build/dev-logging
+SCRY_LOG_FILE=/absolute/path/to/scry.log ctest --test-dir build/dev-logging
+```
+
+`SCRY_LOG_FILE` must name a nonempty explicit destination before the first log
+event. If it is unset or empty, Scry creates no default file. Diagnostic lines
+exclude prompts, tool arguments/results, and credentials.
 
 Build the warning-clean API reference with Doxygen 1.9.8 or newer and Graphviz:
 
@@ -162,15 +186,15 @@ artifacts, and is not claimed as M3 verification.
 | [ARCHITECTURE.md](ARCHITECTURE.md) | How the code is shaped: the C++ patterns and idioms each piece commits to — actor-model concurrency, sans-I/O state machine, type erasure, optional consteval codegen and JSON bridge, PImpl, error-as-value — plus the evolution register documenting every deliberate simplification and its intended end state. |
 | [ENGINEERING.md](ENGINEERING.md) | How we work: testing plan and pyramid, coverage habits, static and dynamic analysis (sanitizers, nightly fuzzing), CI shape, workflow, and the gates-are-behavioral philosophy of the v0.0.1 release posture. |
 | [REQUIREMENTS.md](REQUIREMENTS.md) | **The normative register.** Every binding requirement as a numbered RFC-2119 row with milestone and verification method. When prose elsewhere conflicts with the register, the register wins. |
-| [ADR 0001](docs/adr/0001-public-object-graph-and-lifetimes.md) | Accepted public ownership, registry snapshot, Turn detach, and callback-lifetime decisions. |
+| [ADR 0001](docs/adr/0001-public-object-graph-and-lifetimes.md) | Accepted public ownership, registry snapshot, Turn detach, and callbacks-at-send lifetime decisions. |
 | [ADR 0002](docs/adr/0002-build-and-dependency-foundation.md) | Build, package, dependency-acquisition, and initial test-harness decisions. |
 | [ADR 0003](docs/adr/0003-test-framework-deferred.md) | Historical M0 decision deferring the test framework until M1. |
 | [ADR 0004](docs/adr/0004-live-quality-ratchet.md) | Historical merge-base quality ratchet; superseded by ADR 0011. |
 | [ADR 0005](docs/adr/0005-m1-runtime-and-test-foundation.md) | Compiled M1 runtime, pinned dependencies, internal contracts, and chat-only milestone boundary. |
 | [ADR 0006](docs/adr/0006-m2-agentic-tool-loop.md) | M2 registry snapshots, agentic tool rounds, app-thread dispatch, retry accounting, transactional commit, and Conversation persistence. |
-| [ADR 0007](docs/adr/0007-m3-reflection-contract.md) | Accepted M3 schema/type mapping, strict marshalling, description precedence, optional package component, and no-Glaze public boundary. |
+| [ADR 0007](docs/adr/0007-m3-reflection-contract.md) | Accepted M3 schema/type mapping, strict marshalling, P3394-only parameter descriptions, optional package component, and no-Glaze public boundary. |
 | [ADR 0008](docs/adr/0008-m4-openai-compatible-contract.md) | Accepted M4 endpoint, authentication, common request/response, streaming, error, and per-dialect state contract for OpenAI-compatible Chat Completions. |
-| [ADR 0009](docs/adr/0009-m4-worker-tool-execution.md) | Accepted M4 per-tool execution policy, handler ownership, ordered control flow, cancellation, observer, and teardown contract. |
+| [ADR 0009](docs/adr/0009-m4-worker-tool-execution.md) | Historical M4 worker-tool policy, superseded before v0.0.1 by the single app-thread execution contract. |
 | [ADR 0010](docs/adr/0010-m5-showcase-contract.md) | Accepted M5 showcase-only boundary, host-owned ImGui lifecycle, deterministic NPC tools, pinned build-only dependency, and acceptance gates. |
 | [ADR 0011](docs/adr/0011-absolute-quality-gates.md) | Historical: absolute quality gates from a single build replaced the merge-base ratchet, bespoke reflection coverage validator, nightly mutation schedule, and model manifest pin. Gating machinery since retired by ADR 0012. |
 | [ADR 0012](docs/adr/0012-release-infrastructure-simplification.md) | v0.0.1 release posture: the coverage/CRAP gating machinery, mutation testing, and feasibility spikes are retired; fuzzing and the showcase move to the nightly ring; behavioral gates (matrix, tests, sanitizers, tidy, package audits) remain. |

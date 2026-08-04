@@ -9,7 +9,6 @@
 #include <deque>
 #include <limits>
 #include <memory>
-#include <optional>
 #include <scry/events.hpp>
 #include <scry/unique_function.hpp>
 #include <string>
@@ -22,6 +21,7 @@ struct TurnRouteOptions {
   std::size_t max_tool_result_bytes{};
   std::size_t max_exchange_bytes{std::numeric_limits<std::size_t>::max()};
   std::size_t max_conversation_bytes{};
+  TurnCallbacks callbacks{};
 };
 
 class TurnRoute final {
@@ -40,15 +40,7 @@ public:
   [[nodiscard]] bool terminal() const noexcept;
   void mark_terminal() noexcept;
 
-  [[nodiscard]] Status register_text(TextDeltaCallback callback);
-  [[nodiscard]] Status register_tool(ToolCallCallback callback);
-  [[nodiscard]] Status register_completion(CompletionCallback callback);
-  [[nodiscard]] Status register_error(ErrorCallback callback);
-  [[nodiscard]] Status register_cancelled(CancelledCallback callback);
-
   [[nodiscard]] bool has_callback(const WorkerEvent& event) const noexcept;
-  [[nodiscard]] bool should_retain(const WorkerEvent& event) const noexcept;
-  [[nodiscard]] bool should_discard(const WorkerEvent& event) const noexcept;
   void invoke(const WorkerEvent& event);
 
   [[nodiscard]] const std::shared_ptr<ConversationState>& conversation() const noexcept;
@@ -57,9 +49,6 @@ public:
 
 private:
   void dispatch(const ToolCallEvent& event);
-  void dispatch_on_app(const ToolCallEvent& event);
-  void dispatch_on_worker(const ToolCallEvent& event);
-  void accept_worker_tool(const WorkerToolAcceptedEvent& event);
   void notify_tool_observer(const ToolCallBlock& call);
 
   TurnId turn_id_{};
@@ -74,12 +63,7 @@ private:
   bool attached_{true};
   bool terminal_{false};
   bool tool_dispatch_failed_{false};
-  std::optional<ToolCallBlock> pending_worker_tool_{};
-  TextDeltaCallback on_text_{};
-  ToolCallCallback on_tool_{};
-  CompletionCallback on_completion_{};
-  ErrorCallback on_error_{};
-  CancelledCallback on_cancelled_{};
+  TurnCallbacks callbacks_{};
 };
 
 using PumpClock = UniqueFunction<std::chrono::steady_clock::time_point()>;
@@ -90,7 +74,6 @@ public:
 
   void add_route(std::shared_ptr<TurnRoute> route);
   [[nodiscard]] std::shared_ptr<TurnRoute> find_route(TurnId turn_id) const;
-  [[nodiscard]] std::size_t route_count() const noexcept;
   [[nodiscard]] std::size_t live_route_count() const noexcept;
   [[nodiscard]] bool updating() const noexcept;
 

@@ -35,8 +35,10 @@ still hold, while review checks that changed behavior has meaningful tests at
 the sanctioned seam. Coverage supplied a different signal, but preserving its
 bespoke analyzer was no longer worth the maintenance surface.
 (The merge-base ratchet that preceded it was demoted earlier, under
-[ADR 0011](docs/adr/0011-absolute-quality-gates.md).) The test suites written
-under those gates remain in full — the gates went, not the tests.
+[ADR 0011](docs/adr/0011-absolute-quality-gates.md).) The behavioral suites
+written under those gates remain while they cover live production behavior. A
+test may leave with the implementation that was its only subject; metric-driven
+deletion alone remains out of bounds.
 
 ## 2. Testing Plan
 
@@ -46,7 +48,7 @@ under those gates remain in full — the gates went, not the tests.
 |---|---|---|---|
 | Machine tests | Sans-I/O loop: event sequences in, command sequences asserted | Pure, deterministic, sub-ms, no threads | The bulk (~70%) |
 | Component tests | SSE parser, retry classifier, reflected schema/codec, queue, pump budget | Pure or single-threaded; property-based where inputs are adversarial | Most of the rest |
-| Adapter golden tests | Captured real wire payloads ↔ neutral model round-trips | Data-driven; payloads are checked-in fixtures | Thin |
+| Adapter boundary fixtures | Semantic outgoing request JSON plus captured incoming wire payloads ↔ neutral model | Data-driven; request meaning and adversarial wire spelling are checked separately | Thin |
 | Integration tests | Real threads + fake transport; full harness against a local mock SSE server | The only tests where threading is real | Thin |
 | Showcase contract tests | Deterministic NPC world and fake-controller panel behavior; real ImGui headless frame and package audit | Network-free, fixed state; the real dependency is compiled only in its opt-in leg | Thin |
 | End-to-end smoke | Real local model (Ollama / llama.cpp server) in CI | On demand, not per-commit; flakiness quarantined by design | Thinnest |
@@ -66,6 +68,17 @@ under those gates remain in full — the gates went, not the tests.
 - **Determinism is non-negotiable.** No real sleeps, no wall-clock time, no network in unit tests. Time is an injected event (the machine already "requests wake-ups"); a fake clock makes retry/backoff testable to the millisecond. A test that flakes gets fixed or deleted the day it flakes — a flaky suite trains you to ignore red, which destroys the entire system of gates.
 - **Test-first for pure logic, test-with for plumbing.** The state machine, parsers, and classifiers are TDD-friendly (pure functions, crisp specs) — write tests first there. Threading and curl plumbing are exploratory — tests land in the same commit, shaped by what was learned.
 - **Every bug becomes a test before it becomes a fix.** The reproduction (usually a machine-level event replay — this is why the sans-I/O design pays) is committed with the fix, permanently.
+- **Semantic fixtures say so.** Outgoing JSON request tests parse both sides and
+  compare canonical meaning; they do not claim byte-for-byte member order.
+  Incoming stream fixtures retain exact bytes and arbitrary splits because
+  lexical framing is the behavior under test. Canonical object ordering is a
+  documented pre-1.0 implementation contract, not an accidental golden.
+- **Process-global behavior gets process-isolated tests.** Environment-selected
+  logging destinations and one-shot runtime initialization cannot be reset
+  safely inside a unit-test process. Logging destination cases therefore run
+  fresh probes: unset/empty must create nothing, and an explicit path must
+  receive the marker. Curl capability validation stays pure; integration and
+  sanitizer tests exercise the process-lifetime RAII owner.
 
 ## 3. Coverage — A Habit, Not a Gate
 
@@ -131,7 +144,7 @@ Enforced via lizard and clang-tidy on every commit:
   must not crash the host app). Reflection decoding has deterministic boundary
   tests but no claimed property/fuzz gate in M3. All three fuzz targets run
   with long budgets in the scheduled nightly workflow (ADR 0012); the
-  deterministic golden, arbitrary-split, and boundary wire tests remain in
+  deterministic semantic-request, arbitrary-split, and boundary wire tests remain in
   the per-commit suites.
 - Valgrind/memcheck occasionally as a differently-shaped net; not gating.
 
@@ -143,7 +156,7 @@ Three rings, ordered by feedback speed; a failure in an inner ring stops the out
    tidy, build matrix (supported GCC 16 component with reflection ON; stable
    GCC/Clang with reflection OFF — the severability proof), unit + component
    tests, deterministic
-   fake-transport and local-loopback integration tests, adapter golden suites,
+   fake-transport and local-loopback integration tests, adapter boundary suites,
    ASan/UBSan/TSan suites, and complexity gates. The M3 reflection leg also
    installs to a clean prefix and builds/runs a downstream
    `find_package(scry CONFIG REQUIRED COMPONENTS reflection)`
@@ -182,31 +195,36 @@ toolchain failure from changing the C++23 library configuration surface while
 remaining part of `preflight.sh` and the definition of done (QA-013).
 
 The shared `scripts/ci-reflection.sh` gate is called by local preflight and
-hosted CI. It performs a fresh GCC 16/P2996 build, runs the full configured
-suite (27 reflection-labelled tests: 22 runtime/schema/codec/bridge cases plus
-five compile-fail diagnostics), audits and consumes a clean reflection
-install, then reruns the reflection tests in a separate ASan+UBSan build.
+hosted CI. It performs a fresh GCC 16/P2996+P3394 capability-probed build, runs
+the full configured suite (26 reflection-labelled tests: 22 runtime, schema,
+codec, bridge, and registration cases plus four compile-fail diagnostics),
+audits and consumes a clean reflection install, then reruns the reflection
+tests in a separate ASan+UBSan build.
 The core gate separately audits a
 clean reflection-OFF install and downstream consumer. M3 evidence does not
 claim a manual clang-p2996 run, randomized reflection property generation, or
 a reflection fuzz target.
 
-M4's per-commit evidence is live. The current development suite passes 277/277
-tests, including exact OpenAI request/stream cases; endpoint, auth,
+M4's retained per-commit evidence is live. The development suite includes
+semantic OpenAI request and exact stream-boundary cases; endpoint, auth,
 sampling, usage, error, lifecycle, fragmentation, and byte-limit matrices; the
 fragmented transactional tool round; concurrent cross-dialect isolation; and
-the public Curl path/header/SSE case. The provider slice passes 48/48 tests,
+the public Curl path/header/SSE case. The provider slice passes 50/50 tests,
 and `scry_openai_fuzz` joins the existing checked-corpus short fuzz ring. The
 provider seam is streaming-only: the dead non-streaming decode path was
 removed with its tests (see the evolution register in ARCHITECTURE.md §11).
 
-ADR 0009 verification covers default and opted-in thread IDs, FIFO registration
-and accepted-turn snapshots, all-worker and mixed batches, result
-acknowledgements and cumulative budgets, exception/failure suppression,
-cancellation, observer thread affinity, detached execute/resend/commit, queued
-turns, and a bounded cooperating teardown handler under TSan. A deliberately
-non-cooperating user handler remains outside Scry's enforceable shutdown bound
-and is documented rather than represented by a hanging test.
+The app-thread-only tool contract is verified at both component and threaded
+integration seams. `cumulative result failure suppresses remaining calls in the
+batch` proves route-level cumulative-budget gating before suffix side effects;
+`tool call batches fail atomically at the event queue boundary` proves an
+oversized provider batch exposes no dispatchable prefix; and `a queued turn
+waits for the active turn's app-thread tool round` proves serialized ownership
+through tool await. `Harness destruction stops a worker awaiting an app-thread
+tool result` covers teardown without handlers or callbacks, while `a queued
+turn command is consumed before a zero-backoff retry wakes` retains the worker
+actor's command-intake regression after the worker-handler protocol removal.
+The full threaded suite remains covered by TSan.
 
 The scheduled/manual `.github/workflows/nightly.yml` pipeline runs CodeQL
 v4, long SSE/Anthropic/OpenAI fuzz jobs, and the showcase contract; the

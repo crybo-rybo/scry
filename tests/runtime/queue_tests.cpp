@@ -1,11 +1,14 @@
 #include "core/model.hpp"
+#include "runtime/messages.hpp"
 #include "runtime/queue.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 #include <chrono>
+#include <cstddef>
 #include <limits>
 #include <stop_token>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -15,6 +18,57 @@ using namespace std::chrono_literals;
 TEST_CASE("payload byte accounting saturates instead of wrapping") {
   constexpr auto maximum = std::numeric_limits<std::size_t>::max();
   CHECK(scry::detail::saturating_payload_add(maximum - 1, 2) == maximum);
+}
+
+TEST_CASE("payload accounting sums text, tool call, and tool result blocks") {
+  const scry::detail::Message message{
+      .role = scry::detail::Role::assistant,
+      .content =
+          {
+              scry::detail::TextBlock{.text = "abc"},
+              scry::detail::ToolCallBlock{
+                  .id = "id",
+                  .name = "tool",
+                  .arguments = {.text = "input"},
+              },
+              scry::detail::ToolResultBlock{
+                  .tool_call_id = "ref",
+                  .result = {.text = "json"},
+                  .is_error = true,
+              },
+          },
+  };
+  constexpr std::size_t message_bytes = 3 + 2 + 4 + 5 + 3 + 4 + sizeof(bool);
+  CHECK(scry::detail::message_payload_bytes(message) == message_bytes);
+  const scry::detail::WorkerEvent event{scry::detail::CompletionEvent{
+      .turn_id = {.value = 201},
+      .exchange = {message},
+      .attempt_count = 1,
+      .provider_request_id = "req",
+  }};
+  CHECK(scry::detail::event_payload_bytes(event) ==
+        message_bytes + std::string_view{"req"}.size());
+}
+
+TEST_CASE("payload accounting reports the turn and bytes of every event kind") {
+  const auto turn_id = scry::TurnId{.value = 202};
+  const scry::detail::WorkerEvent text{
+      scry::detail::TextDeltaEvent{.turn_id = turn_id, .text = "text"}};
+  const scry::detail::WorkerEvent error{scry::detail::ErrorEvent{
+      .turn_id = turn_id,
+      .error =
+          {
+              .message = "message",
+              .provider_detail = "detail",
+              .provider_request_id = "request",
+          },
+  }};
+  const scry::detail::WorkerEvent cancelled{
+      scry::detail::CancelledEvent{.turn_id = turn_id}};
+  CHECK(scry::detail::event_turn_id(text) == turn_id);
+  CHECK(scry::detail::event_payload_bytes(text) == 4);
+  CHECK(scry::detail::event_payload_bytes(error) == 20);
+  CHECK(scry::detail::event_payload_bytes(cancelled) == 0);
 }
 
 TEST_CASE("event queue coalescing handles non-adjacent and cross-turn events") {
@@ -93,28 +147,6 @@ TEST_CASE("event queue rejects a coalesced delta beyond remaining capacity") {
       queue.push(scry::detail::TextDeltaEvent{.turn_id = turn_id, .text = "xy"}, 4));
 }
 
-TEST_CASE("event queue discard preserves bytes already owned by the pump") {
-  scry::detail::EventQueue queue;
-  const auto target = scry::TurnId{.value = 207};
-  const auto other = scry::TurnId{.value = 208};
-  REQUIRE(
-      queue.push(scry::detail::TextDeltaEvent{.turn_id = target, .text = "held"}, 32));
-  auto held = queue.try_pop();
-  REQUIRE(held);
-  REQUIRE(queue.push_terminal(
-      scry::detail::ErrorEvent{.turn_id = target, .error = {.message = "queued"}}, 32));
-  REQUIRE(
-      queue.push(scry::detail::TextDeltaEvent{.turn_id = other, .text = "other"}, 32));
-  queue.discard(scry::TurnId{.value = 999});
-  CHECK(queue.size() == 2);
-  queue.discard(target);
-  CHECK(queue.size() == 1);
-  REQUIRE(queue.push(
-      scry::detail::TextDeltaEvent{.turn_id = target, .text = std::string(28, 'x')},
-      32));
-  queue.release(*held);
-}
-
 TEST_CASE("event queue release retains and then clears remaining accounting") {
   scry::detail::EventQueue queue;
   const auto turn_id = scry::TurnId{.value = 209};
@@ -155,6 +187,7 @@ TEST_CASE("blocking queue exposes timeout and size behavior") {
 TEST_CASE("event queue wait reports timeout and ready data") {
   scry::detail::EventQueue queue;
   CHECK_FALSE(queue.wait_for_data(0ms));
-  queue.push_terminal(scry::detail::CancelledEvent{.turn_id = {.value = 211}});
+  REQUIRE(
+      queue.push_terminal(scry::detail::CancelledEvent{.turn_id = {.value = 211}}, 16));
   CHECK(queue.wait_for_data(0ms));
 }

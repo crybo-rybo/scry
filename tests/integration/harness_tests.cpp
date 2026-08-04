@@ -1,6 +1,5 @@
-#include "core/provider.hpp"
 #include "runtime/test_access.hpp"
-#include "support/transport/fake_transport.hpp"
+#include "support/harness_test_support.hpp"
 
 #include <atomic>
 #include <catch2/catch_test_macros.hpp>
@@ -15,6 +14,8 @@
 #include <thread>
 #include <utility>
 #include <vector>
+
+using namespace scry::test_support;
 
 namespace {
 
@@ -41,42 +42,8 @@ data: {"type":"message_stop"}
 
 )";
 
-[[nodiscard]] scry::Config test_config() {
-  return {
-      .base_url = "http://127.0.0.1:1",
-      .api_key = "sanitized-test-key",
-      .model = "test-model",
-  };
-}
-
-[[nodiscard]] std::unique_ptr<scry::detail::ProviderAdapter> provider() {
-  auto result = scry::detail::make_provider_adapter(scry::ProviderDialect::anthropic);
-  REQUIRE(result);
-  return std::move(*result);
-}
-
 [[nodiscard]] scry::test::ScriptedExchange successful_exchange() {
-  return {
-      .body_chunks = {std::string{anthropic_stream}},
-      .result =
-          scry::detail::TransportResult{
-              .status_code = 200,
-              .provider_request_id = "request-integration",
-          },
-  };
-}
-
-template <typename Predicate>
-[[nodiscard]] bool pump_until(scry::Harness& harness, Predicate&& predicate) {
-  constexpr std::size_t maximum_pumps = 100'000;
-  for (std::size_t pump = 0; pump < maximum_pumps; ++pump) {
-    static_cast<void>(harness.update());
-    if (std::forward<Predicate>(predicate)()) {
-      return true;
-    }
-    std::this_thread::yield();
-  }
-  return false;
+  return scripted_exchange(anthropic_stream, "request-integration");
 }
 
 class ControllableTransport final : public scry::detail::Transport {
@@ -160,19 +127,22 @@ TEST_CASE("public async path streams and commits only inside update") {
   REQUIRE(conversation_result);
   auto conversation = std::move(*conversation_result);
 
-  auto turn_result = harness.send(conversation, "Question");
-  REQUIRE(turn_result);
-  auto turn = std::move(*turn_result);
   std::string streamed;
   std::string completed;
   std::thread::id callback_thread{};
-  REQUIRE(turn.on_text_delta(
-      [&streamed](const std::string_view text) { streamed.append(text); }));
-  REQUIRE(
-      turn.on_completion([&completed, &callback_thread](const scry::Completion& value) {
-        completed = value.text;
-        callback_thread = std::this_thread::get_id();
-      }));
+  auto turn_result = harness.send(
+      conversation, "Question",
+      {
+          .on_text_delta =
+              [&streamed](const std::string_view text) { streamed.append(text); },
+          .on_finished =
+              [&completed, &callback_thread](scry::Result<scry::Completion> finished) {
+                REQUIRE(finished);
+                completed = finished->text;
+                callback_thread = std::this_thread::get_id();
+              },
+      });
+  REQUIRE(turn_result);
 
   CHECK(completed.empty());
   REQUIRE(pump_until(harness, [&completed] { return !completed.empty(); }));
@@ -245,22 +215,33 @@ TEST_CASE("busy conversations and queued cancellation issue no second transfer")
   REQUIRE(first_conversation);
   REQUIRE(second_conversation);
 
-  auto first = harness.send(*first_conversation, "First");
+  bool first_completed = false;
+  bool second_cancelled = false;
+  auto first =
+      harness.send(*first_conversation, "First",
+                   {
+                       .on_finished =
+                           [&first_completed](scry::Result<scry::Completion> finished) {
+                             first_completed = finished.has_value();
+                           },
+                   });
   REQUIRE(first);
   transport_observer->wait_until_entered();
   auto busy = harness.send(*first_conversation, "Duplicate");
   REQUIRE_FALSE(busy);
   CHECK(busy.error().category == scry::ErrorCategory::busy);
-  auto second = harness.send(*second_conversation, "Second");
+  auto second = harness.send(
+      *second_conversation, "Second",
+      {
+          .on_finished =
+              [&second_cancelled](scry::Result<scry::Completion> finished) {
+                second_cancelled = !finished && finished.error().category ==
+                                                    scry::ErrorCategory::cancelled;
+              },
+      });
   REQUIRE(second);
   CHECK(second->cancel());
 
-  bool first_completed = false;
-  bool second_cancelled = false;
-  REQUIRE(first->on_completion(
-      [&first_completed](const scry::Completion&) { first_completed = true; }));
-  REQUIRE(second->on_cancelled(
-      [&second_cancelled](const scry::Cancelled&) { second_cancelled = true; }));
   transport_observer->release();
   REQUIRE(pump_until(harness, [&] { return first_completed && second_cancelled; }));
   CHECK(transport_observer->calls() == 1);
@@ -284,20 +265,27 @@ TEST_CASE("serialized turns begin in FIFO order with one active transfer") {
   REQUIRE(second_conversation);
   REQUIRE(third_conversation);
 
-  auto first = harness.send(*first_conversation, "First FIFO request");
+  std::size_t completed = 0;
+  const auto count_completion = [&completed] {
+    return scry::TurnCallbacks{
+        .on_finished =
+            [&completed](scry::Result<scry::Completion> finished) {
+              completed += static_cast<std::size_t>(finished.has_value());
+            },
+    };
+  };
+  auto first =
+      harness.send(*first_conversation, "First FIFO request", count_completion());
   REQUIRE(first);
   observer->wait_until_entered();
-  auto second = harness.send(*second_conversation, "Second FIFO request");
-  auto third = harness.send(*third_conversation, "Third FIFO request");
+  auto second =
+      harness.send(*second_conversation, "Second FIFO request", count_completion());
+  auto third =
+      harness.send(*third_conversation, "Third FIFO request", count_completion());
   REQUIRE(second);
   REQUIRE(third);
   CHECK(observer->calls() == 1);
 
-  std::size_t completed = 0;
-  REQUIRE(first->on_completion([&completed](const scry::Completion&) { ++completed; }));
-  REQUIRE(
-      second->on_completion([&completed](const scry::Completion&) { ++completed; }));
-  REQUIRE(third->on_completion([&completed](const scry::Completion&) { ++completed; }));
   observer->release();
   REQUIRE(pump_until(harness, [&completed] { return completed == 3; }));
 
@@ -322,16 +310,21 @@ TEST_CASE("pending-turn admission limit rejects before acceptance") {
   REQUIRE(first_conversation);
   REQUIRE(second_conversation);
 
-  auto first = harness.send(*first_conversation, "First");
+  bool completed = false;
+  auto first =
+      harness.send(*first_conversation, "First",
+                   {
+                       .on_finished =
+                           [&completed](scry::Result<scry::Completion> finished) {
+                             completed = finished.has_value();
+                           },
+                   });
   REQUIRE(first);
   transport_observer->wait_until_entered();
   auto rejected = harness.send(*second_conversation, "Second");
   REQUIRE_FALSE(rejected);
   CHECK(rejected.error().category == scry::ErrorCategory::resource_limit);
   transport_observer->release();
-  bool completed = false;
-  REQUIRE(first->on_completion(
-      [&completed](const scry::Completion&) { completed = true; }));
   REQUIRE(pump_until(harness, [&completed] { return completed; }));
 }
 
@@ -346,10 +339,15 @@ TEST_CASE("dropping a Turn detaches without cancelling its callbacks or commit")
 
   bool completed = false;
   {
-    auto turn = harness_result->send(*conversation, "Detached");
+    auto turn = harness_result->send(
+        *conversation, "Detached",
+        {
+            .on_finished =
+                [&completed](scry::Result<scry::Completion> finished) {
+                  completed = finished.has_value();
+                },
+        });
     REQUIRE(turn);
-    REQUIRE(turn->on_completion(
-        [&completed](const scry::Completion&) { completed = true; }));
   }
 
   REQUIRE(pump_until(*harness_result, [&completed] { return completed; }));

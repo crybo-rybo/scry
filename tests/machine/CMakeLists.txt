@@ -1,8 +1,10 @@
 add_executable(
   scry_turn_machine_tests
+  retry_tests.cpp
   tool_budget_tests.cpp
   tool_loop_tests.cpp
   turn_machine_tests.cpp
+  "${PROJECT_SOURCE_DIR}/src/core/error.cpp"
   "${PROJECT_SOURCE_DIR}/src/core/json_codec.cpp"
   "${PROJECT_SOURCE_DIR}/src/core/retry.cpp"
   "${PROJECT_SOURCE_DIR}/src/machine/turn_machine.cpp"

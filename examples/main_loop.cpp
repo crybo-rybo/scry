@@ -56,6 +56,9 @@ int main() {
               },
       },
       [&app](scry::Json arguments) -> scry::Result<scry::Json> {
+        // Every handler runs synchronously in harness.update() on this app
+        // thread. Keep it bounded; future long-running work needs an explicit
+        // deferred-result contract rather than a background handler mode.
         // Explicit-schema handlers own argument validation at the C++23 boundary.
         // Exact-text comparison only holds for this zero-argument schema; tools
         // with real arguments parse the JSON (or use the reflected overload in
@@ -69,9 +72,6 @@ int main() {
         // This tool is read-only. Side-effecting tools need an app-owned
         // idempotency key and reconciliation policy; see DESIGN.md section 8.
         return scry::Json{.text = app.status_json()};
-      },
-      scry::ToolRegistrationOptions{
-          .execution = scry::ToolExecution::app_thread,
       });
   if (!registration) {
     std::cerr << registration.error().message << '\n';
@@ -87,29 +87,28 @@ int main() {
   }
   auto conversation = std::move(*conversation_result);
 
-  auto turn_result =
-      harness.send(conversation, "Is the host application main loop running?");
-  if (!turn_result) {
-    std::cerr << turn_result.error().message << '\n';
-    return 1;
-  }
-  auto turn = std::move(*turn_result);
-  auto callback_status = turn.on_completion(
-      [&app](const scry::Completion& completion) { app.show_answer(completion.text); });
-  if (!callback_status) {
-    std::cerr << callback_status.error().message << '\n';
-    return 1;
-  }
-  callback_status = turn.on_error(
-      [&app](const scry::Error& error) { app.show_error(error.message); });
-  if (!callback_status) {
-    std::cerr << callback_status.error().message << '\n';
-    return 1;
-  }
-  callback_status = turn.on_cancelled(
-      [&app](const scry::Cancelled&) { app.show_error("Turn cancelled"); });
-  if (!callback_status) {
-    std::cerr << callback_status.error().message << '\n';
+  // Callbacks travel with the send, so nothing can be missed between acceptance and
+  // the first update(). This non-empty on_finished runs exactly once: with the
+  // completion, or with the terminal error, including an ErrorCategory::cancelled one,
+  // unless Harness destruction begins first.
+  //
+  // The returned handle only identifies and cancels. This example keeps it only long
+  // enough to inspect the admission result and never uses the accepted handle again;
+  // callbacks remain route-owned even after a handle is dropped.
+  const auto turn =
+      harness.send(conversation, "Is the host application main loop running?",
+                   {
+                       .on_finished =
+                           [&app](scry::Result<scry::Completion> finished) {
+                             if (finished) {
+                               app.show_answer(finished->text);
+                             } else {
+                               app.show_error(finished.error().message);
+                             }
+                           },
+                   });
+  if (!turn) {
+    std::cerr << turn.error().message << '\n';
     return 1;
   }
 

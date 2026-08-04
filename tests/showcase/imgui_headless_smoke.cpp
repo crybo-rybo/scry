@@ -3,22 +3,17 @@
 #include <imgui.h>
 #include <memory>
 #include <string>
-#include <utility>
 
 namespace {
 
 class PassiveController final : public scry_showcase::PanelController {
 public:
-  [[nodiscard]] scry_showcase::SubmitStatus
-  submit(std::string, scry_showcase::PanelCallbacks callbacks) override {
-    callbacks_ = std::move(callbacks);
+  [[nodiscard]] scry_showcase::SubmitStatus submit(std::string,
+                                                   scry::TurnCallbacks) override {
     return {};
   }
 
   [[nodiscard]] bool cancel() noexcept override { return false; }
-
-private:
-  scry_showcase::PanelCallbacks callbacks_{};
 };
 
 } // namespace

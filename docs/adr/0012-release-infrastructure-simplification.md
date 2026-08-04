@@ -1,7 +1,9 @@
 # ADR 0012: Release-Posture Infrastructure Simplification
 
-- Status: Accepted
+- Status: Accepted (amended 2026-08-03, see amendments)
 - Date: 2026-07-20
+- Amended: 2026-08-03 — reflection suite membership follows the live M3
+  contract while the retained gate remains unchanged
 - Amends: [ADR 0011](0011-absolute-quality-gates.md) (retires its gating
   machinery), [ADR 0010](0010-m5-showcase-contract.md) (moves the showcase
   gate to the nightly ring)
@@ -61,11 +63,13 @@ Retained, unchanged:
 - ASan+UBSan and TSan suites per commit (TSan keeps the
   `--repeat until-fail:3` flake detection).
 - clang-format (pinned) and clang-tidy.
-- The GCC 16 reflection leg: build, 27-test suite, clean component install,
-  downstream component consumer, compiled core-surface proof, and the
-  separate ASan+UBSan rerun — via `scripts/ci-reflection.sh`.
-- **Every existing test.** The suites written to satisfy the retired gates
-  are real tests; the gates went, not the tests.
+- The GCC 16 reflection leg: build, the then-27-test suite (current membership
+  is governed by the amendment below), clean component install, downstream
+  component consumer, compiled core-surface proof, and the separate
+  ASan+UBSan rerun — via `scripts/ci-reflection.sh`.
+- **Every existing behavioral test at acceptance.** The suites written to
+  satisfy the retired gates are real tests; the gates went, not the tests.
+  Their forward-maintenance lifetime is clarified below.
 - Nightly CodeQL and long fuzz on all three protocol targets.
 
 Retired or moved:
@@ -97,6 +101,19 @@ Retired or moved:
   equivalence. The `.agents/` preflight skill is deleted; AGENTS.md carries
   the workflow.
 
+## Amendment: Reflection suite membership (2026-08-03)
+
+The retained reflection gate is unchanged, but its live suite now contains 26
+tests: 22 runtime/schema/codec/bridge/registration cases and four compile-fail
+diagnostics. The annotation-only description contract retired two
+trait-validation fixtures whose production surface was removed and added one
+duplicate-annotation diagnostic. ADR 0007 records that clean-break contract.
+
+The original 27-test count above remains as the acceptance-time snapshot for
+this decision. This amendment governs the current `scripts/ci-reflection.sh`
+membership; build, component installation, downstream consumption, compiled
+core-surface isolation, and the separate ASan+UBSan rerun remain retained.
+
 ## Consequences
 
 - `scripts/` drops from 14 files (~1,900 lines) to 6 (~510 lines); the PR
@@ -117,3 +134,45 @@ Retired or moved:
 - If the project returns to unattended agent-driven development at scale,
   the retired machinery remains in git history (`git log --diff-filter=D`)
   and this ADR is the map for restoring it.
+
+## Forward-maintenance clarification (2026-08-03)
+
+The acceptance-time phrase "Every existing test" recorded what this decision
+retained when it removed the metric machinery; it was not a promise to preserve
+tests after their only production subject ceased to exist. Behavioral tests
+remain while they exercise live behavior. A later reviewed change may delete a
+test together with the implementation detail that was its sole subject, while
+deleting a test merely because a retired metric once demanded it remains
+outside this decision.
+
+## Amendment (2026-08-03)
+
+The v0.0.1 cleanup revised three decisions this ADR originally recorded:
+
+- **The reflection leg's PR gating is path-aware instead of unconditional.**
+  This ADR retained the GCC 16 reflection leg in the per-commit ring; in
+  practice its `ppa:ubuntu-toolchain-r/test` experimental-toolchain pin was
+  the ring's most rot-prone dependency and gated pull requests that could
+  not affect the component. The leg now runs from `reflection.yml` on every
+  pull request touching a reflection-affecting path (headers, sources,
+  tests, consumers, build wiring, or the script itself), so
+  supported-component regressions still cannot merge untested, while
+  unrelated pull requests skip the experimental toolchain entirely. An
+  unconditional run remains in the scheduled ring to catch toolchain drift.
+  The leg's ASan+UBSan rerun in `ci-reflection.sh` is retained in full — the
+  core ASan leg configures reflection OFF, so that rerun is the component's
+  only sanitizer coverage (QA-005).
+- **The scheduled ring is weekly, not nightly.** CodeQL, long fuzzing, the
+  showcase gate, and the unconditional reflection run fire Monday 06:00 UTC
+  (the workflow file keeps its `nightly.yml` name; its display name is
+  "Scheduled"). The per-commit deterministic suites remain the real gate;
+  a solo-maintained project does not triage scheduled reds daily, and a red
+  that waits six days is not meaningfully worse than one that waits one.
+- **Two per-commit legs consolidated.** The pinned clang-format check merged
+  into the documentation job (same runner class, seconds of work), and the
+  ASan+UBSan leg additionally configures `SCRY_ENABLE_LOGGING=ON` so the
+  opt-in diagnostic build can no longer rot uncompiled.
+
+`scripts/preflight.sh` remains the local superset (QA-011): it still runs
+the reflection leg whenever `g++-16` is available, independent of what a
+given pull request's path filter would select.

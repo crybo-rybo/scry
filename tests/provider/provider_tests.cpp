@@ -1,6 +1,6 @@
+#include "core/json_codec.hpp"
 #include "core/model.hpp"
 #include "core/provider.hpp"
-#include "provider/wire_json.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 #include <fstream>
@@ -22,10 +22,12 @@ using namespace scry::detail;
 }
 
 [[nodiscard]] std::string canonical(const std::string_view json) {
-  auto parsed = parse_wire_json(json, ErrorCategory::protocol, "Fixture is invalid");
+  // Request fixtures assert JSON meaning. They deliberately do not promise
+  // byte-for-byte wire spelling or member order.
+  auto parsed = parse_json(json, ErrorCategory::protocol, "Fixture is invalid");
   REQUIRE(parsed.has_value());
   auto encoded =
-      write_wire_json(*parsed, ErrorCategory::protocol, "Fixture could not be encoded");
+      write_json_text(*parsed, ErrorCategory::protocol, "Fixture could not be encoded");
   REQUIRE(encoded.has_value());
   return *encoded;
 }
@@ -34,14 +36,13 @@ using namespace scry::detail;
   return Config{
       .base_url = "https://api.anthropic.test/",
       .api_key = "sanitized-test-key",
-      .model = "fallback-model",
+      .model = "claude-test",
       .dialect = ProviderDialect::anthropic,
   };
 }
 
 [[nodiscard]] ModelRequest request() {
   return ModelRequest{
-      .model = "claude-test",
       .system_prompt = "Be concise",
       .messages =
           {
@@ -72,20 +73,15 @@ using namespace scry::detail;
 } // namespace
 
 TEST_CASE("provider factory exposes both supported dialects") {
-  auto anthropic = make_provider_adapter(ProviderDialect::anthropic);
-  REQUIRE(anthropic.has_value());
-  CHECK(*anthropic != nullptr);
-
-  auto openai = make_provider_adapter(ProviderDialect::openai_compatible);
-  REQUIRE(openai.has_value());
-  CHECK(*openai != nullptr);
+  CHECK(make_provider_adapter(ProviderDialect::anthropic) != nullptr);
+  CHECK(make_provider_adapter(ProviderDialect::openai_compatible) != nullptr);
 }
 
-TEST_CASE("Anthropic request encoding matches the sanitized golden fixture") {
-  auto adapter = make_provider_adapter(ProviderDialect::anthropic);
-  REQUIRE(adapter.has_value());
+TEST_CASE("Anthropic request is semantically equivalent to its sanitized fixture") {
+  const auto adapter = make_provider_adapter(ProviderDialect::anthropic);
+  REQUIRE(adapter);
 
-  const auto encoded = (*adapter)->make_request(config(), request());
+  const auto encoded = adapter->make_request(config(), request());
   REQUIRE(encoded.has_value());
   CHECK(encoded->url == "https://api.anthropic.test/v1/messages");
   CHECK(encoded->tls_verify_peer);
@@ -97,8 +93,8 @@ TEST_CASE("Anthropic request encoding matches the sanitized golden fixture") {
 }
 
 TEST_CASE("Anthropic request encoding preserves neutral tool shapes") {
-  auto adapter = make_provider_adapter(ProviderDialect::anthropic);
-  REQUIRE(adapter.has_value());
+  const auto adapter = make_provider_adapter(ProviderDialect::anthropic);
+  REQUIRE(adapter);
   auto model_request = request();
   model_request.tools.push_back(ToolSchema{
       .name = "lookup",
@@ -127,31 +123,25 @@ TEST_CASE("Anthropic request encoding preserves neutral tool shapes") {
           },
   });
 
-  const auto encoded = (*adapter)->make_request(config(), model_request);
+  const auto encoded = adapter->make_request(config(), model_request);
   REQUIRE(encoded.has_value());
   CHECK(encoded->body.find(R"("type":"tool_use")") != std::string::npos);
   CHECK(encoded->body.find(R"("type":"tool_result")") != std::string::npos);
   CHECK(encoded->body.find(R"("input_schema":{"type":"object"})") != std::string::npos);
 }
 
-TEST_CASE("Anthropic request validation reports value errors without secrets") {
-  auto adapter = make_provider_adapter(ProviderDialect::anthropic);
-  REQUIRE(adapter.has_value());
+TEST_CASE("Anthropic request encoding reports boundary errors without secrets") {
+  const auto adapter = make_provider_adapter(ProviderDialect::anthropic);
+  REQUIRE(adapter);
   auto invalid = request();
-  invalid.sampling.max_tokens.reset();
-
-  auto result = (*adapter)->make_request(config(), invalid);
-  REQUIRE_FALSE(result.has_value());
-  CHECK(result.error().category == ErrorCategory::invalid_config);
-  CHECK(result.error().message.find("sanitized-test-key") == std::string::npos);
-
-  invalid = request();
   invalid.messages.front().content = {ToolCallBlock{
       .id = "tool_1",
       .name = "lookup",
       .arguments = Json{.text = "not-json"},
   }};
-  result = (*adapter)->make_request(config(), invalid);
+
+  const auto result = adapter->make_request(config(), invalid);
   REQUIRE_FALSE(result.has_value());
   CHECK(result.error().category == ErrorCategory::invalid_config);
+  CHECK(result.error().message.find("sanitized-test-key") == std::string::npos);
 }

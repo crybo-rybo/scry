@@ -41,7 +41,7 @@ option(SCRY_USE_LIBCXX "Use libc++ with a Clang-family compiler" OFF)
 option(SCRY_ENABLE_REFLECTION "Build the supported GCC 16+ reflection component" OFF)
 option(
   SCRY_ENABLE_LOGGING
-  "Compile internal lifecycle diagnostics that append to a log file"
+  "Compile lifecycle diagnostics written only to an explicit SCRY_LOG_FILE"
   OFF
 )
 option(SCRY_BUILD_FUZZERS "Build short protocol fuzz targets" OFF)
@@ -82,6 +82,7 @@ FetchContent_MakeAvailable(glaze)
 add_library(
   scry
   STATIC
+    src/core/error.cpp
     src/core/retry.cpp
     src/core/json_codec.cpp
     src/runtime/config.cpp
@@ -92,12 +93,10 @@ add_library(
     src/runtime/pump.cpp
     src/runtime/pump_state.cpp
     src/runtime/queue.cpp
-    src/runtime/state.cpp
     src/runtime/tool_registry.cpp
     src/runtime/tool_dispatch.cpp
     src/runtime/turn.cpp
     src/runtime/worker.cpp
-    src/runtime/worker_publish.cpp
 )
 add_library(scry::scry ALIAS scry)
 set_target_properties(scry PROPERTIES EXPORT_NAME scry)
@@ -268,20 +267,63 @@ if(SCRY_ENABLE_REFLECTION)
   include(CheckCXXSourceCompiles)
   set(SCRY_SAVED_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS}")
   set(CMAKE_REQUIRED_FLAGS "-std=c++26 -freflection")
-  unset(SCRY_COMPILER_HAS_P2996 CACHE)
+  unset(SCRY_COMPILER_HAS_REFLECTION_ANNOTATIONS CACHE)
   check_cxx_source_compiles(
-    "
+    [=[
+      #include <cstddef>
       #include <meta>
       #if !defined(__cpp_impl_reflection)
       #error P2996 feature macro is missing
       #endif
+
+      template <std::size_t Size> struct probe_description {
+        char text[Size]{};
+        consteval probe_description(const char (&value)[Size]) {
+          for (std::size_t index = 0; index < Size; ++index) {
+            text[index] = value[index];
+          }
+        }
+      };
+
+      struct probe_arguments {
+        [[= probe_description{"probe"}]] int value{};
+      };
+
+      consteval bool has_required_annotation_queries() {
+        constexpr auto members = std::define_static_array(
+          std::meta::nonstatic_data_members_of(
+            ^^probe_arguments, std::meta::access_context::unchecked()));
+        constexpr auto annotations = std::define_static_array(
+          std::meta::annotations_of(members[0]));
+        if constexpr (annotations.size() != 1) {
+          return false;
+        }
+        constexpr auto annotation = annotations[0];
+        if (!std::meta::is_annotation(annotation)) {
+          return false;
+        }
+        const auto type = std::meta::type_of(annotation);
+        if (!std::meta::has_template_arguments(type) ||
+            std::meta::template_of(type) != ^^probe_description) {
+          return false;
+        }
+        using Annotation = [:std::meta::type_of(annotation):];
+        constexpr auto payload = std::meta::extract<Annotation>(annotation);
+        return payload.text[0] == 'p';
+      }
+
+      static_assert(has_required_annotation_queries());
       int main() { return 0; }
-    "
-    SCRY_COMPILER_HAS_P2996
+    ]=]
+    SCRY_COMPILER_HAS_REFLECTION_ANNOTATIONS
   )
   set(CMAKE_REQUIRED_FLAGS "${SCRY_SAVED_REQUIRED_FLAGS}")
-  if(NOT SCRY_COMPILER_HAS_P2996)
-    message(FATAL_ERROR "The selected compiler cannot compile the P2996 surface")
+  if(NOT SCRY_COMPILER_HAS_REFLECTION_ANNOTATIONS)
+    message(
+      FATAL_ERROR
+      "The selected compiler cannot compile Scry's required P2996/P3394 "
+      "reflection annotation-query surface"
+    )
   endif()
 
   file(
@@ -356,208 +398,10 @@ if(SCRY_BUILD_LOCAL_MODEL_SMOKE)
 endif()
 
 if(SCRY_BUILD_TESTS)
+  # enable_testing() must run in the top-level directory for `ctest` to see the
+  # suites registered under tests/, so CTest is included here rather than there.
   include(CTest)
-  FetchContent_Declare(
-    Catch2
-    GIT_REPOSITORY https://github.com/catchorg/Catch2.git
-    GIT_TAG dfc2dff8d70d083c60c1c6986030e5389a867a93
-    SYSTEM
-    EXCLUDE_FROM_ALL
-  )
-  FetchContent_MakeAvailable(Catch2)
-  foreach(SCRY_CATCH_TARGET IN ITEMS Catch2 Catch2WithMain)
-    target_compile_features("${SCRY_CATCH_TARGET}" PRIVATE cxx_std_23)
-    if(SCRY_USE_LIBCXX)
-      target_compile_options("${SCRY_CATCH_TARGET}" PRIVATE -stdlib=libc++)
-    endif()
-  endforeach()
-  list(APPEND CMAKE_MODULE_PATH "${catch2_SOURCE_DIR}/extras")
-  include(Catch)
-
-  file(MAKE_DIRECTORY "${PROJECT_BINARY_DIR}/generated/header_checks")
-  foreach(SCRY_HEADER IN LISTS SCRY_CORE_PUBLIC_HEADERS)
-    get_filename_component(SCRY_HEADER_NAME "${SCRY_HEADER}" NAME_WE)
-    string(REGEX REPLACE "^include/" "" SCRY_HEADER_INCLUDE "${SCRY_HEADER}")
-    set(
-      SCRY_HEADER_CHECK_SOURCE
-      "${PROJECT_BINARY_DIR}/generated/header_checks/${SCRY_HEADER_NAME}.cpp"
-    )
-    file(
-      GENERATE
-      OUTPUT "${SCRY_HEADER_CHECK_SOURCE}"
-      CONTENT "#include <${SCRY_HEADER_INCLUDE}>\n"
-    )
-    add_library(
-      "scry_header_${SCRY_HEADER_NAME}"
-      OBJECT
-      "${SCRY_HEADER_CHECK_SOURCE}"
-    )
-    target_link_libraries(
-      "scry_header_${SCRY_HEADER_NAME}"
-      PRIVATE scry::scry scry_project_options
-    )
-  endforeach()
-  if(SCRY_ENABLE_REFLECTION)
-    set(
-      SCRY_REFLECTION_HEADER_CHECK_SOURCE
-      "${PROJECT_BINARY_DIR}/generated/header_checks/reflection.cpp"
-    )
-    file(
-      GENERATE
-      OUTPUT "${SCRY_REFLECTION_HEADER_CHECK_SOURCE}"
-      CONTENT "#include <scry/reflection.hpp>\n"
-    )
-    add_library(
-      scry_header_reflection
-      OBJECT
-      "${SCRY_REFLECTION_HEADER_CHECK_SOURCE}"
-    )
-    target_link_libraries(
-      scry_header_reflection
-      PRIVATE scry::reflection scry_project_options
-    )
-  endif()
-
-  add_executable(scry_public_api_contract tests/public_api_contract.cpp)
-  target_link_libraries(
-    scry_public_api_contract
-    PRIVATE scry::scry scry_project_options
-  )
-  add_test(NAME public-api-contract COMMAND scry_public_api_contract)
-
-  add_executable(
-    scry_retry_tests
-    tests/core/retry_tests.cpp
-    src/core/retry.cpp
-  )
-  target_compile_features(scry_retry_tests PRIVATE cxx_std_23)
-  target_include_directories(
-    scry_retry_tests
-    PRIVATE
-      "${PROJECT_SOURCE_DIR}/include"
-      "${PROJECT_SOURCE_DIR}/src"
-  )
-  target_link_libraries(
-    scry_retry_tests
-    PRIVATE Catch2::Catch2WithMain scry_project_options
-  )
-  catch_discover_tests(scry_retry_tests TEST_PREFIX "core.")
-
-  add_executable(
-    scry_runtime_tests
-    tests/runtime/config_tests.cpp
-    tests/runtime/conversation_persistence_tests.cpp
-    tests/runtime/pump_branch_tests.cpp
-    tests/runtime/pump_regression_tests.cpp
-    tests/runtime/queue_coverage_tests.cpp
-    tests/runtime/runtime_coverage_tests.cpp
-    tests/runtime/runtime_tests.cpp
-    tests/runtime/tool_dispatch_tests.cpp
-    tests/runtime/tool_pump_tests.cpp
-    tests/runtime/tool_registry_tests.cpp
-  )
-  target_include_directories(scry_runtime_tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
-  target_include_directories(
-    scry_runtime_tests
-    SYSTEM PRIVATE "${glaze_SOURCE_DIR}/include"
-  )
-  target_link_libraries(
-    scry_runtime_tests
-    PRIVATE
-      Catch2::Catch2WithMain
-      glaze::glaze
-      scry::scry
-      scry_project_options
-  )
-  catch_discover_tests(scry_runtime_tests TEST_PREFIX "runtime.")
-  add_subdirectory(tests/machine)
-  add_subdirectory(tests/protocol)
-  add_subdirectory(tests/provider)
-  add_subdirectory(tests/transport)
-  add_subdirectory(tests/integration)
-  if(SCRY_BUILD_IMGUI_SHOWCASE)
-    add_subdirectory(tests/showcase)
-  endif()
-
-  if(SCRY_ENABLE_REFLECTION)
-    file(
-      GLOB
-      SCRY_REFLECTION_TEST_SOURCES
-      CONFIGURE_DEPENDS
-      "${PROJECT_SOURCE_DIR}/tests/reflection/*.cpp"
-    )
-    if(SCRY_REFLECTION_TEST_SOURCES)
-      add_executable(
-        scry_reflection_tests
-        ${SCRY_REFLECTION_TEST_SOURCES}
-      )
-      target_link_libraries(
-        scry_reflection_tests
-        PRIVATE
-          Catch2::Catch2WithMain
-          scry::reflection
-          scry_project_options
-      )
-      catch_discover_tests(
-        scry_reflection_tests
-        TEST_PREFIX "reflection."
-        PROPERTIES LABELS reflection
-      )
-    endif()
-
-    function(
-      scry_add_reflection_compile_fail_test
-      TEST_NAME
-      SOURCE_NAME
-      EXPECTED_SUBSTRING
-    )
-      set(
-        SCRY_COMPILE_FAIL_TEST_NAME
-        "reflection.compile-fail.${TEST_NAME}"
-      )
-      add_test(
-        NAME "${SCRY_COMPILE_FAIL_TEST_NAME}"
-        COMMAND
-          "${CMAKE_COMMAND}"
-          "-DCXX_COMPILER=${CMAKE_CXX_COMPILER}"
-          "-DSOURCE_FILE=${PROJECT_SOURCE_DIR}/tests/reflection/compile_fail/${SOURCE_NAME}"
-          "-DPROJECT_INCLUDE_DIR=${PROJECT_SOURCE_DIR}/include"
-          "-DEXPECTED_SUBSTRING=${EXPECTED_SUBSTRING}"
-          "-DOUTPUT_DIRECTORY=${PROJECT_BINARY_DIR}/reflection-compile-fail"
-          -P "${PROJECT_SOURCE_DIR}/cmake/ExpectCompileFailure.cmake"
-      )
-      set_tests_properties(
-        "${SCRY_COMPILE_FAIL_TEST_NAME}"
-        PROPERTIES LABELS reflection
-      )
-    endfunction()
-
-    scry_add_reflection_compile_fail_test(
-      unsupported-arguments
-      unsupported_arguments.cpp
-      "ToolArguments"
-    )
-    scry_add_reflection_compile_fail_test(
-      void-handler
-      void_handler.cpp
-      "ToolHandlerFor"
-    )
-    scry_add_reflection_compile_fail_test(
-      raw-json-handler
-      raw_json_handler.cpp
-      "ToolHandlerFor"
-    )
-    scry_add_reflection_compile_fail_test(
-      unknown-description
-      unknown_description.cpp
-      "naming distinct reflected members"
-    )
-    scry_add_reflection_compile_fail_test(
-      duplicate-description
-      duplicate_description.cpp
-      "naming distinct reflected members"
-    )
-  endif()
+  add_subdirectory(tests)
 endif()
 
 configure_package_config_file(

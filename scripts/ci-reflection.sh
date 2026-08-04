@@ -58,6 +58,9 @@ cmake \
   -DSCRY_CONSUMER_COMPILE_ONLY=ON
 cmake --build "${core_consumer_dir}"
 
+# QA-005: the reflection marshalling and JSON bridge run under sanitizers only
+# here — the core ASan leg configures reflection OFF, so this rerun is the
+# component's entire ASan+UBSan coverage.
 cmake \
   --preset reflection-gcc16 \
   --fresh \

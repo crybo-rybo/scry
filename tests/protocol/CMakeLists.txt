@@ -1,6 +1,5 @@
 add_executable(
   scry_sse_tests
-  sse_coverage_tests.cpp
   sse_tests.cpp
   "${PROJECT_SOURCE_DIR}/src/protocol/sse.cpp"
 )

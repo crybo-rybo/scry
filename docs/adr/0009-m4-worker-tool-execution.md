@@ -1,7 +1,34 @@
 # ADR 0009: M4 Worker-Thread Tool Execution
 
-- Status: Accepted
+- Status: Superseded
 - Date: 2026-07-18
+- Superseded: 2026-08-03
+
+## Supersession amendment (2026-08-03)
+
+Before v0.0.1, Scry removed the worker-thread tool option described by this
+ADR. `ToolExecution`, `ToolRegistrationOptions`, their registration overloads,
+the worker-owned handler table, and the registration/execute/acknowledgement
+messages no longer exist. THR-021 and TOOL-014 retain their permanent IDs as
+retired requirements; THR-011 is again the sole execution contract: every tool
+handler executes synchronously inside `Harness::update()` on its caller's
+thread.
+
+The single app-thread model keeps one immutable accepted-turn snapshot and one
+dispatch path. The worker publishes each provider batch atomically with the
+machine's remaining exchange budget. The pump reserves each canonical result
+against that budget and latches fatal failure before any later handler can run.
+This preserves ordered resend, observer delivery, cancellation, cumulative
+limits, and suffix-handler suppression without a mirrored acknowledgement
+protocol.
+
+If a real application needs long-running tool work, Scry will ratify a new
+app-owned deferred/async result contract. That decision must define result-token
+lifetime, cancellation, ordering, batch gating, backpressure, resource limits,
+and teardown. It will not restore a hidden worker pool or move arbitrary user
+callables into the network actor.
+
+The original accepted decision follows unchanged as historical context.
 
 ## Context
 

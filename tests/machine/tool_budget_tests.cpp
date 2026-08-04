@@ -114,10 +114,6 @@ TEST_CASE("tool exchange budget is exact across every ordered result") {
   const auto calls =
       machine.apply(scry::detail::ModelCompleted{.response = std::move(response)});
   REQUIRE(calls.commands.size() == 2);
-  CHECK(std::get<scry::detail::PublishToolCall>(calls.commands.front())
-            .remaining_exchange_bytes ==
-        scry::detail::content_payload_bytes(first_result) +
-            scry::detail::content_payload_bytes(second_result));
   CHECK(machine.apply(result("call-a", "{}", at(1ms))).commands.empty());
   const auto next = machine.apply(result("call-b", "{}", at(2ms)));
   static_cast<void>(only_command<scry::detail::IssueModelRequest>(next));

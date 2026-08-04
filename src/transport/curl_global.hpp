@@ -1,8 +1,6 @@
 #pragma once
 
 #include <cstdint>
-#include <memory>
-#include <optional>
 #include <scry/error.hpp>
 
 namespace scry::detail {
@@ -16,23 +14,10 @@ struct CurlRuntimeCapabilities {
 [[nodiscard]] Status
 validate_curl_runtime_capabilities(CurlRuntimeCapabilities capabilities);
 
-class CurlGlobalState;
-
-class CurlGlobalLease final {
-public:
-  CurlGlobalLease();
-  ~CurlGlobalLease();
-
-  CurlGlobalLease(CurlGlobalLease&&) noexcept;
-  CurlGlobalLease& operator=(CurlGlobalLease&&) noexcept;
-
-  CurlGlobalLease(const CurlGlobalLease&) = delete;
-  CurlGlobalLease& operator=(const CurlGlobalLease&) = delete;
-
-  [[nodiscard]] const std::optional<Error>& error() const noexcept;
-
-private:
-  std::shared_ptr<CurlGlobalState> state_;
-};
+// Owns libcurl's process-wide state from the first call until static teardown.
+// The first result (including failure) is cached; capability failure after a
+// successful initialization is cleaned up immediately. Successful startup is
+// paired with exactly one cleanup from the function-static owner's destructor.
+[[nodiscard]] Status curl_global_status();
 
 } // namespace scry::detail

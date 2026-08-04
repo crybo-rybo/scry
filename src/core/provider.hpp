@@ -75,7 +75,7 @@ public:
                      ProviderDecodeState& state) const = 0;
 };
 
-[[nodiscard]] Result<std::unique_ptr<ProviderAdapter>>
+[[nodiscard]] std::unique_ptr<ProviderAdapter>
 make_provider_adapter(ProviderDialect dialect);
 
 } // namespace scry::detail

@@ -1,5 +1,6 @@
 #include "transport/curl_transport.hpp"
 
+#include "core/error.hpp"
 #include "transport/curl_error.hpp"
 #include "transport/curl_global.hpp"
 #include "transport/transport_policy.hpp"
@@ -19,15 +20,6 @@
 
 namespace scry::detail {
 namespace {
-
-[[nodiscard]] Error make_error(const ErrorCategory category, std::string message,
-                               const bool retryable = false) {
-  return Error{
-      .category = category,
-      .message = std::move(message),
-      .retryable = retryable,
-  };
-}
 
 struct EasyDeleter {
   void operator()(CURL* easy) const noexcept { curl_easy_cleanup(easy); }
@@ -150,17 +142,11 @@ std::size_t header_callback(char* data, const std::size_t size, const std::size_
   }
   auto status = (*context.body_sink)(chunk);
   if (!status) {
-    return std::unexpected(Error{
-        .category = status.error().category,
-        .message = "response consumer rejected response data",
-        .provider_detail =
-            transport_policy::sanitize_provider_detail(status.error().provider_detail),
-        .retryable = status.error().retryable,
-        .retry_after = status.error().retry_after,
-        .turn_id = status.error().turn_id,
-        .attempt = status.error().attempt,
-        .provider_request_id = status.error().provider_request_id,
-    });
+    auto error = std::move(status.error());
+    error.message = "response consumer rejected response data";
+    error.provider_detail =
+        transport_policy::sanitize_provider_detail(error.provider_detail);
+    return std::unexpected(std::move(error));
   }
   return {};
 }
@@ -224,122 +210,64 @@ poll_timeout_milliseconds(const std::chrono::milliseconds value) noexcept {
       value.count(), static_cast<std::chrono::milliseconds::rep>(INT_MAX)));
 }
 
-[[nodiscard]] Status check_setopt(const CURLcode code) {
-  if (code == CURLE_OK) {
-    return {};
-  }
-  return std::unexpected(
-      make_error(ErrorCategory::protocol, "libcurl request setup failed"));
-}
+// Applies a flat sequence of easy-handle options, stopping at the first
+// failure. Every one of these failures is effectively impossible, so they
+// share one diagnostic rather than one branch each.
+class EasyOptions final {
+public:
+  explicit EasyOptions(CURL* easy) noexcept : easy_(easy) {}
 
-[[nodiscard]] Status configure_callbacks(CURL* easy, TransferContext& context) {
-  if (auto status =
-          check_setopt(curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION, body_callback));
-      !status) {
-    return status;
+  template <typename Value>
+  EasyOptions& set(const CURLoption option, Value value) noexcept {
+    if (code_ == CURLE_OK) {
+      code_ = curl_easy_setopt(easy_, option, value);
+    }
+    return *this;
   }
-  if (auto status = check_setopt(curl_easy_setopt(easy, CURLOPT_WRITEDATA, &context));
-      !status) {
-    return status;
-  }
-  if (auto status =
-          check_setopt(curl_easy_setopt(easy, CURLOPT_HEADERFUNCTION, header_callback));
-      !status) {
-    return status;
-  }
-  if (auto status = check_setopt(curl_easy_setopt(easy, CURLOPT_HEADERDATA, &context));
-      !status) {
-    return status;
-  }
-  if (auto status = check_setopt(
-          curl_easy_setopt(easy, CURLOPT_XFERINFOFUNCTION, progress_callback));
-      !status) {
-    return status;
-  }
-  if (auto status =
-          check_setopt(curl_easy_setopt(easy, CURLOPT_XFERINFODATA, &context));
-      !status) {
-    return status;
-  }
-  return check_setopt(curl_easy_setopt(easy, CURLOPT_NOPROGRESS, 0L));
-}
 
-[[nodiscard]] Status configure_timeouts(CURL* easy, const TransportRequest& request) {
-  if (auto status = check_setopt(
-          curl_easy_setopt(easy, CURLOPT_CONNECTTIMEOUT_MS,
-                           timeout_milliseconds(request.timeouts.connect)));
-      !status) {
-    return status;
+  [[nodiscard]] Status status() const {
+    if (code_ == CURLE_OK) {
+      return {};
+    }
+    return std::unexpected(
+        make_error(ErrorCategory::protocol, "libcurl request setup failed"));
   }
-  return check_setopt(curl_easy_setopt(
-      easy, CURLOPT_TIMEOUT_MS, timeout_milliseconds(request.timeouts.transfer)));
-}
 
-[[nodiscard]] Status configure_tls(CURL* easy, const TransportRequest& request) {
-  const auto verify_peer = request.tls_verify_peer ? 1L : 0L;
-  const auto verify_host = request.tls_verify_peer ? 2L : 0L;
-  if (auto status =
-          check_setopt(curl_easy_setopt(easy, CURLOPT_SSL_VERIFYPEER, verify_peer));
-      !status) {
-    return status;
-  }
-  return check_setopt(curl_easy_setopt(easy, CURLOPT_SSL_VERIFYHOST, verify_host));
-}
-
-[[nodiscard]] Status configure_request(CURL* easy, const TransportRequest& request,
-                                       HeaderList& headers) {
-  if (auto status =
-          check_setopt(curl_easy_setopt(easy, CURLOPT_URL, request.url.c_str()));
-      !status) {
-    return status;
-  }
-  if (auto status = check_setopt(curl_easy_setopt(easy, CURLOPT_POST, 1L)); !status) {
-    return status;
-  }
-  if (auto status =
-          check_setopt(curl_easy_setopt(easy, CURLOPT_POSTFIELDS, request.body.data()));
-      !status) {
-    return status;
-  }
-  if (auto status =
-          check_setopt(curl_easy_setopt(easy, CURLOPT_POSTFIELDSIZE_LARGE,
-                                        static_cast<curl_off_t>(request.body.size())));
-      !status) {
-    return status;
-  }
-  if (auto status =
-          check_setopt(curl_easy_setopt(easy, CURLOPT_HTTPHEADER, headers.get()));
-      !status) {
-    return status;
-  }
-  if (auto status = check_setopt(curl_easy_setopt(easy, CURLOPT_NOSIGNAL, 1L));
-      !status) {
-    return status;
-  }
-  return check_setopt(
-      curl_easy_setopt(easy, CURLOPT_MAXFILESIZE_LARGE,
-                       static_cast<curl_off_t>(request.limits.max_response_bytes)));
-}
+private:
+  CURL* easy_{};
+  CURLcode code_{CURLE_OK};
+};
 
 [[nodiscard]] Status configure_easy(CURL* easy, const TransportRequest& request,
                                     HeaderList& headers, TransferContext& context) {
-  if (auto status = configure_request(easy, request, headers); !status) {
-    return status;
-  }
-  if (auto status = configure_callbacks(easy, context); !status) {
-    return status;
-  }
-  if (auto status = configure_timeouts(easy, request); !status) {
-    return status;
-  }
-  return configure_tls(easy, request);
+  return EasyOptions{easy}
+      .set(CURLOPT_URL, request.url.c_str())
+      .set(CURLOPT_POST, 1L)
+      .set(CURLOPT_POSTFIELDS, request.body.data())
+      .set(CURLOPT_POSTFIELDSIZE_LARGE, static_cast<curl_off_t>(request.body.size()))
+      .set(CURLOPT_HTTPHEADER, headers.get())
+      .set(CURLOPT_NOSIGNAL, 1L)
+      .set(CURLOPT_MAXFILESIZE_LARGE,
+           static_cast<curl_off_t>(request.limits.max_response_bytes))
+      .set(CURLOPT_WRITEFUNCTION, body_callback)
+      .set(CURLOPT_WRITEDATA, &context)
+      .set(CURLOPT_HEADERFUNCTION, header_callback)
+      .set(CURLOPT_HEADERDATA, &context)
+      .set(CURLOPT_XFERINFOFUNCTION, progress_callback)
+      .set(CURLOPT_XFERINFODATA, &context)
+      .set(CURLOPT_NOPROGRESS, 0L)
+      .set(CURLOPT_CONNECTTIMEOUT_MS, timeout_milliseconds(request.timeouts.connect))
+      .set(CURLOPT_TIMEOUT_MS, timeout_milliseconds(request.timeouts.transfer))
+      .set(CURLOPT_SSL_VERIFYPEER, request.tls_verify_peer ? 1L : 0L)
+      .set(CURLOPT_SSL_VERIFYHOST, request.tls_verify_peer ? 2L : 0L)
+      .status();
 }
 
-[[nodiscard]] Status validate_execution(const std::optional<Error>& startup_error,
+[[nodiscard]] Status validate_execution(const Status& startup_status,
                                         const std::stop_token& shutdown,
                                         const std::atomic<bool>& cancelled) {
-  if (startup_error) {
-    return std::unexpected(*startup_error);
+  if (!startup_status) {
+    return std::unexpected(startup_status.error());
   }
   if (shutdown.stop_requested()) {
     return std::unexpected(
@@ -432,10 +360,12 @@ drive_transfer(MultiTransfer& multi, TransferContext& context,
 
 class CurlTransport::Impl final {
 public:
-  Impl() = default;
+  // Constructing a transport is what first initializes libcurl's process-wide
+  // state, so a failure is observable through status() before any transfer.
+  Impl() : startup_status_(curl_global_status()) {}
 
-  [[nodiscard]] const std::optional<Error>& startup_error() const noexcept {
-    return global_.error();
+  [[nodiscard]] const Status& startup_status() const noexcept {
+    return startup_status_;
   }
 
   // One worker thread owns a transport for the harness lifetime, so the multi
@@ -451,7 +381,7 @@ public:
   }
 
 private:
-  CurlGlobalLease global_;
+  Status startup_status_{};
   MultiHandle multi_{};
 };
 
@@ -459,23 +389,13 @@ CurlTransport::CurlTransport() : impl_(std::make_unique<Impl>()) {}
 
 CurlTransport::~CurlTransport() = default;
 
-CurlTransport::CurlTransport(CurlTransport&&) noexcept = default;
-
-CurlTransport& CurlTransport::operator=(CurlTransport&&) noexcept = default;
-
-Status CurlTransport::status() const {
-  const auto& startup_error = impl_->startup_error();
-  if (startup_error) {
-    return std::unexpected(*startup_error);
-  }
-  return {};
-}
+Status CurlTransport::status() const { return impl_->startup_status(); }
 
 Result<TransportResult> CurlTransport::perform(const TransportRequest& request,
                                                const std::stop_token shutdown,
                                                const std::atomic<bool>& cancelled,
                                                BodyChunkSink& body_sink) {
-  if (auto status = validate_execution(impl_->startup_error(), shutdown, cancelled);
+  if (auto status = validate_execution(impl_->startup_status(), shutdown, cancelled);
       !status) {
     return std::unexpected(std::move(status.error()));
   }

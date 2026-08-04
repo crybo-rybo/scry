@@ -1,12 +1,12 @@
 add_executable(
   scry_provider_tests
-  coverage_tests.cpp
+  anthropic_edge_tests.cpp
+  json_accessor_tests.cpp
   openai_request_tests.cpp
   openai_stream_tests.cpp
   provider_tests.cpp
   stream_tests.cpp
   tool_boundary_tests.cpp
-  wire_json_coverage_tests.cpp
 )
 target_include_directories(
   scry_provider_tests
@@ -33,6 +33,8 @@ if(SCRY_BUILD_FUZZERS)
   endif()
   set(
     scry_provider_fuzz_sources
+    "${PROJECT_SOURCE_DIR}/src/core/error.cpp"
+    "${PROJECT_SOURCE_DIR}/src/core/json_codec.cpp"
     "${PROJECT_SOURCE_DIR}/src/provider/anthropic_content.cpp"
     "${PROJECT_SOURCE_DIR}/src/provider/anthropic_request.cpp"
     "${PROJECT_SOURCE_DIR}/src/provider/anthropic_stream.cpp"
@@ -40,7 +42,6 @@ if(SCRY_BUILD_FUZZERS)
     "${PROJECT_SOURCE_DIR}/src/provider/openai_request.cpp"
     "${PROJECT_SOURCE_DIR}/src/provider/openai_stream.cpp"
     "${PROJECT_SOURCE_DIR}/src/provider/provider.cpp"
-    "${PROJECT_SOURCE_DIR}/src/provider/wire_json.cpp"
   )
 
   function(scry_add_provider_fuzzer target source corpus)

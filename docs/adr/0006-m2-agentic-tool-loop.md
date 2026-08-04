@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-07-18
+- Amended: 2026-08-03 — shared canonical JSON representation
 
 ## Context
 
@@ -98,15 +99,30 @@ history.
   serialized. Malformed documents, unknown versions or fields, and
   role/content mismatches return `invalid_config`.
 
+### 2026-08-03 canonicalization amendment
+
+Tool schemas, tool-call arguments, tool results, committed history, and
+Conversation persistence now pass through one sorted JSON representation.
+Object keys are emitted lexicographically, so a tool argument received as
+`{"b":2,"a":1}` is dispatched and committed as `{"a":1,"b":2}`. The
+semantic document is preserved; original lexical key order is not.
+
+This is an announced pre-1.0 byte-level change under PORT-007. Apps must not
+treat version-1 persistence or request bytes as a stable signature format
+without pinning Scry. A future byte-stability requirement must introduce an
+explicit versioned serializer or raw-preserving boundary rather than splitting
+the runtime back into competing JSON types.
+
 ## Consequences
 
-The worker retains the serialized turn slot while waiting for main-thread tool
+The worker retains the serialized turn slot while waiting for app-thread tool
 execution, as required by the M2 scheduling baseline. The machine remains
 deterministic and independent of queues, clocks, providers, and handlers.
 Reentrant registration is safe because accepted turns never inspect the live
 registry again.
 
 Additive-only mutation is intentionally smaller than a hot-reload registry but
-has unambiguous lifetime and snapshot behavior. Worker-thread handlers remain
-an M4 opt-in layered onto the same immutable records; they do not require a
-second registration table or a parallel agent loop.
+has unambiguous lifetime and snapshot behavior. ADR 0009 briefly added an M4
+worker-thread option, but its 2026-08 supersession removed that protocol before
+v0.0.1. The live design again keeps every handler in the immutable pump-side
+snapshot and invokes it only from `update()`.

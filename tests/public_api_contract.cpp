@@ -1,19 +1,20 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <concepts>
 #include <functional>
 #include <memory>
 #include <scry/scry.hpp>
+#include <string>
 #include <type_traits>
 #include <utility>
 
 static_assert(std::is_aggregate_v<scry::Config>);
 static_assert(std::is_aggregate_v<scry::Error>);
 static_assert(std::is_aggregate_v<scry::Json>);
-static_assert(std::is_aggregate_v<scry::ToolRegistrationOptions>);
+static_assert(std::is_aggregate_v<scry::ToolDefinition>);
 static_assert(std::is_aggregate_v<scry::UpdateOptions>);
-static_assert(scry::ToolRegistrationOptions{}.execution ==
-              scry::ToolExecution::app_thread);
+static_assert(std::is_aggregate_v<scry::TurnCallbacks>);
 
 static_assert(std::is_move_constructible_v<scry::Conversation>);
 static_assert(!std::is_copy_constructible_v<scry::Conversation>);
@@ -26,6 +27,47 @@ static_assert(std::is_move_constructible_v<scry::Harness>);
 static_assert(!std::is_copy_constructible_v<scry::Harness>);
 static_assert(std::is_move_constructible_v<scry::UniqueFunction<void()>>);
 static_assert(!std::is_copy_constructible_v<scry::UniqueFunction<void()>>);
+
+// Callbacks are move-only and every member is optional, so a default-constructed
+// TurnCallbacks is a valid "observe nothing" turn.
+static_assert(std::is_default_constructible_v<scry::TurnCallbacks>);
+static_assert(std::is_move_constructible_v<scry::TurnCallbacks>);
+static_assert(!std::is_copy_constructible_v<scry::TurnCallbacks>);
+static_assert(std::same_as<decltype(scry::TurnCallbacks::on_text_delta),
+                           scry::TextDeltaCallback>);
+static_assert(
+    std::same_as<decltype(scry::TurnCallbacks::on_tool_call), scry::ToolCallCallback>);
+static_assert(std::same_as<decltype(scry::TurnCallbacks::on_finished),
+                           scry::UniqueFunction<void(scry::Result<scry::Completion>)>>);
+
+// Turn is a cancellation handle only; callbacks are supplied to send(). The
+// absence checks need a dependent type, or the missing member is a hard error.
+template <typename T>
+concept registers_completion =
+    requires(T& turn) { turn.on_completion([](const scry::Completion&) {}); };
+
+template <typename T>
+concept registers_text_delta =
+    requires(T& turn) { turn.on_text_delta([](std::string_view) {}); };
+
+static_assert(requires(const scry::Turn& turn) {
+  { turn.id() } -> std::same_as<scry::TurnId>;
+});
+static_assert(requires(scry::Turn& turn) {
+  { turn.cancel() } -> std::same_as<bool>;
+});
+static_assert(!registers_completion<scry::Turn>);
+static_assert(!registers_text_delta<scry::Turn>);
+
+// send() takes the callbacks atomically, and they are optional.
+static_assert(requires(scry::Harness& harness, scry::Conversation& conversation) {
+  {
+    harness.send(conversation, std::string{})
+  } -> std::same_as<scry::Result<scry::Turn>>;
+  {
+    harness.send(conversation, std::string{}, scry::TurnCallbacks{})
+  } -> std::same_as<scry::Result<scry::Turn>>;
+});
 
 namespace {
 

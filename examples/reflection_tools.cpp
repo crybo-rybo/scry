@@ -38,13 +38,12 @@ int main() {
           .description = "Report the state of the host application's main loop",
       },
       [](StatusArguments arguments) {
+        // Reflected handlers share the same synchronous app-thread update()
+        // path as explicit-schema handlers.
         return StatusResult{
             .running = true,
             .state = arguments.verbose ? "running" : "",
         };
-      },
-      scry::ToolRegistrationOptions{
-          .execution = scry::ToolExecution::app_thread,
       });
   if (!registration) {
     std::cerr << registration.error().message << '\n';

@@ -66,8 +66,6 @@ std::shared_ptr<TurnRoute> PumpState::find_route(const TurnId turn_id) const {
   return found == routes_.end() ? nullptr : found->second;
 }
 
-std::size_t PumpState::route_count() const noexcept { return routes_.size(); }
-
 std::size_t PumpState::live_route_count() const noexcept {
   return static_cast<std::size_t>(std::ranges::count_if(
       routes_, [](const auto& entry) { return !entry.second->terminal(); }));
@@ -80,7 +78,6 @@ UpdateStats PumpState::update(const UpdateOptions options) {
     return UpdateStats{
         .events_remaining = pending_callbacks_.size() + events_->size(),
         .budget_exhausted = true,
-        .reentrant_update_rejected = true,
     };
   }
   UpdateGuard guard{updating_};
@@ -152,19 +149,25 @@ void PumpState::accept_event(WorkerEvent event) {
     return;
   }
 
+  // Terminal handling runs before the retention test so that a turn whose
+  // callbacks are empty still commits its history and clears the conversation.
   apply_terminal(*route, event);
-  if (route->attached() || route->should_retain(event)) {
-    if (const auto* delta = std::get_if<TextDeltaEvent>(&event);
-        delta != nullptr && coalesce_pending_delta(*delta, accounted_bytes)) {
-      return;
-    }
-    pending_callbacks_.push_back(PendingCallback{
-        .event = std::move(event),
-        .accounted_bytes = accounted_bytes,
-    });
-  } else {
+  // Callbacks are attached when the turn is accepted, so an event no route
+  // callback can consume is dead on arrival rather than awaiting a later
+  // registration. Releasing it here returns its bytes to the per-turn ledger
+  // immediately.
+  if (!route->has_callback(event)) {
     events_->release(turn_id, accounted_bytes);
+    return;
   }
+  if (const auto* delta = std::get_if<TextDeltaEvent>(&event);
+      delta != nullptr && coalesce_pending_delta(*delta, accounted_bytes)) {
+    return;
+  }
+  pending_callbacks_.push_back(PendingCallback{
+      .event = std::move(event),
+      .accounted_bytes = accounted_bytes,
+  });
 }
 
 bool PumpState::coalesce_pending_delta(const TextDeltaEvent& event,
@@ -270,10 +273,12 @@ bool PumpState::has_deliverable() const noexcept {
 }
 
 void PumpState::release_discarded() {
+  // Every pending event was retained because its route could consume it. Only a
+  // tool call can lose that claim afterwards, by reaching a terminal state or a
+  // failed dispatch.
   std::erase_if(pending_callbacks_, [this](const auto& event) {
     const auto route = find_route(event_turn_id(event.event));
-    const auto discard = !route || route->should_discard(event.event) ||
-                         (!route->attached() && !route->should_retain(event.event));
+    const auto discard = !route || !route->has_callback(event.event);
     if (discard) {
       events_->release(event_turn_id(event.event), event.accounted_bytes);
     }

@@ -1,6 +1,5 @@
-#include "core/provider.hpp"
 #include "runtime/test_access.hpp"
-#include "support/transport/fake_transport.hpp"
+#include "support/harness_test_support.hpp"
 #include "world.hpp"
 
 #include <catch2/catch_test_macros.hpp>
@@ -11,6 +10,8 @@
 #include <string_view>
 #include <thread>
 #include <utility>
+
+using namespace scry::test_support;
 
 namespace {
 
@@ -32,7 +33,9 @@ data: [DONE]
 
 )";
 
-[[nodiscard]] scry::Config test_config() {
+// The showcase talks to a local OpenAI-compatible server, so it needs its own
+// endpoint and dialect rather than the shared Anthropic defaults.
+[[nodiscard]] scry::Config showcase_config() {
   auto config = scry::Config{
       .base_url = "http://127.0.0.1:1/v1",
       .model = "showcase-test-model",
@@ -43,38 +46,6 @@ data: [DONE]
   return config;
 }
 
-[[nodiscard]] std::unique_ptr<scry::detail::ProviderAdapter> provider() {
-  auto created =
-      scry::detail::make_provider_adapter(scry::ProviderDialect::openai_compatible);
-  REQUIRE(created);
-  return std::move(*created);
-}
-
-[[nodiscard]] scry::test::ScriptedExchange
-scripted_exchange(const std::string_view stream, std::string request_id) {
-  return {
-      .body_chunks = {std::string{stream}},
-      .result =
-          scry::detail::TransportResult{
-              .status_code = 200,
-              .provider_request_id = std::move(request_id),
-          },
-  };
-}
-
-template <typename Predicate>
-[[nodiscard]] bool pump_until(scry::Harness& harness, Predicate&& predicate) {
-  constexpr std::size_t maximum_pumps = 100'000;
-  for (std::size_t pump = 0; pump < maximum_pumps; ++pump) {
-    static_cast<void>(harness.update());
-    if (std::forward<Predicate>(predicate)()) {
-      return true;
-    }
-    std::this_thread::yield();
-  }
-  return false;
-}
-
 } // namespace
 
 TEST_CASE("NPC registrations execute on the update thread and resend observations") {
@@ -82,8 +53,9 @@ TEST_CASE("NPC registrations execute on the update thread and resend observation
   auto* requests = transport.get();
   transport->enqueue(scripted_exchange(tool_stream, "npc-tool-request"));
   transport->enqueue(scripted_exchange(final_stream, "npc-final-request"));
-  auto created = scry::detail::HarnessTestAccess::create(test_config(), provider(),
-                                                         std::move(transport));
+  auto created = scry::detail::HarnessTestAccess::create(
+      showcase_config(), provider(scry::ProviderDialect::openai_compatible),
+      std::move(transport));
   REQUIRE(created);
   auto harness = std::move(*created);
 
@@ -98,14 +70,21 @@ TEST_CASE("NPC registrations execute on the update thread and resend observation
 
   auto conversation = scry::Conversation::create();
   REQUIRE(conversation);
-  auto turn = harness.send(*conversation, "Look before moving.");
-  REQUIRE(turn);
-
   std::optional<scry::Completion> completion;
   std::optional<scry::Error> error;
-  REQUIRE(
-      turn->on_completion([&](const scry::Completion& value) { completion = value; }));
-  REQUIRE(turn->on_error([&](const scry::Error& value) { error = value; }));
+  auto turn = harness.send(*conversation, "Look before moving.",
+                           {
+                               .on_finished =
+                                   [&](scry::Result<scry::Completion> finished) {
+                                     if (finished) {
+                                       completion = std::move(*finished);
+                                     } else {
+                                       error = std::move(finished.error());
+                                     }
+                                   },
+                           });
+  REQUIRE(turn);
+
   REQUIRE(
       pump_until(harness, [&] { return completion.has_value() || error.has_value(); }));
 

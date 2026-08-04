@@ -15,7 +15,7 @@ namespace detail {
 class HarnessTestAccess;
 } // namespace detail
 
-/// Configured runtime that owns tools, network state, worker execution, and callback
+/// Configured runtime that owns tools, network state, worker I/O, and callback
 /// delivery.
 ///
 /// A Harness never owns the host's main loop. Asynchronous work progresses on its
@@ -30,9 +30,7 @@ public:
 
   /// Cancels outstanding work, stops Scry-owned I/O, and joins the worker.
   ///
-  /// Undelivered callbacks are discarded once destruction begins. A non-cooperating
-  /// application handler explicitly registered for worker execution remains outside
-  /// Scry's enforceable shutdown bound.
+  /// Undelivered callbacks are discarded once destruction begins.
   ~Harness();
 
   /// Moves ownership of the worker and all Harness state.
@@ -61,11 +59,18 @@ public:
   /// The call validates admission synchronously, snapshots current tool registrations,
   /// and returns without waiting for network I/O. The host must call update() to
   /// execute app-thread tools and deliver callbacks.
+  ///
+  /// Callbacks are attached infallibly and atomically as the turn is accepted, so no
+  /// event can precede them and there is no later registration or replay step. When
+  /// TurnCallbacks::on_finished is non-empty, an accepted turn invokes it exactly once
+  /// unless this Harness is destroyed first; see ~Harness().
   /// @param conversation Conversation that receives the exchange on successful
   /// completion.
   /// @param user_message User text appended transactionally if the turn succeeds.
+  /// @param callbacks Optional per-turn observers delivered inside update().
   /// @return A controllable Turn handle, or an immediate admission error.
-  [[nodiscard]] Result<Turn> send(Conversation& conversation, std::string user_message);
+  [[nodiscard]] Result<Turn> send(Conversation& conversation, std::string user_message,
+                                  TurnCallbacks callbacks = {});
 
   /// Runs one turn synchronously on top of send() and update().
   ///
@@ -80,8 +85,8 @@ public:
   /// Pumps queued events, app-thread tool handlers, and callbacks on the calling
   /// thread.
   ///
-  /// Reentrant calls are rejected and reported through UpdateStats. Exceptions escaping
-  /// an application callback propagate synchronously after the event counts as
+  /// Reentrant calls are rejected and report UpdateStats::budget_exhausted. Exceptions
+  /// escaping an application callback propagate synchronously after the event counts as
   /// delivered; the Harness remains valid.
   /// @param options Soft time and callback limits for this invocation.
   /// @return Delivery and queue statistics.
@@ -89,8 +94,6 @@ public:
 
 private:
   class Impl;
-
-  [[nodiscard]] static std::unique_ptr<ToolRegistry> make_tool_registry();
 
   explicit Harness(std::unique_ptr<Impl> impl) noexcept;
 

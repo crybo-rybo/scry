@@ -1,0 +1,53 @@
+# Path-aware PR gate for the GCC 16 reflection component (ADR 0012 amendment).
+#
+# The full reflection leg — build, tests, staged install, both package
+# consumers, and the ASan+UBSan rerun that is the component's only sanitizer
+# coverage (QA-005) — runs on every pull request that touches a
+# reflection-affecting path, so supported-component regressions cannot merge
+# untested. Pull requests that do not touch these paths skip the experimental
+# ppa:ubuntu-toolchain-r/test toolchain entirely. The unconditional weekly run
+# lives in nightly.yml and catches toolchain drift on the same script.
+name: Reflection
+
+on:
+  pull_request:
+    paths:
+      - "include/scry/reflection.hpp"
+      - "include/scry/detail/reflection*.hpp"
+      - "include/scry/detail/reflection/**"
+      - "src/reflection/**"
+      - "tests/reflection/**"
+      - "tests/package_consumer_reflection/**"
+      - "tests/package_consumer/**"
+      - "examples/reflection_tools.cpp"
+      - "scripts/ci-reflection.sh"
+      - "cmake/**"
+      - "CMakeLists.txt"
+      - "tests/CMakeLists.txt"
+      - "CMakePresets.json"
+      - ".github/workflows/reflection.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: reflection-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  reflection:
+    name: GCC 16 supported reflection component
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - name: Install GCC 16 (and GCC 14 for the core-surface proof)
+        run: |
+          sudo add-apt-repository --yes ppa:ubuntu-toolchain-r/test
+          sudo apt-get update
+          sudo apt-get install -y g++-14 g++-16 libcurl4-openssl-dev ninja-build
+      - name: Lower ASLR entropy for sanitizers
+        run: sudo sysctl vm.mmap_rnd_bits=28
+      - name: Build, test, install, and consume reflection component
+        run: ./scripts/ci-reflection.sh

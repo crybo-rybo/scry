@@ -2,6 +2,8 @@
 
 - Status: Accepted
 - Date: 2026-07-17
+- Amended: 2026-08-03 — process-wide curl ownership, response-length checks,
+  and explicit diagnostic destination
 
 ## Context
 
@@ -43,6 +45,20 @@ can proceed independently without making implementation types public.
 - Keep M1 chat-only. Tool-capable value shapes and validated ToolRegistry
   storage are present so M2 extends the contracts, but M1 does not snapshot,
   serialize, or dispatch tools and never enters a tool-await state.
+
+### 2026-08-03 consolidation amendment
+
+- One function-static RAII owner performs libcurl's process-wide initialization
+  attempt and caches its first result. A successful init followed by capability
+  rejection is cleaned up immediately. A usable runtime stays initialized
+  across Harness churn and is cleaned up exactly once from the owner's static
+  destructor.
+- Response metadata retains strict `Content-Length` parsing: malformed or
+  overflowing values are protocol errors, and a declared size above the
+  configured response limit is a resource-limit error before body delivery.
+- The compile-time diagnostic logger has no implicit destination. It opens a
+  file only when `SCRY_LOG_FILE` names a nonempty explicit path; unset or empty
+  creates no file.
 
 ## Consequences
 

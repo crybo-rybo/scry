@@ -2,11 +2,9 @@
 
 #include <cstdint>
 #include <expected>
-#include <functional>
 #include <memory>
 #include <scry/scry.hpp>
 #include <string>
-#include <string_view>
 
 namespace scry_showcase {
 
@@ -28,13 +26,6 @@ struct ChatSnapshot {
   bool can_cancel{false};
 };
 
-struct PanelCallbacks {
-  std::function<void(std::string_view)> text_delta{};
-  std::function<void(std::string)> completed{};
-  std::function<void(std::string)> failed{};
-  std::function<void()> cancelled{};
-};
-
 using SubmitStatus = std::expected<void, std::string>;
 
 class PanelController {
@@ -42,7 +33,7 @@ public:
   virtual ~PanelController() = default;
 
   [[nodiscard]] virtual SubmitStatus submit(std::string user_message,
-                                            PanelCallbacks callbacks) = 0;
+                                            scry::TurnCallbacks callbacks) = 0;
   [[nodiscard]] virtual bool cancel() noexcept = 0;
 };
 

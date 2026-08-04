@@ -1,9 +1,8 @@
-#include "tool_dispatch_test_support.hpp"
+#include "runtime_test_support.hpp"
 
 #include <array>
 #include <thread>
 #include <variant>
-#include <vector>
 
 using namespace scry::test_support;
 
@@ -15,7 +14,7 @@ TEST_CASE("pump executes tool handlers on the update caller thread") {
         handler_thread = std::this_thread::get_id();
         return scry::Json{.text = "null"};
       })};
-  const auto route = fixture.route(301, tools);
+  const auto route = fixture.route(301, {.tools = tools});
   scry::detail::PumpState pump{fixture.events};
   pump.add_route(route);
   REQUIRE(fixture.events->push(tool_event(route->id()), 1024));
@@ -34,15 +33,23 @@ TEST_CASE("pump queues a tool result before notifying the ToolCall observer") {
       registered_tool("forecast", [](scry::Json) -> scry::Result<scry::Json> {
         return scry::Json{.text = R"({"ok":true})"};
       })};
-  const auto route = fixture.route(302, tools);
-  scry::detail::PumpState pump{fixture.events};
-  pump.add_route(route);
   std::size_t queued_when_observed = 0;
   std::string observed_id;
-  REQUIRE(route->register_tool([&](const scry::ToolCall& call) {
-    queued_when_observed = fixture.commands->size();
-    observed_id = call.id;
-  }));
+  const auto route =
+      fixture.route(302, {
+                             .tools = tools,
+                             .callbacks =
+                                 scry::TurnCallbacks{
+                                     .on_tool_call =
+                                         [&](const scry::ToolCall& call) {
+                                           queued_when_observed =
+                                               fixture.commands->size();
+                                           observed_id = call.id;
+                                         },
+                                 },
+                         });
+  scry::detail::PumpState pump{fixture.events};
+  pump.add_route(route);
   REQUIRE(fixture.events->push(tool_event(route->id()), 1024));
 
   CHECK(pump.update({}).callbacks_delivered == 1);
@@ -55,161 +62,6 @@ TEST_CASE("pump queues a tool result before notifying the ToolCall observer") {
   REQUIRE(result);
   REQUIRE(result->result);
   CHECK(result->result->result.text == R"({"ok":true})");
-}
-
-TEST_CASE("pump gates later calls until a worker result is accepted") {
-  PumpFixture fixture;
-  std::size_t app_calls = 0;
-  std::vector<std::string> observed;
-  const scry::detail::ToolSnapshot tools{
-      registered_tool(
-          "worker",
-          [](scry::Json) -> scry::Result<scry::Json> {
-            return scry::Json{.text = "{}"};
-          },
-          scry::ToolExecution::worker_thread),
-      registered_tool("app",
-                      [&app_calls](scry::Json) -> scry::Result<scry::Json> {
-                        ++app_calls;
-                        return scry::Json{.text = "{}"};
-                      }),
-  };
-  const auto route = fixture.route(308, tools);
-  scry::detail::PumpState pump{fixture.events};
-  pump.add_route(route);
-  REQUIRE(route->register_tool(
-      [&observed](const scry::ToolCall& call) { observed.push_back(call.name); }));
-  REQUIRE(fixture.events->push(tool_event(route->id(), "worker", "call-worker"), 1024));
-  REQUIRE(fixture.events->push(tool_event(route->id(), "app", "call-app"), 1024));
-
-  const auto scheduled = pump.update({});
-  CHECK(scheduled.callbacks_delivered == 1);
-  CHECK(scheduled.events_remaining == 1);
-  CHECK(app_calls == 0);
-  CHECK(observed.empty());
-  auto command = fixture.commands->try_pop();
-  REQUIRE(command);
-  CHECK(std::holds_alternative<scry::detail::ExecuteWorkerToolCommand>(*command));
-
-  const scry::detail::ToolResultBlock result{
-      .tool_call_id = "call-worker",
-      .result = {.text = "{}"},
-  };
-  REQUIRE(fixture.events->push(
-      scry::detail::WorkerToolAcceptedEvent{
-          .turn_id = route->id(),
-          .tool_call_id = "call-worker",
-          .result_payload_bytes = scry::detail::content_payload_bytes(result),
-      },
-      1024));
-  const auto accepted = pump.update({.max_callbacks = 1});
-  CHECK(accepted.callbacks_delivered == 1);
-  CHECK(accepted.events_remaining == 1);
-  CHECK(observed == std::vector<std::string>{"worker"});
-  CHECK(app_calls == 0);
-
-  CHECK(pump.update({.max_callbacks = 1}).callbacks_delivered == 1);
-  CHECK(observed == std::vector<std::string>{"worker", "app"});
-  CHECK(app_calls == 1);
-  command = fixture.commands->try_pop();
-  REQUIRE(command);
-  CHECK(std::holds_alternative<scry::detail::ToolResultCommand>(*command));
-}
-
-TEST_CASE("worker observer remains ordered before an already queued completion") {
-  PumpFixture fixture;
-  std::vector<std::string> timeline;
-  const scry::detail::ToolSnapshot tools{registered_tool(
-      "worker",
-      [](scry::Json) -> scry::Result<scry::Json> { return scry::Json{.text = "{}"}; },
-      scry::ToolExecution::worker_thread)};
-  const auto route = fixture.route(309, tools);
-  scry::detail::PumpState pump{fixture.events};
-  pump.add_route(route);
-  REQUIRE(route->register_tool(
-      [&timeline](const scry::ToolCall&) { timeline.emplace_back("tool"); }));
-  REQUIRE(route->register_completion(
-      [&timeline](const scry::Completion&) { timeline.emplace_back("complete"); }));
-  REQUIRE(fixture.events->push(tool_event(route->id(), "worker", "call-worker"), 1024));
-  CHECK(pump.update({}).callbacks_delivered == 1);
-  REQUIRE(fixture.commands->try_pop());
-
-  REQUIRE(fixture.events->push(
-      scry::detail::WorkerToolAcceptedEvent{
-          .turn_id = route->id(),
-          .tool_call_id = "call-worker",
-          .result_payload_bytes =
-              scry::detail::content_payload_bytes(scry::detail::ToolResultBlock{
-                  .tool_call_id = "call-worker",
-                  .result = {.text = "{}"},
-              }),
-      },
-      1024));
-  REQUIRE(fixture.events->push(completion_event(route->id()), 1024));
-
-  CHECK(pump.update({}).callbacks_delivered == 2);
-  CHECK(timeline == std::vector<std::string>{"tool", "complete"});
-}
-
-TEST_CASE("worker acknowledgement advances cumulative result-budget accounting") {
-  PumpFixture fixture;
-  std::size_t app_calls = 0;
-  std::vector<std::string> observed;
-  const auto worker_result = scry::detail::ToolResultBlock{
-      .tool_call_id = "call-worker",
-      .result = {.text = "{}"},
-  };
-  const auto app_result = scry::detail::ToolResultBlock{
-      .tool_call_id = "call-app",
-      .result = {.text = "{}"},
-  };
-  const auto worker_bytes = scry::detail::content_payload_bytes(worker_result);
-  const auto app_bytes = scry::detail::content_payload_bytes(app_result);
-  const auto budget = worker_bytes + app_bytes - 1;
-  const scry::detail::ToolSnapshot tools{
-      registered_tool(
-          "worker",
-          []([[maybe_unused]] scry::Json value) -> scry::Result<scry::Json> {
-            return {};
-          },
-          scry::ToolExecution::worker_thread),
-      registered_tool("app",
-                      [&app_calls](scry::Json) -> scry::Result<scry::Json> {
-                        ++app_calls;
-                        return scry::Json{.text = "{}"};
-                      }),
-  };
-  const auto route = fixture.route(310, tools, 1024, budget);
-  scry::detail::PumpState pump{fixture.events};
-  pump.add_route(route);
-  REQUIRE(route->register_tool(
-      [&observed](const scry::ToolCall& call) { observed.push_back(call.name); }));
-  REQUIRE(fixture.events->push(tool_event(route->id(), "worker", "call-worker", budget),
-                               1024));
-  REQUIRE(
-      fixture.events->push(tool_event(route->id(), "app", "call-app", budget), 1024));
-
-  CHECK(pump.update({.max_callbacks = 1}).callbacks_delivered == 1);
-  REQUIRE(fixture.commands->try_pop());
-  REQUIRE(fixture.events->push(
-      scry::detail::WorkerToolAcceptedEvent{
-          .turn_id = route->id(),
-          .tool_call_id = "call-worker",
-          .result_payload_bytes = worker_bytes,
-      },
-      1024));
-  CHECK(pump.update({.max_callbacks = 1}).callbacks_delivered == 1);
-  CHECK(observed == std::vector<std::string>{"worker"});
-
-  CHECK(pump.update({.max_callbacks = 1}).callbacks_delivered == 1);
-  CHECK(app_calls == 1);
-  CHECK(observed == std::vector<std::string>{"worker"});
-  auto command = fixture.commands->try_pop();
-  REQUIRE(command);
-  const auto* result = std::get_if<scry::detail::ToolResultCommand>(&*command);
-  REQUIRE(result);
-  REQUIRE_FALSE(result->result);
-  CHECK(result->result.error().category == scry::ErrorCategory::resource_limit);
 }
 
 TEST_CASE("cancellation during a handler suppresses its result and later calls") {
@@ -232,11 +84,17 @@ TEST_CASE("cancellation during a handler suppresses its result and later calls")
                         return scry::Json{.text = R"({"second":true})"};
                       }),
   };
-  route = fixture.route(303, std::move(tools));
+  route = fixture.route(
+      303, {
+               .tools = std::move(tools),
+               .callbacks =
+                   scry::TurnCallbacks{
+                       .on_tool_call = [&observer_calls](
+                                           const scry::ToolCall&) { ++observer_calls; },
+                   },
+           });
   scry::detail::PumpState pump{fixture.events};
   pump.add_route(route);
-  REQUIRE(route->register_tool(
-      [&observer_calls](const scry::ToolCall&) { ++observer_calls; }));
   REQUIRE(fixture.events->push(tool_event(route->id(), "first", "call-1"), 1024));
   REQUIRE(fixture.events->push(tool_event(route->id(), "second", "call-2"), 1024));
 
@@ -269,7 +127,7 @@ TEST_CASE("fatal tool result failure suppresses every later handler") {
                         return scry::Json{.text = "{}"};
                       }),
   };
-  const auto route = fixture.route(306, tools, 2);
+  const auto route = fixture.route(306, {.tools = tools, .max_tool_result_bytes = 2});
   scry::detail::PumpState pump{fixture.events};
   pump.add_route(route);
   REQUIRE(fixture.events->push(tool_event(route->id(), "first", "call-1"), 1024));
@@ -302,7 +160,7 @@ TEST_CASE("cumulative result failure suppresses remaining calls in the batch") {
       registered_tool("second", handler(1)),
       registered_tool("third", handler(2)),
   };
-  const auto route = fixture.route(307, tools);
+  const auto route = fixture.route(307, {.tools = tools});
   scry::detail::PumpState pump{fixture.events};
   pump.add_route(route);
   constexpr std::size_t two_results_minus_one = 17;
@@ -334,7 +192,7 @@ TEST_CASE("detached routes continue dispatching tool calls") {
         ++handler_calls;
         return scry::Json{.text = R"({"ok":true})"};
       })};
-  const auto route = fixture.route(304, tools);
+  const auto route = fixture.route(304, {.tools = tools});
   scry::detail::PumpState pump{fixture.events};
   pump.add_route(route);
   route->detach();
@@ -358,13 +216,20 @@ TEST_CASE("a terminal route suppresses a previously buffered tool call") {
         ++handler_calls;
         return scry::Json{.text = R"({"ok":true})"};
       })};
-  const auto route = fixture.route(305, tools);
+  const auto route = fixture.route(
+      305, {
+               .tools = tools,
+               .callbacks = scry::TurnCallbacks{
+                   .on_tool_call =
+                       [&observer_calls](const scry::ToolCall&) { ++observer_calls; },
+                   .on_finished =
+                       [&completed](scry::Result<scry::Completion> done) {
+                         completed = done.has_value();
+                       },
+               },
+           });
   scry::detail::PumpState pump{fixture.events};
   pump.add_route(route);
-  REQUIRE(route->register_tool(
-      [&observer_calls](const scry::ToolCall&) { ++observer_calls; }));
-  REQUIRE(route->register_completion(
-      [&completed](const scry::Completion&) { completed = true; }));
   REQUIRE(fixture.events->push(tool_event(route->id()), 1024));
   CHECK(pump.update({.max_callbacks = 0}).events_remaining == 1);
   REQUIRE(fixture.events->push(completion_event(route->id()), 1024));
@@ -379,42 +244,4 @@ TEST_CASE("a terminal route suppresses a previously buffered tool call") {
   CHECK(observer_calls == 0);
   CHECK(fixture.commands->size() == 0);
   CHECK(pump.live_route_count() == 0);
-}
-
-TEST_CASE("worker acknowledgements reject absent and mismatched pending calls") {
-  PumpFixture fixture;
-  const scry::detail::ToolSnapshot tools{registered_tool(
-      "worker", [](scry::Json) -> scry::Result<scry::Json> { return {}; },
-      scry::ToolExecution::worker_thread)};
-  const auto route = fixture.route(311, tools);
-  const scry::detail::WorkerEvent accepted{scry::detail::WorkerToolAcceptedEvent{
-      .turn_id = route->id(),
-      .tool_call_id = "call-worker",
-  }};
-
-  CHECK_FALSE(route->has_callback(accepted));
-  CHECK_FALSE(route->should_retain(accepted));
-  CHECK(route->should_discard(accepted));
-  route->invoke(accepted);
-
-  route->invoke(
-      scry::detail::WorkerEvent{tool_event(route->id(), "worker", "call-worker")});
-  auto command = fixture.commands->try_pop();
-  REQUIRE(command);
-  CHECK(std::holds_alternative<scry::detail::ExecuteWorkerToolCommand>(*command));
-
-  const scry::detail::WorkerEvent mismatched{scry::detail::WorkerToolAcceptedEvent{
-      .turn_id = route->id(),
-      .tool_call_id = "other-call",
-  }};
-  CHECK_FALSE(route->has_callback(mismatched));
-  CHECK_FALSE(route->should_retain(mismatched));
-  CHECK(route->should_discard(mismatched));
-  route->invoke(mismatched);
-
-  CHECK(route->has_callback(accepted));
-  CHECK(route->should_retain(accepted));
-  CHECK_FALSE(route->should_discard(accepted));
-  route->invoke(accepted);
-  CHECK_FALSE(route->has_callback(accepted));
 }

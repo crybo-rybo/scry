@@ -1,6 +1,5 @@
-#include "core/provider.hpp"
 #include "runtime/test_access.hpp"
-#include "support/transport/fake_transport.hpp"
+#include "support/harness_test_support.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 #include <cstddef>
@@ -11,29 +10,20 @@
 #include <string>
 #include <utility>
 
+using namespace scry::test_support;
+
 namespace {
 
-[[nodiscard]] scry::Config test_config(const std::size_t conversation_bytes = 1024) {
-  scry::Config config{
-      .base_url = "http://127.0.0.1:1",
-      .api_key = "test-key",
-      .model = "test-model",
-  };
-  config.retry.max_attempts = 1;
+[[nodiscard]] scry::Config bounded_config(const std::size_t conversation_bytes) {
+  auto config = test_config();
   config.limits.max_conversation_bytes = conversation_bytes;
   return config;
-}
-
-[[nodiscard]] std::unique_ptr<scry::detail::ProviderAdapter> provider() {
-  auto adapter = scry::detail::make_provider_adapter(scry::ProviderDialect::anthropic);
-  REQUIRE(adapter);
-  return std::move(*adapter);
 }
 
 [[nodiscard]] scry::Result<scry::Harness>
 fake_harness(const std::size_t conversation_bytes = 1024) {
   return scry::detail::HarnessTestAccess::create(
-      test_config(conversation_bytes), provider(),
+      bounded_config(conversation_bytes), provider(),
       std::make_unique<scry::test::FakeTransport>());
 }
 

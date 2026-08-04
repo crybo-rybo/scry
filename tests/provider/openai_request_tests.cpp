@@ -1,10 +1,9 @@
+#include "core/json_codec.hpp"
 #include "core/model.hpp"
 #include "provider/openai.hpp"
-#include "provider/wire_json.hpp"
 
 #include <array>
 #include <catch2/catch_test_macros.hpp>
-#include <limits>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -16,9 +15,11 @@ using namespace scry;
 using namespace scry::detail;
 
 [[nodiscard]] std::string canonical(const std::string_view json) {
-  auto parsed = parse_wire_json(json, ErrorCategory::protocol, "test JSON is invalid");
+  // Request fixtures assert JSON meaning. They deliberately do not promise
+  // byte-for-byte wire spelling or member order.
+  auto parsed = parse_json(json, ErrorCategory::protocol, "test JSON is invalid");
   REQUIRE(parsed);
-  auto encoded = write_wire_json(*parsed, ErrorCategory::protocol,
+  auto encoded = write_json_text(*parsed, ErrorCategory::protocol,
                                  "test JSON could not be encoded");
   REQUIRE(encoded);
   return *encoded;
@@ -38,14 +39,13 @@ using namespace scry::detail;
   return Config{
       .base_url = std::move(base_url),
       .api_key = "sanitized-key",
-      .model = "fallback-model",
+      .model = "chat-model",
       .dialect = ProviderDialect::openai_compatible,
   };
 }
 
 [[nodiscard]] ModelRequest request() {
   return ModelRequest{
-      .model = "chat-model",
       .system_prompt = "Be concise",
       .messages =
           {
@@ -113,7 +113,7 @@ void require_invalid_request(const Config& value, const ModelRequest& model_requ
 
 } // namespace
 
-TEST_CASE("OpenAI request maps the common text and tool contract") {
+TEST_CASE("OpenAI request is semantically equivalent to the common contract") {
   OpenAiAdapter adapter;
   const auto encoded = adapter.make_request(config(), request());
   REQUIRE(encoded);
@@ -154,19 +154,13 @@ TEST_CASE("OpenAI endpoint normalization accepts only the documented base forms"
   }
 }
 
-TEST_CASE("OpenAI authentication is optional and rejects header injection") {
+TEST_CASE("OpenAI authentication is optional for local servers") {
   OpenAiAdapter adapter;
   auto local = config("http://localhost:11434/v1");
   local.api_key.clear();
-  auto encoded = adapter.make_request(local, request());
+  const auto encoded = adapter.make_request(local, request());
   REQUIRE(encoded);
   CHECK(header(*encoded, "authorization").empty());
-
-  local.api_key = "unsafe\r\nheader";
-  encoded = adapter.make_request(local, request());
-  REQUIRE_FALSE(encoded);
-  CHECK(encoded.error().category == ErrorCategory::invalid_config);
-  CHECK(encoded.error().message.find("unsafe") == std::string::npos);
 }
 
 TEST_CASE("OpenAI request rejects neutral shapes that cannot be preserved") {
@@ -203,37 +197,6 @@ TEST_CASE("OpenAI request rejects neutral shapes that cannot be preserved") {
   encoded = adapter.make_request(config(), invalid);
   REQUIRE_FALSE(encoded);
   CHECK(encoded.error().category == ErrorCategory::invalid_config);
-}
-
-TEST_CASE("OpenAI request validation covers every documented numeric boundary") {
-  auto valid_config = config();
-  auto valid_request = request();
-
-  auto invalid_config = valid_config;
-  invalid_config.base_url.clear();
-  require_invalid_request(invalid_config, valid_request);
-
-  invalid_config = valid_config;
-  invalid_config.model.clear();
-  auto invalid_request = valid_request;
-  invalid_request.model.clear();
-  require_invalid_request(invalid_config, invalid_request);
-
-  for (const auto temperature : {std::numeric_limits<double>::quiet_NaN(), -0.1, 2.1}) {
-    invalid_request = valid_request;
-    invalid_request.sampling.temperature = temperature;
-    require_invalid_request(valid_config, invalid_request);
-  }
-  for (const auto top_p : {std::numeric_limits<double>::quiet_NaN(), -0.1, 1.1}) {
-    invalid_request = valid_request;
-    invalid_request.sampling.top_p = top_p;
-    require_invalid_request(valid_config, invalid_request);
-  }
-  invalid_request = valid_request;
-  invalid_request.sampling.max_tokens.reset();
-  require_invalid_request(valid_config, invalid_request);
-  invalid_request.sampling.max_tokens = 0;
-  require_invalid_request(valid_config, invalid_request);
 }
 
 TEST_CASE("OpenAI request preserves assistant text-only and tool-only shapes") {

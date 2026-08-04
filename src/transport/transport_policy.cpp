@@ -1,5 +1,7 @@
 #include "transport/transport_policy.hpp"
 
+#include "core/error.hpp"
+
 #include <algorithm>
 #include <cctype>
 #include <charconv>
@@ -10,15 +12,6 @@
 
 namespace scry::detail::transport_policy {
 namespace {
-
-[[nodiscard]] Error make_error(const ErrorCategory category, std::string message,
-                               const bool retryable = false) {
-  return Error{
-      .category = category,
-      .message = std::move(message),
-      .retryable = retryable,
-  };
-}
 
 [[nodiscard]] bool valid_header_name(const std::string_view name) noexcept {
   if (name.empty()) {
