@@ -55,17 +55,38 @@ tool_event(const scry::TurnId turn_id, std::string name = "forecast",
   };
 }
 
+// Only the assistant text and the retry bookkeeping ever vary between suites,
+// so they travel as defaulted options rather than positional overloads.
+struct CompletionOptions {
+  std::string text{"done"};
+  std::uint32_t attempt_count{1};
+  std::string provider_request_id{"request-id"};
+};
+
 [[nodiscard]] inline scry::detail::CompletionEvent
-completion_event(const scry::TurnId turn_id) {
+completion_event(const scry::TurnId turn_id, CompletionOptions options = {}) {
   return {
       .turn_id = turn_id,
       .exchange = {scry::detail::Message{
           .role = scry::detail::Role::assistant,
-          .content = {scry::detail::TextBlock{.text = "done"}},
+          .content = {scry::detail::TextBlock{.text = std::move(options.text)}},
       }},
       .finish_reason = scry::FinishReason::completed,
+      .attempt_count = options.attempt_count,
+      .provider_request_id = std::move(options.provider_request_id),
   };
 }
+
+// Everything a test wants to vary about a route, so one fixture serves the
+// tool-dispatch, pump-delivery, and conversation-limit suites without each
+// growing its own positional overload.
+struct RouteOptions {
+  scry::detail::ToolSnapshot tools{};
+  std::size_t max_tool_result_bytes{1024};
+  std::size_t max_exchange_bytes{std::numeric_limits<std::size_t>::max()};
+  std::size_t max_conversation_bytes{1024};
+  scry::TurnCallbacks callbacks{};
+};
 
 struct PumpFixture {
   std::shared_ptr<scry::detail::CommandQueue> commands{
@@ -76,19 +97,16 @@ struct PumpFixture {
       std::make_shared<scry::detail::ConversationState>()};
 
   [[nodiscard]] std::shared_ptr<scry::detail::TurnRoute>
-  route(const std::uint64_t id, scry::detail::ToolSnapshot tools,
-        const std::size_t result_limit = 1024, scry::TurnCallbacks callbacks = {},
-        const std::size_t exchange_limit =
-            std::numeric_limits<std::size_t>::max()) const {
+  route(const std::uint64_t id, RouteOptions options = {}) const {
     return std::make_shared<scry::detail::TurnRoute>(
         scry::TurnId{.value = id}, std::make_shared<std::atomic<bool>>(false), commands,
         conversation, "question",
         scry::detail::TurnRouteOptions{
-            .tools = std::move(tools),
-            .max_tool_result_bytes = result_limit,
-            .max_exchange_bytes = exchange_limit,
-            .max_conversation_bytes = 1024,
-            .callbacks = std::move(callbacks),
+            .tools = std::move(options.tools),
+            .max_tool_result_bytes = options.max_tool_result_bytes,
+            .max_exchange_bytes = options.max_exchange_bytes,
+            .max_conversation_bytes = options.max_conversation_bytes,
+            .callbacks = std::move(options.callbacks),
         });
   }
 };

@@ -1,6 +1,6 @@
 add_executable(
   scry_provider_tests
-  coverage_tests.cpp
+  anthropic_edge_tests.cpp
   json_accessor_tests.cpp
   openai_request_tests.cpp
   openai_stream_tests.cpp

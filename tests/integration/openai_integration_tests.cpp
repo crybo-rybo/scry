@@ -1,6 +1,5 @@
-#include "core/provider.hpp"
 #include "runtime/test_access.hpp"
-#include "support/transport/fake_transport.hpp"
+#include "support/harness_test_support.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 #include <cstddef>
@@ -12,6 +11,8 @@
 #include <thread>
 #include <utility>
 #include <vector>
+
+using namespace scry::test_support;
 
 namespace {
 
@@ -83,13 +84,10 @@ data: {"type":"message_stop"}
   return config;
 }
 
-[[nodiscard]] std::unique_ptr<scry::detail::ProviderAdapter>
-provider(const scry::ProviderDialect dialect) {
-  return scry::detail::make_provider_adapter(dialect);
-}
-
+// Splitting the stream into single-byte chunks proves the decoder reassembles
+// frames that arrive without regard for event boundaries.
 [[nodiscard]] scry::test::ScriptedExchange
-scripted_exchange(const std::string_view stream, std::string request_id) {
+byte_chunked_exchange(const std::string_view stream, std::string request_id) {
   std::vector<std::string> chunks;
   chunks.reserve(stream.size());
   for (const char byte : stream) {
@@ -103,19 +101,6 @@ scripted_exchange(const std::string_view stream, std::string request_id) {
               .provider_request_id = std::move(request_id),
           },
   };
-}
-
-template <typename Predicate>
-[[nodiscard]] bool pump_until(scry::Harness& harness, Predicate&& predicate) {
-  constexpr std::size_t maximum_pumps = 100'000;
-  for (std::size_t pump = 0; pump < maximum_pumps; ++pump) {
-    static_cast<void>(harness.update());
-    if (std::forward<Predicate>(predicate)()) {
-      return true;
-    }
-    std::this_thread::yield();
-  }
-  return false;
 }
 
 [[nodiscard]] scry::ToolDefinition lookup_tool() {
@@ -135,8 +120,8 @@ template <typename Predicate>
 TEST_CASE("OpenAI-compatible config drives a fragmented transactional tool round") {
   auto fake = std::make_unique<scry::test::FakeTransport>();
   auto* requests = fake.get();
-  fake->enqueue(scripted_exchange(openai_tool_stream, "openai-tool-request"));
-  fake->enqueue(scripted_exchange(openai_final_stream, "openai-final-request"));
+  fake->enqueue(byte_chunked_exchange(openai_tool_stream, "openai-tool-request"));
+  fake->enqueue(byte_chunked_exchange(openai_final_stream, "openai-final-request"));
   auto created = scry::detail::HarnessTestAccess::create(
       openai_config(), provider(scry::ProviderDialect::openai_compatible),
       std::move(fake));
@@ -201,10 +186,11 @@ TEST_CASE("concurrent Harnesses keep Anthropic and OpenAI dialect state isolated
   auto anthropic_transport = std::make_unique<scry::test::FakeTransport>();
   auto* anthropic_requests = anthropic_transport.get();
   anthropic_transport->enqueue(
-      scripted_exchange(anthropic_final_stream, "anthropic-request"));
+      byte_chunked_exchange(anthropic_final_stream, "anthropic-request"));
   auto openai_transport = std::make_unique<scry::test::FakeTransport>();
   auto* openai_requests = openai_transport.get();
-  openai_transport->enqueue(scripted_exchange(openai_final_stream, "openai-request"));
+  openai_transport->enqueue(
+      byte_chunked_exchange(openai_final_stream, "openai-request"));
 
   auto anthropic = scry::detail::HarnessTestAccess::create(
       anthropic_config(), provider(scry::ProviderDialect::anthropic),

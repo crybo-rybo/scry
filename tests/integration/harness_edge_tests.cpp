@@ -1,6 +1,5 @@
-#include "core/provider.hpp"
 #include "runtime/test_access.hpp"
-#include "support/transport/fake_transport.hpp"
+#include "support/harness_test_support.hpp"
 
 #include <atomic>
 #include <catch2/catch_test_macros.hpp>
@@ -13,6 +12,8 @@
 #include <string_view>
 #include <utility>
 #include <vector>
+
+using namespace scry::test_support;
 
 namespace {
 
@@ -73,34 +74,6 @@ data: {"type":"message_stop"}
 
 )";
 
-[[nodiscard]] scry::Config test_config() {
-  auto config = scry::Config{
-      .base_url = "http://127.0.0.1:1",
-      .api_key = "sanitized-test-key",
-      .model = "test-model",
-  };
-  config.retry.max_attempts = 1;
-  config.retry.jitter_ratio = 0.0;
-  return config;
-}
-
-[[nodiscard]] std::unique_ptr<scry::detail::ProviderAdapter> provider() {
-  return scry::detail::make_provider_adapter(scry::ProviderDialect::anthropic);
-}
-
-[[nodiscard]] scry::test::ScriptedExchange
-scripted_exchange(const std::string_view body,
-                  std::string request_id = "transport-request") {
-  return {
-      .body_chunks = {std::string{body}},
-      .result =
-          scry::detail::TransportResult{
-              .status_code = 200,
-              .provider_request_id = std::move(request_id),
-          },
-  };
-}
-
 [[nodiscard]] scry::Result<scry::Harness>
 fake_harness(scry::Config config, scry::test::ScriptedExchange scripted) {
   auto fake = std::make_unique<scry::test::FakeTransport>();
@@ -139,12 +112,6 @@ data: {"type":"message_stop"}
       .name = "coverage_tool",
       .description = "runtime coverage tool",
       .input_schema = {.text = R"({"type":"object"})"},
-  };
-}
-
-[[nodiscard]] scry::ToolHandler handler() {
-  return [](scry::Json) -> scry::Result<scry::Json> {
-    return scry::Json{.text = R"({"ok":true})"};
   };
 }
 
@@ -222,7 +189,7 @@ TEST_CASE("moved-from public runtime handles remain safely observable") {
 
   const auto& const_tools = std::as_const(harness).tools();
   CHECK(const_tools.empty());
-  REQUIRE(harness.tools().add(tool(), handler()));
+  REQUIRE(harness.tools().add(tool(), static_handler(R"({"ok":true})")));
   CHECK(const_tools.size() == 1);
 
   auto turn_result = harness.send(conversation, "question");

@@ -140,6 +140,17 @@ TEST_CASE("Conversation persistence diagnoses inactive moved-from handles") {
   CHECK(active.empty());
 }
 
+TEST_CASE("moved-from Conversation observers report an empty history") {
+  auto source = scry::Conversation::create();
+  REQUIRE(source);
+  auto active = std::move(*source);
+
+  CHECK(source->empty());
+  CHECK(source->message_count() == 0);
+  CHECK(active.empty());
+  CHECK(active.message_count() == 0);
+}
+
 TEST_CASE("private JSON codec canonicalizes values and validates object roots") {
   const scry::Json input{.text = R"( { "z": null, "a": [3, {"b": 2, "a": 1}] } )"};
   auto canonical = scry::detail::canonicalize_json(

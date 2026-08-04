@@ -1,6 +1,5 @@
-#include "core/provider.hpp"
 #include "runtime/test_access.hpp"
-#include "support/transport/fake_transport.hpp"
+#include "support/harness_test_support.hpp"
 
 #include <atomic>
 #include <catch2/catch_test_macros.hpp>
@@ -15,6 +14,8 @@
 #include <thread>
 #include <utility>
 #include <vector>
+
+using namespace scry::test_support;
 
 namespace {
 
@@ -41,40 +42,8 @@ data: {"type":"message_stop"}
 
 )";
 
-[[nodiscard]] scry::Config test_config() {
-  return {
-      .base_url = "http://127.0.0.1:1",
-      .api_key = "sanitized-test-key",
-      .model = "test-model",
-  };
-}
-
-[[nodiscard]] std::unique_ptr<scry::detail::ProviderAdapter> provider() {
-  return scry::detail::make_provider_adapter(scry::ProviderDialect::anthropic);
-}
-
 [[nodiscard]] scry::test::ScriptedExchange successful_exchange() {
-  return {
-      .body_chunks = {std::string{anthropic_stream}},
-      .result =
-          scry::detail::TransportResult{
-              .status_code = 200,
-              .provider_request_id = "request-integration",
-          },
-  };
-}
-
-template <typename Predicate>
-[[nodiscard]] bool pump_until(scry::Harness& harness, Predicate&& predicate) {
-  constexpr std::size_t maximum_pumps = 100'000;
-  for (std::size_t pump = 0; pump < maximum_pumps; ++pump) {
-    static_cast<void>(harness.update());
-    if (std::forward<Predicate>(predicate)()) {
-      return true;
-    }
-    std::this_thread::yield();
-  }
-  return false;
+  return scripted_exchange(anthropic_stream, "request-integration");
 }
 
 class ControllableTransport final : public scry::detail::Transport {

@@ -1,10 +1,13 @@
 #include "support/transport/loopback_server.hpp"
+#include "transport/curl_global.hpp"
 #include "transport/curl_transport.hpp"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <catch2/catch_test_macros.hpp>
 #include <chrono>
+#include <curl/curl.h>
 #include <optional>
 #include <scry/error.hpp>
 #include <stop_token>
@@ -81,6 +84,51 @@ struct InterruptedTransfer {
 }
 
 } // namespace
+
+TEST_CASE("curl global initialization is process-wide and repeatable") {
+  REQUIRE(scry::detail::curl_global_status());
+  REQUIRE(scry::detail::curl_global_status());
+
+  const CurlTransport first;
+  REQUIRE(first.status());
+  const CurlTransport second;
+  REQUIRE(second.status());
+}
+
+TEST_CASE("curl runtime rejects capabilities that cannot honor host shutdown") {
+  using scry::detail::CurlRuntimeCapabilities;
+  using scry::detail::validate_curl_runtime_capabilities;
+
+  REQUIRE(validate_curl_runtime_capabilities({
+      .version_number = CURL_VERSION_BITS(7, 84, 0),
+      .thread_safe = true,
+      .asynchronous_dns = true,
+  }));
+
+  const auto old_version = validate_curl_runtime_capabilities({
+      .version_number = CURL_VERSION_BITS(7, 83, 0),
+      .thread_safe = true,
+      .asynchronous_dns = true,
+  });
+  REQUIRE_FALSE(old_version);
+  CHECK(old_version.error().category == ErrorCategory::invalid_config);
+
+  const auto unsafe_global = validate_curl_runtime_capabilities({
+      .version_number = CURL_VERSION_BITS(7, 84, 0),
+      .thread_safe = false,
+      .asynchronous_dns = true,
+  });
+  REQUIRE_FALSE(unsafe_global);
+  CHECK(unsafe_global.error().category == ErrorCategory::invalid_config);
+
+  const auto blocking_resolver = validate_curl_runtime_capabilities({
+      .version_number = CURL_VERSION_BITS(7, 84, 0),
+      .thread_safe = true,
+      .asynchronous_dns = false,
+  });
+  REQUIRE_FALSE(blocking_resolver);
+  CHECK(blocking_resolver.error().category == ErrorCategory::invalid_config);
+}
 
 TEST_CASE("curl transport posts request data and returns response metadata") {
   scry::test::LoopbackServer server{
@@ -414,4 +462,94 @@ TEST_CASE("consecutive transfers reuse one connection") {
   // Rebuilding the multi handle per attempt would discard libcurl's connection
   // cache and force a second TCP connect, and with TLS a second handshake.
   CHECK(server.accepted_connections() == 1);
+}
+
+TEST_CASE("curl transport discards interim metadata and honors disabled TLS checks") {
+  using namespace std::chrono_literals;
+
+  const std::string raw_response{"HTTP/1.1 100 Continue\r\n"
+                                 "request-id: interim-request\r\n\r\n"
+                                 "HTTP/1.1 200 OK\r\n"
+                                 "request-id: final-request\r\n"
+                                 "Content-Length: 2\r\nConnection: close\r\n\r\nok"};
+  scry::test::LoopbackServer server{raw_response};
+  CurlTransport transport;
+  auto local_request = request(server.url());
+  local_request.tls_verify_peer = false;
+  local_request.timeouts.connect = std::chrono::milliseconds::max();
+  local_request.timeouts.transfer = std::chrono::milliseconds::max();
+  local_request.timeouts.shutdown = std::chrono::milliseconds::max();
+  std::string body;
+  auto sink = append_to(body);
+  std::stop_source shutdown;
+  const std::atomic cancelled{false};
+
+  const auto result =
+      transport.perform(local_request, shutdown.get_token(), cancelled, sink);
+
+  REQUIRE(result);
+  CHECK(result->status_code == 200);
+  CHECK(result->provider_request_id == "final-request");
+  CHECK(body == "ok");
+  CHECK(result->headers.size() == 3);
+  CHECK(
+      std::ranges::none_of(result->headers, [](const scry::detail::HttpHeader& header) {
+        return header.value == "interim-request";
+      }));
+}
+
+TEST_CASE("curl transport classifies malformed and unsupported URLs locally") {
+  constexpr std::array urls{
+      std::string_view{"://malformed"},
+      std::string_view{"unsupported-scry-scheme://localhost/"},
+  };
+
+  for (const auto url : urls) {
+    CAPTURE(std::string{url});
+    CurlTransport transport;
+    std::string body;
+    auto sink = append_to(body);
+    std::stop_source shutdown;
+    const std::atomic cancelled{false};
+
+    const auto result = transport.perform(request(std::string{url}),
+                                          shutdown.get_token(), cancelled, sink);
+
+    REQUIRE_FALSE(result);
+    CHECK(result.error().category == ErrorCategory::protocol);
+    CHECK(result.error().message == "invalid server response");
+    CHECK_FALSE(result.error().retryable);
+    CHECK(body.empty());
+  }
+}
+
+TEST_CASE("curl transport falls back to the response request ID on sink failure") {
+  scry::test::LoopbackServer server{
+      response("200 OK", "request-id: header-request\r\n", "body")};
+  CurlTransport transport;
+  BodyChunkSink sink{[](std::string_view) -> scry::Status {
+    return std::unexpected(scry::Error{
+        .category = ErrorCategory::network,
+        .message = "private message",
+        .provider_detail = "provider:safe_code",
+        .retryable = true,
+        .retry_after = std::chrono::milliseconds{31},
+        .turn_id = scry::TurnId{9},
+        .attempt = 4,
+    });
+  }};
+  std::stop_source shutdown;
+  const std::atomic cancelled{false};
+
+  const auto result =
+      transport.perform(request(server.url()), shutdown.get_token(), cancelled, sink);
+
+  REQUIRE_FALSE(result);
+  CHECK(result.error().category == ErrorCategory::network);
+  CHECK(result.error().provider_detail == "provider:safe_code");
+  CHECK(result.error().retryable);
+  CHECK(result.error().retry_after == std::chrono::milliseconds{31});
+  CHECK(result.error().turn_id == scry::TurnId{9});
+  CHECK(result.error().attempt == 4);
+  CHECK(result.error().provider_request_id == "header-request");
 }
