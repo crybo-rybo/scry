@@ -77,6 +77,7 @@ create_harness(std::string base_url, std::string api_key, std::string model) {
               .top_p = 1.0,
               .max_tokens = 512,
           },
+      .reasoning_mode = scry::ReasoningMode::disabled,
       .retry =
           {
               .max_attempts = 1,
@@ -88,7 +89,6 @@ create_harness(std::string base_url, std::string api_key, std::string model) {
               .shutdown = std::chrono::seconds{2},
           },
       .max_tool_rounds = 2,
-      .reasoning_mode = scry::ReasoningMode::disabled,
   });
 }
 

@@ -72,7 +72,7 @@ namespace {
       return {};
     }
     return invalid(
-        "reasoning disablement requires the OpenAI-compatible provider dialect");
+        "reasoning_mode = disabled requires the OpenAI-compatible provider dialect");
   }
   return invalid("reasoning_mode is invalid");
 }

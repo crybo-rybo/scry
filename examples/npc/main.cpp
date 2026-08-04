@@ -32,6 +32,9 @@ public:
     if (const auto failure =
             scry_showcase::npc::completion_failure(completion, tool_call_count_);
         !failure.empty()) {
+      if (streamed_) {
+        std::cout << '\n';
+      }
       show_error(failure);
       return;
     }

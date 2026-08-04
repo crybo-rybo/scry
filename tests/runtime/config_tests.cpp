@@ -86,7 +86,10 @@ TEST_CASE("configuration rejects unknown provider dialects") {
 TEST_CASE("reasoning disablement is restricted to OpenAI-compatible requests") {
   auto config = valid_config();
   config.reasoning_mode = scry::ReasoningMode::disabled;
-  CHECK_FALSE(scry::detail::validate_config(config));
+  const auto unsupported = scry::detail::validate_config(config);
+  REQUIRE_FALSE(unsupported);
+  CHECK(unsupported.error().message ==
+        "reasoning_mode = disabled requires the OpenAI-compatible provider dialect");
 
   config.dialect = scry::ProviderDialect::openai_compatible;
   CHECK(scry::detail::validate_config(config));

@@ -96,6 +96,8 @@ struct Config {
   ProviderDialect dialect{ProviderDialect::anthropic};
   /// Sampling parameters.
   SamplingConfig sampling{};
+  /// Reasoning behavior requested from the provider.
+  ReasoningMode reasoning_mode{ReasoningMode::provider_default};
   /// Retry behavior for transient pre-output failures.
   RetryPolicy retry{};
   /// Network and shutdown time bounds.
@@ -109,8 +111,6 @@ struct Config {
   /// Disabling verification is intended only for explicitly trusted development
   /// endpoints.
   bool tls_verify_peer{true};
-  /// Reasoning behavior requested from the provider.
-  ReasoningMode reasoning_mode{ReasoningMode::provider_default};
 };
 
 } // namespace scry
