@@ -4,7 +4,7 @@
 
 - **Trunk-based; every change lands through a PR.** The PR is the unit of review: a forced read of the diff, a written description, and green gates before merge. Squash-merge, conventional-commit messages.
 - **Decisions update the load-bearing docs.** Anything that would surprise a future contributor is recorded in the relevant design, architecture, development, or requirement section. The [evolution register](../architecture/quality-and-evolution.md) is the standing index of deliberately simple decisions.
-- **Definition of Done** for any change: gates green; docs updated if behavior or a decision changed (the load-bearing docs — including [REQUIREMENTS.md](../../REQUIREMENTS.md), the normative register — are not ceremonial; a stale doc is a bug); public API changes come with a compiling example; deliberate simplifications add a row to the evolution register.
+- **Definition of Done** for any change: gates green; docs updated if behavior or a decision changed (the load-bearing docs — including the [requirements register](../requirements.md), which is normative — are not ceremonial; a stale doc is a bug); public API changes come with a compiling example; deliberate simplifications add a row to the evolution register.
 - **Dependency policy** (restating the [dependency architecture](../architecture/dependencies-and-errors.md) as process): new dependencies require a written justification committed with the change. Toolchains are pinned and upgraded deliberately — on this project the reflection compiler is experimental, so "toolchain drift" is a first-class risk tracked like a dependency.
 
 ## 8. Right-Sized Process

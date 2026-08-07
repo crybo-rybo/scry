@@ -1,7 +1,7 @@
 # Documentation
 
 Start with the [design overview](design/overview.md). The
-[requirements register](../REQUIREMENTS.md) is normative when explanatory prose
+[requirements register](requirements.md) is normative when explanatory prose
 and a binding requirement disagree.
 
 ## Design

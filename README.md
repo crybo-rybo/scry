@@ -111,11 +111,11 @@ credentials never reach the log.
 | [Design](docs/design/overview.md) | Vision, goals/non-goals, public concepts, runtime behavior, tool ergonomics, provider abstraction, and forward scope. **Start here.** |
 | [Architecture](docs/architecture/overview.md) | Actor-model concurrency, the sans-I/O state machine, type erasure, providers and transport, dependencies, and the evolution register. |
 | [Development](docs/development/principles-and-testing.md) | Testing strategy, quality gates, static and dynamic analysis, CI shape, workflow, and the definition of done. |
-| [REQUIREMENTS.md](REQUIREMENTS.md) | **The normative register.** Every binding requirement as a numbered RFC-2119 row. When prose elsewhere conflicts with the register, the register wins. |
+| [Requirements](docs/requirements.md) | **The normative register.** Every binding requirement as a numbered RFC-2119 row. When prose elsewhere conflicts with the register, the register wins. |
 
 Recommended reading order: product design → software architecture → development
-and quality, then REQUIREMENTS.md as the binding summary. The first three
-explain *why*; the register states *what holds*.
+and quality, then requirements as the binding summary. The first three explain
+*why*; the register states *what holds*.
 
 ### API reference
 

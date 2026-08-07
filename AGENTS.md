@@ -6,15 +6,16 @@ Scry is a C++ LLM harness for applications that own their main loop. The
 stable surface is C++23; C++26 reflection is an explicitly isolated,
 experimental capability.
 
-Read the requirement tables in `REQUIREMENTS.md` and the relevant sections of
-the load-bearing design documents before changing behavior. Those state what
+Read the requirement tables in `docs/requirements.md` and the relevant sections
+of the load-bearing design documents before changing behavior. Those state what
 currently holds; do not implement or promise behavior they do not cover.
 
 ## Sources of truth
 
 Use the current branch, not remembered project state.
 
-1. `REQUIREMENTS.md` is normative. Its RFC-2119 rows win if prose conflicts.
+1. `docs/requirements.md` is normative. Its RFC-2119 rows win if prose
+   conflicts.
 2. `docs/design/` defines product behavior and the public concepts.
 3. `docs/architecture/` defines boundaries, dependency direction, and
    deliberate simplifications.

@@ -74,4 +74,4 @@ arguments are borrowed only for the callback invocation and must be copied if re
 
 For complete working code, see `examples/main_loop.cpp` in the source repository. Architectural
 rationale and binding behavioral requirements remain in `docs/design/`,
-`docs/architecture/`, and `REQUIREMENTS.md`.
+`docs/architecture/`, and `docs/requirements.md`.
