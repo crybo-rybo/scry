@@ -8,9 +8,9 @@
 /// when they disagree with the project version.
 #define SCRY_VERSION_MAJOR 0
 /// @brief Scry release minor version.
-#define SCRY_VERSION_MINOR 0
+#define SCRY_VERSION_MINOR 1
 /// @brief Scry release patch version.
-#define SCRY_VERSION_PATCH 1
+#define SCRY_VERSION_PATCH 0
 
 /// @brief Integer release version for consumer preprocessor gates.
 ///

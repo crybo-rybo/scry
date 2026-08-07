@@ -154,7 +154,7 @@ ID scheme: `SCRY-<AREA>-NNN`, abbreviated to `<AREA>-NNN` in the tables below. I
 | QA-009 | MUST | Every bug fix lands with a regression test (machine-level replay where applicable). |
 | QA-010 | SHOULD | The scheduled weekly ring runs deep static analysis (CodeQL), long fuzz runs on all protocol targets, the showcase gate, and the reflection component gate. The end-to-end smoke against a real local model runs on manual dispatch only, against a checksum-pinned server. |
 | QA-011 | SHOULD | Everything CI enforces is runnable locally with one command (`scripts/preflight.sh`), which reports any leg the host toolchain cannot provide. |
-| QA-012 | MUST | Definition of Done includes updating the four load-bearing docs — including this register — when behavior or a decision changes. |
+| QA-012 | MUST | Definition of Done includes updating the four load-bearing docs — including this register — when behavior or a decision changes, and recording user-visible changes in `CHANGELOG.md`. |
 | QA-013 | MUST | Every exported public API declaration is documented, and the Doxygen HTML site builds without warnings on pull requests and every push to `main`. The documentation toolchain MUST remain build-only and outside installed/exported package metadata. |
 
 ## Verification map
@@ -185,6 +185,6 @@ Retired requirements are listed permanently so their IDs are never reused.
 
 | ID | Retired | Reason |
 |---|---|---|
-| THR-021 | v0.0.1 | Opt-in worker-thread tool execution. Removed with `ToolExecution`/`ToolRegistrationOptions` in the v0.0.1 simplification; all tools execute on the app thread under THR-011 ([ADR 0009](docs/adr/0009-m4-worker-tool-execution.md), superseded). |
-| TOOL-014 | v0.0.1 | Shared registration options across explicit and reflected registration. The option type it constrained no longer exists. |
-| QA-003 | v0.0.1 | Per-function CRAP ceiling. Development-era gating machinery; complexity limits remain under QA-004 and untested-complexity risk is caught in review ([ADR 0012](docs/adr/0012-release-infrastructure-simplification.md)). |
+| THR-021 | v0.1.0 | Opt-in worker-thread tool execution. Removed with `ToolExecution`/`ToolRegistrationOptions` in the v0.1.0 simplification; all tools execute on the app thread under THR-011 ([ADR 0009](docs/adr/0009-m4-worker-tool-execution.md), superseded). |
+| TOOL-014 | v0.1.0 | Shared registration options across explicit and reflected registration. The option type it constrained no longer exists. |
+| QA-003 | v0.1.0 | Per-function CRAP ceiling. Development-era gating machinery; complexity limits remain under QA-004 and untested-complexity risk is caught in review ([ADR 0012](docs/adr/0012-release-infrastructure-simplification.md)). |
