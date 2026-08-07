@@ -31,8 +31,7 @@ Built for the apps that live in C++ — games, GUI tools, simulators — where y
   newer) derives schemas and argument marshalling from plain structs and lowers
   onto the same registry.
 
-Scry is pre-1.0: no API or ABI stability is promised yet, and breaking changes
-land with a notice in [CHANGELOG.md](CHANGELOG.md).
+Scry is pre-1.0: no API or ABI stability is promised yet.
 
 ## Requirements
 
@@ -92,7 +91,7 @@ callbacks you want, and pump `update()` from the loop you already own. It assume
 a local Ollama server at `http://127.0.0.1:11434` with the `qwen3:1.7b` model
 installed.
 
-[DESIGN.md §4](DESIGN.md) walks through the same five public concepts —
+[Public API design](docs/design/public-api.md) walks through the same five public concepts —
 `Config`, `Conversation`, `ToolRegistry`, `Turn`, `Harness` — with a complete
 annotated integration.
 
@@ -109,17 +108,14 @@ credentials never reach the log.
 
 | Document | Contents |
 |---|---|
-| [DESIGN.md](DESIGN.md) | High-level design: vision, goals/non-goals, the five core public concepts, interaction and threading model (with diagrams), explicit-schema and reflected-tool ergonomics, provider abstraction, future directions, and forward scope. **Start here.** |
-| [ARCHITECTURE.md](ARCHITECTURE.md) | How the code is shaped: the C++ patterns and idioms each piece commits to — actor-model concurrency, sans-I/O state machine, type erasure, optional consteval codegen and JSON bridge, PImpl, error-as-value — plus the evolution register documenting every deliberate simplification and its intended end state. |
-| [ENGINEERING.md](ENGINEERING.md) | How the project is engineered: testing plan and pyramid, complexity limits, static and dynamic analysis, CI shape, workflow, and the gates-are-behavioral philosophy of the v0.1.0 release posture. |
-| [REQUIREMENTS.md](REQUIREMENTS.md) | **The normative register.** Every binding requirement as a numbered RFC-2119 row. When prose elsewhere conflicts with the register, the register wins. |
+| [Design](docs/design/overview.md) | Vision, goals/non-goals, public concepts, runtime behavior, tool ergonomics, provider abstraction, and forward scope. **Start here.** |
+| [Architecture](docs/architecture/overview.md) | Actor-model concurrency, the sans-I/O state machine, type erasure, providers and transport, dependencies, and the evolution register. |
+| [Development](docs/development/principles-and-testing.md) | Testing strategy, quality gates, static and dynamic analysis, CI shape, workflow, and the definition of done. |
+| [Requirements](docs/requirements.md) | **The normative register.** Every binding requirement as a numbered RFC-2119 row. When prose elsewhere conflicts with the register, the register wins. |
 
-Recommended reading order: DESIGN.md → ARCHITECTURE.md → ENGINEERING.md, then
-REQUIREMENTS.md as the binding summary. The first three explain *why*; the
-register states *what holds*.
-
-Accepted architecture decisions live in [docs/adr/](docs/adr/), newest last;
-each records the context, decision, and consequences behind one fork in the road.
+Recommended reading order: product design → software architecture → development
+and quality, then requirements as the binding summary. The first three explain
+*why*; the register states *what holds*.
 
 ### API reference
 
@@ -160,11 +156,9 @@ host-specific toolchains that are unavailable locally; hosted CI is
 authoritative for those environments. Long protocol fuzzing, deep static
 analysis, the reflection leg, and the showcase gate run in the scheduled weekly
 workflow; `just showcase` runs the showcase gate locally. `just ci` is the
-optional convenience wrapper. [ENGINEERING.md](ENGINEERING.md) describes the
-full quality machinery and the definition of done.
+optional convenience wrapper. [Development documentation](docs/development/principles-and-testing.md)
+describes the full quality machinery and the definition of done.
 
 ## License
 
-Scry is released under the MIT License ([LICENSE](LICENSE)). Third-party
-dependency licenses are recorded in
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Scry is released under the MIT License ([LICENSE](LICENSE)).

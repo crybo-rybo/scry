@@ -6,20 +6,20 @@ Scry is a C++ LLM harness for applications that own their main loop. The
 stable surface is C++23; C++26 reflection is an explicitly isolated,
 experimental capability.
 
-Read the requirement tables in `REQUIREMENTS.md` and the relevant ADRs in
-`docs/adr/` before changing behavior. Those state what currently holds; do not
-implement or promise behavior no accepted requirement or decision covers.
+Read the requirement tables in `docs/requirements.md` and the relevant sections
+of the load-bearing design documents before changing behavior. Those state what
+currently holds; do not implement or promise behavior they do not cover.
 
 ## Sources of truth
 
 Use the current branch, not remembered project state.
 
-1. `REQUIREMENTS.md` is normative. Its RFC-2119 rows win if prose conflicts.
-2. `DESIGN.md` defines product behavior and the public concepts.
-3. `ARCHITECTURE.md` defines boundaries, dependency direction, and deliberate
-   simplifications.
-4. `ENGINEERING.md` defines quality gates and the definition of done.
-5. Accepted decisions live in `docs/adr/`.
+1. `docs/requirements.md` is normative. Its RFC-2119 rows win if prose
+   conflicts.
+2. `docs/design/` defines product behavior and the public concepts.
+3. `docs/architecture/` defines boundaries, dependency direction, and
+   deliberate simplifications.
+4. `docs/development/` defines quality gates and the definition of done.
 
 Update the relevant document when a change alters behavior, architecture, a
 requirement, a dependency decision, or a deliberate simplification. Reference
@@ -47,8 +47,9 @@ This adds clang-tidy, the ASan/UBSan and TSan suites, and the GCC 16
 reflection leg. It runs every leg and reports unavailable host toolchains
 explicitly; hosted CI remains authoritative for those legs. `just ci` is an
 optional equivalent. Fuzzing, deep static analysis, the reflection gate, and
-the showcase gate run in the scheduled weekly workflow (ENGINEERING.md §6);
-`just showcase` runs the showcase gate locally.
+the showcase gate run in the scheduled weekly workflow
+(`docs/development/quality-gates.md` §6); `just showcase` runs the showcase gate
+locally.
 
 For a normal edit/build loop:
 
@@ -78,7 +79,6 @@ ctest --test-dir build/dev --output-on-failure
 ## Definition of done
 
 A change is done only when its relevant tests pass, the core local gate passes,
-load-bearing documentation is current, user-visible changes have an entry under
-Unreleased in `CHANGELOG.md`, and the final diff has been reviewed
-for correctness, scope, and accidental artifacts. Report any check that could
-not run and why.
+load-bearing documentation is current, and the final diff has been reviewed for
+correctness, scope, and accidental artifacts. Report any check that could not
+run and why.
