@@ -73,5 +73,5 @@ arguments are borrowed only for the callback invocation and must be copied if re
 `on_finished` receives its result by value.
 
 For complete working code, see `examples/main_loop.cpp` in the source repository. Architectural
-rationale and binding behavioral requirements remain in `DESIGN.md`, `ARCHITECTURE.md`, and
-`REQUIREMENTS.md`.
+rationale and binding behavioral requirements remain in `docs/design/`,
+`docs/architecture/`, and `REQUIREMENTS.md`.
