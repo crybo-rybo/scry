@@ -70,7 +70,8 @@ int main() {
           });
         }
         // This tool is read-only. Side-effecting tools need an app-owned
-        // idempotency key and reconciliation policy; see DESIGN.md section 8.
+        // idempotency key and reconciliation policy; see
+        // docs/design/tools-and-providers.md section 8.
         return scry::Json{.text = app.status_json()};
       });
   if (!registration) {

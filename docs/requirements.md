@@ -1,6 +1,6 @@
-# Scry — Requirements Register
+# Requirements
 
-**This document is normative.** Where prose in [DESIGN.md](DESIGN.md), [ARCHITECTURE.md](ARCHITECTURE.md), or [ENGINEERING.md](ENGINEERING.md) conflicts with this register, the register wins; the other documents provide rationale and context. Keywords MUST, MUST NOT, SHOULD, and MAY follow RFC 2119. Every requirement is enforced through one of the gate classes in the [Verification map](#verification-map): most mechanically — deterministic suites, the compiler matrix, sanitizer legs, package audits, or scheduled gates — and a named minority as review obligations discharged through the pull-request Definition of Done. A requirement with no credible enforcement path is a design smell and gets reworked, not waived.
+**This document is normative.** Where prose in the [design](design/overview.md), [architecture](architecture/overview.md), or [development](development/principles-and-testing.md) documentation conflicts with this register, the register wins; those documents provide rationale and context. Keywords MUST, MUST NOT, SHOULD, and MAY follow RFC 2119. Every requirement is enforced through one of the gate classes in the [Verification map](#verification-map): most mechanically — deterministic suites, the compiler matrix, sanitizer legs, package audits, or scheduled gates — and a named minority as review obligations discharged through the pull-request Definition of Done. A requirement with no credible enforcement path is a design smell and gets reworked, not waived.
 
 ID scheme: `SCRY-<AREA>-NNN`, abbreviated to `<AREA>-NNN` in the tables below. IDs are permanent. A withdrawn requirement is moved to [Retired IDs](#retired-ids) with its reason and is never reused.
 
@@ -30,7 +30,7 @@ ID scheme: `SCRY-<AREA>-NNN`, abbreviated to `<AREA>-NNN` in the tables below. I
 |---|---|---|
 | THR-001 | MUST | No async public API call blocks the calling thread on network I/O; all blocking work happens on a harness-owned worker thread. The explicitly named `send_and_wait` convenience is the sole blocking exception. |
 | THR-002 | MUST | All user callbacks and all tool handlers execute only inside `update()`, on the thread calling it. |
-| THR-003 | MUST | Exactly three internally-synchronized objects cross the thread boundary: command queue, event queue, and one atomic cancellation flag per turn. All other state is exclusively owned per the ARCHITECTURE.md §3 ownership table; the worker addresses turns only by immutable TurnId. |
+| THR-003 | MUST | Exactly three internally-synchronized objects cross the thread boundary: command queue, event queue, and one atomic cancellation flag per turn. All other state is exclusively owned per the architecture runtime ownership table; the worker addresses turns only by immutable TurnId. |
 | THR-004 | MUST | `update()` honors an optional caller-supplied time budget; undelivered events roll to the next call, none are lost. |
 | THR-005 | MUST | Streaming deltas are coalesced (at most one aggregated text event per pump interval) so token rate cannot flood the queue. |
 | THR-006 | MUST | `Turn::cancel()` is safe to call from the app thread at any time, including after completion; cancellation is cooperative and aborts in-flight transfers promptly. |
@@ -56,7 +56,7 @@ ID scheme: `SCRY-<AREA>-NNN`, abbreviated to `<AREA>-NNN` in the tables below. I
 | LOOP-001 | MUST | The harness owns the full agentic loop (model → tool → result → resend, until final answer); the app never re-submits intermediate results. |
 | LOOP-002 | MUST | The loop engine is sans-I/O: it performs no network, file, or clock access; it consumes events and emits commands only. One machine carries the chat, retry, cancellation, and tool states. |
 | LOOP-003 | MUST | Loop rounds are bounded by configurable `max_tool_rounds`; exceeding it terminates the turn with a distinct error. |
-| LOOP-004 | MUST | Loop states are explicit (variant/enum) with a documented transition diagram (ARCHITECTURE.md §3). Events that are illegal for the current state are diagnosed and MUST NOT mutate state or emit commands. |
+| LOOP-004 | MUST | Loop states are explicit (variant/enum) with a documented transition diagram in the architecture runtime documentation. Events that are illegal for the current state are diagnosed and MUST NOT mutate state or emit commands. |
 | LOOP-005 | MUST | Time enters the machine only as injected events ("wake me at T"); retry backoff (exponential + jitter, configurable cap) is machine state. |
 | LOOP-006 | MUST | Retryability is decided by a pure classifier over error categories (429/5xx/transport retryable; auth/protocol not). |
 | LOOP-007 | SHOULD | Intermediate loop activity (text deltas, tool calls) is observable through the optional `TurnCallbacks::on_text_delta` and `on_tool_call` members supplied at `send()`, without requiring app participation; omitting them changes no loop behavior. |
@@ -76,7 +76,7 @@ ID scheme: `SCRY-<AREA>-NNN`, abbreviated to `<AREA>-NNN` in the tables below. I
 | TOOL-008 | MAY | A reflected handler may return a direct TOOL-010 supported value or `Result` of one, including a reflected aggregate. The reflected overload does not accept `void`, `Status`, raw `Json`, references, futures, or awaitables; dynamic/unsupported returns use TOOL-001. |
 | TOOL-009 | MUST | The registry is additive-only: registering a duplicate tool name is rejected via `std::expected`, not silent replacement, and there is no removal/replacement API. A future mutation surface requires an explicit snapshot/lifetime decision. |
 | TOOL-010 | MUST | Supported reflected values are `bool`; non-character signed/unsigned integral types; finite `float`/`double`; `std::string`; scoped enums with unique underlying values encoded by exact enumerator name; one layer of `std::optional<T>`; `std::vector<T,Allocator>` except every `vector<bool,Allocator>` specialization; `std::array<T,N>`; and recursively supported plain aggregates. Integers carry exact C++ range bounds; fixed arrays carry exact length bounds. Nested optionals and enum aliases are rejected because their JSON decode/encode is ambiguous. Other C++ shapes are not inferred from Glaze support and remain unsupported until separately specified. |
-| TOOL-011 | MUST | Generated schemas use Scry's closed provider-neutral JSON Schema 2020-12 subset from ADR 0007: closed inline objects; the keywords `additionalProperties`, `anyOf`, `description`, `enum`, `items`, `maxItems`, `minItems`, `minimum`, `maximum`, `properties`, `required`, and `type`; minified JSON; lexicographically sorted object/property keys and `required` names; and enum declaration order. Generated schemas omit `$schema`, references/definitions, `title`, and `default`. This subset does not restrict explicit TOOL-001 schemas. |
+| TOOL-011 | MUST | Generated schemas use Scry's closed provider-neutral JSON Schema 2020-12 subset: closed inline objects; the keywords `additionalProperties`, `anyOf`, `description`, `enum`, `items`, `maxItems`, `minItems`, `minimum`, `maximum`, `properties`, `required`, and `type`; minified JSON; lexicographically sorted object/property keys and `required` names; and enum declaration order. Generated schemas omit `$schema`, references/definitions, `title`, and `default`. This subset does not restrict explicit TOOL-001 schemas. |
 | TOOL-012 | MUST | Reflected decoding is strict and recursive: it rejects a non-object root, unknown fields, missing required fields, wrong JSON kinds (including a lexical number such as `1.0` for an integral member), disallowed null, numeric sign/range/non-finite errors, unknown enum names, and fixed-array length errors. The canonical parsed JSON value is authoritative, so duplicate lexical object keys are not separately observable at dispatch. Decode failures become bounded model-visible tool errors; configured payload-limit failures remain fatal `resource_limit` errors. |
 | TOOL-013 | MUST | `scry::reflection::add<Args>(ToolRegistry&, ToolMetadata, Handler&&)` invokes the handler with `std::move(args)`, preserves move-only captures, and lowers the typed wrapper and `input_schema_v<Args>` through the existing additive registry. |
 
@@ -86,7 +86,7 @@ ID scheme: `SCRY-<AREA>-NNN`, abbreviated to `<AREA>-NNN` in the tables below. I
 |---|---|---|
 | PROV-001 | MUST | An internal neutral message model (roles + content blocks incl. tool call/result) isolates provider wire-format mapping inside adapters. The generic JSON codec remains a provider-neutral bottom-layer facility. |
 | PROV-002 | MUST | An Anthropic Messages adapter is supported. |
-| PROV-003 | MUST | An OpenAI-compatible Chat Completions adapter implements the common subset in ADR 0008 for OpenAI, vLLM, Ollama, llama.cpp server, and LM Studio. This is a tested compatibility subset, not complete parity with every server extension or model/chat template. |
+| PROV-003 | MUST | An OpenAI-compatible Chat Completions adapter implements the documented common subset for OpenAI, vLLM, Ollama, llama.cpp server, and LM Studio. This is a tested compatibility subset, not complete parity with every server extension or model/chat template. |
 | PROV-004 | MUST | Streaming (SSE) is supported on all adapters; the SSE parser is a pure incremental function tolerant of arbitrary chunk splits. |
 | PROV-005 | MUST | Adapter selection is config-driven (dialect enum + factory); no public plugin API until a concrete third-party need exists (evolution register). |
 | PROV-006 | SHOULD | Adapters are stateless translators; stream-parse state lives in per-turn parser objects. |
@@ -129,7 +129,7 @@ ID scheme: `SCRY-<AREA>-NNN`, abbreviated to `<AREA>-NNN` in the tables below. I
 | PORT-004 | MUST | Glaze headers and types do not appear in public headers; the tool-boundary JSON type and reflection JSON-view bridge are Scry-owned. |
 | PORT-005 | MUST | The reflection-OFF C++23 core supports Linux and macOS. The reflection-ON GCC 16 component is supported on Linux first; macOS reflection support follows when a production-grade toolchain is practically distributable (evolution register row). Windows is deferred to the evolution register. |
 | PORT-006 | MUST | libcurl ≥ 7.84.0; `CURL_VERSION_THREADSAFE` and asynchronous DNS are verified after the process's single initialization attempt (host threads may exist before the first Harness). The first result is cached. Capability failure cleans up immediately; successful initialization is cleaned up exactly once by the function-static owner's destructor at module/process teardown. |
-| PORT-007 | MUST | Pre-1.0: no API/ABI stability promises, breaking changes allowed with changelog notice. The Conversation persistence document format carries the same pre-1.0 instability (API-007). From 1.0: semver, inline-namespace ABI versioning. |
+| PORT-007 | MUST | Pre-1.0: no API/ABI stability promises. The Conversation persistence document format carries the same pre-1.0 instability (API-007). From 1.0: semver, inline-namespace ABI versioning. |
 
 ## Showcase Integrations (SCRY-SHOW)
 
@@ -140,7 +140,7 @@ ID scheme: `SCRY-<AREA>-NNN`, abbreviated to `<AREA>-NNN` in the tables below. I
 | SHOW-003 | MUST | The showcase adds no Scry public API, installed header, package target, export, or runtime dependency. Dear ImGui is a showcase-only MIT build dependency, pinned to `v1.92.8` commit `8936b58fe26e8c3da834b8f60b06511d537b4c63`, compiled only when `SCRY_BUILD_IMGUI_SHOWCASE=ON` (default `OFF`), and includes no window-system or renderer backend. A normal core build MUST NOT fetch or discover it. |
 | SHOW-004 | MUST | The showcase gate builds with the repository warnings-as-errors policy and runs deterministic NPC tests, fake-controller panel behavior tests, a real Dear ImGui compile/link/headless-frame smoke, and the clean-package audit. It MUST be callable locally and by hosted CI. |
 
-## Quality Gates (SCRY-QA) — binding form of ENGINEERING.md
+## Quality Gates (SCRY-QA) — binding form of the development documentation
 
 | ID | Level | Requirement |
 |---|---|---|
@@ -154,7 +154,7 @@ ID scheme: `SCRY-<AREA>-NNN`, abbreviated to `<AREA>-NNN` in the tables below. I
 | QA-009 | MUST | Every bug fix lands with a regression test (machine-level replay where applicable). |
 | QA-010 | SHOULD | The scheduled weekly ring runs deep static analysis (CodeQL), long fuzz runs on all protocol targets, the showcase gate, and the reflection component gate. The end-to-end smoke against a real local model runs on manual dispatch only, against a checksum-pinned server. |
 | QA-011 | SHOULD | Everything CI enforces is runnable locally with one command (`scripts/preflight.sh`), which reports any leg the host toolchain cannot provide. |
-| QA-012 | MUST | Definition of Done includes updating the four load-bearing docs — including this register — when behavior or a decision changes, and recording user-visible changes in `CHANGELOG.md`. |
+| QA-012 | MUST | Definition of Done includes updating the relevant load-bearing documentation — including this register — when behavior or a decision changes. |
 | QA-013 | MUST | Every exported public API declaration is documented, and the Doxygen HTML site builds without warnings on pull requests and every push to `main`. The documentation toolchain MUST remain build-only and outside installed/exported package metadata. |
 
 ## Verification map
@@ -185,6 +185,6 @@ Retired requirements are listed permanently so their IDs are never reused.
 
 | ID | Retired | Reason |
 |---|---|---|
-| THR-021 | v0.1.0 | Opt-in worker-thread tool execution. Removed with `ToolExecution`/`ToolRegistrationOptions` in the v0.1.0 simplification; all tools execute on the app thread under THR-011 ([ADR 0009](docs/adr/0009-m4-worker-tool-execution.md), superseded). |
+| THR-021 | v0.1.0 | Opt-in worker-thread tool execution. Removed with `ToolExecution`/`ToolRegistrationOptions` in the v0.1.0 simplification; all tools execute on the app thread under THR-011. |
 | TOOL-014 | v0.1.0 | Shared registration options across explicit and reflected registration. The option type it constrained no longer exists. |
-| QA-003 | v0.1.0 | Per-function CRAP ceiling. Development-era gating machinery; complexity limits remain under QA-004 and untested-complexity risk is caught in review ([ADR 0012](docs/adr/0012-release-infrastructure-simplification.md)). |
+| QA-003 | v0.1.0 | Per-function CRAP ceiling. Development-era gating machinery; complexity limits remain under QA-004 and untested-complexity risk is caught in review. |

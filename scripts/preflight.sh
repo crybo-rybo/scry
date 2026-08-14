@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 
-# Local equivalent of the per-commit CI ring (ADR 0012): documentation, core,
-# clang-tidy, sanitizers, and the GCC 16 reflection component. Fuzzing, the
-# showcase, and the local-model smoke live in the scheduled/manual nightly workflow.
+# Local equivalent of the per-commit CI ring: documentation, core, clang-tidy,
+# sanitizers, and the GCC 16 reflection component. Fuzzing, the showcase, and
+# the local-model smoke live in the scheduled/manual nightly workflow.
 
 set -uo pipefail
 

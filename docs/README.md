@@ -1,4 +1,32 @@
-# API documentation
+# Documentation
+
+Start with the [design overview](design/overview.md). The
+[requirements register](requirements.md) is normative when explanatory prose
+and a binding requirement disagree.
+
+## Design
+
+- [Overview](design/overview.md)
+- [Public API and agentic loop](design/public-api.md)
+- [Runtime behavior](design/runtime-behavior.md)
+- [Tools and providers](design/tools-and-providers.md)
+- [Future directions and scope](design/roadmap.md)
+
+## Architecture
+
+- [Overview](architecture/overview.md)
+- [Runtime](architecture/runtime.md)
+- [Tools, providers, and transport](architecture/tools-and-providers.md)
+- [Errors and dependencies](architecture/dependencies-and-errors.md)
+- [Quality and evolution](architecture/quality-and-evolution.md)
+
+## Development
+
+- [Principles and testing](development/principles-and-testing.md)
+- [Quality gates](development/quality-gates.md)
+- [Workflow](development/workflow.md)
+
+## API reference
 
 The generated reference covers Scry's exported C++23 API and its optional C++26 reflection
 component. Private implementation headers and namespaces are deliberately excluded.
