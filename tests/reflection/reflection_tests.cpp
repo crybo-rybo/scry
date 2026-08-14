@@ -1,3 +1,5 @@
+#include "runtime/tool_dispatch.hpp"
+
 #include <array>
 #include <catch2/catch_test_macros.hpp>
 #include <cstdint>
@@ -178,21 +180,21 @@ TEST_CASE("reflected codec round trips every supported composite family") {
   auto decoded = scry::reflection::detail::decode_arguments<
       AllTypesArguments>(scry::Json{
       .text =
-          R"({"fixed":[1,2],"flag":true,"nested":{"label":"indoors"},"ratio":1.25,"unit":"fahrenheit","values":[3,4]})"});
+          R"({"fixed":[1,2],"flag":true,"nested":{"label":"indoors"},"ratio":0.1,"unit":"fahrenheit","values":[3,4]})"});
 
   REQUIRE(decoded);
   CHECK(decoded->fixed == std::array<std::int32_t, 2>{1, 2});
   CHECK(decoded->flag);
   CHECK(decoded->nested.label == "indoors");
-  CHECK(decoded->ratio == 1.25);
+  CHECK(decoded->ratio == 0.1);
   CHECK(decoded->unit == TemperatureUnit::fahrenheit);
   CHECK(decoded->values == std::vector<std::int32_t>{3, 4});
 
-  const auto encoded = scry::reflection::detail::encode(*decoded);
+  const auto encoded = scry::reflection::encode(*decoded);
   REQUIRE(encoded);
   CHECK(
       encoded->text ==
-      R"({"fixed":[1,2],"flag":true,"nested":{"label":"indoors"},"ratio":1.25,"unit":"fahrenheit","values":[3,4]})");
+      R"({"fixed":[1,2],"flag":true,"nested":{"label":"indoors"},"ratio":0.1,"unit":"fahrenheit","values":[3,4]})");
 }
 
 TEST_CASE("reflected codec enforces numeric enum and fixed-array bounds") {
@@ -333,23 +335,34 @@ TEST_CASE("reflected argument parsing rejects malformed JSON") {
 }
 
 TEST_CASE("reflected encoding covers nullable enum and sequence results") {
-  CHECK(scry::reflection::detail::encode(std::optional<std::int16_t>{})->text ==
-        "null");
-  CHECK(scry::reflection::detail::encode(std::optional<std::int16_t>{std::int16_t{7}})
-            ->text == "7");
-  CHECK(scry::reflection::detail::encode(TemperatureUnit::celsius)->text ==
-        R"("celsius")");
-  CHECK(scry::reflection::detail::encode(TemperatureUnit::fahrenheit)->text ==
+  CHECK(scry::reflection::encode(std::optional<std::int16_t>{})->text == "null");
+  CHECK(scry::reflection::encode(std::optional<std::int16_t>{std::int16_t{7}})->text ==
+        "7");
+  CHECK(scry::reflection::encode(TemperatureUnit::celsius)->text == R"("celsius")");
+  CHECK(scry::reflection::encode(TemperatureUnit::fahrenheit)->text ==
         R"("fahrenheit")");
-  CHECK(scry::reflection::detail::encode(std::vector<std::int32_t>{})->text == "[]");
-  CHECK(scry::reflection::detail::encode(std::vector<std::int32_t>{1, 2})->text ==
-        "[1,2]");
+  CHECK(scry::reflection::encode(std::vector<std::int32_t>{})->text == "[]");
+  CHECK(scry::reflection::encode(std::vector<std::int32_t>{1, 2})->text == "[1,2]");
+}
+
+TEST_CASE("reflected encoding uses Scry canonical number spelling") {
+  const auto fraction = scry::reflection::encode(0.1);
+  const auto exponent = scry::reflection::encode(1e20);
+  const auto negative_zero = scry::reflection::encode(-0.0);
+
+  REQUIRE(fraction);
+  REQUIRE(exponent);
+  REQUIRE(negative_zero);
+  CHECK(fraction->text == "0.1");
+  CHECK(exponent->text == "1E20");
+  CHECK(negative_zero->text == "0");
 }
 
 TEST_CASE("reflected sequence encoding propagates fallible element errors") {
-  const auto encoded = scry::reflection::detail::encode(
+  const auto encoded = scry::reflection::encode(
       std::vector<double>{1.0, std::numeric_limits<double>::infinity()});
   REQUIRE_FALSE(encoded);
+  CHECK(encoded.error().category == scry::ErrorCategory::tool);
   CHECK(encoded.error().message == "reflected JSON at $[1] must be finite");
 }
 
@@ -361,16 +374,61 @@ TEST_CASE("reflected encoding rejects non-finite and unnamed values") {
       .ratio = std::numeric_limits<double>::infinity(),
       .unit = TemperatureUnit::celsius,
   };
-  auto encoded = scry::reflection::detail::encode(value);
+  auto encoded = scry::reflection::encode(value);
   REQUIRE_FALSE(encoded);
+  CHECK(encoded.error().category == scry::ErrorCategory::tool);
   CHECK(encoded.error().message == "reflected JSON at $.ratio must be finite");
 
   value.ratio = 1.0;
   value.unit = static_cast<TemperatureUnit>(99);
-  encoded = scry::reflection::detail::encode(value);
+  encoded = scry::reflection::encode(value);
   REQUIRE_FALSE(encoded);
+  CHECK(encoded.error().category == scry::ErrorCategory::tool);
   CHECK(encoded.error().message ==
         "reflected JSON at $.unit is not a declared enumerator value");
+}
+
+TEST_CASE("public encoding matches reflected tool dispatch output") {
+  const auto value = AllTypesArguments{
+      .fixed = {1, 2},
+      .flag = true,
+      .nested = {.label = "same"},
+      .ratio = 1e20,
+      .unit = TemperatureUnit::fahrenheit,
+      .values = {3, 4},
+  };
+  auto handler = scry::reflection::detail::make_tool_handler<PresenceArguments>(
+      [value](PresenceArguments) { return value; });
+  const scry::detail::ToolSnapshot tools{
+      std::make_shared<const scry::detail::RegisteredTool>(scry::detail::RegisteredTool{
+          .definition =
+              {
+                  .name = "snapshot",
+                  .description = "Return the snapshot",
+                  .input_schema = {.text = "{}"},
+              },
+          .handler = std::make_shared<scry::ToolHandler>(std::move(handler)),
+      })};
+
+  const auto direct = scry::reflection::encode(value);
+  const auto through_dispatch = scry::detail::dispatch_tool(
+      tools,
+      scry::detail::ToolCallBlock{
+          .id = "call-1",
+          .name = "snapshot",
+          .arguments =
+              {
+                  .text = R"({"nullable":null,"required":"value"})",
+              },
+      },
+      1024);
+
+  REQUIRE(direct);
+  REQUIRE(through_dispatch);
+  CHECK(
+      direct->text ==
+      R"({"fixed":[1,2],"flag":true,"nested":{"label":"same"},"ratio":1E20,"unit":"fahrenheit","values":[3,4]})");
+  CHECK(direct->text == through_dispatch->result.text);
 }
 
 TEST_CASE("reflected erased handlers retain move-only captures and typed errors") {

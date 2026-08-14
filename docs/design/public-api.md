@@ -64,8 +64,9 @@ This explicit-schema overload is the implemented C++23 surface. The
 [checked-in canonical example](../../examples/main_loop.cpp) registers a read-only
 tool through it and drives the complete loop. The optional reflection component
 adds `scry::reflection::add<Args>()` schema generation and marshalling as
-compile-time sugar over the same registry; it does not introduce a second
-dispatch system.
+compile-time sugar over the same registry. It also exposes
+`scry::reflection::encode(value)` for converting a supported typed value to
+canonical `Json` without registration; both paths use the same encoder.
 
 **Conversation persistence.** `Conversation::to_json()` returns a canonical,
 versioned Scry-owned JSON document suitable for app-managed storage;

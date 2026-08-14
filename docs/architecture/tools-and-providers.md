@@ -39,7 +39,10 @@ layer. Given a plain aggregate, it builds
 instantiates a typed deserializer/invoker erased into an ordinary
 `ToolHandler`. `scry::reflection::add<Args>(registry, metadata, handler)` then
 calls the existing public registry operation. The free function keeps C++26
-reflection declarations out of the stable `ToolRegistry` class.
+reflection declarations out of the stable `ToolRegistry` class. The same
+typed encoder is exposed independently as `scry::reflection::encode(value)`;
+both it and reflected handler results canonicalize through the compiled
+Scry-owned JSON bridge.
 
 The dependency direction is deliberately split:
 
@@ -77,9 +80,10 @@ Additional practices:
   objects are inlined and closed. The compile-time artifact is the exact text
   passed to the lower registry; there is no runtime schema cache or macro
   registry.
-- **One strict value mapping.** Schema, decode, and encode share the closed
-  recursive type matrix defined by the SCRY-TOOL requirements. Glaze gaining a
-  serializer does not expand Scry's public contract.
+- **One strict value mapping.** Schema, decode, handler-result encode, and
+  direct encode share the closed recursive type matrix defined by the SCRY-TOOL
+  requirements. Glaze gaining a serializer does not expand Scry's public
+  contract.
 - **Presence is declaration-driven.** P2996 default-member-initializer
   reflection controls omission; `std::optional` controls nullability. The
   decoder constructs normal C++ defaults and validates the canonical parsed

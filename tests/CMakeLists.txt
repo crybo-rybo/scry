@@ -125,6 +125,7 @@ if(SCRY_ENABLE_REFLECTION)
         scry::reflection
         scry_project_options
     )
+    target_include_directories(scry_reflection_tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
     catch_discover_tests(
       scry_reflection_tests
       TEST_PREFIX "reflection."

@@ -50,6 +50,17 @@ int main() {
     return 1;
   }
 
-  std::cout << scry::reflection::input_schema_v<StatusArguments> << '\n';
+  const StatusResult status_snapshot{
+      .running = true,
+      .state = "running",
+  };
+  const auto audit_record = scry::reflection::encode(status_snapshot);
+  if (!audit_record) {
+    std::cerr << audit_record.error().message << '\n';
+    return 1;
+  }
+
+  std::cout << scry::reflection::input_schema_v<StatusArguments> << '\n'
+            << audit_record->text << '\n';
   return 0;
 }

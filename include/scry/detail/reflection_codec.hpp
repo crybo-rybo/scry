@@ -408,7 +408,7 @@ Status append_encoded(std::string& output, const Type& value, const std::string&
 
 template <typename Type>
   requires SupportedValue<Type> && std::same_as<Type, std::remove_cvref_t<Type>>
-[[nodiscard]] Result<Json> encode(const Type& value) {
+[[nodiscard]] Result<Json> encode_value(const Type& value) {
   std::string output{};
   auto status = append_encoded<Type>(output, value, "$");
   if (!status) {

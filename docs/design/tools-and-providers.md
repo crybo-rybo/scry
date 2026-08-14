@@ -80,6 +80,13 @@ awaitables deliberately stay outside the reflected overload; the implemented
 explicit-schema API remains the escape hatch for dynamic or unsupported
 boundaries.
 
+The same closed value encoder is available directly as
+`scry::reflection::encode(value)`. It returns Scry-owned canonical `Json`
+without registering or invoking a tool, so an application can retain typed
+values until a JSON boundary actually needs them. Direct and handler-result
+encoding share one implementation and error mapping. The output is not a
+versioned persistence document and carries no cross-version byte guarantee.
+
 **Explicit-schema registration (not a parallel system):** the registry's internal representation is necessarily runtime data — name, description, schema JSON, type-erased `json → json` callable — since that is what gets serialized to the server and dispatched on tool calls. The reflection API is `consteval` sugar that lowers onto this same table, so exposing the lower layer as a public overload costs one function signature, not a second code path to maintain. It earns its keep twice: today it covers toolchains without P2996; permanently it covers *dynamic* tools whose schemas exist only at runtime (plugin-loaded tools, MCP proxying, user scripting) — something compile-time reflection can never express. If universal P2996 adoption arrives, the overload remains as the dynamic-tool API rather than becoming debt.
 
 **Side effects and idempotency.** Scry guarantees at-most-once dispatch for a
