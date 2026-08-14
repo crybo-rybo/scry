@@ -12,6 +12,8 @@ struct PackageArguments {
 
 } // namespace
 
+bool package_encode_smoke();
+
 int main() {
   using namespace std::literals;
 
@@ -36,5 +38,5 @@ int main() {
           .description = "Prove the installed reflection API is linkable",
       },
       [](PackageArguments arguments) { return arguments.ready; });
-  return registration && harness.tools().size() == 1 ? 0 : 2;
+  return registration && harness.tools().size() == 1 && package_encode_smoke() ? 0 : 2;
 }

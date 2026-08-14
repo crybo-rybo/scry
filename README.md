@@ -83,6 +83,10 @@ find_package(scry CONFIG REQUIRED COMPONENTS reflection)
 target_link_libraries(app PRIVATE scry::reflection)
 ```
 
+The component provides typed tool registration and
+`scry::reflection::encode(value)` for converting any supported reflected value
+to canonical Scry-owned `Json` without registering a tool.
+
 ## Getting started
 
 The canonical first program is [examples/main_loop.cpp](examples/main_loop.cpp):

@@ -188,4 +188,9 @@ void append_json_string(std::string& output, const std::string_view value) {
   output.push_back('"');
 }
 
+Result<Json> canonicalize_encoded_json(Json json) {
+  return scry::detail::canonicalize_json(
+      json, ErrorCategory::tool, "reflected value could not be encoded as JSON");
+}
+
 } // namespace scry::reflection::detail

@@ -22,9 +22,9 @@ template <typename Return>
     if (!result) {
       return std::unexpected(std::move(result.error()));
     }
-    return encode<Value>(*result);
+    return encode_value<Value>(*result);
   } else {
-    return encode<ResultType>(result);
+    return encode_value<ResultType>(result);
   }
 }
 

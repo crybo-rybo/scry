@@ -79,6 +79,7 @@ ID scheme: `SCRY-<AREA>-NNN`, abbreviated to `<AREA>-NNN` in the tables below. I
 | TOOL-011 | MUST | Generated schemas use Scry's closed provider-neutral JSON Schema 2020-12 subset: closed inline objects; the keywords `additionalProperties`, `anyOf`, `description`, `enum`, `items`, `maxItems`, `minItems`, `minimum`, `maximum`, `properties`, `required`, and `type`; minified JSON; lexicographically sorted object/property keys and `required` names; and enum declaration order. Generated schemas omit `$schema`, references/definitions, `title`, and `default`. This subset does not restrict explicit TOOL-001 schemas. |
 | TOOL-012 | MUST | Reflected decoding is strict and recursive: it rejects a non-object root, unknown fields, missing required fields, wrong JSON kinds (including a lexical number such as `1.0` for an integral member), disallowed null, numeric sign/range/non-finite errors, unknown enum names, and fixed-array length errors. The canonical parsed JSON value is authoritative, so duplicate lexical object keys are not separately observable at dispatch. Decode failures become bounded model-visible tool errors; configured payload-limit failures remain fatal `resource_limit` errors. |
 | TOOL-013 | MUST | `scry::reflection::add<Args>(ToolRegistry&, ToolMetadata, Handler&&)` invokes the handler with `std::move(args)`, preserves move-only captures, and lowers the typed wrapper and `input_schema_v<Args>` through the existing additive registry. |
+| TOOL-015 | MUST | `scry::reflection::encode(const T&)` accepts every TOOL-010 supported value without tool registration and returns Scry-owned canonical `Json` through the same value encoder and error mapping used for reflected handler results. It remains confined to the optional reflection component under TOOL-003, and its bytes carry no cross-version archival guarantee. |
 
 ## Provider & Protocol (SCRY-PROV)
 
@@ -171,7 +172,7 @@ Done and human review.
 | API | Public-header audit (`cmake/CheckPublicHeaders.cmake`), `public_api_contract` static assertions, runtime + integration suites, package-consumer audits | API-005, API-009 (design constraints) |
 | THR | Runtime and integration suites on every pull request, repeated in full under TSan; shutdown/teardown bounds via the curl and loopback transport suites | — |
 | LOOP | Deterministic sans-I/O machine suite (event-in/command-out replay, including retry and budget state) | — |
-| TOOL | Registry and dispatch suites (TOOL-001/006/009); reflection schema/codec/bridge/registration suites plus the compile-fail matrix (TOOL-002/004/005/007/008/010–013); both package consumers for severability (TOOL-003) | — |
+| TOOL | Registry and dispatch suites (TOOL-001/006/009); reflection schema/codec/bridge/registration suites plus the compile-fail matrix (TOOL-002/004/005/007/008/010–013/015); both package consumers for severability (TOOL-003) | — |
 | PROV | Provider golden, stream, and edge suites; protocol fuzz targets in the scheduled ring | — |
 | NET | Transport policy/curl/loopback suites and fake-transport integration suites; fuzz for hostile-input robustness; NET-002 additionally via clang-tidy and the sanitizer legs | — |
 | ERR | Harness edge and integration suites, including the redaction assertions (ERR-004) | — |
