@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.25)
 
 project(scry_reflection_package_consumer LANGUAGES CXX)
 
-find_package(scry CONFIG REQUIRED COMPONENTS reflection)
+find_package(scry 0.1.1 CONFIG REQUIRED COMPONENTS reflection)
 
 if(NOT TARGET scry::reflection)
   message(FATAL_ERROR "The requested scry reflection target is unavailable")

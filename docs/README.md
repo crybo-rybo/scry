@@ -26,6 +26,10 @@ and a binding requirement disagree.
 - [Quality gates](development/quality-gates.md)
 - [Workflow](development/workflow.md)
 
+## Releases
+
+- [v0.1.1](releases/v0.1.1.md)
+
 ## API reference
 
 The generated reference covers Scry's exported C++23 API and its optional C++26 reflection
