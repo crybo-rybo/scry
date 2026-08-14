@@ -1,4 +1,5 @@
-# Path-aware PR gate for the GCC 16 reflection component (ADR 0012 amendment).
+# Path-aware PR gate for the GCC 16 reflection component; see
+# docs/development/quality-gates.md section 6.
 #
 # The full reflection leg — build, tests, staged install, both package
 # consumers, and the ASan+UBSan rerun that is the component's only sanitizer

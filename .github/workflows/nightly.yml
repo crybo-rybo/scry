@@ -1,4 +1,4 @@
-# Scheduled/manual ring (ENGINEERING.md §6, ADR 0012 release posture):
+# Scheduled/manual ring; see docs/development/quality-gates.md section 6:
 # CodeQL, the GCC 16 reflection leg, long protocol fuzzing, and the opt-in
 # showcase run weekly; the Ollama local-model smoke is workflow_dispatch-only
 # because it exercises a live model, not the deterministic protocol seams that
@@ -127,7 +127,7 @@ jobs:
   local-model:
     name: Ollama OpenAI-compatible smoke
     # Exercises a live model over a real server; run on demand rather than
-    # burning a 60-minute scheduled job (ADR 0012). The deterministic
+    # burning a 60-minute scheduled job. The deterministic
     # fake-transport suites gate protocol correctness per-commit.
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
