@@ -9,6 +9,7 @@
 #endif
 
 #include <scry/detail/reflection_registration.hpp>
+#include <utility>
 
 /// Optional experimental C++26 typed-tool API built on P2996 reflection.
 namespace scry::reflection {
@@ -25,7 +26,11 @@ inline constexpr bool enabled = true;
 /// @param value Value to encode without modifying it.
 /// @return Canonical JSON, or a reflected-value codec error.
 template <SupportedValue Type> [[nodiscard]] Result<Json> encode(const Type& value) {
-  return detail::encode_value<Type>(value);
+  auto encoded = detail::encode_value<Type>(value);
+  if (!encoded) {
+    return encoded;
+  }
+  return detail::canonicalize_encoded_json(std::move(*encoded));
 }
 
 } // namespace scry::reflection

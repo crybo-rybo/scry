@@ -1,3 +1,5 @@
+#include "runtime/tool_dispatch.hpp"
+
 #include <array>
 #include <catch2/catch_test_macros.hpp>
 #include <cstdint>
@@ -386,25 +388,47 @@ TEST_CASE("reflected encoding rejects non-finite and unnamed values") {
         "reflected JSON at $.unit is not a declared enumerator value");
 }
 
-TEST_CASE("public encoding matches reflected handler-result encoding") {
+TEST_CASE("public encoding matches reflected tool dispatch output") {
   const auto value = AllTypesArguments{
       .fixed = {1, 2},
       .flag = true,
       .nested = {.label = "same"},
-      .ratio = 0.1,
+      .ratio = 1e20,
       .unit = TemperatureUnit::fahrenheit,
       .values = {3, 4},
   };
   auto handler = scry::reflection::detail::make_tool_handler<PresenceArguments>(
       [value](PresenceArguments) { return value; });
+  const scry::detail::ToolSnapshot tools{
+      std::make_shared<const scry::detail::RegisteredTool>(scry::detail::RegisteredTool{
+          .definition =
+              {
+                  .name = "snapshot",
+                  .description = "Return the snapshot",
+                  .input_schema = {.text = "{}"},
+              },
+          .handler = std::make_shared<scry::ToolHandler>(std::move(handler)),
+      })};
 
   const auto direct = scry::reflection::encode(value);
-  const auto through_handler =
-      handler(scry::Json{.text = R"({"nullable":null,"required":"value"})"});
+  const auto through_dispatch = scry::detail::dispatch_tool(
+      tools,
+      scry::detail::ToolCallBlock{
+          .id = "call-1",
+          .name = "snapshot",
+          .arguments =
+              {
+                  .text = R"({"nullable":null,"required":"value"})",
+              },
+      },
+      1024);
 
   REQUIRE(direct);
-  REQUIRE(through_handler);
-  CHECK(direct->text == through_handler->text);
+  REQUIRE(through_dispatch);
+  CHECK(
+      direct->text ==
+      R"({"fixed":[1,2],"flag":true,"nested":{"label":"same"},"ratio":1E20,"unit":"fahrenheit","values":[3,4]})");
+  CHECK(direct->text == through_dispatch->result.text);
 }
 
 TEST_CASE("reflected erased handlers retain move-only captures and typed errors") {

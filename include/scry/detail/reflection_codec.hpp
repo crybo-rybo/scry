@@ -414,7 +414,7 @@ template <typename Type>
   if (!status) {
     return std::unexpected(std::move(status.error()));
   }
-  return canonicalize_encoded_json(Json{.text = std::move(output)});
+  return Json{.text = std::move(output)};
 }
 
 } // namespace scry::reflection::detail
