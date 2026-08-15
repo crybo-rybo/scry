@@ -51,7 +51,7 @@ cmake --install scry/build --prefix /your/prefix
 ```
 
 ```cmake
-find_package(scry 0.1.0 CONFIG REQUIRED)
+find_package(scry 0.1.1 CONFIG REQUIRED)
 target_link_libraries(app PRIVATE scry::scry)
 ```
 
@@ -65,7 +65,7 @@ include(FetchContent)
 FetchContent_Declare(
   scry
   GIT_REPOSITORY https://github.com/crybo-rybo/scry.git
-  GIT_TAG v0.1.0
+  GIT_TAG v0.1.1
 )
 FetchContent_MakeAvailable(scry)
 target_link_libraries(app PRIVATE scry::scry)
