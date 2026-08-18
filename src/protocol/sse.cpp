@@ -1,7 +1,6 @@
 #include "protocol/sse.hpp"
 
 #include <algorithm>
-#include <iterator>
 #include <utility>
 
 namespace scry::detail {
@@ -19,18 +18,11 @@ namespace {
   return added > limit || current > limit - added;
 }
 
-[[nodiscard]] std::size_t line_ending_at(const std::string& input,
-                                         const std::size_t offset) noexcept {
-  const auto newline = input.find('\n', offset);
-  const auto carriage_return = input.find('\r', offset);
-  return std::min(newline, carriage_return);
-}
-
 [[nodiscard]] std::size_t terminator_size(const std::string& input,
                                           const std::size_t position) noexcept {
-  // push() processes a trailing carriage return before appending more input.
-  // Therefore the only byte that can coexist after one here is its LF pair.
-  if (input[position] == '\r' && position + 1 < input.size()) {
+  // A whole chunk may contain standalone CR line endings, not only CRLF.
+  if (input[position] == '\r' && position + 1 < input.size() &&
+      input[position + 1] == '\n') {
     return 2;
   }
   return 1;
@@ -41,53 +33,99 @@ namespace {
 SseParser::SseParser(const std::size_t max_event_bytes)
     : max_event_bytes_(max_event_bytes) {}
 
+std::size_t SseParser::unconsumed_size() const noexcept {
+  return input_buffer_.size() - input_head_;
+}
+
+bool SseParser::unconsumed_ends_with_cr() const noexcept {
+  return unconsumed_size() != 0 && input_buffer_.back() == '\r';
+}
+
+std::size_t SseParser::buffered_bytes() const noexcept {
+  return event_bytes_ + unconsumed_size();
+}
+
+void SseParser::compact_input() {
+  if (input_head_ == 0) {
+    return;
+  }
+  if (input_head_ == input_buffer_.size()) {
+    input_buffer_.clear();
+    input_head_ = 0;
+    scan_pos_ = 0;
+    return;
+  }
+  input_buffer_.erase(0, input_head_);
+  scan_pos_ = scan_pos_ < input_head_ ? 0 : scan_pos_ - input_head_;
+  input_head_ = 0;
+}
+
+Status SseParser::append_limited(std::string_view& remaining) {
+  if (buffered_bytes() >= max_event_bytes_) {
+    return std::unexpected(size_error());
+  }
+  const auto room = max_event_bytes_ - buffered_bytes();
+  const auto count = std::min(remaining.size(), room);
+  input_buffer_.append(remaining.substr(0, count));
+  remaining.remove_prefix(count);
+  return {};
+}
+
+Status SseParser::accept_split_crlf(std::string_view& remaining,
+                                    std::vector<SseEvent>& events) {
+  if (!unconsumed_ends_with_cr()) {
+    return {};
+  }
+  if (!remaining.empty() && remaining.front() == '\n') {
+    if (exceeds(buffered_bytes(), 1, max_event_bytes_)) {
+      return std::unexpected(size_error());
+    }
+    input_buffer_.push_back('\n');
+    remaining.remove_prefix(1);
+  }
+  process_complete_lines(events, true);
+  return {};
+}
+
 Result<std::vector<SseEvent>> SseParser::push(const std::string_view bytes) {
   auto remaining = bytes;
   std::vector<SseEvent> events{};
   while (!remaining.empty()) {
-    if (!input_buffer_.empty() && input_buffer_.back() == '\r') {
-      if (remaining.front() == '\n') {
-        input_buffer_.push_back('\n');
-        remaining.remove_prefix(1);
+    if (unconsumed_ends_with_cr()) {
+      auto status = accept_split_crlf(remaining, events);
+      if (!status) {
+        return std::unexpected(std::move(status.error()));
       }
-      auto parsed = process_complete_lines(true);
-      events.insert(events.end(), std::make_move_iterator(parsed.begin()),
-                    std::make_move_iterator(parsed.end()));
       continue;
     }
-
-    const auto ending = remaining.find_first_of("\r\n");
-    const auto count = ending == std::string_view::npos ? remaining.size() : ending + 1;
-    if (exceeds(buffered_bytes(), count, max_event_bytes_)) {
+    auto appended = append_limited(remaining);
+    if (!appended) {
+      return std::unexpected(std::move(appended.error()));
+    }
+    process_complete_lines(events);
+    if (!remaining.empty() && buffered_bytes() >= max_event_bytes_) {
       return std::unexpected(size_error());
     }
-    input_buffer_.append(remaining.substr(0, count));
-    remaining.remove_prefix(count);
-
-    auto parsed = process_complete_lines();
-    events.insert(events.end(), std::make_move_iterator(parsed.begin()),
-                  std::make_move_iterator(parsed.end()));
   }
   return events;
 }
 
 Result<std::vector<SseEvent>> SseParser::finish() {
-  auto events = process_complete_lines(true);
+  std::vector<SseEvent> events{};
+  process_complete_lines(events, true);
 
-  if (!input_buffer_.empty()) {
-    auto status = account_for_line(input_buffer_.size());
+  if (unconsumed_size() != 0) {
+    auto status = account_for_line(unconsumed_size());
     if (!status) {
       return std::unexpected(std::move(status.error()));
     }
-    process_line(input_buffer_, events);
+    process_line(std::string_view{input_buffer_}.substr(input_head_), events);
     input_buffer_.clear();
+    input_head_ = 0;
+    scan_pos_ = 0;
   }
   dispatch(events);
   return events;
-}
-
-std::size_t SseParser::buffered_bytes() const noexcept {
-  return event_bytes_ + input_buffer_.size();
 }
 
 Status SseParser::account_for_line(const std::size_t line_bytes) {
@@ -140,30 +178,33 @@ void SseParser::dispatch(std::vector<SseEvent>& events) {
   reset_event();
 }
 
-std::vector<SseEvent>
-SseParser::process_complete_lines(const bool accept_trailing_carriage_return) {
-  std::vector<SseEvent> events{};
-  std::size_t consumed{};
+void SseParser::process_complete_lines(std::vector<SseEvent>& events,
+                                       const bool accept_trailing_carriage_return) {
+  auto consumed = input_head_;
+  auto search_from = std::max(consumed, scan_pos_);
   while (true) {
-    const auto ending = line_ending_at(input_buffer_, consumed);
+    const auto ending = input_buffer_.find_first_of("\r\n", search_from);
     if (ending == std::string::npos) {
+      scan_pos_ = input_buffer_.size();
       break;
     }
     if (input_buffer_[ending] == '\r' && ending + 1 == input_buffer_.size() &&
         !accept_trailing_carriage_return) {
+      scan_pos_ = ending;
       break;
     }
 
-    // push() bounds event_bytes_ + input_buffer_.size() before appending.
+    // push() bounds event_bytes_ + unconsumed input before appending.
     // A complete line's implicit terminator is already present in that buffer,
     // so accounting it cannot exceed the configured event limit.
     event_bytes_ += ending - consumed + 1;
     process_line(std::string_view{input_buffer_}.substr(consumed, ending - consumed),
                  events);
     consumed = ending + terminator_size(input_buffer_, ending);
+    search_from = consumed;
   }
-  input_buffer_.erase(0, consumed);
-  return events;
+  input_head_ = consumed;
+  compact_input();
 }
 
 void SseParser::reset_event() noexcept {
