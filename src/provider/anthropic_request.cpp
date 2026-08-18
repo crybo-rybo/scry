@@ -2,11 +2,33 @@
 #include "core/json_codec.hpp"
 #include "provider/anthropic.hpp"
 
+#include <cstdint>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <variant>
+#include <vector>
 
 namespace scry::detail {
+
+struct AnthropicTool {
+  std::string_view name{};
+  std::string_view description{};
+  glz::raw_json_view input_schema{};
+};
+
+struct AnthropicRequestBody {
+  std::string_view model{};
+  std::uint32_t max_tokens{};
+  double temperature{};
+  bool stream{true};
+  glz::raw_json_view messages{};
+  std::optional<std::string_view> system{};
+  std::optional<double> top_p{};
+  std::optional<glz::raw_json_view> tools{};
+};
+
 namespace {
 
 [[nodiscard]] Result<JsonValue>
@@ -40,18 +62,10 @@ encode_boundary_json(const Json& json, const std::string_view failure_message) {
   if (!result) {
     return std::unexpected(std::move(result.error()));
   }
-  auto encoded = write_json_text(*result, ErrorCategory::invalid_config,
-                                 "Tool result could not be encoded");
-  if (!encoded) {
-    return std::unexpected(std::move(encoded.error()));
-  }
-
   JsonValue value{};
   value["type"] = "tool_result";
   value["tool_use_id"] = block.tool_call_id;
-  // Glaze's assignment operators bind const&, so moving into the node's
-  // variant is what transfers the payload instead of duplicating it.
-  value["content"].data = std::move(*encoded);
+  value["content"].data = block.result.text;
   value["is_error"] = block.is_error;
   return value;
 }
@@ -97,23 +111,34 @@ encode_messages(const SharedHistory& messages) {
   return encoded;
 }
 
-[[nodiscard]] Result<JsonValue> encode_tool(const ToolSchema& tool) {
+[[nodiscard]] Result<std::string> encode_json(const auto& value,
+                                              const std::string_view what) {
+  auto encoded = glz::write_json(value);
+  if (!encoded) {
+    return std::unexpected(
+        make_error(ErrorCategory::invalid_config, std::string{what}));
+  }
+  return std::move(*encoded);
+}
+
+[[nodiscard]] Result<AnthropicTool> encode_tool(const ToolSchema& tool) {
   auto schema =
       encode_boundary_json(tool.input_schema, "Tool input schema is not valid JSON");
   if (!schema) {
     return std::unexpected(std::move(schema.error()));
   }
-
-  JsonValue value{};
-  value["name"] = tool.name;
-  value["description"] = tool.description;
-  value["input_schema"] = std::move(*schema);
-  return value;
+  return AnthropicTool{
+      .name = tool.name,
+      .description = tool.description,
+      .input_schema = glz::raw_json_view{tool.input_schema.text},
+  };
 }
 
-[[nodiscard]] Result<JsonValue::array_t>
-encode_tools(const std::vector<ToolSchema>& tools) {
-  JsonValue::array_t encoded{};
+[[nodiscard]] Result<std::string> encode_tools(const std::vector<ToolSchema>& tools) {
+  if (tools.empty()) {
+    return std::string{};
+  }
+  std::vector<AnthropicTool> encoded{};
   encoded.reserve(tools.size());
   for (const auto& tool : tools) {
     auto value = encode_tool(tool);
@@ -122,7 +147,7 @@ encode_tools(const std::vector<ToolSchema>& tools) {
     }
     encoded.push_back(std::move(*value));
   }
-  return encoded;
+  return encode_json(encoded, "Anthropic tools could not be encoded");
 }
 
 [[nodiscard]] std::string endpoint(std::string base_url) {
@@ -136,8 +161,8 @@ encode_tools(const std::vector<ToolSchema>& tools) {
   return base_url;
 }
 
-[[nodiscard]] Result<JsonValue> make_request_body(const Config& config,
-                                                  const ModelRequest& request) {
+[[nodiscard]] Result<std::string> make_request_body(const Config& config,
+                                                    const ModelRequest& request) {
   auto messages = encode_messages(request.messages);
   if (!messages) {
     return std::unexpected(std::move(messages.error()));
@@ -146,23 +171,25 @@ encode_tools(const std::vector<ToolSchema>& tools) {
   if (!tools) {
     return std::unexpected(std::move(tools.error()));
   }
+  auto encoded_messages =
+      encode_json(*messages, "Anthropic messages could not be encoded");
+  if (!encoded_messages) {
+    return std::unexpected(std::move(encoded_messages.error()));
+  }
 
-  JsonValue root{};
-  root["model"] = config.model;
-  root["max_tokens"] = request.sampling.max_tokens.value_or(0);
-  root["temperature"] = request.sampling.temperature;
-  root["stream"] = true;
-  root["messages"].data = std::move(*messages);
-  if (!request.system_prompt.empty()) {
-    root["system"] = request.system_prompt;
-  }
-  if (request.sampling.top_p) {
-    root["top_p"] = *request.sampling.top_p;
-  }
-  if (!tools->empty()) {
-    root["tools"].data = std::move(*tools);
-  }
-  return root;
+  AnthropicRequestBody body{
+      .model = config.model,
+      .max_tokens = request.sampling.max_tokens.value_or(0),
+      .temperature = request.sampling.temperature,
+      .messages = glz::raw_json_view{*encoded_messages},
+      .system = request.system_prompt.empty()
+                    ? std::nullopt
+                    : std::optional<std::string_view>{request.system_prompt},
+      .top_p = request.sampling.top_p,
+      .tools =
+          tools->empty() ? std::nullopt : std::optional<glz::raw_json_view>{*tools},
+  };
+  return encode_json(body, "Anthropic request body could not be encoded");
 }
 
 } // namespace
@@ -177,11 +204,6 @@ AnthropicAdapter::make_request(const Config& config,
   if (!body) {
     return std::unexpected(std::move(body.error()));
   }
-  auto encoded = write_json_text(*body, ErrorCategory::invalid_config,
-                                 "Anthropic request body could not be encoded");
-  if (!encoded) {
-    return std::unexpected(std::move(encoded.error()));
-  }
 
   return TransportRequest{
       .url = endpoint(config.base_url),
@@ -192,7 +214,7 @@ AnthropicAdapter::make_request(const Config& config,
               HttpHeader{.name = "anthropic-version", .value = "2023-06-01"},
               HttpHeader{.name = "accept", .value = "text/event-stream"},
           },
-      .body = std::move(*encoded),
+      .body = std::move(*body),
       .tls_verify_peer = config.tls_verify_peer,
       .timeouts = config.timeouts,
       .limits = config.limits,

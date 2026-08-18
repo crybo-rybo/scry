@@ -2,11 +2,43 @@
 #include "core/json_codec.hpp"
 #include "provider/openai.hpp"
 
+#include <cstdint>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <variant>
+#include <vector>
 
 namespace scry::detail {
+
+struct OpenAiFunction {
+  std::string_view name{};
+  std::string_view description{};
+  glz::raw_json_view parameters{};
+};
+
+struct OpenAiTool {
+  std::string_view type{"function"};
+  OpenAiFunction function{};
+};
+
+struct OpenAiStreamOptions {
+  bool include_usage{true};
+};
+
+struct OpenAiRequestBody {
+  std::string_view model{};
+  glz::raw_json_view messages{};
+  double temperature{};
+  std::uint32_t max_tokens{};
+  bool stream{true};
+  std::optional<double> top_p{};
+  std::optional<std::string_view> reasoning_effort{};
+  OpenAiStreamOptions stream_options{};
+  std::optional<glz::raw_json_view> tools{};
+};
+
 namespace {
 
 [[nodiscard]] Error invalid_request(std::string message) {
@@ -27,17 +59,6 @@ namespace {
   return value;
 }
 
-[[nodiscard]] Result<std::string> boundary_json_string(const Json& json,
-                                                       const std::string_view name) {
-  JsonValue value{};
-  if (glz::read_json(value, json.text)) {
-    return std::unexpected(
-        invalid_request("OpenAI " + std::string{name} + " is not valid JSON"));
-  }
-  return write_json_text(value, ErrorCategory::invalid_config,
-                         "OpenAI " + std::string{name} + " could not be encoded");
-}
-
 [[nodiscard]] Result<JsonValue> encode_tool_call(const ToolCallBlock& call) {
   if (call.id.empty() || call.name.empty()) {
     return std::unexpected(
@@ -47,17 +68,12 @@ namespace {
   if (!arguments) {
     return std::unexpected(std::move(arguments.error()));
   }
-  auto encoded = write_json_text(*arguments, ErrorCategory::invalid_config,
-                                 "OpenAI tool arguments could not be encoded");
-  if (!encoded) {
-    return std::unexpected(std::move(encoded.error()));
-  }
 
   JsonValue function{};
   function["name"] = call.name;
-  // Glaze's assignment operators bind const&, so moving into the node's
-  // variant is what transfers the payload instead of duplicating it.
-  function["arguments"].data = std::move(*encoded);
+  // Canonical argument text is spliced as the JSON string value; validation
+  // above already rejected non-objects.
+  function["arguments"].data = call.arguments.text;
   JsonValue value{};
   value["id"] = call.id;
   value["type"] = "function";
@@ -70,14 +86,14 @@ namespace {
     return std::unexpected(
         invalid_request("OpenAI tool results require a nonempty call ID"));
   }
-  auto content = boundary_json_string(result.result, "tool result");
-  if (!content) {
-    return std::unexpected(std::move(content.error()));
+  JsonValue parsed{};
+  if (glz::read_json(parsed, result.result.text)) {
+    return std::unexpected(invalid_request("OpenAI tool result is not valid JSON"));
   }
   JsonValue value{};
   value["role"] = "tool";
   value["tool_call_id"] = result.tool_call_id;
-  value["content"].data = std::move(*content);
+  value["content"].data = result.result.text;
   return value;
 }
 
@@ -176,7 +192,16 @@ encode_assistant_message(const Message& message) {
   return encoded;
 }
 
-[[nodiscard]] Result<JsonValue> encode_tool(const ToolSchema& tool) {
+[[nodiscard]] Result<std::string> encode_json(const auto& value,
+                                              const std::string_view what) {
+  auto encoded = glz::write_json(value);
+  if (!encoded) {
+    return std::unexpected(invalid_request(std::string{what}));
+  }
+  return std::move(*encoded);
+}
+
+[[nodiscard]] Result<OpenAiTool> encode_tool(const ToolSchema& tool) {
   if (tool.name.empty()) {
     return std::unexpected(invalid_request("OpenAI tools require a nonempty name"));
   }
@@ -184,19 +209,21 @@ encode_assistant_message(const Message& message) {
   if (!parameters) {
     return std::unexpected(std::move(parameters.error()));
   }
-  JsonValue function{};
-  function["name"] = tool.name;
-  function["description"] = tool.description;
-  function["parameters"] = std::move(*parameters);
-  JsonValue value{};
-  value["type"] = "function";
-  value["function"] = std::move(function);
-  return value;
+  return OpenAiTool{
+      .function =
+          {
+              .name = tool.name,
+              .description = tool.description,
+              .parameters = glz::raw_json_view{tool.input_schema.text},
+          },
+  };
 }
 
-[[nodiscard]] Result<JsonValue::array_t>
-encode_tools(const std::vector<ToolSchema>& tools) {
-  JsonValue::array_t encoded{};
+[[nodiscard]] Result<std::string> encode_tools(const std::vector<ToolSchema>& tools) {
+  if (tools.empty()) {
+    return std::string{};
+  }
+  std::vector<OpenAiTool> encoded{};
   encoded.reserve(tools.size());
   for (const auto& tool : tools) {
     auto value = encode_tool(tool);
@@ -205,7 +232,7 @@ encode_tools(const std::vector<ToolSchema>& tools) {
     }
     encoded.push_back(std::move(*value));
   }
-  return encoded;
+  return encode_json(encoded, "OpenAI tools could not be encoded");
 }
 
 [[nodiscard]] std::string endpoint(std::string base_url) {
@@ -222,8 +249,8 @@ encode_tools(const std::vector<ToolSchema>& tools) {
   return base_url;
 }
 
-[[nodiscard]] Result<JsonValue> make_request_body(const Config& config,
-                                                  const ModelRequest& request) {
+[[nodiscard]] Result<std::string> make_request_body(const Config& config,
+                                                    const ModelRequest& request) {
   auto messages = encode_messages(request);
   if (!messages) {
     return std::unexpected(std::move(messages.error()));
@@ -232,25 +259,25 @@ encode_tools(const std::vector<ToolSchema>& tools) {
   if (!tools) {
     return std::unexpected(std::move(tools.error()));
   }
-  JsonValue root{};
-  root["model"] = config.model;
-  root["messages"].data = std::move(*messages);
-  root["temperature"] = request.sampling.temperature;
-  root["max_tokens"] = request.sampling.max_tokens.value_or(0);
-  root["stream"] = true;
-  if (request.sampling.top_p) {
-    root["top_p"] = *request.sampling.top_p;
+  auto encoded_messages =
+      encode_json(*messages, "OpenAI messages could not be encoded");
+  if (!encoded_messages) {
+    return std::unexpected(std::move(encoded_messages.error()));
   }
-  if (config.reasoning_mode == ReasoningMode::disabled) {
-    root["reasoning_effort"] = "none";
-  }
-  JsonValue stream_options{};
-  stream_options["include_usage"] = true;
-  root["stream_options"] = std::move(stream_options);
-  if (!tools->empty()) {
-    root["tools"].data = std::move(*tools);
-  }
-  return root;
+
+  OpenAiRequestBody body{
+      .model = config.model,
+      .messages = glz::raw_json_view{*encoded_messages},
+      .temperature = request.sampling.temperature,
+      .max_tokens = request.sampling.max_tokens.value_or(0),
+      .top_p = request.sampling.top_p,
+      .reasoning_effort = config.reasoning_mode == ReasoningMode::disabled
+                              ? std::optional<std::string_view>{"none"}
+                              : std::nullopt,
+      .tools =
+          tools->empty() ? std::nullopt : std::optional<glz::raw_json_view>{*tools},
+  };
+  return encode_json(body, "OpenAI request body could not be encoded");
 }
 
 [[nodiscard]] std::vector<HttpHeader> request_headers(const Config& config) {
@@ -278,15 +305,10 @@ OpenAiAdapter::make_request(const Config& config, const ModelRequest& request) c
   if (!body) {
     return std::unexpected(std::move(body.error()));
   }
-  auto encoded = write_json_text(*body, ErrorCategory::invalid_config,
-                                 "OpenAI request body could not be encoded");
-  if (!encoded) {
-    return std::unexpected(std::move(encoded.error()));
-  }
   return TransportRequest{
       .url = endpoint(config.base_url),
       .headers = request_headers(config),
-      .body = std::move(*encoded),
+      .body = std::move(*body),
       .tls_verify_peer = config.tls_verify_peer,
       .timeouts = config.timeouts,
       .limits = config.limits,

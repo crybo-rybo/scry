@@ -20,7 +20,10 @@
   persistence, and the reflection bridge — and it emits exactly one canonical
   form, with object keys sorted lexicographically. There is no second encoder
   and no per-seam canonicalization to keep in agreement, so "canonical JSON"
-  means one thing throughout the codebase.
+  means one thing throughout the codebase. Request encoding splices already-canonical
+  `Json` text (tool schemas, arguments, and results) through Glaze
+  `raw_json_view` so those subtrees are not rebuilt in the request DOM; malformed
+  payloads are still rejected before they reach the wire.
 - Dependency bar is high: curl, Glaze, and test frameworks. Each new dependency needs a written justification in this doc. Header hygiene enforced (IWYU in CI) so the PImpl firewall stays real.
 
 **Showcase boundary.**
