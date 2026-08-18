@@ -13,6 +13,7 @@
       "binaryDir": "${sourceDir}/build/${presetName}",
       "cacheVariables": {
         "CMAKE_EXPORT_COMPILE_COMMANDS": true,
+        "SCRY_BUILD_BENCHMARKS": false,
         "SCRY_BUILD_EXAMPLES": true,
         "SCRY_BUILD_IMGUI_SHOWCASE": false,
         "SCRY_BUILD_TESTS": true,
@@ -44,6 +45,25 @@
       "inherits": "base",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+      }
+    },
+    {
+      "name": "profile",
+      "displayName": "Opt-in performance profiling build",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "SCRY_BUILD_BENCHMARKS": true,
+        "SCRY_BUILD_EXAMPLES": false,
+        "SCRY_BUILD_FUZZERS": false,
+        "SCRY_BUILD_IMGUI_SHOWCASE": false,
+        "SCRY_BUILD_LOCAL_MODEL_SMOKE": false,
+        "SCRY_BUILD_TESTS": false,
+        "SCRY_ENABLE_CLANG_TIDY": false,
+        "SCRY_ENABLE_FORMAT_CHECK": false,
+        "SCRY_ENABLE_LOGGING": false,
+        "SCRY_ENABLE_REFLECTION": false,
+        "SCRY_SANITIZER": "none"
       }
     },
     {

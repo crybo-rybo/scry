@@ -21,6 +21,12 @@
   [Quality gates](../development/quality-gates.md) owns the ring shape and which
   leg runs where.
 - **Warnings are errors** (`-Wall -Wextra -Wconversion`), from the first commit.
+- **Performance claims are paired experiments.** The opt-in profiling suite
+  keeps stable behavioral scenarios, semantic oracles, environment metadata,
+  and same-host parent/candidate comparisons. Timing, C++ allocation, and RSS
+  results are review evidence under QA-014 and never substitute for correctness
+  gates or portable promises. The
+  [profiling protocol](../development/performance-profiling.md) owns the method.
 - **Diagnostic logging build:** `-DSCRY_ENABLE_LOGGING=ON` (preset `dev-logging`)
   compiles the internal `SCRY_LOG` macro into a small thread-safe file logger
   (`src/core/log.*`); every other build compiles the macro to nothing. Even in
@@ -58,6 +64,7 @@ Every "boring first" choice is recorded here with the condition that triggers ev
 | Release-posture verification uses behavioral gates only — matrix, tests, sanitizers, tidy, package audits; no coverage/CRAP metric gating, no mutation testing, fuzz and showcase on the scheduled ring | Unattended agent-driven development resumes at scale, or coverage erosion on the pure components is observed in review | Restore targeted pieces, starting with a single non-gating coverage report line, never the full retired apparatus by default |
 | Reflection CI gating is path-aware: the GCC 16 leg — with its ASan+UBSan rerun, the component's only sanitizer coverage — gates reflection-affecting pull requests and runs unconditionally in the weekly scheduled ring | A reflection regression merges through a gap in the path filter, or the experimental toolchain stabilizes into a plain distribution package | Widen the path filter first; return the leg to the unconditional pull-request ring only if filtering itself proves unsound |
 | v0.1.0 runtime simplification: worker-thread tool execution and its registration options removed, turn callbacks supplied once at `send()` with a single terminal outcome, one JSON codec with one canonical form | A slow tool, a coroutine host, or a second serialization shape presents a concrete need the simplified surface cannot express | Reintroduce capability by contract, not by restoring the old machinery: an async/deferred tool-result API for slow tools (row above), a `co_await`-able turn for coroutine hosts, and a ratified second document contract before any second canonical form |
+| Performance results are opt-in, same-host review evidence; CI builds and smoke-runs the harness but has no absolute timing or memory threshold | A dedicated stable runner and enough scenario history establish reproducible, scenario-specific noise envelopes | Add narrowly scoped regression thresholds for proven-stable scenarios while retaining paired parent/head evidence and never replacing the behavioral gates in QA-007 |
 
 ## 12. Pattern Summary
 

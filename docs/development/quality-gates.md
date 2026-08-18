@@ -33,6 +33,27 @@ Enforced via lizard and clang-tidy on every commit:
   arbitrary-split, and boundary wire tests remain per-commit.
 - Valgrind/memcheck occasionally as a differently-shaped net; not gating.
 
+### Performance evidence — informational, not a timing gate
+
+The opt-in profiling suite is separate from sanitizer and correctness builds.
+It may be built and smoke-run in hosted CI, but shared-runner timings, C++
+allocation counts, and RSS values do not pass or fail a pull request. A
+performance or memory claim instead supplies same-host paired evidence under
+`SCRY-QA-014`, following the
+[performance profiling protocol](performance-profiling.md). This preserves
+`SCRY-QA-007`: the compiler, tests, sanitizers, static analysis, complexity, and
+package audits remain the gates, while measurements inform whether an
+optimization deserves to exist.
+
+`SCRY_BUILD_BENCHMARKS` defaults to `OFF`. Google Benchmark and the profiling
+executables are build-only; they never enter the installed or exported package.
+A profiling workflow checks that the harness configures, builds, validates all
+semantic oracles, emits parseable artifacts, and exercises a one-scenario,
+one-cycle paired orchestration smoke. That paired result is explicitly
+diagnostic and evidence-ineligible. The workflow does not enforce an absolute
+timing percentage. The evolution register defines the evidence needed before
+any scenario-specific threshold could become credible.
+
 ## 6. CI Pipeline Shape
 
 Three rings, ordered by feedback speed; a failure in an inner ring stops the outer ones:
@@ -49,7 +70,9 @@ Three rings, ordered by feedback speed; a failure in an inner ring stops the out
    leg — including its ASan+UBSan rerun, the component's only sanitizer
    coverage — on any pull request touching a reflection-affecting path, so
    component regressions cannot merge untested while unrelated pull requests
-   skip the experimental toolchain.
+   skip the experimental toolchain. A separate path-aware profiling job builds
+   both opt-in executables, runs every semantic oracle in smoke mode, and
+   validates the artifact contract without applying a timing threshold.
 2. **Scheduled weekly:** CodeQL, long fuzz runs on all three protocol targets,
    the showcase contract gate (a default-OFF leg that enables the examples,
    builds them with warnings as errors, runs the deterministic NPC and

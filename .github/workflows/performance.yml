@@ -1,0 +1,154 @@
+# Profiling infrastructure validation and manually requested characterization.
+# Hosted-runner measurements are informational: this workflow never fails on a
+# timing or allocation percentage and never defines an absolute performance gate.
+name: Performance profiling
+
+on:
+  pull_request:
+    paths:
+      - "benchmarks/**"
+      - "include/**"
+      - "src/**"
+      - "scripts/perf-*"
+      - "scripts/ci-local.sh"
+      - "CMakeLists.txt"
+      - "CMakePresets.json"
+      - "justfile"
+      - "docs/development/performance-profiling.md"
+      - "docs/architecture/dependencies-and-errors.md"
+      - ".github/workflows/performance.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "benchmarks/**"
+      - "include/**"
+      - "src/**"
+      - "scripts/perf-*"
+      - "scripts/ci-local.sh"
+      - "CMakeLists.txt"
+      - "CMakePresets.json"
+      - "justfile"
+      - "docs/development/performance-profiling.md"
+      - "docs/architecture/dependencies-and-errors.md"
+      - ".github/workflows/performance.yml"
+  workflow_dispatch:
+    inputs:
+      base_ref:
+        description: Git ref to compare against the dispatched ref
+        required: true
+        default: main
+        type: string
+      characterization_mode:
+        description: Longer characterization or a quick paired smoke
+        required: true
+        default: full
+        type: choice
+        options:
+          - full
+          - smoke
+
+permissions:
+  contents: read
+
+concurrency:
+  group: performance-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  infrastructure:
+    name: Profiling build and semantic smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      CC: gcc-14
+      CXX: g++-14
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - name: Install build toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++-14 libcurl4-openssl-dev ninja-build
+      - name: Build and smoke all profiling scenarios
+        run: |
+          ./scripts/perf-run.sh \
+            --mode smoke \
+            --output build/profile-artifacts/smoke
+      - name: Exercise strict artifact comparison
+        run: |
+          python3 scripts/perf-compare.py compare \
+            --base build/profile-artifacts/smoke \
+            --head build/profile-artifacts/smoke \
+            --output-dir build/profile-artifacts/smoke/self-comparison
+      - name: Exercise paired fresh-process orchestration
+        run: |
+          ./scripts/perf-pair.sh \
+            --base-dir . \
+            --head-dir . \
+            --output build/profile-artifacts/paired-smoke \
+            --mode smoke \
+            --cycles 1 \
+            --filter '^SSE/chunk_bytes:4096/crlf:0$' \
+            --informational-reason "profiling infrastructure paired smoke"
+      - name: Upload profiling infrastructure artifact
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: profiling-smoke-${{ github.sha }}
+          path: build/profile-artifacts
+          if-no-files-found: error
+          retention-days: 14
+
+  paired-characterization:
+    # A-B-B-A controls local ordering, but a shared hosted runner is still
+    # informational rather than a stable performance evidence environment.
+    name: Informational paired A-B-B-A characterization
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      CC: gcc-14
+      CXX: g++-14
+    steps:
+      - name: Check out candidate
+        uses: actions/checkout@v7.0.0
+        with:
+          path: head
+      - name: Check out comparison base
+        uses: actions/checkout@v7.0.0
+        with:
+          ref: ${{ inputs.base_ref }}
+          path: base
+      - name: Install build toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++-14 libcurl4-openssl-dev ninja-build
+      - name: Verify both revisions contain the profiling foundation
+        env:
+          COMPARISON_BASE_REF: ${{ inputs.base_ref }}
+        run: |
+          test -d base/benchmarks || {
+            echo "The base ref predates the profiling foundation: ${COMPARISON_BASE_REF}" >&2
+            exit 1
+          }
+          test -f base/CMakePresets.json
+          test -x head/scripts/perf-pair.sh
+      - name: Collect and compare paired fresh-process samples
+        run: |
+          ./head/scripts/perf-pair.sh \
+            --base-dir "${GITHUB_WORKSPACE}/base" \
+            --head-dir "${GITHUB_WORKSPACE}/head" \
+            --output "${GITHUB_WORKSPACE}/artifacts" \
+            --mode "${{ inputs.characterization_mode }}" \
+            --informational-reason "GitHub-hosted shared runner characterization"
+      - name: Add comparison to the workflow summary
+        if: always() && hashFiles('artifacts/comparison/comparison.md') != ''
+        run: cat artifacts/comparison/comparison.md >>"${GITHUB_STEP_SUMMARY}"
+      - name: Upload paired profiling characterization
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: profiling-characterization-${{ github.sha }}
+          path: artifacts
+          if-no-files-found: error
+          retention-days: 30
