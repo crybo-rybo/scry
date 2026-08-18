@@ -109,6 +109,20 @@ struct StreamEventView {
   return append_arguments(tool, arguments->value_or(std::string_view{}), limit);
 }
 
+[[nodiscard]] Result<OpenAiToolDecodeState*>
+tool_slot(OpenAiProviderDecodeState& decode, const std::size_t index) {
+  constexpr auto max_parallel_tool_calls = std::size_t{256};
+  if (index >= max_parallel_tool_calls) {
+    return std::unexpected(
+        make_error(ErrorCategory::protocol,
+                   "OpenAI streamed tool calls are incomplete or noncontiguous"));
+  }
+  if (index >= decode.tool_calls.size()) {
+    decode.tool_calls.resize(index + 1);
+  }
+  return &decode.tool_calls[index];
+}
+
 [[nodiscard]] Status apply_tool_fragment(const JsonValue& value,
                                          ProviderDecodeState& state,
                                          OpenAiProviderDecodeState& decode) {
@@ -121,7 +135,11 @@ struct StreamEventView {
   if (!index) {
     return std::unexpected(std::move(index.error()));
   }
-  auto& tool = decode.tool_calls[*index];
+  auto slot = tool_slot(decode, *index);
+  if (!slot) {
+    return std::unexpected(std::move(slot.error()));
+  }
+  auto& tool = **slot;
   auto id = apply_optional_metadata(value, "id", tool.id);
   if (!id) {
     return id;
@@ -164,10 +182,8 @@ struct StreamEventView {
 
 [[nodiscard]] Status finalize_tools(ProviderDecodeState& state,
                                     OpenAiProviderDecodeState& decode) {
-  std::size_t expected_index = 0;
-  for (auto& [index, tool] : decode.tool_calls) {
-    if (index != expected_index || !tool.id || !tool.name || !tool.type ||
-        *tool.type != "function") {
+  for (auto& tool : decode.tool_calls) {
+    if (!tool.id || !tool.name || !tool.type || *tool.type != "function") {
       return std::unexpected(
           make_error(ErrorCategory::protocol,
                      "OpenAI streamed tool calls are incomplete or noncontiguous"));
@@ -182,11 +198,10 @@ struct StreamEventView {
       return std::unexpected(std::move(status.error()));
     }
     state.response.content.push_back(ToolCallBlock{
-        .id = *tool.id,
-        .name = *tool.name,
+        .id = std::move(*tool.id),
+        .name = std::move(*tool.name),
         .arguments = Json{.text = std::move(tool.arguments)},
     });
-    ++expected_index;
   }
   decode.tools_finalized = true;
   return {};
@@ -261,9 +276,12 @@ apply_text_delta(const JsonValue& delta, ProviderDecodeState& state,
     return std::unexpected(make_error(ErrorCategory::protocol,
                                       "OpenAI stream chunk ID must not be empty"));
   }
-  if (decode.chunk_id && *decode.chunk_id != *id) {
-    return std::unexpected(make_error(ErrorCategory::protocol,
-                                      "OpenAI stream chunk ID changed mid-stream"));
+  if (decode.chunk_id) {
+    if (*decode.chunk_id != *id) {
+      return std::unexpected(make_error(ErrorCategory::protocol,
+                                        "OpenAI stream chunk ID changed mid-stream"));
+    }
+    return {};
   }
   decode.chunk_id = *id;
   return {};

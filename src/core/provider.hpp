@@ -4,7 +4,6 @@
 #include "core/transport.hpp"
 
 #include <limits>
-#include <map>
 #include <memory>
 #include <optional>
 #include <scry/error.hpp>
@@ -46,7 +45,7 @@ struct OpenAiToolDecodeState {
 struct OpenAiProviderDecodeState {
   std::optional<std::string> chunk_id{};
   std::optional<std::size_t> text_content_index{};
-  std::map<std::size_t, OpenAiToolDecodeState> tool_calls{};
+  std::vector<OpenAiToolDecodeState> tool_calls{};
   bool finish_observed{false};
   bool tools_finalized{false};
 };

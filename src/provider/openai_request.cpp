@@ -15,26 +15,26 @@ namespace {
 
 [[nodiscard]] Result<JsonValue> boundary_json_object(const Json& json,
                                                      const std::string_view name) {
-  auto parsed = parse_json(json.text, ErrorCategory::invalid_config,
-                           "OpenAI " + std::string{name} + " is not valid JSON");
-  if (!parsed) {
-    return std::unexpected(std::move(parsed.error()));
+  JsonValue value{};
+  if (glz::read_json(value, json.text)) {
+    return std::unexpected(
+        invalid_request("OpenAI " + std::string{name} + " is not valid JSON"));
   }
-  if (!parsed->is_object()) {
+  if (!value.is_object()) {
     return std::unexpected(
         invalid_request("OpenAI " + std::string{name} + " must be a JSON object"));
   }
-  return parsed;
+  return value;
 }
 
 [[nodiscard]] Result<std::string> boundary_json_string(const Json& json,
                                                        const std::string_view name) {
-  auto parsed = parse_json(json.text, ErrorCategory::invalid_config,
-                           "OpenAI " + std::string{name} + " is not valid JSON");
-  if (!parsed) {
-    return std::unexpected(std::move(parsed.error()));
+  JsonValue value{};
+  if (glz::read_json(value, json.text)) {
+    return std::unexpected(
+        invalid_request("OpenAI " + std::string{name} + " is not valid JSON"));
   }
-  return write_json_text(*parsed, ErrorCategory::invalid_config,
+  return write_json_text(value, ErrorCategory::invalid_config,
                          "OpenAI " + std::string{name} + " could not be encoded");
 }
 
@@ -156,6 +156,7 @@ encode_assistant_message(const Message& message) {
 
 [[nodiscard]] Result<JsonValue::array_t> encode_messages(const ModelRequest& request) {
   JsonValue::array_t encoded{};
+  encoded.reserve(request.messages.size() + (request.system_prompt.empty() ? 0 : 1));
   if (!request.system_prompt.empty()) {
     JsonValue system{};
     system["role"] = "system";

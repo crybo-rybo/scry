@@ -34,11 +34,11 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data,
   scry::detail::ProviderDecodeState active{};
   auto& openai = active.dialect.emplace<scry::detail::OpenAiProviderDecodeState>();
   openai.chunk_id = "chatcmpl-fuzz";
-  openai.tool_calls[0] = scry::detail::OpenAiToolDecodeState{
+  openai.tool_calls.push_back(scry::detail::OpenAiToolDecodeState{
       .id = "call",
       .name = "tool",
       .type = "function",
-  };
+  });
   active.max_tool_arguments_bytes = 1024;
   parse_stream_payload(*adapter, "message", input, active);
 
