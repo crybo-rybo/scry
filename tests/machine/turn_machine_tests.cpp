@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <random>
 #include <type_traits>
@@ -162,6 +163,50 @@ TEST_CASE("transient pre-output failure schedules a deterministic retry") {
   const auto& issue = only_command<scry::detail::IssueModelRequest>(wake);
   CHECK(issue.attempt == 2);
   CHECK(machine.phase() == scry::detail::MachinePhase::awaiting_model);
+}
+
+TEST_CASE("retry deadlines saturate at the steady clock maximum") {
+  auto policy = retry_policy();
+  policy.initial_backoff = 10ms;
+  policy.max_backoff = 10ms;
+  policy.max_elapsed = 100ms;
+  auto machine = make_machine(policy);
+  const auto started = scry::detail::MachineTimePoint::max() - 5ms;
+  const auto begun = machine.apply(scry::detail::BeginTurn{.observed_at = started});
+  static_cast<void>(only_command<scry::detail::IssueModelRequest>(begun));
+
+  const auto failed = machine.apply(scry::detail::AttemptFailed{
+      .error = error(scry::ErrorCategory::network),
+      .observed_at = started,
+  });
+  const auto& schedule = only_command<scry::detail::ScheduleRetryWake>(failed);
+  CHECK(schedule.deadline == scry::detail::MachineTimePoint::max());
+
+  const auto wake =
+      machine.apply(scry::detail::RetryWake{.observed_at = schedule.deadline});
+  CHECK(only_command<scry::detail::IssueModelRequest>(wake).attempt == 2);
+}
+
+TEST_CASE("retry durations larger than the steady clock range saturate") {
+  using Milliseconds = std::chrono::milliseconds;
+  constexpr auto maximum = Milliseconds{std::numeric_limits<Milliseconds::rep>::max()};
+  auto policy = retry_policy();
+  policy.initial_backoff = maximum;
+  policy.max_backoff = maximum;
+  policy.max_elapsed = maximum;
+  auto machine = make_machine(policy);
+  begin(machine);
+
+  const auto failed = machine.apply(scry::detail::AttemptFailed{
+      .error = error(scry::ErrorCategory::network),
+      .observed_at = scry::detail::MachineTimePoint{},
+  });
+  const auto& schedule = only_command<scry::detail::ScheduleRetryWake>(failed);
+  CHECK(schedule.deadline == scry::detail::MachineTimePoint::max());
+
+  const auto wake =
+      machine.apply(scry::detail::RetryWake{.observed_at = schedule.deadline});
+  CHECK(only_command<scry::detail::IssueModelRequest>(wake).attempt == 2);
 }
 
 TEST_CASE("machine integrates exponential backoff and injected jitter") {
