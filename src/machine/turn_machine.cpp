@@ -36,10 +36,10 @@ bounded_elapsed(const RetryPolicy& policy) noexcept {
   return std::ranges::find(ids, id) != ids.end();
 }
 
-[[nodiscard]] Result<ToolCallBlock>
-validated_call(const ToolCallBlock& call, const std::vector<std::string>& response_ids,
-               const std::vector<std::string>& dispatched_ids,
-               const std::size_t max_argument_bytes) {
+[[nodiscard]] Status validated_call(ToolCallBlock& call,
+                                    const std::vector<std::string>& response_ids,
+                                    const std::vector<std::string>& dispatched_ids,
+                                    const std::size_t max_argument_bytes) {
   if (call.id.empty() || call.name.empty()) {
     return std::unexpected(response_error(
         ErrorCategory::protocol, "tool calls require non-empty IDs and names"));
@@ -59,9 +59,8 @@ validated_call(const ToolCallBlock& call, const std::vector<std::string>& respon
   if (!arguments) {
     return std::unexpected(std::move(arguments.error()));
   }
-  auto normalized = call;
-  normalized.arguments = std::move(*arguments);
-  return normalized;
+  call.arguments = std::move(*arguments);
+  return {};
 }
 
 } // namespace
@@ -330,30 +329,25 @@ TransitionResult TurnMachine::begin_tool_round(ModelResponse response,
                          std::move(response.provider_request_id));
   }
   ++tool_round_count_;
-  for (const auto& call : calls) {
-    dispatched_tool_ids_.push_back(call.id);
-  }
+  dispatched_tool_ids_.reserve(dispatched_tool_ids_.size() + calls.size());
 
   AwaitingToolState awaiting{
       .assistant = std::move(assistant),
       .provider_request_id = std::move(response.provider_request_id),
   };
   awaiting.calls.reserve(calls.size());
+  TransitionResult result{};
+  result.commands.reserve(calls.size());
   for (auto& call : calls) {
+    dispatched_tool_ids_.push_back(call.id);
+    result.commands.emplace_back(PublishToolCall{
+        .turn_id = turn_id_,
+        .call = call,
+        .remaining_exchange_bytes = remaining_exchange_bytes(),
+    });
     awaiting.calls.push_back(PendingToolCall{.call = std::move(call)});
   }
   state_.emplace<AwaitingToolState>(std::move(awaiting));
-
-  TransitionResult result{};
-  const auto& pending = std::get<AwaitingToolState>(state_);
-  result.commands.reserve(pending.calls.size());
-  for (const auto& call : pending.calls) {
-    result.commands.emplace_back(PublishToolCall{
-        .turn_id = turn_id_,
-        .call = call.call,
-        .remaining_exchange_bytes = remaining_exchange_bytes(),
-    });
-  }
   return result;
 }
 
@@ -429,13 +423,12 @@ TurnMachine::validate_response(ModelResponse& response) const {
       return std::unexpected(response_error(
           ErrorCategory::protocol, "assistant response contains a tool-result block"));
     }
-    auto validated = validated_call(*call, response_ids, dispatched_tool_ids_,
-                                    tool_policy_.max_argument_bytes);
-    if (!validated) {
-      return std::unexpected(std::move(validated.error()));
+    auto valid = validated_call(*call, response_ids, dispatched_tool_ids_,
+                                tool_policy_.max_argument_bytes);
+    if (!valid) {
+      return std::unexpected(std::move(valid.error()));
     }
     response_ids.push_back(call->id);
-    *call = std::move(*validated);
     calls.push_back(*call);
   }
 
