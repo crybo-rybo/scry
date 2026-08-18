@@ -28,9 +28,13 @@ using ToolSnapshot = std::vector<ToolRegistrationPtr>;
 
 struct ToolRegistryState {
   ToolSnapshot entries{};
+  std::shared_ptr<const std::vector<ToolSchema>> schema_snapshot =
+      std::make_shared<const std::vector<ToolSchema>>();
 };
 
 [[nodiscard]] ToolSnapshot snapshot_tools(const ToolRegistryState& state);
+[[nodiscard]] std::shared_ptr<const std::vector<ToolSchema>>
+schema_snapshot(const ToolRegistryState& state);
 [[nodiscard]] std::vector<ToolSchema> snapshot_schemas(const ToolSnapshot& snapshot);
 
 } // namespace scry::detail

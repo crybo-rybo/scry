@@ -88,10 +88,38 @@ TEST_CASE("tool snapshots retain immutable registrations across later additions"
   CHECK(schemas.front().input_schema.text ==
         snapshot.front()->definition.input_schema.text);
 
+  const auto cached = scry::detail::schema_snapshot(state);
+  REQUIRE(cached);
+  CHECK(cached->size() == 2);
+  CHECK(scry::detail::schema_snapshot(state) == cached);
+
   state.entries.clear();
   auto result =
       (*snapshot.front()->handler)(scry::Json{.text = R"({"city":"Detroit"})"});
   REQUIRE(result);
   CHECK(result->text == R"({"city":"Detroit"})");
   CHECK(*calls == 1);
+}
+
+TEST_CASE("schema snapshots are reused until a registration is added") {
+  scry::detail::ToolRegistryState state{};
+  const auto empty = scry::detail::schema_snapshot(state);
+  REQUIRE(empty);
+  CHECK(empty->empty());
+  CHECK(scry::detail::schema_snapshot(state) == empty);
+
+  REQUIRE(scry::detail::add_tool_registration(state, definition(), handler()));
+  const auto first = scry::detail::schema_snapshot(state);
+  REQUIRE(first);
+  REQUIRE(first->size() == 1);
+  CHECK(first != empty);
+  CHECK(scry::detail::schema_snapshot(state) == first);
+
+  REQUIRE(scry::detail::add_tool_registration(
+      state, definition("current_time", R"({"type":"object"})"), handler()));
+  const auto second = scry::detail::schema_snapshot(state);
+  REQUIRE(second);
+  REQUIRE(second->size() == 2);
+  CHECK(second != first);
+  CHECK(first->size() == 1);
 }

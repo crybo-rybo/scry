@@ -22,6 +22,11 @@ public:
     return detail::snapshot_tools(state);
   }
 
+  [[nodiscard]] std::shared_ptr<const std::vector<detail::ToolSchema>>
+  schema_snapshot() const {
+    return detail::schema_snapshot(state);
+  }
+
   detail::ToolRegistryState state{};
 };
 

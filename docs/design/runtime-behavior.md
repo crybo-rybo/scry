@@ -81,7 +81,8 @@ there is no Conversation-local or process-global registry. `send()` snapshots
 immutable registrations into the accepted turn, so later or reentrant
 registration remains safe and affects only subsequently accepted turns. The
 public surface cannot move the Harness-owned registry out. Definitions are
-snapshotted and their neutral schemas are copied to the worker; handlers stay
+snapshotted and their neutral schemas are shared with the worker as an
+immutable snapshot; handlers stay
 pump-owned and never cross the thread boundary. Explicit schemas are parsed
 when registered, must be JSON objects, and are stored canonically.
 

@@ -43,7 +43,7 @@ namespace {
 [[nodiscard]] detail::ModelRequest
 make_request(const Config& config, const detail::ConversationState& conversation,
              std::vector<detail::Message> messages,
-             std::vector<detail::ToolSchema> schemas) {
+             std::shared_ptr<const std::vector<detail::ToolSchema>> schemas) {
   return detail::ModelRequest{
       .system_prompt = conversation.config.system_prompt,
       .messages = std::move(messages),
@@ -94,7 +94,9 @@ public:
 
   [[nodiscard]] Result<std::shared_ptr<detail::TurnRoute>>
   send(const std::shared_ptr<detail::ConversationState>& conversation, std::string text,
-       detail::ToolSnapshot tools, TurnCallbacks callbacks) {
+       detail::ToolSnapshot tools,
+       std::shared_ptr<const std::vector<detail::ToolSchema>> schemas,
+       TurnCallbacks callbacks) {
     if (text.empty()) {
       return std::unexpected(immediate_error(ErrorCategory::invalid_state,
                                              "user message must not be empty"));
@@ -125,7 +127,6 @@ public:
     auto cancelled = std::make_shared<std::atomic<bool>>(false);
     auto messages = conversation->messages;
     messages.push_back(user_message(text));
-    auto schemas = detail::snapshot_schemas(tools);
     auto route = std::make_shared<detail::TurnRoute>(
         turn_id, cancelled, commands_, conversation, std::move(text),
         detail::TurnRouteOptions{
@@ -211,8 +212,9 @@ Result<Turn> Harness::send(Conversation& conversation, std::string user_message_
         ErrorCategory::invalid_state, "Harness and Conversation must both be active"));
   }
   auto tools = impl_->tools().impl_->snapshot();
+  auto schemas = impl_->tools().impl_->schema_snapshot();
   auto route = impl_->send(conversation.impl_->state, std::move(user_message_text),
-                           std::move(tools), std::move(callbacks));
+                           std::move(tools), std::move(schemas), std::move(callbacks));
   if (!route) {
     return std::unexpected(std::move(route.error()));
   }

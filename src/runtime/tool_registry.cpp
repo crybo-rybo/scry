@@ -16,6 +16,20 @@ namespace {
   };
 }
 
+void rebuild_schema_snapshot(ToolRegistryState& state) {
+  std::vector<ToolSchema> schemas{};
+  schemas.reserve(state.entries.size());
+  for (const auto& registration : state.entries) {
+    schemas.push_back(ToolSchema{
+        .name = registration->definition.name,
+        .description = registration->definition.description,
+        .input_schema = registration->definition.input_schema,
+    });
+  }
+  state.schema_snapshot =
+      std::make_shared<const std::vector<ToolSchema>>(std::move(schemas));
+}
+
 } // namespace
 
 Status add_tool_registration(ToolRegistryState& state, ToolDefinition definition,
@@ -46,10 +60,16 @@ Status add_tool_registration(ToolRegistryState& state, ToolDefinition definition
       .definition = std::move(definition),
       .handler = std::make_shared<ToolHandler>(std::move(handler)),
   }));
+  rebuild_schema_snapshot(state);
   return {};
 }
 
 ToolSnapshot snapshot_tools(const ToolRegistryState& state) { return state.entries; }
+
+std::shared_ptr<const std::vector<ToolSchema>>
+schema_snapshot(const ToolRegistryState& state) {
+  return state.schema_snapshot;
+}
 
 std::vector<ToolSchema> snapshot_schemas(const ToolSnapshot& snapshot) {
   std::vector<ToolSchema> schemas{};

@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <scry/config.hpp>
 #include <scry/events.hpp>
 #include <scry/json.hpp>
@@ -49,9 +50,20 @@ struct ToolSchema {
 struct ModelRequest {
   std::string system_prompt{};
   std::vector<Message> messages{};
-  std::vector<ToolSchema> tools{};
+  std::shared_ptr<const std::vector<ToolSchema>> tools{};
   SamplingConfig sampling{};
 };
+
+[[nodiscard]] inline std::shared_ptr<const std::vector<ToolSchema>>
+share_tool_schemas(std::vector<ToolSchema> schemas) {
+  return std::make_shared<const std::vector<ToolSchema>>(std::move(schemas));
+}
+
+[[nodiscard]] inline const std::vector<ToolSchema>&
+tool_schemas(const ModelRequest& request) noexcept {
+  static const std::vector<ToolSchema> empty{};
+  return request.tools ? *request.tools : empty;
+}
 
 using ::scry::FinishReason;
 using ::scry::Usage;

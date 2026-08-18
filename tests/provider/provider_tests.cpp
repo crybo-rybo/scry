@@ -96,11 +96,13 @@ TEST_CASE("Anthropic request encoding preserves neutral tool shapes") {
   const auto adapter = make_provider_adapter(ProviderDialect::anthropic);
   REQUIRE(adapter);
   auto model_request = request();
-  model_request.tools.push_back(ToolSchema{
+  auto tools = tool_schemas(model_request);
+  tools.push_back(ToolSchema{
       .name = "lookup",
       .description = "Lookup a value",
       .input_schema = Json{.text = R"({"type":"object"})"},
   });
+  model_request.tools = share_tool_schemas(std::move(tools));
   model_request.messages.push_back(Message{
       .role = Role::assistant,
       .content =

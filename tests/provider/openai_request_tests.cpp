@@ -85,15 +85,13 @@ using namespace scry::detail;
                       },
               },
           },
-      .tools =
-          {
-              ToolSchema{
-                  .name = "weather",
-                  .description = "Get weather",
-                  .input_schema =
-                      Json{.text = R"({"type":"object","required":["city"]})"},
-              },
+      .tools = share_tool_schemas({
+          ToolSchema{
+              .name = "weather",
+              .description = "Get weather",
+              .input_schema = Json{.text = R"({"type":"object","required":["city"]})"},
           },
+      }),
       .sampling =
           SamplingConfig{
               .temperature = 1.5,
@@ -109,6 +107,10 @@ void require_invalid_request(const Config& value, const ModelRequest& model_requ
   REQUIRE_FALSE(encoded);
   CHECK(encoded.error().category == ErrorCategory::invalid_config);
   CHECK(encoded.error().message.find("sanitized-key") == std::string::npos);
+}
+
+void replace_tools(ModelRequest& request, std::vector<ToolSchema> schemas) {
+  request.tools = share_tool_schemas(std::move(schemas));
 }
 
 } // namespace
@@ -204,7 +206,9 @@ TEST_CASE("OpenAI request rejects neutral shapes that cannot be preserved") {
   CHECK(encoded.error().category == ErrorCategory::invalid_config);
 
   invalid = request();
-  invalid.tools.front().input_schema.text = "[]";
+  auto invalid_schema = tool_schemas(invalid);
+  invalid_schema.front().input_schema.text = "[]";
+  replace_tools(invalid, std::move(invalid_schema));
   encoded = adapter.make_request(config(), invalid);
   REQUIRE_FALSE(encoded);
   CHECK(encoded.error().category == ErrorCategory::invalid_config);
@@ -224,7 +228,7 @@ TEST_CASE("OpenAI request preserves assistant text-only and tool-only shapes") {
                   .arguments = Json{.text = "{}"},
               }}},
   };
-  model_request.tools.clear();
+  model_request.tools.reset();
   model_request.sampling.top_p.reset();
 
   const auto encoded = adapter.make_request(config(), model_request);
@@ -262,10 +266,14 @@ TEST_CASE("OpenAI request rejects malformed tool boundary fields") {
   require_invalid_request(config(), invalid);
 
   invalid = request();
-  invalid.tools.front().name.clear();
+  auto nameless = tool_schemas(invalid);
+  nameless.front().name.clear();
+  replace_tools(invalid, std::move(nameless));
   require_invalid_request(config(), invalid);
 
   invalid = request();
-  invalid.tools.front().input_schema.text = "{";
+  auto malformed = tool_schemas(invalid);
+  malformed.front().input_schema.text = "{";
+  replace_tools(invalid, std::move(malformed));
   require_invalid_request(config(), invalid);
 }

@@ -228,7 +228,7 @@ encode_tools(const std::vector<ToolSchema>& tools) {
   if (!messages) {
     return std::unexpected(std::move(messages.error()));
   }
-  auto tools = encode_tools(request.tools);
+  auto tools = encode_tools(tool_schemas(request));
   if (!tools) {
     return std::unexpected(std::move(tools.error()));
   }
