@@ -32,10 +32,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.0
       - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            g++-14 libcurl4-openssl-dev ninja-build
+        run: ./scripts/ci-apt-install.sh g++-14 libcurl4-openssl-dev ninja-build
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:
@@ -62,8 +59,7 @@ jobs:
       - name: Install GCC 16 (and GCC 14 for the core-surface proof)
         run: |
           sudo add-apt-repository --yes ppa:ubuntu-toolchain-r/test
-          sudo apt-get update
-          sudo apt-get install -y g++-14 g++-16 libcurl4-openssl-dev ninja-build
+          ./scripts/ci-apt-install.sh g++-14 g++-16 libcurl4-openssl-dev ninja-build
       - name: Lower ASLR entropy for sanitizers
         run: sudo sysctl vm.mmap_rnd_bits=28
       - name: Build, test, install, and consume reflection component
@@ -92,8 +88,7 @@ jobs:
             | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
           echo "deb https://apt.llvm.org/noble/ llvm-toolchain-noble-21 main" \
             | sudo tee /etc/apt/sources.list.d/llvm-21.list
-          sudo apt-get update
-          sudo apt-get install -y \
+          ./scripts/ci-apt-install.sh \
             clang-21 g++-14 libclang-rt-21-dev libcurl4-openssl-dev \
             libfuzzer-21-dev ninja-build
       - name: Run long fuzz target
@@ -117,10 +112,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.0
       - name: Install showcase toolchain
-        run: >
-          sudo apt-get update &&
-          sudo apt-get install -y
-          g++-14 libcurl4-openssl-dev ninja-build
+        run: ./scripts/ci-apt-install.sh g++-14 libcurl4-openssl-dev ninja-build
       - name: Build, test, render a headless frame, and audit packaging
         run: ./scripts/ci-showcase.sh
 
@@ -145,10 +137,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.0
       - name: Install build and extraction dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            curl g++-14 libcurl4-openssl-dev ninja-build zstd
+        run: ./scripts/ci-apt-install.sh curl g++-14 libcurl4-openssl-dev ninja-build zstd
       - name: Download and verify Ollama v0.32.1
         env:
           OLLAMA_URL: >-
