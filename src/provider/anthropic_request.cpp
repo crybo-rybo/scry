@@ -145,7 +145,7 @@ encode_messages(const SharedHistory& messages) {
     if (!value) {
       return std::unexpected(std::move(value.error()));
     }
-    encoded.push_back(std::move(*value));
+    encoded.push_back(*value);
   }
   return encode_json(encoded, "Anthropic tools could not be encoded");
 }
