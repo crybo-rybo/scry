@@ -85,7 +85,7 @@ UpdateStats PumpState::update(const UpdateOptions options) {
   const auto deadline = update_deadline(started, options.time_budget);
   std::size_t delivered = 0;
   bool exhausted = ingest_events(deadline);
-  while (delivered < options.max_callbacks && has_deliverable()) {
+  while (delivered < options.max_callbacks) {
     if (clock_() >= deadline) {
       exhausted = true;
       break;
@@ -123,7 +123,7 @@ void PumpState::shutdown() noexcept {
 }
 
 bool PumpState::ingest_events(const std::chrono::steady_clock::time_point deadline) {
-  while (events_->size() != 0) {
+  while (true) {
     if (clock_() >= deadline) {
       return true;
     }
@@ -133,7 +133,6 @@ bool PumpState::ingest_events(const std::chrono::steady_clock::time_point deadli
     }
     accept_event(std::move(*event));
   }
-  return false;
 }
 
 void PumpState::accept_event(WorkerEvent event) {
@@ -248,21 +247,20 @@ void PumpState::commit_completion(TurnRoute& route, CompletionEvent& event) {
 }
 
 bool PumpState::deliver_one(std::size_t& callbacks_delivered) {
-  const auto found = std::find_if(
-      pending_callbacks_.begin(), pending_callbacks_.end(), [this](const auto& event) {
-        const auto route = find_route(event_turn_id(event.event));
-        return route && route->has_callback(event.event);
-      });
-  if (found == pending_callbacks_.end()) {
-    return false;
+  for (auto it = pending_callbacks_.begin(); it != pending_callbacks_.end(); ++it) {
+    const auto turn_id = event_turn_id(it->event);
+    const auto route = find_route(turn_id);
+    if (!route || !route->has_callback(it->event)) {
+      continue;
+    }
+    auto pending = std::move(*it);
+    pending_callbacks_.erase(it);
+    events_->release(turn_id, pending.accounted_bytes);
+    ++callbacks_delivered;
+    route->invoke(std::move(pending.event));
+    return true;
   }
-  auto pending = std::move(*found);
-  pending_callbacks_.erase(found);
-  const auto route = find_route(event_turn_id(pending.event));
-  events_->release(event_turn_id(pending.event), pending.accounted_bytes);
-  ++callbacks_delivered;
-  route->invoke(pending.event);
-  return true;
+  return false;
 }
 
 bool PumpState::has_deliverable() const noexcept {

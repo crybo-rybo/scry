@@ -84,9 +84,9 @@ bool TurnRoute::has_callback(const WorkerEvent& event) const noexcept {
       event);
 }
 
-void TurnRoute::invoke(const WorkerEvent& event) {
+void TurnRoute::invoke(WorkerEvent event) {
   std::visit(
-      [this](const auto& value) {
+      [this](auto& value) {
         using Event = std::decay_t<decltype(value)>;
         if constexpr (std::is_same_v<Event, TextDeltaEvent>) {
           callbacks_.on_text_delta(value.text);
@@ -94,17 +94,18 @@ void TurnRoute::invoke(const WorkerEvent& event) {
           dispatch(value);
         } else if constexpr (std::is_same_v<Event, CompletionEvent>) {
           // commit_completion captured the text before moving the exchange
-          // into the Conversation.
+          // into the Conversation. The pending event is otherwise dead after
+          // this call, so the callback takes the remaining strings by move.
           callbacks_.on_finished(Completion{
               .turn_id = value.turn_id,
-              .text = value.text,
+              .text = std::move(value.text),
               .finish_reason = value.finish_reason,
               .usage = value.usage,
               .attempt_count = value.attempt_count,
-              .provider_request_id = value.provider_request_id,
+              .provider_request_id = std::move(value.provider_request_id),
           });
         } else if constexpr (std::is_same_v<Event, ErrorEvent>) {
-          callbacks_.on_finished(std::unexpected(value.error));
+          callbacks_.on_finished(std::unexpected(std::move(value.error)));
         } else if constexpr (std::is_same_v<Event, CancelledEvent>) {
           callbacks_.on_finished(std::unexpected(cancellation_error(value.turn_id)));
         } else {
@@ -115,7 +116,7 @@ void TurnRoute::invoke(const WorkerEvent& event) {
       event);
 }
 
-void TurnRoute::dispatch(const ToolCallEvent& event) {
+void TurnRoute::dispatch(ToolCallEvent& event) {
   if (cancelled_->load(std::memory_order_acquire)) {
     return;
   }
@@ -153,12 +154,12 @@ void TurnRoute::dispatch(const ToolCallEvent& event) {
   }
 }
 
-void TurnRoute::notify_tool_observer(const ToolCallBlock& call) {
+void TurnRoute::notify_tool_observer(ToolCallBlock& call) {
   callbacks_.on_tool_call(ToolCall{
       .turn_id = turn_id_,
-      .id = call.id,
-      .name = call.name,
-      .arguments = call.arguments,
+      .id = std::move(call.id),
+      .name = std::move(call.name),
+      .arguments = std::move(call.arguments),
   });
 }
 

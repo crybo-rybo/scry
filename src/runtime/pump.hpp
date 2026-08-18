@@ -41,15 +41,15 @@ public:
   void mark_terminal() noexcept;
 
   [[nodiscard]] bool has_callback(const WorkerEvent& event) const noexcept;
-  void invoke(const WorkerEvent& event);
+  void invoke(WorkerEvent event);
 
   [[nodiscard]] const std::shared_ptr<ConversationState>& conversation() const noexcept;
   [[nodiscard]] const std::string& user_message() const noexcept;
   [[nodiscard]] std::size_t max_conversation_bytes() const noexcept;
 
 private:
-  void dispatch(const ToolCallEvent& event);
-  void notify_tool_observer(const ToolCallBlock& call);
+  void dispatch(ToolCallEvent& event);
+  void notify_tool_observer(ToolCallBlock& call);
 
   TurnId turn_id_{};
   std::shared_ptr<std::atomic<bool>> cancelled_{};
