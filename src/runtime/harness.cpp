@@ -19,6 +19,7 @@
 #include <optional>
 #include <scry/harness.hpp>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -33,16 +34,16 @@ namespace {
   };
 }
 
-[[nodiscard]] detail::Message user_message(std::string text) {
-  return detail::Message{
+[[nodiscard]] detail::SharedMessage user_message(std::string_view text) {
+  return detail::share_message(detail::Message{
       .role = detail::Role::user,
-      .content = {detail::TextBlock{.text = std::move(text)}},
-  };
+      .content = {detail::TextBlock{.text = std::string{text}}},
+  });
 }
 
 [[nodiscard]] detail::ModelRequest
 make_request(const Config& config, const detail::ConversationState& conversation,
-             std::vector<detail::Message> messages,
+             detail::SharedHistory messages,
              std::shared_ptr<const std::vector<detail::ToolSchema>> schemas) {
   return detail::ModelRequest{
       .system_prompt = conversation.config.system_prompt,

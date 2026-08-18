@@ -30,7 +30,7 @@ oversized_completion(const scry::TurnId turn_id) {
 // moves into the Conversation, so these cases drive real deliveries rather
 // than invoking the route directly.
 [[nodiscard]] std::string delivered_text(PumpFixture& fixture, const std::uint64_t id,
-                                         std::vector<scry::detail::Message> exchange) {
+                                         scry::detail::SharedHistory exchange) {
   scry::detail::PumpState pump{fixture.events};
   std::string observed;
   bool delivered = false;
@@ -275,7 +275,7 @@ TEST_CASE("committing a completion moves its exchange into the Conversation") {
   // The user message plus the committed assistant message, with content
   // intact after the move.
   REQUIRE(fixture.conversation->messages.size() == 2);
-  const auto& assistant = fixture.conversation->messages.back();
+  const auto& assistant = *fixture.conversation->messages.back();
   CHECK(assistant.role == scry::detail::Role::assistant);
   REQUIRE(assistant.content.size() == 1);
   CHECK(std::get<scry::detail::TextBlock>(assistant.content.front()).text == "done");

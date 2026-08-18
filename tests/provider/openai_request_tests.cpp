@@ -179,28 +179,34 @@ TEST_CASE("OpenAI authentication is optional for local servers") {
 TEST_CASE("OpenAI request rejects neutral shapes that cannot be preserved") {
   OpenAiAdapter adapter;
   auto invalid = request();
-  invalid.messages.front().content.push_back(ToolResultBlock{
-      .tool_call_id = "call",
-      .result = Json{.text = "{}"},
+  mutate_shared_message(invalid.messages, 0, [](Message& message) {
+    message.content.push_back(ToolResultBlock{
+        .tool_call_id = "call",
+        .result = Json{.text = "{}"},
+    });
   });
   auto encoded = adapter.make_request(config(), invalid);
   REQUIRE_FALSE(encoded);
   CHECK(encoded.error().category == ErrorCategory::invalid_config);
 
   invalid = request();
-  invalid.messages.front().content = {
-      TextBlock{},
-      ToolResultBlock{
-          .tool_call_id = "call",
-          .result = Json{.text = "{}"},
-      },
-  };
+  mutate_shared_message(invalid.messages, 0, [](Message& message) {
+    message.content = {
+        TextBlock{},
+        ToolResultBlock{
+            .tool_call_id = "call",
+            .result = Json{.text = "{}"},
+        },
+    };
+  });
   encoded = adapter.make_request(config(), invalid);
   REQUIRE_FALSE(encoded);
   CHECK(encoded.error().category == ErrorCategory::invalid_config);
 
   invalid = request();
-  std::get<ToolCallBlock>(invalid.messages[1].content[1]).arguments.text = "[]";
+  mutate_shared_message(invalid.messages, 1, [](Message& message) {
+    std::get<ToolCallBlock>(message.content[1]).arguments.text = "[]";
+  });
   encoded = adapter.make_request(config(), invalid);
   REQUIRE_FALSE(encoded);
   CHECK(encoded.error().category == ErrorCategory::invalid_config);
@@ -241,28 +247,41 @@ TEST_CASE("OpenAI request preserves assistant text-only and tool-only shapes") {
 
 TEST_CASE("OpenAI request rejects malformed tool boundary fields") {
   auto invalid = request();
-  std::get<ToolCallBlock>(invalid.messages[1].content[1]).id.clear();
+  mutate_shared_message(invalid.messages, 1, [](Message& message) {
+    std::get<ToolCallBlock>(message.content[1]).id.clear();
+  });
   require_invalid_request(config(), invalid);
 
   invalid = request();
-  std::get<ToolCallBlock>(invalid.messages[1].content[1]).name.clear();
+  mutate_shared_message(invalid.messages, 1, [](Message& message) {
+    std::get<ToolCallBlock>(message.content[1]).name.clear();
+  });
   require_invalid_request(config(), invalid);
 
   invalid = request();
-  std::get<ToolCallBlock>(invalid.messages[1].content[1]).arguments.text = "{";
+  mutate_shared_message(invalid.messages, 1, [](Message& message) {
+    std::get<ToolCallBlock>(message.content[1]).arguments.text = "{";
+  });
   require_invalid_request(config(), invalid);
 
   invalid = request();
-  std::get<ToolResultBlock>(invalid.messages[2].content[0]).tool_call_id.clear();
+  mutate_shared_message(invalid.messages, 2, [](Message& message) {
+    std::get<ToolResultBlock>(message.content[0]).tool_call_id.clear();
+  });
   require_invalid_request(config(), invalid);
 
   invalid = request();
-  std::get<ToolResultBlock>(invalid.messages[2].content[0]).result.text = "{";
+  mutate_shared_message(invalid.messages, 2, [](Message& message) {
+    std::get<ToolResultBlock>(message.content[0]).result.text = "{";
+  });
   require_invalid_request(config(), invalid);
 
   invalid = request();
-  invalid.messages[1].content = {
-      ToolResultBlock{.tool_call_id = "call", .result = Json{.text = "{}"}}};
+  mutate_shared_message(invalid.messages, 1, [](Message& message) {
+    message.content = {
+        ToolResultBlock{.tool_call_id = "call", .result = Json{.text = "{}"}},
+    };
+  });
   require_invalid_request(config(), invalid);
 
   invalid = request();

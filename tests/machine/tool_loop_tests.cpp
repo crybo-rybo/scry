@@ -37,11 +37,11 @@ final_response(std::string text = "done", const std::uint64_t input_tokens = 7,
 }
 
 [[nodiscard]] const scry::detail::Message&
-message_at(const std::vector<scry::detail::Message>& messages, const std::size_t index,
-           const scry::detail::Role role) {
+message_at(const std::vector<scry::detail::SharedMessage>& messages,
+           const std::size_t index, const scry::detail::Role role) {
   REQUIRE(index < messages.size());
-  CHECK(messages[index].role == role);
-  return messages[index];
+  CHECK(messages[index]->role == role);
+  return *messages[index];
 }
 
 void check_rejected_response(scry::detail::ModelResponse response,
@@ -469,4 +469,5 @@ TEST_CASE("an issued request snapshot never observes later tool-round messages")
   CHECK(snapshot->messages.size() == 1);
   CHECK(reissued.request->messages.size() == 3);
   CHECK(reissued.request.get() != snapshot.get());
+  CHECK(reissued.request->messages.front() == snapshot->messages.front());
 }

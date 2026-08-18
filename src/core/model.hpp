@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <initializer_list>
 #include <limits>
 #include <memory>
 #include <scry/config.hpp>
@@ -41,6 +42,42 @@ struct Message {
   std::vector<ContentBlock> content{};
 };
 
+using SharedMessage = std::shared_ptr<const Message>;
+
+// Immutable conversation history is shared across send() snapshots, tool-round
+// resends, and the pump commit. The converting constructors keep tests and
+// designated initializers writing ordinary Message values.
+struct SharedHistory : std::vector<SharedMessage> {
+  using std::vector<SharedMessage>::vector;
+  using std::vector<SharedMessage>::operator=;
+
+  SharedHistory() = default;
+
+  SharedHistory(std::initializer_list<Message> messages) {
+    reserve(messages.size());
+    for (const auto& message : messages) {
+      emplace_back(std::make_shared<const Message>(message));
+    }
+  }
+
+  SharedHistory& operator=(std::initializer_list<Message> messages) {
+    SharedHistory assigned{messages};
+    vector::operator=(std::move(assigned));
+    return *this;
+  }
+};
+
+[[nodiscard]] inline SharedMessage share_message(Message message) {
+  return std::make_shared<const Message>(std::move(message));
+}
+
+template <typename Fn>
+void mutate_shared_message(SharedHistory& history, const std::size_t index, Fn&& fn) {
+  Message copy = *history[index];
+  static_cast<Fn&&>(fn)(copy);
+  history[index] = share_message(std::move(copy));
+}
+
 struct ToolSchema {
   std::string name{};
   std::string description{};
@@ -49,7 +86,7 @@ struct ToolSchema {
 
 struct ModelRequest {
   std::string system_prompt{};
-  std::vector<Message> messages{};
+  SharedHistory messages{};
   std::shared_ptr<const std::vector<ToolSchema>> tools{};
   SamplingConfig sampling{};
 };
@@ -113,6 +150,11 @@ message_payload_bytes(const Message& message) noexcept {
     total = saturating_payload_add(total, content_payload_bytes(block));
   }
   return total;
+}
+
+[[nodiscard]] inline std::size_t
+message_payload_bytes(const SharedMessage& message) noexcept {
+  return message ? message_payload_bytes(*message) : 0;
 }
 
 } // namespace scry::detail

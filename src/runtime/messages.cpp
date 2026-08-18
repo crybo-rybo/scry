@@ -8,7 +8,7 @@ namespace scry::detail {
 namespace {
 
 [[nodiscard]] std::size_t
-exchange_bytes(const std::vector<Message>& exchange) noexcept {
+exchange_bytes(const std::vector<SharedMessage>& exchange) noexcept {
   std::size_t total = 0;
   for (const auto& message : exchange) {
     total = saturating_payload_add(total, message_payload_bytes(message));

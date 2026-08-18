@@ -119,7 +119,7 @@ struct PublishToolCall {
 // owns the atomic Conversation commit and callback delivery.
 struct CommitCompletion {
   TurnId turn_id{};
-  std::vector<Message> exchange{};
+  SharedHistory exchange{};
   FinishReason finish_reason{FinishReason::unknown};
   Usage usage{};
   std::uint32_t attempt_count{};
@@ -256,7 +256,7 @@ private:
   RetryPolicy retry_policy_{};
   ToolLoopPolicy tool_policy_{};
   State state_{QueuedState{}};
-  std::vector<Message> exchange_{};
+  SharedHistory exchange_{};
   std::optional<MachineTimePoint> request_started_at_{};
   std::optional<MachineTimePoint> latest_time_{};
   std::uint32_t attempt_count_{};

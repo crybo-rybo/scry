@@ -243,20 +243,20 @@ decode_tool_result(const detail::JsonValue& value, const detail::Role role) {
   return message;
 }
 
-[[nodiscard]] Result<std::vector<detail::Message>>
+[[nodiscard]] Result<std::vector<detail::SharedMessage>>
 decode_messages(const detail::JsonValue& root) {
   auto values = array_field(root, "messages", "Conversation document");
   if (!values) {
     return std::unexpected(std::move(values.error()));
   }
-  std::vector<detail::Message> messages;
+  std::vector<detail::SharedMessage> messages;
   messages.reserve((*values)->size());
   for (const auto& value : **values) {
     auto message = decode_message(value);
     if (!message) {
       return std::unexpected(std::move(message.error()));
     }
-    messages.push_back(std::move(*message));
+    messages.push_back(detail::share_message(std::move(*message)));
   }
   return messages;
 }
@@ -350,11 +350,11 @@ encode_block_value(const detail::ToolResultBlock& block, const detail::Role role
 }
 
 [[nodiscard]] Result<detail::JsonValue::array_t>
-encode_messages(const std::vector<detail::Message>& messages) {
+encode_messages(const std::vector<detail::SharedMessage>& messages) {
   detail::JsonValue::array_t encoded;
   encoded.reserve(messages.size());
   for (const auto& message : messages) {
-    auto value = encode_message(message);
+    auto value = encode_message(*message);
     if (!value) {
       return std::unexpected(std::move(value.error()));
     }
@@ -373,7 +373,7 @@ encode_messages(const std::vector<detail::Message>& messages) {
 
 [[nodiscard]] Result<std::size_t>
 conversation_payload_bytes(const ConversationConfig& config,
-                           const std::vector<detail::Message>& messages) {
+                           const std::vector<detail::SharedMessage>& messages) {
   std::size_t total = config.system_prompt.size();
   for (const auto& message : messages) {
     if (!add_size(total, detail::message_payload_bytes(message))) {

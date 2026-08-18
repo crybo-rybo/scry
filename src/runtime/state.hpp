@@ -13,7 +13,7 @@ namespace scry::detail {
 
 struct ConversationState {
   ConversationConfig config{};
-  std::vector<Message> messages{};
+  SharedHistory messages{};
   std::size_t payload_bytes{};
   bool busy{false};
 };

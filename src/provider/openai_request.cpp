@@ -164,8 +164,8 @@ encode_assistant_message(const Message& message) {
     encoded.push_back(std::move(system));
   }
   for (const auto& message : request.messages) {
-    auto values = message.role == Role::user ? encode_user_message(message)
-                                             : encode_assistant_message(message);
+    auto values = message->role == Role::user ? encode_user_message(*message)
+                                              : encode_assistant_message(*message);
     if (!values) {
       return std::unexpected(std::move(values.error()));
     }

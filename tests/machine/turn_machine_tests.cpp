@@ -69,9 +69,9 @@ TEST_CASE("non-streaming completion emits one transactional commit intent") {
   CHECK(command.provider_request_id == "provider-id");
   CHECK(command.usage.input_tokens == 4);
   REQUIRE(command.exchange.size() == 1);
-  CHECK(command.exchange.front().role == scry::detail::Role::assistant);
-  REQUIRE(command.exchange.front().content.size() == 1);
-  CHECK(std::get<scry::detail::TextBlock>(command.exchange.front().content.front())
+  CHECK(command.exchange.front()->role == scry::detail::Role::assistant);
+  REQUIRE(command.exchange.front()->content.size() == 1);
+  CHECK(std::get<scry::detail::TextBlock>(command.exchange.front()->content.front())
             .text == "answer");
   CHECK(machine.phase() == scry::detail::MachinePhase::terminal);
   CHECK(machine.terminal_kind() == scry::detail::MachineTerminalKind::completed);

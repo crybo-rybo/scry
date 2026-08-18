@@ -84,11 +84,11 @@ encode_boundary_json(const Json& json, const std::string_view failure_message) {
 }
 
 [[nodiscard]] Result<JsonValue::array_t>
-encode_messages(const std::vector<Message>& messages) {
+encode_messages(const SharedHistory& messages) {
   JsonValue::array_t encoded{};
   encoded.reserve(messages.size());
   for (const auto& message : messages) {
-    auto value = encode_message(message);
+    auto value = encode_message(*message);
     if (!value) {
       return std::unexpected(std::move(value.error()));
     }

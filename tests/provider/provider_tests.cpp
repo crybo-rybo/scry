@@ -103,7 +103,7 @@ TEST_CASE("Anthropic request encoding preserves neutral tool shapes") {
       .input_schema = Json{.text = R"({"type":"object"})"},
   });
   model_request.tools = share_tool_schemas(std::move(tools));
-  model_request.messages.push_back(Message{
+  model_request.messages.push_back(share_message(Message{
       .role = Role::assistant,
       .content =
           {
@@ -113,8 +113,8 @@ TEST_CASE("Anthropic request encoding preserves neutral tool shapes") {
                   .arguments = Json{.text = R"({"key":"value"})"},
               },
           },
-  });
-  model_request.messages.push_back(Message{
+  }));
+  model_request.messages.push_back(share_message(Message{
       .role = Role::user,
       .content =
           {
@@ -123,7 +123,7 @@ TEST_CASE("Anthropic request encoding preserves neutral tool shapes") {
                   .result = Json{.text = R"({"answer":42})"},
               },
           },
-  });
+  }));
 
   const auto encoded = adapter->make_request(config(), model_request);
   REQUIRE(encoded.has_value());
@@ -136,11 +136,13 @@ TEST_CASE("Anthropic request encoding reports boundary errors without secrets") 
   const auto adapter = make_provider_adapter(ProviderDialect::anthropic);
   REQUIRE(adapter);
   auto invalid = request();
-  invalid.messages.front().content = {ToolCallBlock{
-      .id = "tool_1",
-      .name = "lookup",
-      .arguments = Json{.text = "not-json"},
-  }};
+  mutate_shared_message(invalid.messages, 0, [](Message& message) {
+    message.content = {ToolCallBlock{
+        .id = "tool_1",
+        .name = "lookup",
+        .arguments = Json{.text = "not-json"},
+    }};
+  });
 
   const auto result = adapter->make_request(config(), invalid);
   REQUIRE_FALSE(result.has_value());

@@ -262,12 +262,13 @@ TransitionResult TurnMachine::on_event(ToolResultReady event) {
     // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
     results.content.emplace_back(std::move(call.result).value());
   }
-  auto assistant = std::move(awaiting->assistant);
+  auto assistant = share_message(std::move(awaiting->assistant));
+  auto results_message = share_message(std::move(results));
   auto& request = mutable_request();
   request.messages.push_back(assistant);
-  request.messages.push_back(results);
+  request.messages.push_back(results_message);
   exchange_.push_back(std::move(assistant));
-  exchange_.push_back(std::move(results));
+  exchange_.push_back(std::move(results_message));
   return start_request(event.observed_at);
 }
 
@@ -361,7 +362,7 @@ TransitionResult TurnMachine::complete_turn(ModelResponse response) {
                          "completion exceeds the remaining Conversation byte limit",
                          std::move(response.provider_request_id));
   }
-  exchange_.push_back(std::move(assistant));
+  exchange_.push_back(share_message(std::move(assistant)));
   state_.emplace<TerminalState>(MachineTerminalKind::completed);
   return applied(CommitCompletion{
       .turn_id = turn_id_,

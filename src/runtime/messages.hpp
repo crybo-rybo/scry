@@ -49,7 +49,7 @@ struct ToolCallEvent {
 // accounting in event_payload_bytes.
 struct CompletionEvent {
   TurnId turn_id{};
-  std::vector<Message> exchange{};
+  SharedHistory exchange{};
   std::string text{};
   FinishReason finish_reason{FinishReason::unknown};
   Usage usage{};

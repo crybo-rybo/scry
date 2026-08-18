@@ -172,15 +172,15 @@ TEST_CASE("Anthropic request encoding preserves optional and tool branches") {
                    .description = "lookup",
                    .input_schema = {.text = R"({"type":"object"})"}});
   value_request.tools = share_tool_schemas(std::move(tools));
-  value_request.messages.push_back(
+  value_request.messages.push_back(share_message(
       {.role = Role::assistant,
        .content = {ToolCallBlock{
-           .id = "id", .name = "lookup", .arguments = {.text = R"({"x":1})"}}}});
+           .id = "id", .name = "lookup", .arguments = {.text = R"({"x":1})"}}}}));
   value_request.messages.push_back(
-      {.role = Role::user,
-       .content = {ToolResultBlock{.tool_call_id = "id",
-                                   .result = {.text = R"({"answer":2})"},
-                                   .is_error = true}}});
+      share_message({.role = Role::user,
+                     .content = {ToolResultBlock{.tool_call_id = "id",
+                                                 .result = {.text = R"({"answer":2})"},
+                                                 .is_error = true}}}));
   const auto encoded = adapter.make_request(value_config, value_request);
   REQUIRE(encoded);
   CHECK(encoded->url == "https://api.anthropic.test/v1/messages");
@@ -193,12 +193,18 @@ TEST_CASE("Anthropic request encoding preserves optional and tool branches") {
 TEST_CASE("Anthropic request encoding propagates invalid boundary JSON") {
   AnthropicAdapter adapter;
   auto value = request();
-  value.messages.front().content = {
-      ToolCallBlock{.id = "id", .name = "tool", .arguments = {.text = "{"}}};
+  mutate_shared_message(value.messages, 0, [](Message& message) {
+    message.content = {
+        ToolCallBlock{.id = "id", .name = "tool", .arguments = {.text = "{"}},
+    };
+  });
   require_request_error(adapter, config(), value);
   value = request();
-  value.messages.front().content = {
-      ToolResultBlock{.tool_call_id = "id", .result = {.text = "{"}}};
+  mutate_shared_message(value.messages, 0, [](Message& message) {
+    message.content = {
+        ToolResultBlock{.tool_call_id = "id", .result = {.text = "{"}},
+    };
+  });
   require_request_error(adapter, config(), value);
   value = request();
   value.tools = share_tool_schemas({

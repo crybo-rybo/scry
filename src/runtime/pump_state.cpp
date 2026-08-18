@@ -9,7 +9,7 @@ namespace {
   if (event.exchange.empty()) {
     return {};
   }
-  const auto& final_message = event.exchange.back();
+  const auto& final_message = *event.exchange.back();
   std::string text;
   for (const auto& block : final_message.content) {
     if (const auto* value = std::get_if<TextBlock>(&block)) {
@@ -235,7 +235,7 @@ void PumpState::commit_completion(TurnRoute& route, CompletionEvent& event) {
       .content = {TextBlock{.text = route.user_message()}},
   };
   conversation.payload_bytes += message_payload_bytes(user);
-  conversation.messages.push_back(std::move(user));
+  conversation.messages.push_back(share_message(std::move(user)));
   // The callback needs only the final assistant text, so capture it before the
   // exchange moves into the Conversation rather than retaining a second copy.
   event.text = completion_text(event);

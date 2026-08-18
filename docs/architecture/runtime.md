@@ -11,7 +11,7 @@ A `Turn` is a **handle**: a move-only PImpl value holding an immutable `TurnId`,
 | Transport handles, curl state, wire buffers, SSE parser state | Worker | Never visible to any other thread |
 | Loop state machines (per turn) | Worker | Addressed by `TurnId` |
 | Turn callbacks, buffered undelivered events per turn, Turn routes | Pump side (Harness main-thread state) | Callbacks move in at `send()`; read only inside `update()`; handles observe routes weakly |
-| Conversation contents | App thread via pump | A live route retains shared lifetime on the pump side; contents are mutated only at terminal-event delivery |
+| Conversation contents | App thread via pump | Committed messages are immutable and shared with in-flight request snapshots; the live Conversation is mutated only at terminal-event delivery |
 | Tool definitions | Pump side; immutable per accepted turn | Worker commands receive an immutable shared snapshot of neutral schemas, never the live registry |
 | Tool handlers | Pump side; immutable per accepted turn | Invoked only by `update()`; never cross the thread boundary |
 | Command queue, event queue | Shared, internally synchronized | Sanctioned crossing points |
