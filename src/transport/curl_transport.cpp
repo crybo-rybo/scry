@@ -380,9 +380,22 @@ public:
     return multi_.get();
   }
 
+  // The easy handle is reset between transfers rather than re-created. Options
+  // from the previous attempt must not leak; the multi handle still owns the
+  // connection cache. A null return is reported as initialization failure.
+  [[nodiscard]] CURL* easy() {
+    if (!easy_) {
+      easy_.reset(curl_easy_init());
+    } else {
+      curl_easy_reset(easy_.get());
+    }
+    return easy_.get();
+  }
+
 private:
   Status startup_status_{};
   MultiHandle multi_{};
+  EasyHandle easy_{};
 };
 
 CurlTransport::CurlTransport() : impl_(std::make_unique<Impl>()) {}
@@ -406,8 +419,8 @@ Result<TransportResult> CurlTransport::perform(const TransportRequest& request,
   if (!headers) {
     return std::unexpected(std::move(headers.error()));
   }
-  EasyHandle easy{curl_easy_init()};
-  if (!easy) {
+  auto* easy = impl_->easy();
+  if (easy == nullptr) {
     return std::unexpected(
         make_error(ErrorCategory::network, "libcurl request initialization failed"));
   }
@@ -420,11 +433,11 @@ Result<TransportResult> CurlTransport::perform(const TransportRequest& request,
               .limit = request.limits.max_response_bytes,
           },
   };
-  if (auto status = configure_easy(easy.get(), request, *headers, context); !status) {
+  if (auto status = configure_easy(easy, request, *headers, context); !status) {
     return std::unexpected(std::move(status.error()));
   }
   MultiTransfer multi{impl_->multi()};
-  if (!multi.valid() || multi.add(easy.get()) != CURLM_OK) {
+  if (!multi.valid() || multi.add(easy) != CURLM_OK) {
     return std::unexpected(
         make_error(ErrorCategory::network, "libcurl transfer setup failed", true));
   }
@@ -433,7 +446,7 @@ Result<TransportResult> CurlTransport::perform(const TransportRequest& request,
     code.error().provider_request_id = context.response.provider_request_id;
     return std::unexpected(std::move(code.error()));
   }
-  return finish_transfer(easy.get(), *code, context);
+  return finish_transfer(easy, *code, context);
 }
 
 } // namespace scry::detail
