@@ -121,7 +121,6 @@ case "${mode}" in
   full)
     repetitions="${repetitions:-10}"
     minimum_time="${minimum_time:-0.25s}"
-    minimum_warmup_time="0.1"
     ;;
   smoke)
     repetitions="${repetitions:-1}"

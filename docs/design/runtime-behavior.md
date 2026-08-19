@@ -81,11 +81,13 @@ there is no Conversation-local or process-global registry. `send()` snapshots
 immutable registrations into the accepted turn, so later or reentrant
 registration remains safe and affects only subsequently accepted turns. The
 public surface cannot move the Harness-owned registry out. Registration appends
-to the registry's working list only; the first `send()` after a change freezes
-one registry-level immutable snapshot — registrations and neutral schemas as
-shared collections — that subsequent turns reuse until the next registration,
-and the accepted turn shares those collections with its model requests instead
-of copying them. Handlers stay pump-owned and never cross the thread boundary.
+to the registry's working list only; after a `send()` passes immediate admission
+validation, the first accepted turn following a change freezes one
+registry-level immutable snapshot — registrations and neutral schemas as shared
+collections — that subsequent accepted turns reuse until the next registration.
+Rejected sends neither freeze nor advance a registry generation. The accepted
+turn shares those collections with its model requests instead of copying them.
+Handlers stay pump-owned and never cross the thread boundary.
 Explicit schemas are parsed when registered, must be JSON objects, and are
 stored canonically.
 

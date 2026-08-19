@@ -14,6 +14,7 @@ public:
   [[nodiscard]] static Result<Harness> create(Config config,
                                               std::unique_ptr<ProviderAdapter> provider,
                                               std::unique_ptr<Transport> transport);
+  [[nodiscard]] static bool has_current_tool_snapshot(const Harness& harness) noexcept;
 };
 
 } // namespace scry::detail

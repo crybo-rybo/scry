@@ -94,7 +94,7 @@ public:
 
   [[nodiscard]] Result<std::shared_ptr<detail::TurnRoute>>
   send(const std::shared_ptr<detail::ConversationState>& conversation, std::string text,
-       detail::ToolSnapshots tools, TurnCallbacks callbacks) {
+       TurnCallbacks callbacks) {
     if (text.empty()) {
       return std::unexpected(immediate_error(ErrorCategory::invalid_state,
                                              "user message must not be empty"));
@@ -122,6 +122,7 @@ public:
     const auto turn_id = TurnId{.value = ++next_turn_id_};
     const auto max_exchange_bytes = config_.limits.max_conversation_bytes -
                                     conversation->payload_bytes - text.size();
+    auto tools = tools_->impl_->snapshot();
     auto cancelled = std::make_shared<std::atomic<bool>>(false);
     auto messages = std::vector<detail::Message>{};
     messages.push_back(user_message(text));
@@ -157,6 +158,11 @@ public:
   [[nodiscard]] bool updating() const noexcept { return pump_.updating(); }
   [[nodiscard]] bool wait_for_event() {
     return events_->wait_for_data(std::chrono::milliseconds{10});
+  }
+  [[nodiscard]] bool has_current_tool_snapshot() const noexcept {
+    const auto& state = tools_->impl_->state;
+    return state.frozen.entries != nullptr &&
+           state.frozen.entries->size() == state.entries.size();
   }
 
 private:
@@ -209,9 +215,8 @@ Result<Turn> Harness::send(Conversation& conversation, std::string user_message_
     return std::unexpected(immediate_error(
         ErrorCategory::invalid_state, "Harness and Conversation must both be active"));
   }
-  auto tools = impl_->tools().impl_->snapshot();
   auto route = impl_->send(conversation.impl_->state, std::move(user_message_text),
-                           std::move(tools), std::move(callbacks));
+                           std::move(callbacks));
   if (!route) {
     return std::unexpected(std::move(route.error()));
   }
@@ -272,6 +277,10 @@ Result<Harness> HarnessTestAccess::create(Config config,
             std::make_unique<Harness::Impl>(std::move(config), std::move(provider),
                                             std::move(transport), std::move(tools))};
       });
+}
+
+bool HarnessTestAccess::has_current_tool_snapshot(const Harness& harness) noexcept {
+  return harness.impl_ != nullptr && harness.impl_->has_current_tool_snapshot();
 }
 
 } // namespace detail

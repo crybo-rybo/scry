@@ -33,9 +33,9 @@ using ToolSnapshot = std::vector<ToolRegistrationPtr>;
 using FrozenToolEntries = std::shared_ptr<const ToolSnapshot>;
 
 // Immutable registry-level snapshot pair. Registration appends to the mutable
-// working list only; the frozen views are rebuilt lazily on the next send that
-// observes them, so repeated accepted turns share one block per registration
-// generation and registration itself pays no snapshot cost.
+// working list only; the frozen views are rebuilt lazily after the next send
+// passes admission validation, so rejected sends pay no freeze cost and repeated
+// accepted turns share one block per registration generation.
 struct ToolSnapshots {
   FrozenToolEntries entries{};
   SchemaSnapshot schemas{};

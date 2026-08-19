@@ -21,8 +21,9 @@ namespace {
 
 // Appends one committed exchange onto the Conversation's history block. The
 // block is shared with accepted-turn request snapshots, so a commit reseats it
-// copy-on-write whenever a live request still holds it; in the normal flow the
-// worker has already released its request, and the append reuses the block.
+// copy-on-write whenever a live request still holds it. Terminalization releases
+// the worker's request before publishing completion, so ordinary commit reuses
+// the block deterministically; retained external snapshots still take this path.
 void append_history(ConversationState& conversation, const std::string_view user_text,
                     std::vector<Message>&& exchange) {
   if (conversation.messages.use_count() > 1) {

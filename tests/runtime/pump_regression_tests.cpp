@@ -281,6 +281,29 @@ TEST_CASE("committing a completion moves its exchange into the Conversation") {
   CHECK(std::get<scry::detail::TextBlock>(assistant.content.front()).text == "done");
 }
 
+TEST_CASE("commit reseats history while a retained snapshot stays immutable") {
+  PumpFixture fixture;
+  fixture.conversation->messages->push_back(scry::detail::Message{
+      .role = scry::detail::Role::assistant,
+      .content = {scry::detail::TextBlock{.text = "committed"}},
+  });
+  const auto snapshot = fixture.conversation->messages;
+  const auto* original_block = snapshot.get();
+  scry::detail::PumpState pump{fixture.events};
+  const auto route = fixture.route(406);
+  pump.add_route(route);
+  REQUIRE(fixture.events->push(completion_event(route->id()), 1024));
+
+  static_cast<void>(pump.update({}));
+
+  REQUIRE(snapshot->size() == 1);
+  CHECK(snapshot.get() == original_block);
+  CHECK(fixture.conversation->messages.get() != original_block);
+  REQUIRE(fixture.conversation->messages->size() == 3);
+  CHECK(std::get<scry::detail::TextBlock>(snapshot->front().content.front()).text ==
+        "committed");
+}
+
 TEST_CASE("pump releases events without routes and events after terminal state") {
   PumpFixture fixture;
   scry::detail::PumpState pump{fixture.events};

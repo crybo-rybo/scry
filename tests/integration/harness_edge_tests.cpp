@@ -251,6 +251,24 @@ TEST_CASE("construction and synchronous admission failures are immediate") {
   CHECK_FALSE(harness->send_and_wait(*empty, ""));
 }
 
+TEST_CASE("rejected admission does not freeze a new tool snapshot generation") {
+  auto harness = fake_harness(test_config(), scripted_exchange(completed_stream));
+  auto conversation = scry::Conversation::create();
+  REQUIRE(harness);
+  REQUIRE(conversation);
+  REQUIRE(harness->tools().add(tool(), static_handler(R"({"ok":true})")));
+  REQUIRE_FALSE(scry::detail::HarnessTestAccess::has_current_tool_snapshot(*harness));
+
+  const auto rejected = harness->send(*conversation, "");
+  REQUIRE_FALSE(rejected);
+  CHECK(rejected.error().category == scry::ErrorCategory::invalid_state);
+  CHECK_FALSE(scry::detail::HarnessTestAccess::has_current_tool_snapshot(*harness));
+
+  const auto accepted = harness->send(*conversation, "freeze after validation");
+  REQUIRE(accepted);
+  CHECK(scry::detail::HarnessTestAccess::has_current_tool_snapshot(*harness));
+}
+
 TEST_CASE("oversized terminal diagnostics are bounded before publication") {
   auto fake = std::make_unique<scry::test::FakeTransport>();
   fake->enqueue(scry::test::ScriptedExchange{

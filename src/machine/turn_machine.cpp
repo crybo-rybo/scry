@@ -286,6 +286,7 @@ TransitionResult TurnMachine::on_event(ToolExecutionFailed event) {
 
 TransitionResult TurnMachine::on_event(const CancelTurn /*event*/) {
   state_.emplace<TerminalState>(MachineTerminalKind::cancelled);
+  request_.reset();
   return applied(PublishCancelled{.turn_id = turn_id_});
 }
 
@@ -369,6 +370,7 @@ TransitionResult TurnMachine::complete_turn(ModelResponse response) {
   }
   exchange_.push_back(std::move(assistant));
   state_.emplace<TerminalState>(MachineTerminalKind::completed);
+  request_.reset();
   return applied(CommitCompletion{
       .turn_id = turn_id_,
       .exchange = std::move(exchange_),
@@ -381,6 +383,7 @@ TransitionResult TurnMachine::complete_turn(ModelResponse response) {
 
 TransitionResult TurnMachine::finish_error(Error error) {
   state_.emplace<TerminalState>(MachineTerminalKind::failed);
+  request_.reset();
   return applied(PublishError{.error = std::move(error)});
 }
 

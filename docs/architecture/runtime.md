@@ -91,6 +91,11 @@ teardown callbacks. The remaining lifecycle contracts, each of which is a
 numbered requirement:
 
 - **Conversation commits are transactional.** History is mutated only by the pump at terminal-event delivery: `Completed` commits the full exchange (user message, all tool rounds, final answer) atomically; `Failed`/`Cancelled` commit nothing. This keeps Conversation retry/resubmission mechanically clean, but does not make external handler side effects reversible or idempotent; side-effecting schemas need app-owned operation keys and reconciliation ([tools design](../design/tools-and-providers.md)).
+- **Terminal request release precedes publication.** Every completed, failed, or
+  cancelled machine transition drops its immutable model-request snapshot
+  before the worker can publish the terminal event. Ordinary completion commit
+  therefore appends to uniquely owned history in place; a separately retained
+  reader still triggers the pump's COW reseat.
 - **Detach semantics.** Dropping the handle detaches: the turn runs to termination, the Conversation still commits on success, and the callbacks supplied at `send()` remain route-owned and deliverable. Dropping loses identity and cancellation control, not callbacks.
 - **Atomic callback attachment.** `send()` moves `TurnCallbacks` infallibly into the pump route before it publishes the worker command. No event can precede the immutable callback set, and there is no late registration or replay. An absent callback makes its matching event dead on arrival and returns its bytes to the queue ledger immediately; terminal processing still occurs.
 - **Reentrancy.** Callbacks may call `send`, `cancel`, and tool registration APIs.

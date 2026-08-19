@@ -146,6 +146,22 @@ void ToolRegistry(benchmark::State& state, const bool /*registration*/) {
                                [=] { return ToolRegistryScenario{schema_count}; });
 }
 
+void SchemaAdmission(benchmark::State& state, const SchemaAdmissionShape shape) {
+  const auto schema_count = static_cast<std::size_t>(state.range(0));
+  const auto schema_bytes = static_cast<std::size_t>(state.range(1));
+  measure_prepared_allocations(state, [=] {
+    return SchemaAdmissionScenario{shape, schema_count, schema_bytes};
+  });
+}
+
+void HistoryCommit(benchmark::State& state, const HistoryCommitShape shape) {
+  const auto message_count = static_cast<std::size_t>(state.range(0));
+  const auto message_bytes = static_cast<std::size_t>(state.range(1));
+  measure_prepared_allocations(state, [=] {
+    return HistoryCommitScenario{shape, message_count, message_bytes};
+  });
+}
+
 BENCHMARK(SSE)
     ->Args({1, 0})
     ->Args({64, 0})
@@ -191,6 +207,55 @@ BENCHMARK_CAPTURE(Admission, Schemas, AdmissionShape::schemas)
     ->Args({32, 2048})
     ->Args({64, 2048})
     ->ArgNames({"schemas", "schema_bytes"})
+    ->Iterations(1)
+    ->UseRealTime();
+
+BENCHMARK_CAPTURE(SchemaAdmission, ColdAccepted, SchemaAdmissionShape::cold_accepted)
+    ->Args({8, 2048})
+    ->Args({32, 2048})
+    ->Args({64, 2048})
+    ->ArgNames({"schemas", "schema_bytes"})
+    ->Iterations(1)
+    ->UseRealTime();
+
+BENCHMARK_CAPTURE(SchemaAdmission, WarmAccepted, SchemaAdmissionShape::warm_accepted)
+    ->Args({8, 2048})
+    ->Args({32, 2048})
+    ->Args({64, 2048})
+    ->ArgNames({"schemas", "schema_bytes"})
+    ->Iterations(1)
+    ->UseRealTime();
+
+BENCHMARK_CAPTURE(SchemaAdmission, Rejected, SchemaAdmissionShape::rejected)
+    ->Args({8, 2048})
+    ->Args({32, 2048})
+    ->Args({64, 2048})
+    ->ArgNames({"schemas", "schema_bytes"})
+    ->Iterations(1)
+    ->UseRealTime();
+
+BENCHMARK_CAPTURE(SchemaAdmission, RetainedGenerations,
+                  SchemaAdmissionShape::retained_generations)
+    ->Args({8, 2048})
+    ->Args({32, 2048})
+    ->Args({64, 2048})
+    ->ArgNames({"generations", "schema_bytes"})
+    ->Iterations(1)
+    ->UseRealTime();
+
+BENCHMARK_CAPTURE(HistoryCommit, Unique, HistoryCommitShape::unique)
+    ->Args({32, 4096})
+    ->Args({256, 512})
+    ->Args({2048, 64})
+    ->ArgNames({"messages", "message_bytes"})
+    ->Iterations(1)
+    ->UseRealTime();
+
+BENCHMARK_CAPTURE(HistoryCommit, Aliased, HistoryCommitShape::aliased)
+    ->Args({32, 4096})
+    ->Args({256, 512})
+    ->Args({2048, 64})
+    ->ArgNames({"messages", "message_bytes"})
     ->Iterations(1)
     ->UseRealTime();
 

@@ -4,6 +4,7 @@
 
 #include <array>
 #include <catch2/catch_test_macros.hpp>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -127,6 +128,27 @@ TEST_CASE("OpenAI request is semantically equivalent to the common contract") {
   CHECK(encoded->body.find("parallel_tool_calls") == std::string::npos);
   CHECK(encoded->body.find("reasoning_effort") == std::string::npos);
   CHECK(encoded->body.find("\"strict\"") == std::string::npos);
+}
+
+TEST_CASE("OpenAI request encodes committed history before the turn suffix") {
+  OpenAiAdapter adapter;
+  auto model_request = request();
+  model_request.history =
+      std::make_shared<const std::vector<Message>>(std::vector<Message>{
+          Message{.role = Role::user,
+                  .content = {TextBlock{.text = "committed-prefix"}}},
+      });
+  model_request.messages = {
+      Message{.role = Role::assistant, .content = {TextBlock{.text = "turn-suffix"}}},
+  };
+
+  const auto encoded = adapter.make_request(config(), model_request);
+  REQUIRE(encoded);
+  const auto history_position = encoded->body.find("committed-prefix");
+  const auto suffix_position = encoded->body.find("turn-suffix");
+  REQUIRE(history_position != std::string::npos);
+  REQUIRE(suffix_position != std::string::npos);
+  CHECK(history_position < suffix_position);
 }
 
 TEST_CASE("OpenAI request can disable reasoning without changing the default") {

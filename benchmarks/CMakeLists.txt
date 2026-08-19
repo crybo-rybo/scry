@@ -2,6 +2,7 @@ add_library(
   scry_benchmark_scenarios
   STATIC
     admission_scenarios.cpp
+    ownership_scenarios.cpp
     runtime_scenarios.cpp
     scenarios.cpp
     tool_registry_scenarios.cpp
