@@ -154,7 +154,8 @@ Before handing off a pull request, run the complete local preflight:
 ./scripts/preflight.sh
 ```
 
-That one command adds clang-tidy, the ASan/UBSan and TSan suites, and the
+That one command adds all-scenario semantic profiling and paired-orchestration
+smoke checks, clang-tidy, the ASan/UBSan and TSan suites, and the
 host-specific GCC 16 reflection leg. It runs all available legs and reports
 host-specific toolchains that are unavailable locally; hosted CI is
 authoritative for those environments. Long protocol fuzzing, deep static

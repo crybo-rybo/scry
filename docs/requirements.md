@@ -157,6 +157,7 @@ ID scheme: `SCRY-<AREA>-NNN`, abbreviated to `<AREA>-NNN` in the tables below. I
 | QA-011 | SHOULD | Everything CI enforces is runnable locally with one command (`scripts/preflight.sh`), which reports any leg the host toolchain cannot provide. |
 | QA-012 | MUST | Definition of Done includes updating the relevant load-bearing documentation — including this register — when behavior or a decision changes. |
 | QA-013 | MUST | Every exported public API declaration is documented, and the Doxygen HTML site builds without warnings on pull requests and every push to `main`. The documentation toolchain MUST remain build-only and outside installed/exported package metadata. |
+| QA-014 | MUST | A pull request that claims a performance or memory improvement MUST provide rerunnable, compatible, same-host paired evidence for its head and immediate parent, preserve semantic output, and report representative guardrail scenarios. A stacked optimization additionally reports the affected cumulative scenarios against its profiling-foundation baseline. Measurements remain review evidence and MUST NOT become absolute shared-runner timing or memory gates without the evolution trigger; QA-007 remains authoritative for pull-request gates. |
 
 ## Verification map
 
@@ -178,7 +179,7 @@ Done and human review.
 | ERR | Harness edge and integration suites, including the redaction assertions (ERR-004) | — |
 | PORT | The compiler matrix itself (PORT-001), the reflection gate's configure-time probe (PORT-002), package audits (PORT-004), the curl capability check at first init (PORT-006) | PORT-003 (dependency justification), PORT-005 (platform policy), PORT-007 (release policy) |
 | SHOW | Showcase gate (`ci-showcase.sh`): deterministic NPC and fake-panel suites, headless ImGui smoke, package-absence audit — weekly and on demand | — |
-| QA | The CI workflows are themselves the gate (matrix, sanitizers, tidy, complexity flags, Doxygen); QA-010/QA-011 are properties of the workflow and script set | QA-001, QA-009, QA-012 (habit clauses) |
+| QA | The CI workflows are themselves the gate (matrix, sanitizers, tidy, complexity flags, Doxygen); QA-010/QA-011 are properties of the workflow and script set; the profiling harness is built and smoke-run without timing thresholds | QA-001, QA-009, QA-012, QA-014 (review and habit clauses) |
 
 ## Retired IDs
 

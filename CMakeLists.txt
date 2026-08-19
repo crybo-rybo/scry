@@ -34,6 +34,7 @@ include(GNUInstallDirs)
 
 option(SCRY_BUILD_TESTS "Build Scry's tests" ${PROJECT_IS_TOP_LEVEL})
 option(SCRY_BUILD_EXAMPLES "Compile Scry's canonical examples" ${PROJECT_IS_TOP_LEVEL})
+option(SCRY_BUILD_BENCHMARKS "Build Scry's profiling executables" OFF)
 option(SCRY_ENABLE_FORMAT_CHECK "Create clang-format check and fix targets" OFF)
 option(SCRY_ENABLE_CLANG_TIDY "Run clang-tidy while compiling" OFF)
 option(SCRY_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ${PROJECT_IS_TOP_LEVEL})
@@ -78,6 +79,23 @@ FetchContent_Declare(
   EXCLUDE_FROM_ALL
 )
 FetchContent_MakeAvailable(glaze)
+
+if(SCRY_BUILD_BENCHMARKS)
+  # Google Benchmark is a build-only profiling dependency. Keep its own tests,
+  # documentation, and install rules out of Scry's build and package surface.
+  set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+  set(BENCHMARK_ENABLE_GTEST_TESTS OFF CACHE BOOL "" FORCE)
+  set(BENCHMARK_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+  set(BENCHMARK_INSTALL_DOCS OFF CACHE BOOL "" FORCE)
+  set(BENCHMARK_ENABLE_WERROR OFF CACHE BOOL "" FORCE)
+  FetchContent_Declare(
+    google_benchmark
+    GIT_REPOSITORY https://github.com/google/benchmark.git
+    GIT_TAG 192ef10025eb2c4cdd392bc502f0c852196baa48
+    SYSTEM
+  )
+  FetchContent_MakeAvailable(google_benchmark)
+endif()
 
 add_library(
   scry
@@ -231,6 +249,8 @@ if(SCRY_ENABLE_FORMAT_CHECK)
     SCRY_FORMAT_SOURCES
     CONFIGURE_DEPENDS
       "${PROJECT_SOURCE_DIR}/examples/*.cpp"
+      "${PROJECT_SOURCE_DIR}/benchmarks/*.cpp"
+      "${PROJECT_SOURCE_DIR}/benchmarks/*.hpp"
       "${PROJECT_SOURCE_DIR}/include/*.hpp"
       "${PROJECT_SOURCE_DIR}/src/*.cpp"
       "${PROJECT_SOURCE_DIR}/src/*.hpp"
@@ -402,6 +422,10 @@ if(SCRY_BUILD_TESTS)
   # suites registered under tests/, so CTest is included here rather than there.
   include(CTest)
   add_subdirectory(tests)
+endif()
+
+if(SCRY_BUILD_BENCHMARKS)
+  add_subdirectory(benchmarks)
 endif()
 
 configure_package_config_file(

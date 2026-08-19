@@ -21,7 +21,18 @@
   form, with object keys sorted lexicographically. There is no second encoder
   and no per-seam canonicalization to keep in agreement, so "canonical JSON"
   means one thing throughout the codebase.
-- Dependency bar is high: curl, Glaze, and test frameworks. Each new dependency needs a written justification in this doc. Header hygiene enforced (IWYU in CI) so the PImpl firewall stays real.
+- **Google Benchmark 1.9.5** at commit
+  `192ef10025eb2c4cdd392bc502f0c852196baa48` is the pinned,
+  build-only profiling framework. It provides calibrated repetitions, warm-up,
+  optimizer barriers, counters, filtering, and machine-readable output rather
+  than making Scry maintain a second timing framework. It is fetched only when
+  `SCRY_BUILD_BENCHMARKS=ON`, which defaults to `OFF`; its targets are private
+  to benchmark executables and are never installed or exported. It therefore
+  does not expand the SCRY-PORT-003 runtime dependency set or the normal
+  consumer graph.
+- Dependency bar is high: curl, Glaze, and test frameworks. Each new dependency
+  needs a written justification in this doc. Header hygiene is enforced (IWYU
+  in CI) so the PImpl firewall stays real.
 
 **Showcase boundary.**
 Dependency direction is one-way: showcase code depends inward on the public
