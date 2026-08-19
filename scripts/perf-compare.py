@@ -694,7 +694,14 @@ def summarize_raw_files(
             "output_bytes",
         }
         if group["mode"] == "allocations":
-            required_counters.update({"cpp_allocations", "cpp_requested_bytes"})
+            required_counters.update(
+                {
+                    "cpp_allocations",
+                    "cpp_requested_bytes",
+                    "cpp_live_requested_bytes",
+                    "cpp_peak_live_requested_bytes",
+                }
+            )
         missing_counters = sorted(required_counters - group["counter_samples"].keys())
         if missing_counters:
             raise EvidenceError(
@@ -1451,6 +1458,8 @@ def comparison_markdown(comparison: dict[str, Any]) -> str:
         if scenario["mode"] == "allocations"
         and "cpp_allocations" in scenario["counters"]
         and "cpp_requested_bytes" in scenario["counters"]
+        and "cpp_live_requested_bytes" in scenario["counters"]
+        and "cpp_peak_live_requested_bytes" in scenario["counters"]
     ]
     if allocation_scenarios:
         lines.extend(
@@ -1474,10 +1483,31 @@ def comparison_markdown(comparison: dict[str, Any]) -> str:
                 f"{markdown_number(requested['head']['median'])} | "
                 f"{markdown_percent(requested['head_over_base']['percent_change'])} |"
             )
+        lines.extend(
+            [
+                "",
+                "### Live C++ requested bytes",
+                "",
+                "| Scenario | Base live | Head live | Change | Base peak | Head peak | Change |",
+                "|---|---:|---:|---:|---:|---:|---:|",
+            ]
+        )
+        for scenario in allocation_scenarios:
+            live = scenario["counters"]["cpp_live_requested_bytes"]
+            peak = scenario["counters"]["cpp_peak_live_requested_bytes"]
+            name = scenario["name"].replace("|", "\\|")
+            lines.append(
+                f"| `{name}` | {markdown_number(live['base']['median'])} | "
+                f"{markdown_number(live['head']['median'])} | "
+                f"{markdown_percent(live['head_over_base']['percent_change'])} | "
+                f"{markdown_number(peak['base']['median'])} | "
+                f"{markdown_number(peak['head']['median'])} | "
+                f"{markdown_percent(peak['head_over_base']['percent_change'])} |"
+            )
     lines.extend(
         [
             "",
-            "Negative timing changes are faster; negative allocation changes use fewer calls or requested bytes. Allocation-executable timings are retained only in JSON and are non-authoritative.",
+            "Negative timing changes are faster; negative allocation changes use fewer calls or requested bytes. Live bytes are allocations from the measured epoch that remain at its boundary; peak is their high-water mark. Allocation-executable timings are retained only in JSON and are non-authoritative.",
             "Raw samples, allocation counters, normalized MAD, and bootstrap data are retained in `comparison.json`.",
             "",
         ]
