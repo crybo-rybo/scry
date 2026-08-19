@@ -18,6 +18,12 @@ void publish_result(benchmark::State& state, const ScenarioResult& result,
       static_cast<double>(totals.calls), benchmark::Counter::kAvgIterations);
   state.counters["cpp_requested_bytes"] = benchmark::Counter(
       static_cast<double>(totals.requested_bytes), benchmark::Counter::kAvgIterations);
+  state.counters["cpp_live_requested_bytes"] =
+      benchmark::Counter(static_cast<double>(totals.live_requested_bytes),
+                         benchmark::Counter::kAvgIterations);
+  state.counters["cpp_peak_live_requested_bytes"] =
+      benchmark::Counter(static_cast<double>(totals.peak_live_requested_bytes),
+                         benchmark::Counter::kAvgIterations);
   state.counters["input_bytes"] = static_cast<double>(result.input_bytes);
   state.counters["items"] = static_cast<double>(result.items);
   state.counters["output_bytes"] = static_cast<double>(result.output_bytes);
@@ -49,6 +55,8 @@ void measure_allocations(benchmark::State& state, Factory&& factory) {
     }
     totals.calls += sample.calls;
     totals.requested_bytes += sample.requested_bytes;
+    totals.live_requested_bytes += sample.live_requested_bytes;
+    totals.peak_live_requested_bytes += sample.peak_live_requested_bytes;
     benchmark::DoNotOptimize(last.items);
     benchmark::DoNotOptimize(last.output_bytes);
     if (!last.valid) {
@@ -86,6 +94,8 @@ void measure_prepared_allocations(benchmark::State& state, Factory&& factory) {
     }
     totals.calls += sample.calls;
     totals.requested_bytes += sample.requested_bytes;
+    totals.live_requested_bytes += sample.live_requested_bytes;
+    totals.peak_live_requested_bytes += sample.peak_live_requested_bytes;
     benchmark::DoNotOptimize(last.items);
     benchmark::DoNotOptimize(last.output_bytes);
     if (!last.valid) {

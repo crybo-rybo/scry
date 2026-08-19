@@ -63,3 +63,7 @@ target_sources(
   PRIVATE
     allocation_tracker.cpp
 )
+target_compile_definitions(
+  scry_allocation_benchmarks
+  PRIVATE SCRY_VALIDATE_ALLOCATION_TRACKER=1
+)

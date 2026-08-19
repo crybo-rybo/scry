@@ -179,15 +179,22 @@ memory pressure cannot drift during calibration.
 The allocation executable reports these counters per logical operation:
 
 - `cpp_allocations`: calls through the instrumented global C++ allocation
-  forms; and
-- `cpp_requested_bytes`: bytes requested through those allocation calls.
+  forms;
+- `cpp_requested_bytes`: cumulative bytes requested through those allocation
+  calls;
+- `cpp_live_requested_bytes`: requested bytes allocated during the measured
+  epoch that remain live at its boundary; and
+- `cpp_peak_live_requested_bytes`: the high-water mark of simultaneously live
+  requested bytes allocated during that epoch.
 
 The tracker is benchmark-only, cross-thread safe, and inactive during fixture
-construction. These counters cover Scry, Glaze, and standard-library C++
-allocations routed through the replaced operators. They do **not** cover
-libcurl's internal `malloc` calls, allocator metadata, resident pages, or the
-configured logical payload limits. They must be labeled as C++ allocation
-metrics, never as total process memory.
+construction. Allocation epochs tag their own objects, so freeing an object
+created before the current measurement cannot reduce its live-byte counters.
+These counters cover Scry, Glaze, and standard-library C++ allocations routed
+through the replaced operators. They do **not** cover libcurl's internal
+`malloc` calls, allocator metadata, resident pages, or the configured logical
+payload limits. They must be labeled as C++ requested-byte metrics, never as
+total process memory.
 
 ### Process memory
 
@@ -204,9 +211,10 @@ workloads large enough to exceed allocator noise. Results are comparable only
 on the same operating system, host, allocator, compiler, standard library, and
 build configuration. Native tools such as heaptrack or Instruments may explain
 an observation, but their numbers are diagnostic artifacts rather than a
-cross-platform acceptance metric. The initial portable harness reports C++
-allocation calls and requested bytes; it does not automate RSS collection, so
-no pull request may imply that those C++ counters cover total process memory.
+cross-platform acceptance metric. The portable harness reports C++ allocation
+calls plus cumulative, boundary-live, and peak-live requested bytes; it does
+not automate RSS collection, so no pull request may imply that those C++
+counters cover total process memory.
 
 ## Result Metadata and Compatibility
 

@@ -14,6 +14,10 @@
     {
       "sha256": "27bfe1d1c9e3f0deaae2fe8085a46115941cc891ab727c4767ee0b46964b903c",
       "reason": "review revision preserves established scenario identities and adds separately named ownership diagnostics"
+    },
+    {
+      "sha256": "51847a9c17539b03355b7638c4ebe0d45d9c2543901f7979a201bbbbddfd6b60",
+      "reason": "live allocation accounting extends instrumentation without changing logical scenario work"
     }
   ]
 }
