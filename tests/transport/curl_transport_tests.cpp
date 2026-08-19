@@ -204,9 +204,9 @@ TEST_CASE("curl transport sanitizes response consumer errors") {
   BodyChunkSink sink{[](std::string_view) -> scry::Status {
     return std::unexpected(scry::Error{
         .category = ErrorCategory::resource_limit,
+        .retryable = true,
         .message = "response-body-never-log",
         .provider_detail = "api-key-never-log",
-        .retryable = true,
     });
   }};
   std::stop_source shutdown;
@@ -366,9 +366,9 @@ TEST_CASE("curl transport preserves provider-neutral sanitized error detail") {
   BodyChunkSink sink{[](std::string_view) -> scry::Status {
     return std::unexpected(scry::Error{
         .category = ErrorCategory::network,
+        .retryable = true,
         .message = "private provider message",
         .provider_detail = "anthropic:overloaded_error",
-        .retryable = true,
         .provider_request_id = "body-request",
     });
   }};
@@ -530,12 +530,12 @@ TEST_CASE("curl transport falls back to the response request ID on sink failure"
   BodyChunkSink sink{[](std::string_view) -> scry::Status {
     return std::unexpected(scry::Error{
         .category = ErrorCategory::network,
+        .retryable = true,
+        .attempt = 4,
         .message = "private message",
         .provider_detail = "provider:safe_code",
-        .retryable = true,
         .retry_after = std::chrono::milliseconds{31},
         .turn_id = scry::TurnId{9},
-        .attempt = 4,
     });
   }};
   std::stop_source shutdown;

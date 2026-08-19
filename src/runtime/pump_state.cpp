@@ -217,9 +217,9 @@ void PumpState::apply_terminal(TurnRoute& route, WorkerEvent& event) {
           .error =
               Error{
                   .category = ErrorCategory::resource_limit,
+                  .attempt = completion->attempt_count,
                   .message = "completion exceeds the Conversation byte limit",
                   .turn_id = completion->turn_id,
-                  .attempt = completion->attempt_count,
                   .provider_request_id = completion->provider_request_id,
               },
       };

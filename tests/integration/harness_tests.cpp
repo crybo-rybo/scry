@@ -183,8 +183,8 @@ TEST_CASE("accepted failure uses one async error channel and commits nothing") {
   fake->enqueue({
       .result = std::unexpected(scry::Error{
           .category = scry::ErrorCategory::network,
-          .message = "scripted failure",
           .retryable = true,
+          .message = "scripted failure",
       }),
   });
   auto harness_result =
