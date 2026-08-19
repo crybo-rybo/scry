@@ -51,7 +51,7 @@ TEST_CASE("a turn with empty callbacks still commits its history") {
   // No callback can ever consume the completion, so the pump releases its bytes
   // on arrival rather than holding them for a registration that cannot happen.
   CHECK(stats.events_remaining == 0);
-  CHECK(fixture.conversation->messages.size() == 2);
+  CHECK(fixture.conversation->messages->size() == 2);
   CHECK_FALSE(fixture.conversation->busy);
   CHECK(route->terminal());
 }
@@ -208,7 +208,7 @@ TEST_CASE("pump budget bounds event ingestion and terminal commits") {
   CHECK(bounded.callbacks_delivered == 0);
   CHECK(bounded.events_remaining == 2);
   CHECK(bounded.budget_exhausted);
-  CHECK(fixture.conversation->messages.size() == 2);
+  CHECK(fixture.conversation->messages->size() == 2);
   CHECK_FALSE(first_completed);
   CHECK_FALSE(second_completed);
 
@@ -217,7 +217,7 @@ TEST_CASE("pump budget bounds event ingestion and terminal commits") {
   CHECK(drained.events_remaining == 0);
   CHECK(first_completed);
   CHECK(second_completed);
-  CHECK(fixture.conversation->messages.size() == 4);
+  CHECK(fixture.conversation->messages->size() == 4);
 }
 
 TEST_CASE("detaching retains the callbacks supplied at send") {

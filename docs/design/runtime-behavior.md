@@ -80,10 +80,14 @@ dispatch, resend, or commit. It is not a per-message limit.
 there is no Conversation-local or process-global registry. `send()` snapshots
 immutable registrations into the accepted turn, so later or reentrant
 registration remains safe and affects only subsequently accepted turns. The
-public surface cannot move the Harness-owned registry out. Definitions are
-snapshotted and their neutral schemas are copied to the worker; handlers stay
-pump-owned and never cross the thread boundary. Explicit schemas are parsed
-when registered, must be JSON objects, and are stored canonically.
+public surface cannot move the Harness-owned registry out. Registration appends
+to the registry's working list only; the first `send()` after a change freezes
+one registry-level immutable snapshot — registrations and neutral schemas as
+shared collections — that subsequent turns reuse until the next registration,
+and the accepted turn shares those collections with its model requests instead
+of copying them. Handlers stay pump-owned and never cross the thread boundary.
+Explicit schemas are parsed when registered, must be JSON objects, and are
+stored canonically.
 
 **Runtime configuration defaults.** Limits count payload bytes (not allocator
 overhead); implementations may reject earlier when a provider's own limit is

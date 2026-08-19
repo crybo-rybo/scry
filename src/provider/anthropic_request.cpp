@@ -83,16 +83,30 @@ encode_boundary_json(const Json& json, const std::string_view failure_message) {
   return value;
 }
 
-[[nodiscard]] Result<JsonValue::array_t>
-encode_messages(const std::vector<Message>& messages) {
+[[nodiscard]] Status encode_message_into(JsonValue::array_t& encoded,
+                                         const Message& message) {
+  auto value = encode_message(message);
+  if (!value) {
+    return std::unexpected(std::move(value.error()));
+  }
+  encoded.push_back(std::move(*value));
+  return {};
+}
+
+[[nodiscard]] Result<JsonValue::array_t> encode_messages(const ModelRequest& request) {
   JsonValue::array_t encoded{};
-  encoded.reserve(messages.size());
-  for (const auto& message : messages) {
-    auto value = encode_message(message);
-    if (!value) {
-      return std::unexpected(std::move(value.error()));
+  encoded.reserve(request.message_count());
+  if (request.history) {
+    for (const auto& message : *request.history) {
+      if (auto status = encode_message_into(encoded, message); !status) {
+        return std::unexpected(std::move(status.error()));
+      }
     }
-    encoded.push_back(std::move(*value));
+  }
+  for (const auto& message : request.messages) {
+    if (auto status = encode_message_into(encoded, message); !status) {
+      return std::unexpected(std::move(status.error()));
+    }
   }
   return encoded;
 }
@@ -138,13 +152,9 @@ encode_tools(const std::vector<ToolSchema>& tools) {
 
 [[nodiscard]] Result<JsonValue> make_request_body(const Config& config,
                                                   const ModelRequest& request) {
-  auto messages = encode_messages(request.messages);
+  auto messages = encode_messages(request);
   if (!messages) {
     return std::unexpected(std::move(messages.error()));
-  }
-  auto tools = encode_tools(request.tools);
-  if (!tools) {
-    return std::unexpected(std::move(tools.error()));
   }
 
   JsonValue root{};
@@ -159,7 +169,11 @@ encode_tools(const std::vector<ToolSchema>& tools) {
   if (request.sampling.top_p) {
     root["top_p"] = *request.sampling.top_p;
   }
-  if (!tools->empty()) {
+  if (request.tools && !request.tools->empty()) {
+    auto tools = encode_tools(*request.tools);
+    if (!tools) {
+      return std::unexpected(std::move(tools.error()));
+    }
     root["tools"].data = std::move(*tools);
   }
   return root;

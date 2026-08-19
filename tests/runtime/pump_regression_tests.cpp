@@ -120,7 +120,7 @@ TEST_CASE("completion mutation releases the originally accounted queue bytes") {
   CHECK(stats.callbacks_delivered == 1);
   REQUIRE(delivered_error);
   CHECK(delivered_error->category == scry::ErrorCategory::resource_limit);
-  CHECK(fixture.conversation->messages.empty());
+  CHECK(fixture.conversation->messages->empty());
 
   REQUIRE(fixture.events->push(
       scry::detail::TextDeltaEvent{
@@ -274,8 +274,8 @@ TEST_CASE("committing a completion moves its exchange into the Conversation") {
 
   // The user message plus the committed assistant message, with content
   // intact after the move.
-  REQUIRE(fixture.conversation->messages.size() == 2);
-  const auto& assistant = fixture.conversation->messages.back();
+  REQUIRE(fixture.conversation->messages->size() == 2);
+  const auto& assistant = fixture.conversation->messages->back();
   CHECK(assistant.role == scry::detail::Role::assistant);
   REQUIRE(assistant.content.size() == 1);
   CHECK(std::get<scry::detail::TextBlock>(assistant.content.front()).text == "done");

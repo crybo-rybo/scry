@@ -3,6 +3,7 @@
 #include "protocol/sse.hpp"
 
 #include <algorithm>
+#include <memory>
 #include <string_view>
 #include <utility>
 #include <variant>
@@ -332,30 +333,34 @@ RequestEncodingScenario::RequestEncodingScenario(const RequestDialect dialect,
       .top_p = 0.9,
       .max_tokens = 512,
   };
-  request_.messages.reserve(message_count);
+  auto history = std::make_shared<std::vector<detail::Message>>();
+  history->reserve(message_count);
   for (std::size_t index = 0; index < message_count; ++index) {
     auto text = padded_text(512, index);
     input_bytes_ += text.size();
-    request_.messages.push_back(detail::Message{
+    history->push_back(detail::Message{
         .role = index % 2 == 0 ? detail::Role::user : detail::Role::assistant,
         .content = {detail::TextBlock{.text = std::move(text)}},
     });
   }
-  request_.tools.reserve(schema_count);
+  request_.history = std::move(history);
+  auto tools = std::make_shared<std::vector<detail::ToolSchema>>();
+  tools->reserve(schema_count);
   for (std::size_t index = 0; index < schema_count; ++index) {
     auto schema = schema_json(index);
     input_bytes_ += schema.size();
-    request_.tools.push_back(detail::ToolSchema{
+    tools->push_back(detail::ToolSchema{
         .name = "tool-" + std::to_string(index),
         .description = padded_text(128, index),
         .input_schema = Json{.text = std::move(schema)},
     });
   }
+  request_.tools = std::move(tools);
   input_bytes_ += request_.system_prompt.size();
 }
 
 ScenarioResult RequestEncodingScenario::run(const bool validate) {
-  const auto items = request_.messages.size() + request_.tools.size();
+  const auto items = request_.message_count() + request_.tools->size();
   auto encoded = adapter_->make_request(config_, request_);
   if (!encoded) {
     return {};

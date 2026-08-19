@@ -13,7 +13,12 @@ namespace scry::detail {
 
 struct ConversationState {
   ConversationConfig config{};
-  std::vector<Message> messages{};
+  // Committed history as a shared immutable-when-shared block. send() hands a
+  // const view of this block to the request instead of copying every message;
+  // the pump appends at commit, reseating onto a private copy first whenever a
+  // live request snapshot still shares the block.
+  std::shared_ptr<std::vector<Message>> messages{
+      std::make_shared<std::vector<Message>>()};
   std::size_t payload_bytes{};
   bool busy{false};
 };
@@ -25,12 +30,22 @@ struct RegisteredTool final {
 
 using ToolRegistrationPtr = std::shared_ptr<const RegisteredTool>;
 using ToolSnapshot = std::vector<ToolRegistrationPtr>;
+using FrozenToolEntries = std::shared_ptr<const ToolSnapshot>;
+
+// Immutable registry-level snapshot pair. Registration appends to the mutable
+// working list only; the frozen views are rebuilt lazily on the next send that
+// observes them, so repeated accepted turns share one block per registration
+// generation and registration itself pays no snapshot cost.
+struct ToolSnapshots {
+  FrozenToolEntries entries{};
+  SchemaSnapshot schemas{};
+};
 
 struct ToolRegistryState {
   ToolSnapshot entries{};
+  ToolSnapshots frozen{};
 };
 
-[[nodiscard]] ToolSnapshot snapshot_tools(const ToolRegistryState& state);
-[[nodiscard]] std::vector<ToolSchema> snapshot_schemas(const ToolSnapshot& snapshot);
+[[nodiscard]] ToolSnapshots snapshot_tools(ToolRegistryState& state);
 
 } // namespace scry::detail

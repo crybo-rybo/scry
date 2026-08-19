@@ -5,6 +5,7 @@
 #include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace scry::detail {
 namespace {
@@ -49,19 +50,29 @@ Status add_tool_registration(ToolRegistryState& state, ToolDefinition definition
   return {};
 }
 
-ToolSnapshot snapshot_tools(const ToolRegistryState& state) { return state.entries; }
-
-std::vector<ToolSchema> snapshot_schemas(const ToolSnapshot& snapshot) {
-  std::vector<ToolSchema> schemas{};
-  schemas.reserve(snapshot.size());
-  for (const auto& registration : snapshot) {
-    schemas.push_back(ToolSchema{
+ToolSnapshots snapshot_tools(ToolRegistryState& state) {
+  // The registry is additive-only and single-app-thread, so a frozen view whose
+  // size matches the working list is current. Registration leaves the frozen
+  // pair stale; the first send that observes it pays one rebuild, and every
+  // later turn shares the same immutable blocks.
+  if (state.frozen.entries && state.frozen.entries->size() == state.entries.size()) {
+    return state.frozen;
+  }
+  auto entries = std::make_shared<ToolSnapshot>(state.entries);
+  auto schemas = std::make_shared<std::vector<ToolSchema>>();
+  schemas->reserve(entries->size());
+  for (const auto& registration : *entries) {
+    schemas->push_back(ToolSchema{
         .name = registration->definition.name,
         .description = registration->definition.description,
         .input_schema = registration->definition.input_schema,
     });
   }
-  return schemas;
+  state.frozen = ToolSnapshots{
+      .entries = std::move(entries),
+      .schemas = std::move(schemas),
+  };
+  return state.frozen;
 }
 
 } // namespace scry::detail
