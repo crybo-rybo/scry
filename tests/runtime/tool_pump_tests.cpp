@@ -14,7 +14,7 @@ TEST_CASE("pump executes tool handlers on the update caller thread") {
         handler_thread = std::this_thread::get_id();
         return scry::Json{.text = "null"};
       })};
-  const auto route = fixture.route(301, {.tools = tools});
+  const auto route = fixture.route(301, {.tools = frozen_tools(tools)});
   scry::detail::PumpState pump{fixture.events};
   pump.add_route(route);
   REQUIRE(fixture.events->push(tool_event(route->id()), 1024));
@@ -37,7 +37,7 @@ TEST_CASE("pump queues a tool result before notifying the ToolCall observer") {
   std::string observed_id;
   const auto route =
       fixture.route(302, {
-                             .tools = tools,
+                             .tools = frozen_tools(tools),
                              .callbacks =
                                  scry::TurnCallbacks{
                                      .on_tool_call =
@@ -86,7 +86,7 @@ TEST_CASE("cancellation during a handler suppresses its result and later calls")
   };
   route = fixture.route(
       303, {
-               .tools = std::move(tools),
+               .tools = frozen_tools(std::move(tools)),
                .callbacks =
                    scry::TurnCallbacks{
                        .on_tool_call = [&observer_calls](
@@ -127,7 +127,8 @@ TEST_CASE("fatal tool result failure suppresses every later handler") {
                         return scry::Json{.text = "{}"};
                       }),
   };
-  const auto route = fixture.route(306, {.tools = tools, .max_tool_result_bytes = 2});
+  const auto route =
+      fixture.route(306, {.tools = frozen_tools(tools), .max_tool_result_bytes = 2});
   scry::detail::PumpState pump{fixture.events};
   pump.add_route(route);
   REQUIRE(fixture.events->push(tool_event(route->id(), "first", "call-1"), 1024));
@@ -160,7 +161,7 @@ TEST_CASE("cumulative result failure suppresses remaining calls in the batch") {
       registered_tool("second", handler(1)),
       registered_tool("third", handler(2)),
   };
-  const auto route = fixture.route(307, {.tools = tools});
+  const auto route = fixture.route(307, {.tools = frozen_tools(tools)});
   scry::detail::PumpState pump{fixture.events};
   pump.add_route(route);
   constexpr std::size_t two_results_minus_one = 17;
@@ -192,7 +193,7 @@ TEST_CASE("detached routes continue dispatching tool calls") {
         ++handler_calls;
         return scry::Json{.text = R"({"ok":true})"};
       })};
-  const auto route = fixture.route(304, {.tools = tools});
+  const auto route = fixture.route(304, {.tools = frozen_tools(tools)});
   scry::detail::PumpState pump{fixture.events};
   pump.add_route(route);
   route->detach();
@@ -218,7 +219,7 @@ TEST_CASE("a terminal route suppresses a previously buffered tool call") {
       })};
   const auto route = fixture.route(
       305, {
-               .tools = tools,
+               .tools = frozen_tools(tools),
                .callbacks = scry::TurnCallbacks{
                    .on_tool_call =
                        [&observer_calls](const scry::ToolCall&) { ++observer_calls; },

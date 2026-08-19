@@ -123,21 +123,18 @@ void append_arguments(AnthropicAdapter& adapter, ProviderDecodeState& state,
                       },
               },
           },
-      .tools =
-          {
-              ToolSchema{
-                  .name = "weather",
-                  .description = "Get weather",
-                  .input_schema =
-                      Json{.text = R"({"type":"object","required":["city"]})"},
-              },
-              ToolSchema{
-                  .name = "days",
-                  .description = "Get days",
-                  .input_schema =
-                      Json{.text = R"({"type":"object","required":["days"]})"},
-              },
+      .tools = std::make_shared<const std::vector<ToolSchema>>(std::vector<ToolSchema>{
+          ToolSchema{
+              .name = "weather",
+              .description = "Get weather",
+              .input_schema = Json{.text = R"({"type":"object","required":["city"]})"},
           },
+          ToolSchema{
+              .name = "days",
+              .description = "Get days",
+              .input_schema = Json{.text = R"({"type":"object","required":["days"]})"},
+          },
+      }),
   };
 }
 

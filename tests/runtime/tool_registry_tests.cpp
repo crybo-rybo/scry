@@ -74,24 +74,46 @@ TEST_CASE("tool snapshots retain immutable registrations across later additions"
   REQUIRE(scry::detail::add_tool_registration(state, definition(), handler(calls)));
 
   auto snapshot = scry::detail::snapshot_tools(state);
-  REQUIRE(snapshot.size() == 1);
+  REQUIRE(snapshot.entries->size() == 1);
   REQUIRE(scry::detail::add_tool_registration(
       state, definition("current_time", R"({"type":"object"})"), handler()));
   CHECK(state.entries.size() == 2);
-  CHECK(snapshot.size() == 1);
-  CHECK(snapshot.front() == state.entries.front());
+  CHECK(snapshot.entries->size() == 1);
+  CHECK(snapshot.entries->front() == state.entries.front());
 
-  const auto schemas = scry::detail::snapshot_schemas(snapshot);
+  const auto& schemas = *snapshot.schemas;
   REQUIRE(schemas.size() == 1);
   CHECK(schemas.front().name == "forecast");
   CHECK(schemas.front().description == "Get a forecast");
   CHECK(schemas.front().input_schema.text ==
-        snapshot.front()->definition.input_schema.text);
+        snapshot.entries->front()->definition.input_schema.text);
 
   state.entries.clear();
-  auto result =
-      (*snapshot.front()->handler)(scry::Json{.text = R"({"city":"Detroit"})"});
+  auto result = (*snapshot.entries->front()->handler)(
+      scry::Json{.text = R"({"city":"Detroit"})"});
   REQUIRE(result);
   CHECK(result->text == R"({"city":"Detroit"})");
   CHECK(*calls == 1);
+}
+
+TEST_CASE("registry snapshots rebuild only when registration changed") {
+  scry::detail::ToolRegistryState state{};
+  REQUIRE(scry::detail::add_tool_registration(state, definition(), handler()));
+
+  const auto first = scry::detail::snapshot_tools(state);
+  const auto shared = scry::detail::snapshot_tools(state);
+  CHECK(first.entries == shared.entries);
+  CHECK(first.schemas == shared.schemas);
+  CHECK(first.entries->size() == 1);
+  CHECK(first.schemas->size() == 1);
+
+  REQUIRE(scry::detail::add_tool_registration(
+      state, definition("current_time", R"({"type":"object"})"), handler()));
+  const auto rebuilt = scry::detail::snapshot_tools(state);
+  CHECK(rebuilt.entries != first.entries);
+  CHECK(rebuilt.schemas != first.schemas);
+  CHECK(rebuilt.entries->size() == 2);
+  CHECK(rebuilt.schemas->size() == 2);
+  CHECK(first.entries->size() == 1);
+  CHECK(rebuilt.schemas->back().name == "current_time");
 }

@@ -106,27 +106,31 @@ void digest_text(std::uint64_t& digest, const std::string_view text) noexcept {
 void append_expected_history(detail::ModelRequest& request,
                              const std::size_t message_count,
                              const std::size_t message_bytes) {
-  request.messages.reserve(message_count + 1);
+  auto history = std::make_shared<std::vector<detail::Message>>();
+  history->reserve(message_count);
   for (std::size_t index = 0; index < message_count; ++index) {
-    request.messages.push_back(detail::Message{
+    history->push_back(detail::Message{
         .role = index % 2 == 0 ? detail::Role::user : detail::Role::assistant,
         .content = {detail::TextBlock{.text = fixture_text(message_bytes, index)}},
     });
   }
+  request.history = std::move(history);
 }
 
 void append_expected_schemas(detail::ModelRequest& request,
                              const std::size_t schema_count,
                              const std::size_t schema_bytes) {
-  request.tools.reserve(schema_count);
+  auto schemas = std::make_shared<std::vector<detail::ToolSchema>>();
+  schemas->reserve(schema_count);
   for (std::size_t index = 0; index < schema_count; ++index) {
     auto definition = tool_definition(index, schema_bytes);
-    request.tools.push_back(detail::ToolSchema{
+    schemas->push_back(detail::ToolSchema{
         .name = std::move(definition.name),
         .description = std::move(definition.description),
         .input_schema = std::move(definition.input_schema),
     });
   }
+  request.tools = std::move(schemas);
 }
 
 [[nodiscard]] std::optional<std::string>

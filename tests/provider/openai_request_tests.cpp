@@ -4,6 +4,7 @@
 
 #include <array>
 #include <catch2/catch_test_macros.hpp>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -85,15 +86,13 @@ using namespace scry::detail;
                       },
               },
           },
-      .tools =
-          {
-              ToolSchema{
-                  .name = "weather",
-                  .description = "Get weather",
-                  .input_schema =
-                      Json{.text = R"({"type":"object","required":["city"]})"},
-              },
+      .tools = std::make_shared<const std::vector<ToolSchema>>(std::vector<ToolSchema>{
+          ToolSchema{
+              .name = "weather",
+              .description = "Get weather",
+              .input_schema = Json{.text = R"({"type":"object","required":["city"]})"},
           },
+      }),
       .sampling =
           SamplingConfig{
               .temperature = 1.5,
@@ -129,6 +128,27 @@ TEST_CASE("OpenAI request is semantically equivalent to the common contract") {
   CHECK(encoded->body.find("parallel_tool_calls") == std::string::npos);
   CHECK(encoded->body.find("reasoning_effort") == std::string::npos);
   CHECK(encoded->body.find("\"strict\"") == std::string::npos);
+}
+
+TEST_CASE("OpenAI request encodes committed history before the turn suffix") {
+  OpenAiAdapter adapter;
+  auto model_request = request();
+  model_request.history =
+      std::make_shared<const std::vector<Message>>(std::vector<Message>{
+          Message{.role = Role::user,
+                  .content = {TextBlock{.text = "committed-prefix"}}},
+      });
+  model_request.messages = {
+      Message{.role = Role::assistant, .content = {TextBlock{.text = "turn-suffix"}}},
+  };
+
+  const auto encoded = adapter.make_request(config(), model_request);
+  REQUIRE(encoded);
+  const auto history_position = encoded->body.find("committed-prefix");
+  const auto suffix_position = encoded->body.find("turn-suffix");
+  REQUIRE(history_position != std::string::npos);
+  REQUIRE(suffix_position != std::string::npos);
+  CHECK(history_position < suffix_position);
 }
 
 TEST_CASE("OpenAI request can disable reasoning without changing the default") {
@@ -204,7 +224,10 @@ TEST_CASE("OpenAI request rejects neutral shapes that cannot be preserved") {
   CHECK(encoded.error().category == ErrorCategory::invalid_config);
 
   invalid = request();
-  invalid.tools.front().input_schema.text = "[]";
+  invalid.tools = std::make_shared<const std::vector<ToolSchema>>(
+      std::vector<ToolSchema>{{.name = "weather",
+                               .description = "Get weather",
+                               .input_schema = {.text = "[]"}}});
   encoded = adapter.make_request(config(), invalid);
   REQUIRE_FALSE(encoded);
   CHECK(encoded.error().category == ErrorCategory::invalid_config);
@@ -224,7 +247,7 @@ TEST_CASE("OpenAI request preserves assistant text-only and tool-only shapes") {
                   .arguments = Json{.text = "{}"},
               }}},
   };
-  model_request.tools.clear();
+  model_request.tools.reset();
   model_request.sampling.top_p.reset();
 
   const auto encoded = adapter.make_request(config(), model_request);
@@ -262,10 +285,16 @@ TEST_CASE("OpenAI request rejects malformed tool boundary fields") {
   require_invalid_request(config(), invalid);
 
   invalid = request();
-  invalid.tools.front().name.clear();
+  invalid.tools = std::make_shared<const std::vector<ToolSchema>>(
+      std::vector<ToolSchema>{{.name = "",
+                               .description = "lookup",
+                               .input_schema = {.text = R"({"type":"object"})"}}});
   require_invalid_request(config(), invalid);
 
   invalid = request();
-  invalid.tools.front().input_schema.text = "{";
+  invalid.tools = std::make_shared<const std::vector<ToolSchema>>(
+      std::vector<ToolSchema>{{.name = "weather",
+                               .description = "Get weather",
+                               .input_schema = {.text = "{"}}});
   require_invalid_request(config(), invalid);
 }

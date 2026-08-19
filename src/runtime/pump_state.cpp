@@ -19,6 +19,30 @@ namespace {
   return text;
 }
 
+// Appends one committed exchange onto the Conversation's history block. The
+// block is shared with accepted-turn request snapshots, so a commit reseats it
+// copy-on-write whenever a live request still holds it. Terminalization releases
+// the worker's request before publishing completion, so ordinary commit reuses
+// the block deterministically; retained external snapshots still take this path.
+void append_history(ConversationState& conversation, const std::string_view user_text,
+                    std::vector<Message>&& exchange) {
+  if (conversation.messages.use_count() > 1) {
+    conversation.messages =
+        std::make_shared<std::vector<Message>>(*conversation.messages);
+  }
+  auto& messages = *conversation.messages;
+  Message user{
+      .role = Role::user,
+      .content = {TextBlock{.text = std::string{user_text}}},
+  };
+  conversation.payload_bytes += message_payload_bytes(user);
+  messages.push_back(std::move(user));
+  for (auto& message : exchange) {
+    conversation.payload_bytes += message_payload_bytes(message);
+    messages.push_back(std::move(message));
+  }
+}
+
 class UpdateGuard final {
 public:
   explicit UpdateGuard(bool& updating) noexcept : updating_(updating) {
@@ -231,19 +255,10 @@ bool PumpState::conversation_limit_exceeded(
 
 void PumpState::commit_completion(TurnRoute& route, CompletionEvent& event) {
   auto& conversation = *route.conversation();
-  Message user{
-      .role = Role::user,
-      .content = {TextBlock{.text = route.user_message()}},
-  };
-  conversation.payload_bytes += message_payload_bytes(user);
-  conversation.messages.push_back(std::move(user));
   // The callback needs only the final assistant text, so capture it before the
   // exchange moves into the Conversation rather than retaining a second copy.
   event.text = completion_text(event);
-  for (auto& message : event.exchange) {
-    conversation.payload_bytes += message_payload_bytes(message);
-    conversation.messages.push_back(std::move(message));
-  }
+  append_history(conversation, route.user_message(), std::move(event.exchange));
   event.exchange.clear();
 }
 

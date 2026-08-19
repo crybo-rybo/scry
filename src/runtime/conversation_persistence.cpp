@@ -402,7 +402,7 @@ Result<Json> Conversation::to_json() const {
         .message = "Conversation is inactive",
     });
   }
-  auto messages = encode_messages(impl_->state->messages);
+  auto messages = encode_messages(*impl_->state->messages);
   if (!messages) {
     return std::unexpected(std::move(messages.error()));
   }
@@ -444,7 +444,7 @@ Result<Conversation> Conversation::from_json(const Json& json) {
     return std::unexpected(std::move(payload_bytes.error()));
   }
   auto impl = std::make_unique<Impl>(std::move(config));
-  impl->state->messages = std::move(*messages);
+  *impl->state->messages = std::move(*messages);
   impl->state->payload_bytes = *payload_bytes;
   impl->state->busy = false;
   return Conversation{std::move(impl)};

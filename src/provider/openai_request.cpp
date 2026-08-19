@@ -154,6 +154,19 @@ encode_assistant_message(const Message& message) {
   return std::vector<JsonValue>{std::move(value)};
 }
 
+[[nodiscard]] Status encode_message_into(JsonValue::array_t& encoded,
+                                         const Message& message) {
+  auto values = message.role == Role::user ? encode_user_message(message)
+                                           : encode_assistant_message(message);
+  if (!values) {
+    return std::unexpected(std::move(values.error()));
+  }
+  for (auto& value : *values) {
+    encoded.push_back(std::move(value));
+  }
+  return {};
+}
+
 [[nodiscard]] Result<JsonValue::array_t> encode_messages(const ModelRequest& request) {
   JsonValue::array_t encoded{};
   if (!request.system_prompt.empty()) {
@@ -162,14 +175,17 @@ encode_assistant_message(const Message& message) {
     system["content"] = request.system_prompt;
     encoded.push_back(std::move(system));
   }
-  for (const auto& message : request.messages) {
-    auto values = message.role == Role::user ? encode_user_message(message)
-                                             : encode_assistant_message(message);
-    if (!values) {
-      return std::unexpected(std::move(values.error()));
+  encoded.reserve(encoded.size() + request.message_count());
+  if (request.history) {
+    for (const auto& message : *request.history) {
+      if (auto status = encode_message_into(encoded, message); !status) {
+        return std::unexpected(std::move(status.error()));
+      }
     }
-    for (auto& value : *values) {
-      encoded.push_back(std::move(value));
+  }
+  for (const auto& message : request.messages) {
+    if (auto status = encode_message_into(encoded, message); !status) {
+      return std::unexpected(std::move(status.error()));
     }
   }
   return encoded;
@@ -227,10 +243,6 @@ encode_tools(const std::vector<ToolSchema>& tools) {
   if (!messages) {
     return std::unexpected(std::move(messages.error()));
   }
-  auto tools = encode_tools(request.tools);
-  if (!tools) {
-    return std::unexpected(std::move(tools.error()));
-  }
   JsonValue root{};
   root["model"] = config.model;
   root["messages"].data = std::move(*messages);
@@ -246,7 +258,11 @@ encode_tools(const std::vector<ToolSchema>& tools) {
   JsonValue stream_options{};
   stream_options["include_usage"] = true;
   root["stream_options"] = std::move(stream_options);
-  if (!tools->empty()) {
+  if (request.tools && !request.tools->empty()) {
+    auto tools = encode_tools(*request.tools);
+    if (!tools) {
+      return std::unexpected(std::move(tools.error()));
+    }
     root["tools"].data = std::move(*tools);
   }
   return root;

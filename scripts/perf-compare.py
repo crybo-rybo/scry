@@ -178,9 +178,51 @@ def source_digest(source_dir: Path) -> str:
     return digest_paths(benchmark_source_entries(source_dir))
 
 
-def methodology_digest(source_dir: Path, tooling_dir: Path) -> str:
-    entries = benchmark_source_entries(source_dir)
+def scenario_contract(source_dir: Path, tooling_dir: Path) -> dict[str, Any]:
+    contract_path = tooling_dir / "benchmarks/scenario-contract.json"
+    contract = read_json(contract_path)
+    if contract.get("schema_version") != SCENARIO_SCHEMA_VERSION:
+        raise EvidenceError("scenario contract schema does not match the benchmark schema")
+    if contract.get("fixture_seed") != 0:
+        raise EvidenceError("scenario contract fixture seed must be zero")
+    contract_id = contract.get("contract_id")
+    compatible = contract.get("compatible_source_digests")
+    if not isinstance(contract_id, str) or not contract_id:
+        raise EvidenceError("scenario contract has no stable contract id")
+    if not isinstance(compatible, list) or not compatible:
+        raise EvidenceError("scenario contract has no compatible source digests")
+    source_sha256 = source_digest(source_dir)
+    entries = [
+        entry
+        for entry in compatible
+        if isinstance(entry, dict)
+        and isinstance(entry.get("sha256"), str)
+        and isinstance(entry.get("reason"), str)
+    ]
+    if len(entries) != len(compatible):
+        raise EvidenceError("scenario contract contains a malformed source mapping")
+    digests = [entry["sha256"] for entry in entries]
+    if len(set(digests)) != len(digests):
+        raise EvidenceError("scenario contract contains duplicate source digests")
+    if source_sha256 not in digests:
+        raise EvidenceError(
+            "benchmark source is not explicitly mapped by the scenario contract: "
+            + source_sha256
+        )
+    return {
+        "schema_version": SCENARIO_SCHEMA_VERSION,
+        "fixture_seed": 0,
+        "contract_id": contract_id,
+        "compatibility_manifest_sha256": sha256_file(contract_path),
+        "compatible_source_digests": entries,
+        "source_digest_sha256": source_sha256,
+    }
+
+
+def methodology_digest(tooling_dir: Path) -> str:
+    entries = benchmark_source_entries(tooling_dir)
     for relative in (
+        "benchmarks/scenario-contract.json",
         "scripts/perf-run.sh",
         "scripts/perf-compare.py",
         "scripts/perf-pair.sh",
@@ -362,10 +404,8 @@ def make_environment(arguments: argparse.Namespace) -> None:
     environment = {
         "schema_version": ENVIRONMENT_SCHEMA,
         "scenario_contract": {
-            "schema_version": SCENARIO_SCHEMA_VERSION,
-            "fixture_seed": 0,
-            "source_digest_sha256": source_digest(source_dir),
-            "methodology_digest_sha256": methodology_digest(source_dir, tooling_dir),
+            **scenario_contract(source_dir, tooling_dir),
+            "methodology_digest_sha256": methodology_digest(tooling_dir),
         },
         "source": source_state,
         "tooling": {
@@ -812,7 +852,9 @@ def verify_compatible(base: dict[str, Any], head: dict[str, Any]) -> None:
         "environment.schema_version",
         "environment.scenario_contract.schema_version",
         "environment.scenario_contract.fixture_seed",
-        "environment.scenario_contract.source_digest_sha256",
+        "environment.scenario_contract.contract_id",
+        "environment.scenario_contract.compatibility_manifest_sha256",
+        "environment.scenario_contract.compatible_source_digests",
         "environment.scenario_contract.methodology_digest_sha256",
         "environment.tooling.commit",
         "environment.tooling.common_orchestrator",
@@ -859,6 +901,24 @@ def verify_compatible(base: dict[str, Any], head: dict[str, Any]) -> None:
     if mismatches:
         details = ", ".join(mismatches)
         raise EvidenceError(f"incompatible profiling contexts: {details}")
+
+    compatible_sources = nested_value(
+        base, "environment.scenario_contract.compatible_source_digests"
+    )
+    allowed_digests = {
+        entry.get("sha256")
+        for entry in compatible_sources
+        if isinstance(entry, dict)
+    }
+    for label, summary in (("base", base), ("head", head)):
+        source_sha256 = nested_value(
+            summary, "environment.scenario_contract.source_digest_sha256"
+        )
+        if source_sha256 not in allowed_digests:
+            raise EvidenceError(
+                f"{label} benchmark source is absent from the reviewed compatibility "
+                "manifest"
+            )
 
     base_ids = {scenario["id"] for scenario in base.get("scenarios", [])}
     head_ids = {scenario["id"] for scenario in head.get("scenarios", [])}
@@ -1271,7 +1331,15 @@ def semantic_counter(name: str) -> bool:
 
 
 def primary_timing_metric(family: str) -> str:
-    if family in {"Pump", "Admission", "FullTurn", "Curl", "CurlTransport"}:
+    if family in {
+        "Pump",
+        "Admission",
+        "SchemaAdmission",
+        "HistoryCommit",
+        "FullTurn",
+        "Curl",
+        "CurlTransport",
+    }:
         return "real_time_ns"
     return "cpu_time_ns"
 
@@ -1495,6 +1563,19 @@ def make_comparison(arguments: argparse.Namespace) -> None:
         },
         "compatibility": {
             "same_host": True,
+            "scenario_contract_id": nested_value(
+                base, "environment.scenario_contract.contract_id"
+            ),
+            "compatibility_manifest_sha256": nested_value(
+                base,
+                "environment.scenario_contract.compatibility_manifest_sha256",
+            ),
+            "base_source_digest_sha256": nested_value(
+                base, "environment.scenario_contract.source_digest_sha256"
+            ),
+            "head_source_digest_sha256": nested_value(
+                head, "environment.scenario_contract.source_digest_sha256"
+            ),
             "methodology_digest_sha256": nested_value(
                 base, "environment.scenario_contract.methodology_digest_sha256"
             ),

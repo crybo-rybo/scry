@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <memory>
 #include <scry/config.hpp>
+#include <scry/tool_registry.hpp>
 #include <string>
 #include <vector>
 
@@ -17,6 +18,92 @@ struct ScenarioResult {
   std::uint64_t output_bytes{};
   std::uint64_t items{};
   bool valid{};
+};
+
+enum class SchemaAdmissionShape : std::uint8_t {
+  cold_accepted,
+  warm_accepted,
+  rejected,
+  retained_generations,
+};
+
+class SchemaAdmissionOperation final {
+public:
+  ~SchemaAdmissionOperation();
+  SchemaAdmissionOperation(SchemaAdmissionOperation&&) noexcept;
+  SchemaAdmissionOperation& operator=(SchemaAdmissionOperation&&) noexcept;
+
+  SchemaAdmissionOperation(const SchemaAdmissionOperation&) = delete;
+  SchemaAdmissionOperation& operator=(const SchemaAdmissionOperation&) = delete;
+
+  [[nodiscard]] ScenarioResult run();
+
+private:
+  struct Impl;
+  explicit SchemaAdmissionOperation(std::unique_ptr<Impl> impl) noexcept;
+
+  std::unique_ptr<Impl> impl_{};
+
+  friend class SchemaAdmissionScenario;
+};
+
+class SchemaAdmissionScenario final {
+public:
+  SchemaAdmissionScenario(SchemaAdmissionShape shape, std::size_t schema_count,
+                          std::size_t schema_bytes);
+
+  [[nodiscard]] ScenarioResult validate();
+  [[nodiscard]] SchemaAdmissionOperation prepare() const;
+
+private:
+  [[nodiscard]] SchemaAdmissionOperation make_operation(bool validate) const;
+
+  SchemaAdmissionShape shape_{};
+  std::vector<ToolDefinition> definitions_{};
+  std::size_t input_bytes_{};
+  ScenarioResult oracle_{};
+};
+
+enum class HistoryCommitShape : std::uint8_t {
+  unique,
+  aliased,
+};
+
+class HistoryCommitOperation final {
+public:
+  ~HistoryCommitOperation();
+  HistoryCommitOperation(HistoryCommitOperation&&) noexcept;
+  HistoryCommitOperation& operator=(HistoryCommitOperation&&) noexcept;
+
+  HistoryCommitOperation(const HistoryCommitOperation&) = delete;
+  HistoryCommitOperation& operator=(const HistoryCommitOperation&) = delete;
+
+  [[nodiscard]] ScenarioResult run();
+
+private:
+  struct Impl;
+  explicit HistoryCommitOperation(std::unique_ptr<Impl> impl) noexcept;
+
+  std::unique_ptr<Impl> impl_{};
+
+  friend class HistoryCommitScenario;
+};
+
+class HistoryCommitScenario final {
+public:
+  HistoryCommitScenario(HistoryCommitShape shape, std::size_t message_count,
+                        std::size_t message_bytes);
+
+  [[nodiscard]] ScenarioResult validate();
+  [[nodiscard]] HistoryCommitOperation prepare() const;
+
+private:
+  [[nodiscard]] HistoryCommitOperation make_operation(bool validate) const;
+
+  HistoryCommitShape shape_{};
+  std::size_t message_count_{};
+  std::size_t message_bytes_{};
+  ScenarioResult oracle_{};
 };
 
 class SseScenario final {

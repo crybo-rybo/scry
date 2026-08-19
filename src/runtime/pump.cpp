@@ -21,6 +21,11 @@ template <typename> inline constexpr bool unhandled_worker_event = false;
   };
 }
 
+[[nodiscard]] const ToolSnapshot& route_tools(const FrozenToolEntries& tools) noexcept {
+  static const ToolSnapshot empty{};
+  return tools ? *tools : empty;
+}
+
 } // namespace
 
 TurnRoute::TurnRoute(const TurnId turn_id, std::shared_ptr<std::atomic<bool>> cancelled,
@@ -123,7 +128,7 @@ void TurnRoute::dispatch(const ToolCallEvent& event) {
       std::min(remaining_exchange_bytes_, event.remaining_exchange_bytes);
   SCRY_LOG("Dispatching {} Tool on the app thread (Turn {})", event.call.name,
            turn_id_.value);
-  auto result = dispatch_tool(tools_, event.call, max_tool_result_bytes_);
+  auto result = dispatch_tool(route_tools(tools_), event.call, max_tool_result_bytes_);
   if (result) {
     const auto result_bytes = content_payload_bytes(*result);
     if (result_bytes > remaining_exchange_bytes_) {

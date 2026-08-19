@@ -10,7 +10,8 @@ Two layers, one table (as settled in the
 The Registry is owned by its Harness. `send()` snapshots its immutable shared
 records for the accepted turn, so registration during `update()` never mutates
 an in-flight turn and the live registry never crosses the worker boundary. Only
-copied neutral schemas cross; every handler stays exclusively pump-owned. The
+a frozen registry-level snapshot of neutral schemas — shared, never re-copied
+per turn — crosses; every handler stays exclusively pump-owned. The
 public registry cannot be moved out of its Harness, and explicit schemas are
 parsed and canonicalized at registration. Mutation is additive-only: duplicate
 names are rejected, and replacement/removal remain absent until a real

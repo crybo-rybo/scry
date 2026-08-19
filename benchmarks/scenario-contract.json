@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "fixture_seed": 0,
+  "contract_id": "scry.logical-scenarios.v1",
+  "compatible_source_digests": [
+    {
+      "sha256": "691c432ff3645081c96b2a878053b757de4d6dccf010781354349ef2c465c886",
+      "reason": "profiling foundation uses value-owned fixture adapters for the established scenario families"
+    },
+    {
+      "sha256": "ee8358f6b9c963f4b6e7a41a9d0d06c39388259643e1b22474ed084a4eda84c6",
+      "reason": "collection-snapshot head adapts established fixtures to shared history and schema blocks without changing logical work"
+    },
+    {
+      "sha256": "27bfe1d1c9e3f0deaae2fe8085a46115941cc891ab727c4767ee0b46964b903c",
+      "reason": "review revision preserves established scenario identities and adds separately named ownership diagnostics"
+    }
+  ]
+}

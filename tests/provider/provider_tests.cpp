@@ -92,15 +92,40 @@ TEST_CASE("Anthropic request is semantically equivalent to its sanitized fixture
   CHECK(canonical(encoded->body) == canonical(fixture("request.json")));
 }
 
+TEST_CASE("Anthropic request encodes committed history before the turn suffix") {
+  const auto adapter = make_provider_adapter(ProviderDialect::anthropic);
+  REQUIRE(adapter);
+  auto model_request = request();
+  model_request.history =
+      std::make_shared<const std::vector<Message>>(std::vector<Message>{
+          Message{.role = Role::assistant,
+                  .content = {TextBlock{.text = "committed-prefix"}}},
+      });
+  model_request.messages = {
+      Message{.role = Role::user, .content = {TextBlock{.text = "turn-suffix"}}},
+  };
+
+  const auto encoded = adapter->make_request(config(), model_request);
+  REQUIRE(encoded);
+  const auto history_position = encoded->body.find("committed-prefix");
+  const auto suffix_position = encoded->body.find("turn-suffix");
+  REQUIRE(history_position != std::string::npos);
+  REQUIRE(suffix_position != std::string::npos);
+  CHECK(history_position < suffix_position);
+}
+
 TEST_CASE("Anthropic request encoding preserves neutral tool shapes") {
   const auto adapter = make_provider_adapter(ProviderDialect::anthropic);
   REQUIRE(adapter);
   auto model_request = request();
-  model_request.tools.push_back(ToolSchema{
-      .name = "lookup",
-      .description = "Lookup a value",
-      .input_schema = Json{.text = R"({"type":"object"})"},
-  });
+  model_request.tools =
+      std::make_shared<const std::vector<ToolSchema>>(std::vector<ToolSchema>{
+          ToolSchema{
+              .name = "lookup",
+              .description = "Lookup a value",
+              .input_schema = Json{.text = R"({"type":"object"})"},
+          },
+      });
   model_request.messages.push_back(Message{
       .role = Role::assistant,
       .content =

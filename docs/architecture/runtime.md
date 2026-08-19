@@ -11,8 +11,8 @@ A `Turn` is a **handle**: a move-only PImpl value holding an immutable `TurnId`,
 | Transport handles, curl state, wire buffers, SSE parser state | Worker | Never visible to any other thread |
 | Loop state machines (per turn) | Worker | Addressed by `TurnId` |
 | Turn callbacks, buffered undelivered events per turn, Turn routes | Pump side (Harness main-thread state) | Callbacks move in at `send()`; read only inside `update()`; handles observe routes weakly |
-| Conversation contents | App thread via pump | A live route retains shared lifetime on the pump side; contents are mutated only at terminal-event delivery |
-| Tool definitions | Pump side; immutable per accepted turn | Worker commands receive copied neutral schemas, never the live registry |
+| Conversation contents | App thread via pump | A live route retains shared lifetime on the pump side; contents are mutated only at terminal-event delivery. `send()` shares the committed-history block immutably with the worker command; the pump reseats it copy-on-write at commit if any request snapshot still shares it |
+| Tool definitions | Pump side; immutable per accepted turn | Worker commands receive a shared registry-level snapshot of neutral schemas, never the live registry |
 | Tool handlers | Pump side; immutable per accepted turn | Invoked only by `update()`; never cross the thread boundary |
 | Command queue, event queue | Shared, internally synchronized | Sanctioned crossing points |
 | Per-turn cancel flag (`atomic<bool>`) | Shared | Third sanctioned crossing point |
@@ -91,6 +91,11 @@ teardown callbacks. The remaining lifecycle contracts, each of which is a
 numbered requirement:
 
 - **Conversation commits are transactional.** History is mutated only by the pump at terminal-event delivery: `Completed` commits the full exchange (user message, all tool rounds, final answer) atomically; `Failed`/`Cancelled` commit nothing. This keeps Conversation retry/resubmission mechanically clean, but does not make external handler side effects reversible or idempotent; side-effecting schemas need app-owned operation keys and reconciliation ([tools design](../design/tools-and-providers.md)).
+- **Terminal request release precedes publication.** Every completed, failed, or
+  cancelled machine transition drops its immutable model-request snapshot
+  before the worker can publish the terminal event. Ordinary completion commit
+  therefore appends to uniquely owned history in place; a separately retained
+  reader still triggers the pump's COW reseat.
 - **Detach semantics.** Dropping the handle detaches: the turn runs to termination, the Conversation still commits on success, and the callbacks supplied at `send()` remain route-owned and deliverable. Dropping loses identity and cancellation control, not callbacks.
 - **Atomic callback attachment.** `send()` moves `TurnCallbacks` infallibly into the pump route before it publishes the worker command. No event can precede the immutable callback set, and there is no late registration or replay. An absent callback makes its matching event dead on arrival and returns its bytes to the queue ledger immediately; terminal processing still occurs.
 - **Reentrancy.** Callbacks may call `send`, `cancel`, and tool registration APIs.

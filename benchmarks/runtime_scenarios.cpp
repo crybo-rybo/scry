@@ -202,7 +202,7 @@ make_route(const std::uint64_t id,
   }
   std::size_t output_bytes = 0;
   for (const auto& conversation : conversations) {
-    valid = valid && !conversation->busy && conversation->messages.size() == 2;
+    valid = valid && !conversation->busy && conversation->messages->size() == 2;
     output_bytes += conversation->payload_bytes;
   }
   return output_bytes;

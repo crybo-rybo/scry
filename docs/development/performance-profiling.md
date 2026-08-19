@@ -89,7 +89,12 @@ envelope or its compatibility rules requires that artifact's schema increment.
 A benchmark modification that materially changes a scenario lands before the
 production optimization it is meant to measure. Both candidate implementations
 are then rerun with the new scenario. Results from incompatible scenario
-schemas are never compared.
+schemas are never compared. A representation-only fixture adapter change MAY
+instead use the reviewed `benchmarks/scenario-contract.json` mapping when the
+logical operation, timed boundaries, scenario identity, dimensions, and
+semantic counters are unchanged. The comparator requires both source digests
+to appear in that exact common-tooling manifest; a changed semantic counter or
+scenario identity still rejects the comparison.
 
 Every scenario MUST:
 
@@ -104,10 +109,14 @@ Every scenario MUST:
 - use application callbacks, handlers, and fake transports that do no work
   beyond the minimum checksum needed to retain observable behavior.
 
-Timing pauses around fixture reset, allocation, and correctness validation. A
-benchmark may use private headers at an established internal seam, but it does
-not create a new public API or make a private representation a compatibility
-contract. The 64-bit semantic FNV-1a digest is exported losslessly as
+Timing pauses around fixture reset, allocation, and correctness validation.
+Each scenario performs one explicit validation warm-up outside its measured
+region. The runner leaves Google Benchmark's time-based warm-up disabled so a
+fixed one-shot operation never rebuilds a paused, potentially expensive fixture
+until a warm-up duration happens to elapse. A benchmark may use private headers
+at an established internal seam, but it does not create a new public API or make
+a private representation a compatibility contract. The 64-bit semantic FNV-1a
+digest is exported losslessly as
 `checksum_hi` and `checksum_lo` counters so the result artifact carries its
 correctness oracle without depending on floating-point integer precision.
 
@@ -124,6 +133,8 @@ The foundation covers parameter curves rather than one favorable large case:
 | Pump delivery | 64-route text delivery and 64-route completion commit | What do event movement, route lookup, callback delivery, and commit cost? |
 | Turn admission | 63 queued turns with equal 128 KiB message-text payloads shaped as 32, 256, or 2,048 messages; 8/32/64 shared 2 KiB schemas | What allocation and latency cost is retained while accepted turns wait behind one blocked active turn? |
 | Tool registration | Additive batches of 8/32/64 representative 2 KiB schemas | Does moving snapshot work into registration improve the full tradeoff rather than hiding cost? |
+| Schema snapshot lifecycle | Cold accepted, warm accepted, rejected, and 8/32/64 retained-generation cases with 2 KiB schemas | Where is snapshot construction paid, do rejections avoid it, and what does retaining generations allocate? |
+| History commit ownership | Unique and deliberately aliased 32/256/2,048-message histories with equal logical bytes | Does ordinary terminal commit append in place while a legitimate retained reader takes the COW fallback? |
 
 The suite may add two corroborating macro workloads without turning them into
 microbenchmark gates:
@@ -215,8 +226,12 @@ The environment and summary record at least:
   `scry_fixture_seed`;
 - a run identifier carried by the environment and both executables' raw Google
   Benchmark contexts, plus corroborating host, CPU-count, and target identity;
-- a methodology digest covering benchmark sources (including their CMake
-  definition), the profiling runner, comparator, and pair orchestrator;
+- the source checkout's benchmark-source digest, plus a reviewed logical
+  scenario-contract manifest from the common HEAD tooling that explicitly maps
+  every representation-compatible source digest;
+- a methodology digest covering the common HEAD benchmark sources (including
+  their CMake definition and compatibility manifest), profiling runner,
+  comparator, and pair orchestrator;
 - the common HEAD tooling commit and dirty state;
 - compiler identity/version, standard library, build type, and effective flags;
 - operating system/kernel, architecture, CPU model, and logical CPU count;
@@ -227,7 +242,8 @@ The environment and summary record at least:
 - semantic output digest plus input/output dimensions.
 
 The comparator refuses results with mismatched artifact or benchmark schemas,
-methodology digests, common tooling revisions, scenario sets/parameters,
+logical-contract manifests, methodology digests, common tooling revisions,
+scenario sets/parameters,
 compiler or standard library, normalized compile-command fingerprints, build
 flags, dependency checkouts, operating system, architecture, or host identity.
 Compile commands are grouped into stable production and benchmark scopes; file
@@ -258,7 +274,9 @@ A reported comparison follows this protocol:
 1. Build parent (`A`) and candidate (`B`) in separate clean build directories
    with identical effective configuration.
 2. Run on the same otherwise-idle host, toolchain, allocator, and power mode.
-3. Warm each executable before taking samples and run scenarios serially.
+3. Run each scenario's explicit validation warm-up before its measured sample
+   and run scenarios serially. Do not add a time-based Google Benchmark warm-up
+   that repeatedly rebuilds paused one-shot fixtures.
 4. Use five `A-B-B-A` cycles, producing ten samples for each revision. For
    worker/pump or Curl claims, repeat the result in an independent session when
    no dedicated stable runner exists.

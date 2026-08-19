@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <scry/config.hpp>
 #include <scry/events.hpp>
 #include <scry/json.hpp>
@@ -46,11 +47,28 @@ struct ToolSchema {
   Json input_schema{};
 };
 
+// Immutable collections shared across thread and turn boundaries. Ownership is
+// collection-level: a snapshot is one control block rather than one per
+// message or schema, so sharing costs an atomic increment instead of a deep
+// copy, and readers retain locality of the underlying vector.
+using HistorySnapshot = std::shared_ptr<const std::vector<Message>>;
+using SchemaSnapshot = std::shared_ptr<const std::vector<ToolSchema>>;
+
 struct ModelRequest {
   std::string system_prompt{};
+  // Committed history shared with the owning Conversation at send time. It is
+  // immutable for the request's lifetime; the Conversation reseats its own
+  // block copy-on-write before a commit if any request still references it.
+  HistorySnapshot history{};
+  // Messages introduced by this turn: the user message and each tool round.
+  // The turn machine owns this suffix privately and reseats it copy-on-write.
   std::vector<Message> messages{};
-  std::vector<ToolSchema> tools{};
+  SchemaSnapshot tools{};
   SamplingConfig sampling{};
+
+  [[nodiscard]] std::size_t message_count() const noexcept {
+    return (history ? history->size() : 0U) + messages.size();
+  }
 };
 
 using ::scry::FinishReason;

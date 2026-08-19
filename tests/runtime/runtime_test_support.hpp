@@ -35,6 +35,11 @@ registered_tool(std::string name, scry::ToolHandler handler) {
       });
 }
 
+[[nodiscard]] inline scry::detail::FrozenToolEntries
+frozen_tools(scry::detail::ToolSnapshot tools) {
+  return std::make_shared<const scry::detail::ToolSnapshot>(std::move(tools));
+}
+
 [[nodiscard]] inline scry::detail::ToolCallBlock
 tool_call(std::string name = "forecast", std::string id = "call-1") {
   return {
@@ -81,7 +86,7 @@ completion_event(const scry::TurnId turn_id, CompletionOptions options = {}) {
 // tool-dispatch, pump-delivery, and conversation-limit suites without each
 // growing its own positional overload.
 struct RouteOptions {
-  scry::detail::ToolSnapshot tools{};
+  scry::detail::FrozenToolEntries tools{};
   std::size_t max_tool_result_bytes{1024};
   std::size_t max_exchange_bytes{std::numeric_limits<std::size_t>::max()};
   std::size_t max_conversation_bytes{1024};

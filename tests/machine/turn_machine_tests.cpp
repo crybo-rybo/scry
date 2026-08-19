@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <random>
 #include <type_traits>
 #include <vector>
@@ -75,6 +76,50 @@ TEST_CASE("non-streaming completion emits one transactional commit intent") {
             .text == "answer");
   CHECK(machine.phase() == scry::detail::MachinePhase::terminal);
   CHECK(machine.terminal_kind() == scry::detail::MachineTerminalKind::completed);
+}
+
+TEST_CASE("terminal transitions release the model request snapshot") {
+  const auto history = std::make_shared<std::vector<scry::detail::Message>>();
+  auto model_request = request();
+  model_request.history = history;
+
+  SECTION("completion") {
+    scry::detail::TurnMachine machine{turn_id, std::move(model_request),
+                                      retry_policy()};
+    auto issued = machine.apply(scry::detail::BeginTurn{});
+    issued.commands.clear();
+    REQUIRE(history.use_count() == 2);
+
+    const auto completed = machine.apply(scry::detail::ModelCompleted{});
+    static_cast<void>(only_command<scry::detail::CommitCompletion>(completed));
+    CHECK(history.use_count() == 1);
+  }
+
+  SECTION("failure") {
+    scry::detail::TurnMachine machine{turn_id, std::move(model_request),
+                                      retry_policy()};
+    auto issued = machine.apply(scry::detail::BeginTurn{});
+    issued.commands.clear();
+    REQUIRE(history.use_count() == 2);
+
+    const auto failed = machine.apply(scry::detail::AttemptFailed{
+        .error = error(scry::ErrorCategory::protocol),
+    });
+    static_cast<void>(only_command<scry::detail::PublishError>(failed));
+    CHECK(history.use_count() == 1);
+  }
+
+  SECTION("cancellation") {
+    scry::detail::TurnMachine machine{turn_id, std::move(model_request),
+                                      retry_policy()};
+    auto issued = machine.apply(scry::detail::BeginTurn{});
+    issued.commands.clear();
+    REQUIRE(history.use_count() == 2);
+
+    const auto cancelled = machine.apply(scry::detail::CancelTurn{});
+    static_cast<void>(only_command<scry::detail::PublishCancelled>(cancelled));
+    CHECK(history.use_count() == 1);
+  }
 }
 
 TEST_CASE("text deltas enter streaming and preserve attempt correlation") {

@@ -14,12 +14,15 @@ These apply everywhere and settle arguments before they start.
 **Value semantics at the boundary, explicit ownership inside.** Public types are
 cheap-to-move value types or lightweight handles. Exclusively owned resources
 use `std::unique_ptr` or dedicated RAII wrappers. Shared lifetime is deliberate
-and enumerated: command/event queues and the per-turn cancellation flag cross
-the worker boundary; a Conversation handle and its live pump route share
-Conversation state; and a pump-side turn route is owned by the Harness and
-observed weakly by the Turn handle. Tool handlers are never shared: each one
-stays in the pump-side snapshot of the turn that captured it. Raw pointers are
-non-owning observers only, never stored across a suspension point.
+and enumerated: command/event queues, the per-turn cancellation flag, and
+immutable accepted-turn history/schema blocks cross the worker boundary; a
+Conversation handle and its live pump route share Conversation state; and a
+pump-side turn route is owned by the Harness and observed weakly by the Turn
+handle. Snapshot blocks are immutable while shared, and the pump reseats a
+private history block copy-on-write before mutation. Tool handlers are never
+shared: each one stays in the pump-side snapshot of the turn that captured it.
+Raw pointers are non-owning observers only, never stored across a suspension
+point.
 
 **Rule of Zero.** Types define no special member functions unless they manage a resource directly; resource management is pushed into dedicated RAII wrappers (curl handles, threads, queues) so everything above them defaults.
 
@@ -59,7 +62,7 @@ queues; nothing gets its own side channel.
 
 Practices that follow:
 
-- **Enumerated shared state, no user-visible locks.** There is no mutex a user callback can deadlock against. Exactly three things are shared across the thread boundary, all internally synchronized: the command queue, the event queue, and one atomic cancellation flag per turn. Nothing else — worker-side state and pump-side state are exclusively owned (see the [runtime ownership table](runtime.md)), and the worker addresses turns only by immutable `TurnId`. Pump-side objects may share lifetime with other pump-side objects; shared ownership does not make them cross-thread state. This enumeration *is* the invariant TSan enforces; anything not on the list found crossing threads is a bug by definition.
+- **Enumerated shared state, no user-visible locks.** There is no mutex a user callback can deadlock against. Mutable cross-thread state is limited to exactly three internally synchronized objects: the command queue, the event queue, and one atomic cancellation flag per turn. Accepted-turn commands also carry shared immutable history and tool-schema blocks; the worker only reads them, and the pump reseats any still-shared history block copy-on-write before mutation. Everything else — worker-side state and pump-side state — is exclusively owned (see the [runtime ownership table](runtime.md)), and the worker addresses turns only by immutable `TurnId`. Pump-side-only lifetime sharing is not cross-thread state. This enumeration *is* the invariant TSan enforces; anything not on the list found crossing threads is a bug by definition.
 - **Messages are immutable values.** Commands and events are `std::variant` of small structs, moved (never copied) through the queue. Variant + `std::visit` gives exhaustive handling — adding an event type breaks the build until every consumer handles it. This is the same closed-set-of-alternatives reasoning that picks variant over inheritance everywhere in this codebase.
 - **Queue implementation: boring first.** Mutex + `std::deque` + condition variable, wrapped behind a minimal Scry-owned interface so a lock-free MPSC queue can be swapped in *if profiling ever demands it*. Premature lock-free is how libraries acquire unfixable bugs.
 - **Two cancellation mechanisms, deliberately separate.** The worker's `std::jthread` `stop_token` means one thing only: **Harness shutdown**. Per-turn cancellation is a distinct per-turn `std::atomic<bool>`, checked at every I/O boundary and plumbed into transport progress callbacks. Both are cooperative, never `pthread_cancel`-style. Conflating them was an early ambiguity: shutdown must abort *all* turns and join; cancelling one turn must not disturb its neighbors.
