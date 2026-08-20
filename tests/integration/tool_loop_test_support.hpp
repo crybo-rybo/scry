@@ -61,7 +61,7 @@ data: {"type":"message_stop"}
 
 )";
 
-[[nodiscard]] inline scry::ToolDefinition tool_definition(std::string name) {
+[[nodiscard]] inline scry::ToolDefinition ordinal_tool_definition(std::string name) {
   return {
       .name = std::move(name),
       .description = "Accepts an explicit ordinal",

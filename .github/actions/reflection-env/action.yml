@@ -1,0 +1,17 @@
+# Composite action for the GCC 16 reflection environment, shared by the
+# path-aware PR gate (reflection.yml) and the unconditional weekly ring
+# (nightly.yml). Toolchain and runner changes are made here, not in the
+# workflows. The caller must check out the repository first.
+name: Reflection environment
+description: Install the GCC 16 (and 14) toolchain and lower ASLR entropy.
+
+runs:
+  using: composite
+  steps:
+    - name: Install GCC 16 (and GCC 14 for the core-surface proof)
+      run: |
+        sudo add-apt-repository --yes ppa:ubuntu-toolchain-r/test
+        sudo apt-get update
+        sudo apt-get install -y g++-14 g++-16 libcurl4-openssl-dev ninja-build
+    - name: Lower ASLR entropy for sanitizers
+      run: sudo sysctl vm.mmap_rnd_bits=28

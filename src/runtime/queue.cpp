@@ -1,7 +1,6 @@
 #include "runtime/queue.hpp"
 
 #include <algorithm>
-#include <type_traits>
 
 namespace scry::detail {
 

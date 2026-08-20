@@ -40,7 +40,7 @@ docs:
     ./scripts/ci-docs.sh
 
 tidy:
-    cmake --preset ci -B build/tidy -DSCRY_ENABLE_CLANG_TIDY=ON -DSCRY_ENABLE_FORMAT_CHECK=OFF
+    cmake --preset ci -B build/tidy -DSCRY_ENABLE_CLANG_TIDY=ON -DSCRY_ENABLE_FORMAT_CHECK=OFF -DSCRY_USE_LIBCXX=ON
     cmake --build build/tidy
 
 asan:
@@ -51,7 +51,7 @@ asan:
 tsan:
     cmake --preset tsan
     cmake --build build/tsan
-    ctest --test-dir build/tsan --output-on-failure
+    ctest --test-dir build/tsan --output-on-failure --repeat until-fail:3
 
 reflection:
     ./scripts/ci-reflection.sh

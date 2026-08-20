@@ -38,7 +38,8 @@ run_tidy() {
     --preset ci \
     -B build/tidy \
     -DSCRY_ENABLE_CLANG_TIDY=ON \
-    -DSCRY_ENABLE_FORMAT_CHECK=OFF &&
+    -DSCRY_ENABLE_FORMAT_CHECK=OFF \
+    -DSCRY_USE_LIBCXX=ON &&
     PATH="${tidy_path}" cmake --build build/tidy
 }
 

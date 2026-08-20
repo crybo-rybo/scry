@@ -32,6 +32,11 @@ experimental GCC 16 `scry::reflection` component, and opt-in showcase examples
 an NPC through explicit tools — that add no public, installed, or exported
 surface.
 
+**Shipped in v0.1.1.** The public typed-to-JSON boundary
+`scry::reflection::encode(const T&)` on the experimental reflection component,
+additive and confined to `scry::reflection`; the stable C++23 core API and
+core-only package remain unchanged.
+
 **Not shipped, in rough order of demand.** The asynchronous/deferred
 tool-result API and structured output from §11; curl-multi multiplexing of
 concurrent turns; coroutine-awaitable turns; Windows support. Each has a trigger

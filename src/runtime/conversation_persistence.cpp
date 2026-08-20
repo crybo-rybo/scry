@@ -46,20 +46,10 @@ require_fields(const detail::JsonValue& value,
   return {};
 }
 
-[[nodiscard]] const detail::JsonValue* field(const detail::JsonValue& value,
-                                             const std::string_view name) noexcept {
-  if (!value.is_object()) {
-    return nullptr;
-  }
-  const auto& object = value.get_object();
-  const auto found = object.find(name);
-  return found == object.end() ? nullptr : &found->second;
-}
-
 [[nodiscard]] Result<std::string_view> string_field(const detail::JsonValue& value,
                                                     const std::string_view name,
                                                     const std::string_view context) {
-  const auto* found = field(value, name);
+  const auto* found = detail::json_field(value, name);
   if (found == nullptr || !found->is_string()) {
     return std::unexpected(invalid_document(std::string{context} + " field '" +
                                             std::string{name} + "' must be a string"));
@@ -84,7 +74,7 @@ nonempty_string_field(const detail::JsonValue& value, const std::string_view nam
 [[nodiscard]] Result<const detail::JsonValue::array_t*>
 array_field(const detail::JsonValue& value, const std::string_view name,
             const std::string_view context) {
-  const auto* found = field(value, name);
+  const auto* found = detail::json_field(value, name);
   if (found == nullptr || !found->is_array()) {
     return std::unexpected(invalid_document(std::string{context} + " field '" +
                                             std::string{name} + "' must be an array"));
@@ -95,7 +85,7 @@ array_field(const detail::JsonValue& value, const std::string_view name,
 [[nodiscard]] Result<bool> bool_field(const detail::JsonValue& value,
                                       const std::string_view name,
                                       const std::string_view context) {
-  const auto* found = field(value, name);
+  const auto* found = detail::json_field(value, name);
   if (found == nullptr || !found->is_boolean()) {
     return std::unexpected(invalid_document(std::string{context} + " field '" +
                                             std::string{name} + "' must be a boolean"));
@@ -147,7 +137,7 @@ decode_tool_call(const detail::JsonValue& value, const detail::Role role) {
   }
   auto id = nonempty_string_field(value, "id", "Tool-call block");
   auto name = nonempty_string_field(value, "name", "Tool-call block");
-  const auto* arguments = field(value, "arguments");
+  const auto* arguments = detail::json_field(value, "arguments");
   if (!id || !name || arguments == nullptr || !arguments->is_object()) {
     return std::unexpected(
         invalid_document("Tool-call block has invalid id, name, or arguments"));
@@ -177,7 +167,7 @@ decode_tool_result(const detail::JsonValue& value, const detail::Role role) {
   }
   auto id = nonempty_string_field(value, "tool_call_id", "Tool-result block");
   auto is_error = bool_field(value, "is_error", "Tool-result block");
-  const auto* result = field(value, "result");
+  const auto* result = detail::json_field(value, "result");
   if (!id || !is_error || result == nullptr) {
     return std::unexpected(
         invalid_document("Tool-result block has invalid id, result, or error flag"));
@@ -385,7 +375,7 @@ conversation_payload_bytes(const ConversationConfig& config,
 }
 
 [[nodiscard]] Result<std::uint64_t> decode_version(const detail::JsonValue& root) {
-  const auto* version = field(root, "version");
+  const auto* version = detail::json_field(root, "version");
   if (version == nullptr || !version->is_uint64()) {
     return std::unexpected(
         invalid_document("Conversation document version must be an unsigned integer"));

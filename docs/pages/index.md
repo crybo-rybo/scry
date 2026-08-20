@@ -18,8 +18,8 @@ The stable surface has five core concepts:
 #include <scry/scry.hpp>
 
 auto harness = scry::Harness::create(scry::Config{
-    .base_url = "http://127.0.0.1:11434",
-    .model = "qwen3:1.7b",
+    .base_url = "http://127.0.0.1:11434/v1",
+    .model = "qwen3:8b",
     .dialect = scry::ProviderDialect::openai_compatible,
 });
 

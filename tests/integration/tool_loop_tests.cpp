@@ -20,18 +20,18 @@ TEST_CASE("two-tool turn snapshots tools, resends results, and commits atomicall
   std::string second_arguments;
   bool reentrant_registration_succeeded = false;
 
-  REQUIRE(harness.tools().add(tool_definition("first_tool"),
+  REQUIRE(harness.tools().add(ordinal_tool_definition("first_tool"),
                               [&](scry::Json arguments) -> scry::Result<scry::Json> {
                                 timeline.emplace_back("handler:first");
                                 callback_threads.push_back(std::this_thread::get_id());
                                 first_arguments = std::move(arguments.text);
                                 reentrant_registration_succeeded =
                                     static_cast<bool>(harness.tools().add(
-                                        tool_definition("reentrant_tool"),
+                                        ordinal_tool_definition("reentrant_tool"),
                                         static_handler(R"({"handled":"reentrant"})")));
                                 return scry::Json{.text = R"({"handled":"first"})"};
                               }));
-  REQUIRE(harness.tools().add(tool_definition("second_tool"),
+  REQUIRE(harness.tools().add(ordinal_tool_definition("second_tool"),
                               [&](scry::Json arguments) -> scry::Result<scry::Json> {
                                 timeline.emplace_back("handler:second");
                                 callback_threads.push_back(std::this_thread::get_id());
@@ -59,7 +59,7 @@ TEST_CASE("two-tool turn snapshots tools, resends results, and commits atomicall
                    });
   REQUIRE(turn_result);
 
-  REQUIRE(harness.tools().add(tool_definition("after_send_tool"),
+  REQUIRE(harness.tools().add(ordinal_tool_definition("after_send_tool"),
                               static_handler(R"({"handled":"after-send"})")));
 
   CHECK(conversation.empty());
@@ -128,9 +128,9 @@ TEST_CASE("a queued turn waits for the active turn's app-thread tool round") {
       test_config(), provider(), std::move(fake));
   REQUIRE(harness_result);
   auto harness = std::move(*harness_result);
-  REQUIRE(harness.tools().add(tool_definition("first_tool"),
+  REQUIRE(harness.tools().add(ordinal_tool_definition("first_tool"),
                               static_handler(R"({"queue":1})")));
-  REQUIRE(harness.tools().add(tool_definition("second_tool"),
+  REQUIRE(harness.tools().add(ordinal_tool_definition("second_tool"),
                               static_handler(R"({"queue":2})")));
 
   auto first_conversation = scry::Conversation::create();
@@ -188,8 +188,8 @@ TEST_CASE("tool call batches fail atomically at the event queue boundary") {
     ++handler_calls;
     return scry::Json{.text = "{}"};
   };
-  REQUIRE(harness.tools().add(tool_definition(first_name), handler));
-  REQUIRE(harness.tools().add(tool_definition(second_name), handler));
+  REQUIRE(harness.tools().add(ordinal_tool_definition(first_name), handler));
+  REQUIRE(harness.tools().add(ordinal_tool_definition(second_name), handler));
   auto conversation = scry::Conversation::create();
   REQUIRE(conversation);
   std::optional<scry::Error> failure;
@@ -224,8 +224,8 @@ TEST_CASE("Harness destruction stops a worker awaiting an app-thread tool result
     ++handler_calls;
     return scry::Json{.text = "{}"};
   };
-  REQUIRE(harness.tools().add(tool_definition("first_tool"), handler));
-  REQUIRE(harness.tools().add(tool_definition("second_tool"), handler));
+  REQUIRE(harness.tools().add(ordinal_tool_definition("first_tool"), handler));
+  REQUIRE(harness.tools().add(ordinal_tool_definition("second_tool"), handler));
   auto conversation = scry::Conversation::create();
   REQUIRE(conversation);
   std::size_t callbacks = 0;

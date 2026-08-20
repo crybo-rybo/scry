@@ -2,7 +2,6 @@
 
 #include "core/error.hpp"
 
-#include <limits>
 #include <utility>
 
 namespace scry::detail {
