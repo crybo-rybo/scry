@@ -29,6 +29,7 @@ and a binding requirement disagree.
 
 ## Releases
 
+- [v0.2.0](releases/v0.2.0.md)
 - [v0.1.1](releases/v0.1.1.md)
 
 ## API reference
