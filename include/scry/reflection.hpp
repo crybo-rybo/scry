@@ -14,9 +14,6 @@
 /// Optional experimental C++26 typed-tool API built on P2996 reflection.
 namespace scry::reflection {
 
-/// Whether this installed component was built with C++26 reflection support.
-inline constexpr bool enabled = true;
-
 /// Encodes a supported reflected value as Scry's canonical JSON.
 ///
 /// This is the same value encoder used for reflected tool-handler results. The

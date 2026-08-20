@@ -17,6 +17,36 @@ static_assert(std::is_aggregate_v<scry::ToolDefinition>);
 static_assert(std::is_aggregate_v<scry::UpdateOptions>);
 static_assert(std::is_aggregate_v<scry::TurnCallbacks>);
 
+static_assert(std::is_enum_v<scry::FinishReason>);
+static_assert(std::is_aggregate_v<scry::Usage>);
+static_assert(std::is_aggregate_v<scry::ToolCall>);
+static_assert(std::is_aggregate_v<scry::Completion>);
+static_assert(std::is_aggregate_v<scry::UpdateStats>);
+static_assert(std::is_aggregate_v<scry::ConversationConfig>);
+static_assert(std::is_aggregate_v<scry::TurnId>);
+static_assert(std::same_as<decltype(scry::Usage::input_tokens), std::uint64_t>);
+static_assert(std::same_as<decltype(scry::Usage::output_tokens), std::uint64_t>);
+static_assert(std::same_as<decltype(scry::ToolCall::turn_id), scry::TurnId>);
+static_assert(std::same_as<decltype(scry::ToolCall::arguments), scry::Json>);
+static_assert(std::same_as<decltype(scry::Completion::turn_id), scry::TurnId>);
+static_assert(
+    std::same_as<decltype(scry::Completion::finish_reason), scry::FinishReason>);
+static_assert(std::same_as<decltype(scry::Completion::usage), scry::Usage>);
+static_assert(
+    std::same_as<decltype(scry::UpdateStats::callbacks_delivered), std::size_t>);
+static_assert(std::same_as<decltype(scry::UpdateStats::events_remaining), std::size_t>);
+static_assert(std::same_as<decltype(scry::UpdateStats::budget_exhausted), bool>);
+static_assert(
+    std::same_as<decltype(scry::ConversationConfig::system_prompt), std::string>);
+static_assert(std::same_as<decltype(scry::TurnId::value), std::uint64_t>);
+
+// TurnId::operator bool is explicit and constexpr: zero is invalid, nonzero names
+// an accepted turn.
+constexpr scry::TurnId unset_turn{};
+constexpr scry::TurnId set_turn{42};
+static_assert(!unset_turn);
+static_assert(bool{set_turn});
+
 static_assert(std::is_move_constructible_v<scry::Conversation>);
 static_assert(!std::is_copy_constructible_v<scry::Conversation>);
 static_assert(!std::is_move_constructible_v<scry::ToolRegistry>);
@@ -155,5 +185,7 @@ int main() {
   static_assert(scry::version_major == SCRY_VERSION_MAJOR);
   static_assert(scry::version_minor == SCRY_VERSION_MINOR);
   static_assert(scry::version_patch == SCRY_VERSION_PATCH);
+  static_assert(SCRY_VERSION == scry::version_major * 10000 +
+                                    scry::version_minor * 100 + scry::version_patch);
   return scry::version == "0.1.1" ? 0 : 1;
 }

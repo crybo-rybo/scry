@@ -7,7 +7,6 @@
 #include <ctime>
 #include <curl/curl.h>
 #include <limits>
-#include <string>
 
 namespace scry::detail::curl_error {
 namespace {

@@ -7,7 +7,9 @@
 #include <array>
 #include <limits>
 #include <ranges>
+#include <ratio>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 
 namespace scry::detail {
@@ -22,6 +24,59 @@ template <typename Command> [[nodiscard]] TransitionResult applied(Command comma
 [[nodiscard]] std::chrono::milliseconds
 bounded_elapsed(const RetryPolicy& policy) noexcept {
   return std::max(policy.max_elapsed, std::chrono::milliseconds{0});
+}
+
+// Conversion to the clock's usually finer tick period can overflow before the
+// later time-point addition gets a chance to enforce its own bound.
+[[nodiscard]] std::optional<MachineTimePoint::duration>
+clock_duration(const std::chrono::milliseconds value) noexcept {
+  using Duration = MachineTimePoint::duration;
+  using Conversion =
+      std::ratio_divide<std::chrono::milliseconds::period, Duration::period>;
+  using Common =
+      std::common_type_t<std::chrono::milliseconds::rep, Duration::rep, std::intmax_t>;
+
+  const auto count = static_cast<Common>(value.count());
+  const auto maximum = static_cast<Common>(Duration::max().count());
+  if (count <= 0) {
+    return Duration::zero();
+  }
+  Common converted{};
+  if constexpr (Conversion::den == 1) {
+    if (count > maximum / static_cast<Common>(Conversion::num)) {
+      return std::nullopt;
+    }
+    converted = count * static_cast<Common>(Conversion::num);
+  } else if constexpr (Conversion::num == 1) {
+    converted = count / static_cast<Common>(Conversion::den);
+  } else {
+    const auto scaled = static_cast<long double>(count) *
+                        static_cast<long double>(Conversion::num) /
+                        static_cast<long double>(Conversion::den);
+    if (scaled >= static_cast<long double>(maximum)) {
+      return std::nullopt;
+    }
+    converted = static_cast<Common>(scaled);
+  }
+  if (converted > maximum) {
+    return std::nullopt;
+  }
+  return Duration{static_cast<Duration::rep>(converted)};
+}
+
+[[nodiscard]] MachineTimePoint
+saturating_deadline(const MachineTimePoint started,
+                    const std::chrono::milliseconds delay) noexcept {
+  const auto converted = clock_duration(delay);
+  if (!converted) {
+    return MachineTimePoint::max();
+  }
+  const auto elapsed = started.time_since_epoch();
+  if (elapsed > MachineTimePoint::duration::zero() &&
+      *converted > MachineTimePoint::duration::max() - elapsed) {
+    return MachineTimePoint::max();
+  }
+  return started + *converted;
 }
 
 [[nodiscard]] Error response_error(const ErrorCategory category, std::string message) {
@@ -188,9 +243,9 @@ TransitionResult TurnMachine::on_event(AttemptFailed event) {
 
   const auto delay = retry_delay(retry_policy_, request_attempt_count_,
                                  event.retry_after, event.jitter_sample);
-  const auto deadline = event.observed_at + delay;
-  const auto elapsed_deadline =
-      request_started_at_.value_or(event.observed_at) + bounded_elapsed(retry_policy_);
+  const auto deadline = saturating_deadline(event.observed_at, delay);
+  const auto elapsed_deadline = saturating_deadline(
+      request_started_at_.value_or(event.observed_at), bounded_elapsed(retry_policy_));
   if (deadline > elapsed_deadline) {
     return finish_error(std::move(error));
   }
@@ -212,8 +267,8 @@ TransitionResult TurnMachine::on_event(const RetryWake event) {
     return illegal(MachineEventKind::retry_wake,
                    TransitionDiagnosticReason::wake_before_deadline);
   }
-  const auto elapsed_deadline =
-      request_started_at_.value_or(event.observed_at) + bounded_elapsed(retry_policy_);
+  const auto elapsed_deadline = saturating_deadline(
+      request_started_at_.value_or(event.observed_at), bounded_elapsed(retry_policy_));
   if (event.observed_at > elapsed_deadline) {
     return finish_error(waiting->last_error);
   }
@@ -414,8 +469,8 @@ bool TurnMachine::retry_is_allowed(const Error& error,
       request_attempt_count_ >= retry_policy_.max_attempts) {
     return false;
   }
-  const auto deadline =
-      request_started_at_.value_or(observed_at) + bounded_elapsed(retry_policy_);
+  const auto deadline = saturating_deadline(request_started_at_.value_or(observed_at),
+                                            bounded_elapsed(retry_policy_));
   return observed_at <= deadline;
 }
 

@@ -351,7 +351,6 @@ if(SCRY_ENABLE_REFLECTION)
     SCRY_REFLECTION_DETAIL_HEADERS
     CONFIGURE_DEPENDS
     "${PROJECT_SOURCE_DIR}/include/scry/detail/reflection*.hpp"
-    "${PROJECT_SOURCE_DIR}/include/scry/detail/reflection/*.hpp"
   )
   set(
     SCRY_REFLECTION_PUBLIC_HEADERS

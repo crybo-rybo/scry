@@ -92,7 +92,7 @@ to canonical Scry-owned `Json` without registering a tool.
 The canonical first program is [examples/main_loop.cpp](examples/main_loop.cpp):
 create a `Harness` from a `Config`, register a tool, `send()` a message with the
 callbacks you want, and pump `update()` from the loop you already own. It assumes
-a local Ollama server at `http://127.0.0.1:11434` with the `qwen3:1.7b` model
+a local Ollama server at `http://127.0.0.1:11434/v1` with the `qwen3:8b` model
 installed.
 
 [Public API design](docs/design/public-api.md) walks through the same five public concepts —

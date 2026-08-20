@@ -20,7 +20,7 @@
   compiler against the same reflection-enabled installation.
   [Quality gates](../development/quality-gates.md) owns the ring shape and which
   leg runs where.
-- **Warnings are errors** (`-Wall -Wextra -Wconversion`), from the first commit.
+- **Warnings are errors** (`-Wall -Wextra -Wconversion -Wshadow`), from the first commit.
 - **Performance claims are paired experiments.** The opt-in profiling suite
   keeps stable behavioral scenarios, semantic oracles, environment metadata,
   and same-host parent/candidate comparisons. Timing, C++ allocation, and RSS
