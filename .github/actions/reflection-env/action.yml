@@ -9,9 +9,11 @@ runs:
   using: composite
   steps:
     - name: Install GCC 16 (and GCC 14 for the core-surface proof)
+      shell: bash
       run: |
         sudo add-apt-repository --yes ppa:ubuntu-toolchain-r/test
         sudo apt-get update
         sudo apt-get install -y g++-14 g++-16 libcurl4-openssl-dev ninja-build
     - name: Lower ASLR entropy for sanitizers
+      shell: bash
       run: sudo sysctl vm.mmap_rnd_bits=28
