@@ -40,7 +40,7 @@ docs:
     ./scripts/ci-docs.sh
 
 tidy:
-    cmake --preset ci -B build/tidy -DSCRY_ENABLE_CLANG_TIDY=ON -DSCRY_ENABLE_FORMAT_CHECK=OFF -DSCRY_USE_LIBCXX=ON
+    CC=clang CXX=clang++ cmake --preset ci --fresh -B build/tidy -DSCRY_ENABLE_CLANG_TIDY=ON -DSCRY_ENABLE_FORMAT_CHECK=OFF -DSCRY_USE_LIBCXX=ON
     cmake --build build/tidy
 
 asan:

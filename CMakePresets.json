@@ -13,10 +13,7 @@
       "binaryDir": "${sourceDir}/build/${presetName}",
       "cacheVariables": {
         "CMAKE_EXPORT_COMPILE_COMMANDS": true,
-        "SCRY_BUILD_EXAMPLES": true,
-        "SCRY_BUILD_TESTS": true,
-        "SCRY_ENABLE_FORMAT_CHECK": true,
-        "SCRY_WARNINGS_AS_ERRORS": true
+        "SCRY_ENABLE_FORMAT_CHECK": true
       }
     },
     {
@@ -51,12 +48,8 @@
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
         "SCRY_BUILD_BENCHMARKS": true,
         "SCRY_BUILD_EXAMPLES": false,
-        "SCRY_BUILD_LOCAL_MODEL_SMOKE": false,
         "SCRY_BUILD_TESTS": false,
-        "SCRY_ENABLE_CLANG_TIDY": false,
-        "SCRY_ENABLE_FORMAT_CHECK": false,
-        "SCRY_ENABLE_LOGGING": false,
-        "SCRY_SANITIZER": "none"
+        "SCRY_ENABLE_FORMAT_CHECK": false
       }
     },
     {

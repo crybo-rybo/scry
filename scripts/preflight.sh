@@ -34,8 +34,19 @@ run_tidy() {
     echo "clang-tidy is unavailable" >&2
     return 1
   fi
-  PATH="${tidy_path}" cmake \
+  if ! PATH="${tidy_path}" command -v clang >/dev/null 2>&1 ||
+    ! PATH="${tidy_path}" command -v clang++ >/dev/null 2>&1; then
+    echo "Clang is unavailable; the clang-tidy leg requires its matching compiler" >&2
+    return 1
+  fi
+  if ! PATH="${tidy_path}" clang++ -std=c++23 -stdlib=libc++ -x c++ \
+    -fsyntax-only - <<<"#include <version>" >/dev/null 2>&1; then
+    echo "libc++ is unavailable; the hosted clang-tidy leg is authoritative" >&2
+    return 1
+  fi
+  PATH="${tidy_path}" CC=clang CXX=clang++ cmake \
     --preset ci \
+    --fresh \
     -B build/tidy \
     -DSCRY_ENABLE_CLANG_TIDY=ON \
     -DSCRY_ENABLE_FORMAT_CHECK=OFF \

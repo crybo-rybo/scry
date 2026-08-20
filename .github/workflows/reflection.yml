@@ -25,6 +25,7 @@ on:
       - "CMakeLists.txt"
       - "tests/CMakeLists.txt"
       - "CMakePresets.json"
+      - ".github/actions/reflection-env/**"
       - ".github/workflows/reflection.yml"
   workflow_dispatch:
 
