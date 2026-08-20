@@ -274,10 +274,10 @@ TEST_CASE("oversized terminal diagnostics are bounded before publication") {
   fake->enqueue(scry::test::ScriptedExchange{
       .result = std::unexpected(scry::Error{
           .category = scry::ErrorCategory::network,
+          .attempt = 9,
           .message = std::string(600, 'm'),
           .provider_detail = std::string(600, 'd'),
           .turn_id = scry::TurnId{.value = 999},
-          .attempt = 9,
           .provider_request_id = std::string(600, 'r'),
       }),
   });
@@ -306,9 +306,9 @@ TEST_CASE("accepted results redact the configured API key from correlation field
   fake->enqueue({
       .result = std::unexpected(scry::Error{
           .category = scry::ErrorCategory::network,
+          .retryable = true,
           .message = "transport echoed sanitized-test-key",
           .provider_detail = "sanitized-test-key",
-          .retryable = true,
           .provider_request_id = "request-sanitized-test-key",
       }),
   });

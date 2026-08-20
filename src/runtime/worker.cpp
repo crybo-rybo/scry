@@ -25,9 +25,9 @@ constexpr std::size_t terminal_event_reserve = 512;
                                  const std::uint32_t attempt = 0) {
   return Error{
       .category = category,
+      .attempt = attempt,
       .message = std::move(message),
       .turn_id = turn_id,
-      .attempt = attempt,
   };
 }
 

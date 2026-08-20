@@ -279,12 +279,12 @@ TEST_CASE("curl error classification prefers consumer errors and cancellation ca
 
   const scry::Error callback{
       .category = ErrorCategory::tool,
+      .retryable = true,
+      .attempt = 3,
       .message = "consumer failed",
       .provider_detail = "provider:safe_code",
-      .retryable = true,
       .retry_after = std::chrono::milliseconds{17},
       .turn_id = scry::TurnId{42},
-      .attempt = 3,
       .provider_request_id = "body-request",
   };
   const auto preserved =

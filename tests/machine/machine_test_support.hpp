@@ -74,9 +74,9 @@ inline constexpr TurnId turn_id{42};
                                  std::string message = "attempt failed") {
   return {
       .category = category,
+      .retryable = is_retryable(category),
       .message = std::move(message),
       .provider_detail = "sanitized detail",
-      .retryable = is_retryable(category),
       .provider_request_id = "request-123",
   };
 }

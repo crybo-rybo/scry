@@ -40,21 +40,23 @@ enum class ErrorCategory : std::uint8_t {
 /// Provider-supplied fields are sanitized before they reach this boundary. API keys,
 /// auth headers, prompt content, and tool content are never intentionally included.
 struct Error {
+  // Keep the scalar header together: Error is carried by value through expected
+  // and event queues, so separating these fields adds padding to every instance.
   /// Stable programmatic category.
   ErrorCategory category{ErrorCategory::invalid_state};
+  /// Whether retrying may succeed. Scry retries automatically only before semantic
+  /// output.
+  bool retryable{false};
+  /// One-based request attempt number, or zero when no request was attempted.
+  std::uint32_t attempt{};
   /// Human-readable Scry diagnostic.
   std::string message{};
   /// Sanitized provider diagnostic, when one is safe and available.
   std::string provider_detail{};
-  /// Whether retrying may succeed. Scry retries automatically only before semantic
-  /// output.
-  bool retryable{false};
   /// Provider-requested retry delay, when supplied and valid.
   std::optional<std::chrono::milliseconds> retry_after{};
   /// Correlated turn, when the failure belongs to an accepted turn.
   std::optional<TurnId> turn_id{};
-  /// One-based request attempt number, or zero when no request was attempted.
-  std::uint32_t attempt{};
   /// Sanitized provider request identifier, when available.
   std::string provider_request_id{};
 };

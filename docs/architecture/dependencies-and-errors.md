@@ -3,6 +3,12 @@
 ## 8. Errors as Values, Categorized Once
 
 - Internal fallible paths return `std::expected<T, Error>`; `Error` is one struct with a category enum (`invalid_config`, `invalid_state`, `busy`, `authentication`, `rate_limit`, `network`, `protocol`, `resource_limit`, `tool`, `max_tool_rounds`, `cancelled`) plus message, sanitized provider detail, retryability, and correlation fields. One error type end-to-end — no per-layer error hierarchies to translate between.
+- `Error` remains a designated-initializer-friendly aggregate. Its category,
+  retryability flag, and attempt count form a compact scalar header before the
+  diagnostic and correlation values; designated initializers that set those
+  fields follow that declaration order. Keeping the scalars together avoids
+  carrying two separate padding gaps through `expected` values and event
+  queues.
 - The retry classifier (which categories are retryable) is a pure function owned by the loop state machine, tested as a table.
 - At the boundary, failures before work is accepted are returned immediately by `std::expected`. After acceptance, the same `Error` arrives through `on_finished` in place of the completion — including cancellation, as category `cancelled`. `errno`-style status polling is deliberately absent; there is exactly one asynchronous outcome channel.
 

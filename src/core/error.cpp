@@ -8,8 +8,8 @@ Error make_error(const ErrorCategory category, std::string message,
                  const bool retryable) {
   return Error{
       .category = category,
-      .message = std::move(message),
       .retryable = retryable,
+      .message = std::move(message),
   };
 }
 

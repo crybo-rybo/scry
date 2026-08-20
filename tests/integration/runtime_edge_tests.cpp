@@ -77,8 +77,8 @@ transient_failure(const std::string_view message = "transient failure") {
   return {
       .result = std::unexpected(scry::Error{
           .category = scry::ErrorCategory::network,
-          .message = std::string{message},
           .retryable = true,
+          .message = std::string{message},
       }),
   };
 }
@@ -95,8 +95,8 @@ public:
     changed_.notify_all();
     return std::unexpected(scry::Error{
         .category = scry::ErrorCategory::network,
-        .message = "retry signal",
         .retryable = true,
+        .message = "retry signal",
     });
   }
 
@@ -138,8 +138,8 @@ public:
     if (call_number == 1) {
       return std::unexpected(scry::Error{
           .category = scry::ErrorCategory::network,
-          .message = "held transient failure",
           .retryable = true,
+          .message = "held transient failure",
       });
     }
     if (auto status = sink(completed_stream); !status) {

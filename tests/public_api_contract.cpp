@@ -140,9 +140,11 @@ int main() {
 
   const scry::Error error{
       .category = scry::ErrorCategory::resource_limit,
+      .retryable = true,
+      .attempt = 2,
       .message = "bounded",
   };
-  if (error.retryable) {
+  if (!error.retryable || error.attempt != 2) {
     return 1;
   }
 
