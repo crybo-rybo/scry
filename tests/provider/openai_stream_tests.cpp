@@ -211,6 +211,20 @@ TEST_CASE("OpenAI stream rejects incomplete and conflicting tool metadata") {
               chunk(R"({"index":0,"delta":{},"finish_reason":"tool_calls"})")));
   }
 
+  SECTION("large sparse indices retain only observed calls") {
+    ProviderDecodeState state{};
+    apply(
+        adapter, state,
+        chunk(
+            R"({"index":0,"delta":{"tool_calls":[{"index":1000000000,"id":"call","type":"function","function":{"name":"lookup","arguments":"{}"}}]},"finish_reason":null})"));
+    const auto& decode = std::get<OpenAiProviderDecodeState>(state.dialect);
+    REQUIRE(decode.tool_calls.size() == 1);
+    CHECK(decode.tool_calls.front().index == 1000000000);
+    require_protocol(
+        event(adapter, state,
+              chunk(R"({"index":0,"delta":{},"finish_reason":"tool_calls"})")));
+  }
+
   SECTION("metadata changes") {
     ProviderDecodeState state{};
     apply(

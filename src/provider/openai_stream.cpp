@@ -4,6 +4,7 @@
 #include "provider/openai_content.hpp"
 #include "provider/shared.hpp"
 
+#include <algorithm>
 #include <limits>
 #include <optional>
 #include <string>
@@ -16,6 +17,7 @@ namespace {
 struct MetadataFragment {
   std::string_view value;
   std::string_view field;
+  std::uint8_t presence;
 };
 
 struct StreamEventView {
@@ -40,25 +42,33 @@ struct StreamEventView {
   return static_cast<std::size_t>(index);
 }
 
-[[nodiscard]] Status assign_metadata(std::optional<std::string>& destination,
+[[nodiscard]] bool has_metadata(const OpenAiToolDecodeState& tool,
+                                const std::uint8_t presence) {
+  return (tool.metadata & presence) != 0U;
+}
+
+[[nodiscard]] Status assign_metadata(std::string& destination, std::uint8_t& metadata,
                                      const MetadataFragment fragment) {
   if (fragment.value.empty()) {
     return std::unexpected(make_error(
         ErrorCategory::protocol,
         "OpenAI streamed tool " + std::string{fragment.field} + " must not be empty"));
   }
-  if (destination && *destination != fragment.value) {
+  if ((metadata & fragment.presence) != 0U && destination != fragment.value) {
     return std::unexpected(make_error(
         ErrorCategory::protocol,
         "OpenAI streamed tool " + std::string{fragment.field} + " changed mid-stream"));
   }
   destination = fragment.value;
+  metadata |= fragment.presence;
   return {};
 }
 
 [[nodiscard]] Status apply_optional_metadata(const JsonValue& owner,
                                              const std::string_view field,
-                                             std::optional<std::string>& destination) {
+                                             std::string& destination,
+                                             std::uint8_t& metadata,
+                                             const std::uint8_t presence) {
   auto parsed = optional_json_string(owner, field);
   if (!parsed) {
     return std::unexpected(std::move(parsed.error()));
@@ -66,9 +76,32 @@ struct StreamEventView {
   if (!parsed->has_value()) {
     return {};
   }
-  return assign_metadata(
-      destination,
-      MetadataFragment{.value = parsed->value_or(std::string_view{}), .field = field});
+  return assign_metadata(destination, metadata,
+                         MetadataFragment{.value = parsed->value_or(std::string_view{}),
+                                          .field = field,
+                                          .presence = presence});
+}
+
+[[nodiscard]] Status apply_tool_type(const JsonValue& owner,
+                                     OpenAiToolDecodeState& tool) {
+  auto parsed = optional_json_string(owner, "type");
+  if (!parsed) {
+    return std::unexpected(std::move(parsed.error()));
+  }
+  if (!parsed->has_value()) {
+    return {};
+  }
+  const auto type = parsed->value_or(std::string_view{});
+  if (type.empty()) {
+    return std::unexpected(make_error(ErrorCategory::protocol,
+                                      "OpenAI streamed tool type must not be empty"));
+  }
+  if (type != "function") {
+    return std::unexpected(make_error(
+        ErrorCategory::protocol, "OpenAI streamed tool call type must be function"));
+  }
+  tool.metadata |= OpenAiToolDecodeState::type_present;
+  return {};
 }
 
 [[nodiscard]] Status append_arguments(OpenAiToolDecodeState& tool,
@@ -95,7 +128,8 @@ struct StreamEventView {
     return std::unexpected(make_error(
         ErrorCategory::protocol, "OpenAI streamed tool function must be an object"));
   }
-  auto name = apply_optional_metadata(*function, "name", tool.name);
+  auto name = apply_optional_metadata(*function, "name", tool.name, tool.metadata,
+                                      OpenAiToolDecodeState::name_present);
   if (!name) {
     return name;
   }
@@ -107,6 +141,20 @@ struct StreamEventView {
     return {};
   }
   return append_arguments(tool, arguments->value_or(std::string_view{}), limit);
+}
+
+[[nodiscard]] OpenAiToolDecodeState& indexed_tool(OpenAiProviderDecodeState& decode,
+                                                  const std::size_t index) {
+  auto position = std::lower_bound(
+      decode.tool_calls.begin(), decode.tool_calls.end(), index,
+      [](const OpenAiToolDecodeState& tool, const std::size_t candidate) {
+        return tool.index < candidate;
+      });
+  if (position == decode.tool_calls.end() || position->index != index) {
+    position =
+        decode.tool_calls.insert(position, OpenAiToolDecodeState{.index = index});
+  }
+  return *position;
 }
 
 [[nodiscard]] Status apply_tool_fragment(const JsonValue& value,
@@ -121,18 +169,15 @@ struct StreamEventView {
   if (!index) {
     return std::unexpected(std::move(index.error()));
   }
-  auto& tool = decode.tool_calls[*index];
-  auto id = apply_optional_metadata(value, "id", tool.id);
+  auto& tool = indexed_tool(decode, *index);
+  auto id = apply_optional_metadata(value, "id", tool.id, tool.metadata,
+                                    OpenAiToolDecodeState::id_present);
   if (!id) {
     return id;
   }
-  auto type = apply_optional_metadata(value, "type", tool.type);
+  auto type = apply_tool_type(value, tool);
   if (!type) {
     return type;
-  }
-  if (tool.type && *tool.type != "function") {
-    return std::unexpected(make_error(
-        ErrorCategory::protocol, "OpenAI streamed tool call type must be function"));
   }
   auto function = apply_function_fragment(value, tool, state.max_tool_arguments_bytes);
   if (!function) {
@@ -165,9 +210,11 @@ struct StreamEventView {
 [[nodiscard]] Status finalize_tools(ProviderDecodeState& state,
                                     OpenAiProviderDecodeState& decode) {
   std::size_t expected_index = 0;
-  for (auto& [index, tool] : decode.tool_calls) {
-    if (index != expected_index || !tool.id || !tool.name || !tool.type ||
-        *tool.type != "function") {
+  for (auto& tool : decode.tool_calls) {
+    if (tool.index != expected_index ||
+        !has_metadata(tool, OpenAiToolDecodeState::id_present) ||
+        !has_metadata(tool, OpenAiToolDecodeState::name_present) ||
+        !has_metadata(tool, OpenAiToolDecodeState::type_present)) {
       return std::unexpected(
           make_error(ErrorCategory::protocol,
                      "OpenAI streamed tool calls are incomplete or noncontiguous"));
@@ -182,8 +229,8 @@ struct StreamEventView {
       return std::unexpected(std::move(status.error()));
     }
     state.response.content.push_back(ToolCallBlock{
-        .id = *tool.id,
-        .name = *tool.name,
+        .id = std::move(tool.id),
+        .name = std::move(tool.name),
         .arguments = Json{.text = std::move(tool.arguments)},
     });
     ++expected_index;
@@ -207,12 +254,12 @@ apply_text_delta(const JsonValue& delta, ProviderDecodeState& state,
   if (text.empty()) {
     return std::vector<ProviderEvent>{};
   }
-  if (!decode.text_content_index) {
+  if (decode.text_content_index == OpenAiProviderDecodeState::no_text_content) {
     decode.text_content_index = state.response.content.size();
     state.response.content.push_back(TextBlock{});
   }
   auto* destination =
-      std::get_if<TextBlock>(&state.response.content[*decode.text_content_index]);
+      std::get_if<TextBlock>(&state.response.content[decode.text_content_index]);
   if (destination == nullptr) {
     return std::unexpected(
         make_error(ErrorCategory::protocol,
@@ -261,7 +308,7 @@ apply_text_delta(const JsonValue& delta, ProviderDecodeState& state,
     return std::unexpected(make_error(ErrorCategory::protocol,
                                       "OpenAI stream chunk ID must not be empty"));
   }
-  if (decode.chunk_id && *decode.chunk_id != *id) {
+  if (!decode.chunk_id.empty() && decode.chunk_id != *id) {
     return std::unexpected(make_error(ErrorCategory::protocol,
                                       "OpenAI stream chunk ID changed mid-stream"));
   }

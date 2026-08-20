@@ -3,8 +3,8 @@
 #include "core/model.hpp"
 #include "core/transport.hpp"
 
+#include <cstdint>
 #include <limits>
-#include <map>
 #include <memory>
 #include <optional>
 #include <scry/error.hpp>
@@ -37,16 +37,26 @@ struct AnthropicProviderDecodeState {
 };
 
 struct OpenAiToolDecodeState {
-  std::optional<std::string> id{};
-  std::optional<std::string> name{};
-  std::optional<std::string> type{};
+  static constexpr std::uint8_t id_present = 1U << 0U;
+  static constexpr std::uint8_t name_present = 1U << 1U;
+  static constexpr std::uint8_t type_present = 1U << 2U;
+
+  std::size_t index{};
+  std::string id{};
+  std::string name{};
   std::string arguments{};
+  std::uint8_t metadata{};
 };
 
 struct OpenAiProviderDecodeState {
-  std::optional<std::string> chunk_id{};
-  std::optional<std::size_t> text_content_index{};
-  std::map<std::size_t, OpenAiToolDecodeState> tool_calls{};
+  static constexpr std::size_t no_text_content =
+      std::numeric_limits<std::size_t>::max();
+
+  std::string chunk_id{};
+  std::size_t text_content_index{no_text_content};
+  // Sorted by index and stores only observed calls, so an untrusted sparse
+  // index cannot size the allocation.
+  std::vector<OpenAiToolDecodeState> tool_calls{};
   bool finish_observed{false};
   bool tools_finalized{false};
 };
