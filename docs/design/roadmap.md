@@ -37,6 +37,13 @@ surface.
 additive and confined to `scry::reflection`; the stable C++23 core API and
 core-only package remain unchanged.
 
+**Shipped in v0.2.0.** Lower allocation pressure for accepted-turn snapshots
+and streaming decoder state, with a reproducible profiling workflow and
+saturating retry deadlines. The public `scry::Error` aggregate was reordered to
+reduce padding, requiring source updates for ordered aggregate initialization
+and an ABI rebuild. The information-free `scry::reflection::enabled` constant
+was removed from the experimental reflection component.
+
 **Not shipped, in rough order of demand.** The asynchronous/deferred
 tool-result API and structured output from §11; curl-multi multiplexing of
 concurrent turns; coroutine-awaitable turns; Windows support. Each has a trigger
