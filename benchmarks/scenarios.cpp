@@ -1,6 +1,7 @@
 #include "scenarios.hpp"
 
 #include "protocol/sse.hpp"
+#include "scenario_support.hpp"
 
 #include <algorithm>
 #include <memory>
@@ -10,28 +11,6 @@
 
 namespace scry::bench {
 namespace {
-
-constexpr std::uint64_t fnv_offset = 14'695'981'039'346'656'037ULL;
-constexpr std::uint64_t fnv_prime = 1'099'511'628'211ULL;
-
-void digest_byte(std::uint64_t& digest, const std::uint8_t value) noexcept {
-  digest ^= value;
-  digest *= fnv_prime;
-}
-
-void digest_number(std::uint64_t& digest, std::uint64_t value) noexcept {
-  for (std::size_t index = 0; index < sizeof(value); ++index) {
-    digest_byte(digest, static_cast<std::uint8_t>(value & 0xffU));
-    value >>= 8U;
-  }
-}
-
-void digest_text(std::uint64_t& digest, const std::string_view text) noexcept {
-  digest_number(digest, static_cast<std::uint64_t>(text.size()));
-  for (const char value : text) {
-    digest_byte(digest, static_cast<std::uint8_t>(value));
-  }
-}
 
 void observe_sse_events(const std::vector<detail::SseEvent>& events,
                         std::uint64_t& digest, std::size_t& event_count,
@@ -156,13 +135,6 @@ void observe_provider_events(const std::vector<detail::ProviderEvent>& events,
 [[nodiscard]] std::string tool_closing_fragment(const std::size_t index) {
   return std::string{R"({"index":)"} + std::to_string(index) +
          R"(,"function":{"arguments":"\"}"}})";
-}
-
-[[nodiscard]] std::string padded_text(const std::size_t size, const std::size_t seed) {
-  std::string value(size, static_cast<char>('a' + static_cast<char>(seed % 26)));
-  const auto prefix = std::to_string(seed) + ':';
-  value.replace(0, std::min(prefix.size(), value.size()), prefix);
-  return value;
 }
 
 [[nodiscard]] std::string schema_json(const std::size_t index) {

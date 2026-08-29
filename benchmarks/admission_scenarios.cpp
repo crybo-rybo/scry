@@ -1,6 +1,8 @@
 #include "core/provider.hpp"
 #include "core/transport.hpp"
+#include "prepared_operation_impl.hpp"
 #include "runtime/test_access.hpp"
+#include "scenario_support.hpp"
 #include "scenarios.hpp"
 
 #include <atomic>
@@ -21,45 +23,7 @@
 namespace scry::bench {
 namespace {
 
-constexpr std::uint64_t fnv_offset = 14'695'981'039'346'656'037ULL;
-constexpr std::uint64_t fnv_prime = 1'099'511'628'211ULL;
 constexpr std::size_t admitted_turn_count = 63;
-
-void digest_byte(std::uint64_t& digest, const std::uint8_t value) noexcept {
-  digest ^= value;
-  digest *= fnv_prime;
-}
-
-void digest_number(std::uint64_t& digest, std::uint64_t value) noexcept {
-  for (std::size_t index = 0; index < sizeof(value); ++index) {
-    digest_byte(digest, static_cast<std::uint8_t>(value & 0xffU));
-    value >>= 8U;
-  }
-}
-
-void digest_text(std::uint64_t& digest, const std::string_view text) noexcept {
-  digest_number(digest, static_cast<std::uint64_t>(text.size()));
-  for (const auto value : text) {
-    digest_byte(digest, static_cast<std::uint8_t>(value));
-  }
-}
-
-[[nodiscard]] std::string fixture_text(const std::size_t size, const std::size_t seed) {
-  return std::string(size, static_cast<char>('a' + static_cast<char>(seed % 26)));
-}
-
-[[nodiscard]] std::string representative_schema(const std::size_t size,
-                                                const std::size_t seed) {
-  constexpr auto prefix = std::string_view{R"({"description":")"};
-  constexpr auto suffix = std::string_view{
-      R"(","properties":{"payload":{"type":"string"}},"type":"object"})"};
-  const auto fixed_size = prefix.size() + suffix.size();
-  if (size <= fixed_size) {
-    return R"({"type":"object"})";
-  }
-  return std::string{prefix} + fixture_text(size - fixed_size, seed) +
-         std::string{suffix};
-}
 
 [[nodiscard]] ToolDefinition tool_definition(const std::size_t index,
                                              const std::size_t schema_bytes) {
@@ -286,10 +250,12 @@ make_admission_harness(const std::shared_ptr<BlockingTransportState>& state) {
 
 } // namespace
 
-struct AdmissionOperation::Impl final {
-  Impl(const AdmissionShape admission_shape, const std::size_t element_count,
-       const std::size_t element_bytes, const bool semantic_validation,
-       const ScenarioResult expected)
+class AdmissionOperationState final {
+public:
+  AdmissionOperationState(const AdmissionShape admission_shape,
+                          const std::size_t element_count,
+                          const std::size_t element_bytes,
+                          const bool semantic_validation, const ScenarioResult expected)
       : shape{admission_shape}, validate{semantic_validation}, oracle{expected},
         transport_state{std::make_shared<BlockingTransportState>(semantic_validation)},
         expected_element_count{element_count}, expected_element_bytes{element_bytes} {
@@ -372,6 +338,29 @@ struct AdmissionOperation::Impl final {
     return transport_state->release_drain_and_validate(expected_request_body, digest);
   }
 
+  [[nodiscard]] ScenarioResult run() {
+    if (!harness) {
+      return {};
+    }
+    auto digest = validate ? fnv_offset : oracle.digest;
+    auto valid = validate_fixture(digest);
+    for (std::size_t index = 0; index < conversations.size(); ++index) {
+      valid = admit(index, digest) && valid;
+    }
+    valid = drain_and_validate_requests(digest) && valid;
+    const auto user_message_bytes = std::string_view{"benchmark admission"}.size();
+    return {
+        .digest = digest,
+        .input_bytes = static_cast<std::uint64_t>(
+            admitted_turn_count * (per_turn_input_bytes + user_message_bytes)),
+        .output_bytes = admitted_turn_count * sizeof(std::uint64_t),
+        .items = static_cast<std::uint64_t>(turns.size()),
+        .valid =
+            valid && turns.size() == admitted_turn_count && (validate || oracle.valid),
+    };
+  }
+
+private:
   AdmissionShape shape{};
   bool validate{};
   ScenarioResult oracle{};
@@ -389,44 +378,13 @@ struct AdmissionOperation::Impl final {
   bool setup_valid{true};
 };
 
-AdmissionOperation::AdmissionOperation(std::unique_ptr<Impl> impl) noexcept
-    : impl_(std::move(impl)) {}
-
-AdmissionOperation::~AdmissionOperation() = default;
-AdmissionOperation::AdmissionOperation(AdmissionOperation&&) noexcept = default;
-AdmissionOperation&
-AdmissionOperation::operator=(AdmissionOperation&&) noexcept = default;
-
-ScenarioResult AdmissionOperation::run() {
-  if (!impl_ || !impl_->harness) {
-    return {};
-  }
-  auto& operation = *impl_;
-  auto digest = operation.validate ? fnv_offset : operation.oracle.digest;
-  auto valid = operation.validate_fixture(digest);
-  for (std::size_t index = 0; index < operation.conversations.size(); ++index) {
-    valid = operation.admit(index, digest) && valid;
-  }
-  valid = operation.drain_and_validate_requests(digest) && valid;
-  const auto user_message_bytes = std::string_view{"benchmark admission"}.size();
-  return {
-      .digest = digest,
-      .input_bytes = static_cast<std::uint64_t>(
-          admitted_turn_count * (operation.per_turn_input_bytes + user_message_bytes)),
-      .output_bytes = admitted_turn_count * sizeof(std::uint64_t),
-      .items = static_cast<std::uint64_t>(operation.turns.size()),
-      .valid = valid && operation.turns.size() == admitted_turn_count &&
-               (operation.validate || operation.oracle.valid),
-  };
-}
-
 AdmissionScenario::AdmissionScenario(const AdmissionShape shape,
                                      const std::size_t element_count,
                                      const std::size_t element_bytes)
     : shape_(shape), element_count_(element_count), element_bytes_(element_bytes) {}
 
 AdmissionOperation AdmissionScenario::make_operation(const bool validate) const {
-  return AdmissionOperation{std::make_unique<AdmissionOperation::Impl>(
+  return AdmissionOperation{std::make_unique<AdmissionOperationState>(
       shape_, element_count_, element_bytes_, validate, oracle_)};
 }
 
@@ -437,5 +395,7 @@ ScenarioResult AdmissionScenario::validate() {
 }
 
 AdmissionOperation AdmissionScenario::prepare() const { return make_operation(false); }
+
+template class PreparedOperation<AdmissionOperationState>;
 
 } // namespace scry::bench

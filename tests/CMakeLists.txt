@@ -15,6 +15,14 @@ endforeach()
 list(APPEND CMAKE_MODULE_PATH "${catch2_SOURCE_DIR}/extras")
 include(Catch)
 
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+add_test(
+  NAME performance-tooling
+  COMMAND
+    "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/scripts/perf_compare_tests.py"
+)
+
 # Every public header must compile on its own, so each one becomes a lone
 # translation unit that includes nothing else.
 file(MAKE_DIRECTORY "${PROJECT_BINARY_DIR}/generated/header_checks")

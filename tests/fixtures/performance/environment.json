@@ -1,0 +1,18 @@
+{
+  "schema_version": "scry.performance.environment.v1",
+  "run": {
+    "id": "fixture-run"
+  },
+  "host": {
+    "node": "fixture-host",
+    "logical_cpu_count": 8
+  },
+  "measurement": {
+    "run_mode": "smoke",
+    "targets": [
+      "scry_timing_benchmarks",
+      "scry_allocation_benchmarks"
+    ],
+    "requested_repetitions": 1
+  }
+}

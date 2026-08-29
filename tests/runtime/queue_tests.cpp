@@ -75,7 +75,7 @@ TEST_CASE("event queue coalescing handles non-adjacent and cross-turn events") {
   scry::detail::EventQueue queue;
   const auto first = scry::TurnId{.value = 203};
   const auto second = scry::TurnId{.value = 204};
-  REQUIRE(queue.push_terminal(
+  REQUIRE(queue.push(
       scry::detail::ErrorEvent{.turn_id = first, .error = {.message = "e"}}, 16));
   REQUIRE(queue.push(scry::detail::TextDeltaEvent{.turn_id = first, .text = "a"}, 16));
   REQUIRE(queue.push(scry::detail::TextDeltaEvent{.turn_id = second, .text = "b"}, 16));
@@ -135,7 +135,7 @@ TEST_CASE("event queue rejects coalescing against a reduced byte limit") {
       queue.push(scry::detail::TextDeltaEvent{.turn_id = turn_id, .text = "1234"}, 4));
   CHECK_FALSE(
       queue.push(scry::detail::TextDeltaEvent{.turn_id = turn_id, .text = "x"}, 3));
-  CHECK_FALSE(queue.push_terminal(scry::detail::CancelledEvent{.turn_id = turn_id}, 3));
+  CHECK_FALSE(queue.push(scry::detail::CancelledEvent{.turn_id = turn_id}, 3));
 }
 
 TEST_CASE("event queue rejects a coalesced delta beyond remaining capacity") {
@@ -154,7 +154,7 @@ TEST_CASE("event queue release retains and then clears remaining accounting") {
                      16));
   auto first = queue.try_pop();
   REQUIRE(first);
-  REQUIRE(queue.push_terminal(
+  REQUIRE(queue.push(
       scry::detail::ErrorEvent{.turn_id = turn_id, .error = {.message = "last"}}, 16));
   auto last = queue.try_pop();
   REQUIRE(last);
@@ -187,7 +187,6 @@ TEST_CASE("blocking queue exposes timeout and size behavior") {
 TEST_CASE("event queue wait reports timeout and ready data") {
   scry::detail::EventQueue queue;
   CHECK_FALSE(queue.wait_for_data(0ms));
-  REQUIRE(
-      queue.push_terminal(scry::detail::CancelledEvent{.turn_id = {.value = 211}}, 16));
+  REQUIRE(queue.push(scry::detail::CancelledEvent{.turn_id = {.value = 211}}, 16));
   CHECK(queue.wait_for_data(0ms));
 }

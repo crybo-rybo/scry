@@ -234,6 +234,57 @@ def methodology_digest(tooling_dir: Path) -> str:
     return digest_paths(entries)
 
 
+def compile_command_scope(source_path: Path, source_dir: Path) -> Optional[str]:
+    try:
+        relative_source = source_path.relative_to(source_dir)
+    except ValueError:
+        return None
+    if relative_source.parts[0] == "src":
+        return "scry-production"
+    if relative_source.parts[0] == "benchmarks":
+        return "benchmark"
+    return None
+
+
+def compile_command_tokens(entry: dict[str, Any]) -> list[str]:
+    if "arguments" in entry:
+        tokens = [str(token) for token in entry["arguments"]]
+    else:
+        tokens = shlex.split(str(entry.get("command", "")))
+    return tokens[1:] if tokens else []
+
+
+def normalized_compile_flags(
+    entry: dict[str, Any], source_path: Path, source_dir: Path, build_dir: Path
+) -> tuple[str, ...]:
+    relative_source = source_path.relative_to(source_dir)
+    lexical_source_root = Path(str(entry["file"]))
+    for _ in relative_source.parts:
+        lexical_source_root = lexical_source_root.parent
+    lexical_build_root = Path(str(entry.get("directory", build_dir)))
+    flags: list[str] = []
+    skip_next = False
+    for token in compile_command_tokens(entry):
+        if skip_next:
+            skip_next = False
+            continue
+        if token in {"-o", "-MF", "-MT", "-MQ"}:
+            skip_next = True
+            continue
+        token_path = Path(token)
+        if not token_path.is_absolute():
+            token_path = Path(str(entry.get("directory", source_dir))) / token_path
+        if token == "-c" or token_path.resolve() == source_path:
+            continue
+        normalized = token
+        for spelling in {str(build_dir), str(lexical_build_root)}:
+            normalized = normalized.replace(spelling, "<BUILD>")
+        for spelling in {str(source_dir), str(lexical_source_root)}:
+            normalized = normalized.replace(spelling, "<SOURCE>")
+        flags.append(normalized)
+    return tuple(flags)
+
+
 def effective_compile_context(build_dir: Path, source_dir: Path) -> dict[str, Any]:
     compile_commands_path = build_dir / "compile_commands.json"
     try:
@@ -255,47 +306,12 @@ def effective_compile_context(build_dir: Path, source_dir: Path) -> dict[str, An
             continue
         except ValueError:
             pass
-        try:
-            relative_source = source_path.relative_to(source_dir)
-        except ValueError:
+        scope = compile_command_scope(source_path, source_dir)
+        if scope is None:
             continue
-        if relative_source.parts[0] == "src":
-            scope = "scry-production"
-        elif relative_source.parts[0] == "benchmarks":
-            scope = "benchmark"
-        else:
-            continue
-        lexical_source_root = Path(str(entry["file"]))
-        for _ in relative_source.parts:
-            lexical_source_root = lexical_source_root.parent
-        lexical_build_root = Path(str(entry.get("directory", build_dir)))
-        if "arguments" in entry:
-            tokens = [str(token) for token in entry["arguments"]]
-        else:
-            tokens = shlex.split(str(entry.get("command", "")))
-        if tokens:
-            tokens = tokens[1:]
-        flags: list[str] = []
-        skip_next = False
-        for token in tokens:
-            if skip_next:
-                skip_next = False
-                continue
-            if token in {"-o", "-MF", "-MT", "-MQ"}:
-                skip_next = True
-                continue
-            token_path = Path(token)
-            if not token_path.is_absolute():
-                token_path = Path(str(entry.get("directory", source_dir))) / token_path
-            if token == "-c" or token_path.resolve() == source_path:
-                continue
-            normalized = token
-            for spelling in {str(build_dir), str(lexical_build_root)}:
-                normalized = normalized.replace(spelling, "<BUILD>")
-            for spelling in {str(source_dir), str(lexical_source_root)}:
-                normalized = normalized.replace(spelling, "<SOURCE>")
-            flags.append(normalized)
-        scoped_flag_sets[scope].add(tuple(flags))
+        scoped_flag_sets[scope].add(
+            normalized_compile_flags(entry, source_path, source_dir, build_dir)
+        )
     missing_scopes = [
         scope for scope, flag_sets in scoped_flag_sets.items() if not flag_sets
     ]
@@ -576,175 +592,210 @@ def numeric_counters(row: dict[str, Any]) -> dict[str, float]:
     }
 
 
-def summarize_raw_files(
-    raw_paths: Iterable[Path], environment: dict[str, Any]
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    raw_files: list[dict[str, Any]] = []
-    grouped: dict[tuple[str, str], dict[str, Any]] = {}
-    for raw_path in sorted(raw_paths):
-        document = read_json(raw_path)
-        mode = benchmark_mode(raw_path)
-        expected_target = (
-            "scry_allocation_benchmarks"
-            if mode == "allocations"
-            else "scry_timing_benchmarks"
-        )
-        if raw_path.stem != expected_target:
-            raise EvidenceError(f"unexpected profiling target artifact: {raw_path}")
-        context = validate_raw_context(
-            raw_path, document.get("context", {}), mode, environment
-        )
-        raw_files.append(
+def expected_raw_target(mode: str) -> str:
+    return (
+        "scry_allocation_benchmarks"
+        if mode == "allocations"
+        else "scry_timing_benchmarks"
+    )
+
+
+def scenario_group(mode: str, name: str) -> dict[str, Any]:
+    return {
+        "id": f"{mode}:{name}",
+        "name": name,
+        "family": name.split("/", 1)[0],
+        "parameters": name.split("/")[1:],
+        "scenario_version": SCENARIO_SCHEMA_VERSION,
+        "mode": mode,
+        "labels": [],
+        "samples": {"cpu_time_ns": [], "real_time_ns": []},
+        "counter_samples": {},
+    }
+
+
+def add_measurement(group: dict[str, Any], row: dict[str, Any]) -> None:
+    unit = str(row.get("time_unit", "ns"))
+    group["samples"]["cpu_time_ns"].append(
+        time_in_nanoseconds(float(row.get("cpu_time", 0.0)), unit)
+    )
+    group["samples"]["real_time_ns"].append(
+        time_in_nanoseconds(float(row.get("real_time", 0.0)), unit)
+    )
+    label = row.get("label")
+    if isinstance(label, str) and label not in group["labels"]:
+        group["labels"].append(label)
+    for counter_name, counter_value in numeric_counters(row).items():
+        group["counter_samples"].setdefault(counter_name, []).append(counter_value)
+
+
+def summarize_raw_file(
+    raw_path: Path,
+    environment: dict[str, Any],
+    grouped: dict[tuple[str, str], dict[str, Any]],
+) -> dict[str, Any]:
+    document = read_json(raw_path)
+    mode = benchmark_mode(raw_path)
+    if raw_path.stem != expected_raw_target(mode):
+        raise EvidenceError(f"unexpected profiling target artifact: {raw_path}")
+    context = validate_raw_context(
+        raw_path, document.get("context", {}), mode, environment
+    )
+    rows = document.get("benchmarks", [])
+    if not isinstance(rows, list):
+        raise EvidenceError(f"Google Benchmark output has no benchmark list: {raw_path}")
+    for value in rows:
+        if not isinstance(value, dict) or not is_measurement_row(value):
+            continue
+        name = benchmark_name(value)
+        if not name:
+            raise EvidenceError(f"benchmark row has no name: {raw_path}")
+        group = grouped.setdefault((mode, name), scenario_group(mode, name))
+        add_measurement(group, value)
+    return {
+        "path": raw_path.name,
+        "sha256": sha256_file(raw_path),
+        "mode": mode,
+        "context": context,
+    }
+
+
+def validate_raw_file_set(
+    raw_files: list[dict[str, Any]], environment: dict[str, Any]
+) -> None:
+    if not raw_files:
+        return
+    raw_targets = {Path(raw_file["path"]).stem for raw_file in raw_files}
+    expected_targets = set(nested_value(environment, "measurement.targets") or [])
+    required_targets = {
+        "scry_timing_benchmarks",
+        "scry_allocation_benchmarks",
+    }
+    if raw_targets != expected_targets or raw_targets != required_targets:
+        raise EvidenceError("raw benchmark target set does not match the environment")
+    shared_context_fields = (
+        "json_schema_version",
+        "library_version",
+        "library_build_type",
+        "host_name",
+        "num_cpus",
+        "caches",
+        "scry_benchmark_schema",
+        "scry_fixture_seed",
+        "scry_run_id",
+    )
+    mixed_fields = [
+        field
+        for field in shared_context_fields
+        if len(
             {
-                "path": raw_path.name,
-                "sha256": sha256_file(raw_path),
-                "mode": mode,
-                "context": context,
+                json.dumps(raw_file["context"].get(field), sort_keys=True)
+                for raw_file in raw_files
             }
         )
-        rows = document.get("benchmarks", [])
-        if not isinstance(rows, list):
-            raise EvidenceError(f"Google Benchmark output has no benchmark list: {raw_path}")
-        for value in rows:
-            if not isinstance(value, dict) or not is_measurement_row(value):
-                continue
-            name = benchmark_name(value)
-            if not name:
-                raise EvidenceError(f"benchmark row has no name: {raw_path}")
-            key = (mode, name)
-            group = grouped.setdefault(
-                key,
-                {
-                    "id": f"{mode}:{name}",
-                    "name": name,
-                    "family": name.split("/", 1)[0],
-                    "parameters": name.split("/")[1:],
-                    "scenario_version": SCENARIO_SCHEMA_VERSION,
-                    "mode": mode,
-                    "labels": [],
-                    "samples": {"cpu_time_ns": [], "real_time_ns": []},
-                    "counter_samples": {},
-                },
-            )
-            unit = str(value.get("time_unit", "ns"))
-            group["samples"]["cpu_time_ns"].append(
-                time_in_nanoseconds(float(value.get("cpu_time", 0.0)), unit)
-            )
-            group["samples"]["real_time_ns"].append(
-                time_in_nanoseconds(float(value.get("real_time", 0.0)), unit)
-            )
-            label = value.get("label")
-            if isinstance(label, str) and label not in group["labels"]:
-                group["labels"].append(label)
-            for counter_name, counter_value in numeric_counters(value).items():
-                group["counter_samples"].setdefault(counter_name, []).append(counter_value)
-
-    if raw_files:
-        raw_targets = {Path(raw_file["path"]).stem for raw_file in raw_files}
-        expected_targets = set(nested_value(environment, "measurement.targets") or [])
-        if raw_targets != expected_targets or raw_targets != {
-            "scry_timing_benchmarks",
-            "scry_allocation_benchmarks",
-        }:
-            raise EvidenceError("raw benchmark target set does not match the environment")
-        shared_context_fields = (
-            "json_schema_version",
-            "library_version",
-            "library_build_type",
-            "host_name",
-            "num_cpus",
-            "caches",
-            "scry_benchmark_schema",
-            "scry_fixture_seed",
-            "scry_run_id",
+        > 1
+    ]
+    if mixed_fields:
+        raise EvidenceError(
+            f"raw benchmark files have mixed contexts: {', '.join(mixed_fields)}"
         )
-        mixed_fields = [
-            field
-            for field in shared_context_fields
-            if len(
-                {
-                    json.dumps(raw_file["context"].get(field), sort_keys=True)
-                    for raw_file in raw_files
-                }
-            )
-            > 1
-        ]
-        if mixed_fields:
-            raise EvidenceError(
-                f"raw benchmark files have mixed contexts: {', '.join(mixed_fields)}"
-            )
 
-    scenarios: list[dict[str, Any]] = []
-    for key in sorted(grouped):
-        group = grouped[key]
-        timing_sample_count = len(group["samples"]["cpu_time_ns"])
-        if timing_sample_count != len(group["samples"]["real_time_ns"]):
-            raise EvidenceError(f"timing sample counts differ for {group['id']}")
-        if any(
-            not math.isfinite(sample)
-            for samples in group["samples"].values()
-            for sample in samples
+
+def required_scenario_counters(mode: str) -> set[str]:
+    required = {
+        "checksum_hi",
+        "checksum_lo",
+        "input_bytes",
+        "items",
+        "output_bytes",
+    }
+    if mode == "allocations":
+        required.update(
+            {
+                "cpp_allocations",
+                "cpp_requested_bytes",
+                "cpp_live_requested_bytes",
+                "cpp_peak_live_requested_bytes",
+            }
+        )
+    return required
+
+
+def validate_timing_samples(group: dict[str, Any]) -> int:
+    timing_sample_count = len(group["samples"]["cpu_time_ns"])
+    if timing_sample_count != len(group["samples"]["real_time_ns"]):
+        raise EvidenceError(f"timing sample counts differ for {group['id']}")
+    if any(
+        not math.isfinite(sample)
+        for samples in group["samples"].values()
+        for sample in samples
+    ):
+        raise EvidenceError(f"non-finite timing sample for {group['id']}")
+    return timing_sample_count
+
+
+def validate_counter_samples(
+    group: dict[str, Any], timing_sample_count: int
+) -> None:
+    missing_counters = sorted(
+        required_scenario_counters(group["mode"])
+        - group["counter_samples"].keys()
+    )
+    if missing_counters:
+        raise EvidenceError(
+            f"required counters missing for {group['id']}: "
+            + ", ".join(missing_counters)
+        )
+    malformed_counters = [
+        counter_name
+        for counter_name, samples in group["counter_samples"].items()
+        if len(samples) != timing_sample_count
+        or any(not math.isfinite(sample) for sample in samples)
+    ]
+    if malformed_counters:
+        raise EvidenceError(
+            f"counter samples are incomplete or non-finite for {group['id']}: "
+            + ", ".join(sorted(malformed_counters))
+        )
+
+
+def validate_semantic_counters(group: dict[str, Any]) -> None:
+    for counter_name, counter in group["counters"].items():
+        samples = counter["samples"]
+        if semantic_counter(counter_name) and any(
+            sample != samples[0] for sample in samples[1:]
         ):
-            raise EvidenceError(f"non-finite timing sample for {group['id']}")
-        required_counters = {
-            "checksum_hi",
-            "checksum_lo",
-            "input_bytes",
-            "items",
-            "output_bytes",
-        }
-        if group["mode"] == "allocations":
-            required_counters.update(
-                {
-                    "cpp_allocations",
-                    "cpp_requested_bytes",
-                    "cpp_live_requested_bytes",
-                    "cpp_peak_live_requested_bytes",
-                }
-            )
-        missing_counters = sorted(required_counters - group["counter_samples"].keys())
-        if missing_counters:
             raise EvidenceError(
-                f"required counters missing for {group['id']}: "
-                + ", ".join(missing_counters)
+                f"semantic counter {counter_name} is not constant for {group['id']}"
             )
-        malformed_counters = [
-            counter_name
-            for counter_name, samples in group["counter_samples"].items()
-            if len(samples) != timing_sample_count
-            or any(not math.isfinite(sample) for sample in samples)
-        ]
-        if malformed_counters:
-            raise EvidenceError(
-                f"counter samples are incomplete or non-finite for {group['id']}: "
-                + ", ".join(sorted(malformed_counters))
-            )
-        group["statistics"] = {
-            name: sample_statistics(samples)
-            for name, samples in group["samples"].items()
+
+
+def finalize_scenario_group(group: dict[str, Any]) -> dict[str, Any]:
+    timing_sample_count = validate_timing_samples(group)
+    validate_counter_samples(group, timing_sample_count)
+    group["statistics"] = {
+        name: sample_statistics(samples) for name, samples in group["samples"].items()
+    }
+    group["counters"] = {
+        name: {
+            "samples": samples,
+            "statistics": sample_statistics(samples),
         }
-        group["counters"] = {
-            name: {
-                "samples": samples,
-                "statistics": sample_statistics(samples),
-            }
-            for name, samples in sorted(group["counter_samples"].items())
-        }
-        for counter_name, counter in group["counters"].items():
-            samples = counter["samples"]
-            if semantic_counter(counter_name) and any(
-                sample != samples[0] for sample in samples[1:]
-            ):
-                raise EvidenceError(
-                    f"semantic counter {counter_name} is not constant for {group['id']}"
-                )
-        del group["counter_samples"]
-        scenarios.append(group)
+        for name, samples in sorted(group["counter_samples"].items())
+    }
+    validate_semantic_counters(group)
+    del group["counter_samples"]
+    return group
+
+
+def validate_scenario_sets(scenarios: list[dict[str, Any]]) -> None:
     timing_names = {
         scenario["name"] for scenario in scenarios if scenario["mode"] == "timing"
     }
     allocation_names = {
-        scenario["name"] for scenario in scenarios if scenario["mode"] == "allocations"
+        scenario["name"]
+        for scenario in scenarios
+        if scenario["mode"] == "allocations"
     }
     if timing_names != allocation_names:
         raise EvidenceError(
@@ -752,6 +803,19 @@ def summarize_raw_files(
             f"timing-only={sorted(timing_names - allocation_names)}, "
             f"allocation-only={sorted(allocation_names - timing_names)}"
         )
+
+
+def summarize_raw_files(
+    raw_paths: Iterable[Path], environment: dict[str, Any]
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    grouped: dict[tuple[str, str], dict[str, Any]] = {}
+    raw_files = [
+        summarize_raw_file(raw_path, environment, grouped)
+        for raw_path in sorted(raw_paths)
+    ]
+    validate_raw_file_set(raw_files, environment)
+    scenarios = [finalize_scenario_group(grouped[key]) for key in sorted(grouped)]
+    validate_scenario_sets(scenarios)
     return raw_files, scenarios
 
 
@@ -937,11 +1001,9 @@ def verify_compatible(base: dict[str, Any], head: dict[str, Any]) -> None:
         )
 
 
-def validate_summary_binding(summary: dict[str, Any], artifact_path: Path) -> None:
-    environment = summary.get("environment", {})
-    run_id = nested_value(environment, "run.id")
-    if not isinstance(run_id, str) or not run_id:
-        raise EvidenceError(f"artifact has no run id: {artifact_path}")
+def validate_artifact_states(
+    environment: dict[str, Any], artifact_path: Path
+) -> None:
     for state_name in ("source", "tooling"):
         state = environment.get(state_name, {})
         if not isinstance(state.get("commit"), str) or not isinstance(
@@ -950,46 +1012,163 @@ def validate_summary_binding(summary: dict[str, Any], artifact_path: Path) -> No
             raise EvidenceError(
                 f"artifact has an invalid {state_name} state: {artifact_path}"
             )
+
+
+def validate_dependency_pins(
+    environment: dict[str, Any], artifact_path: Path
+) -> None:
     for dependency_name, expected_commit in (
         ("google_benchmark", GOOGLE_BENCHMARK_COMMIT),
         ("glaze", GLAZE_COMMIT),
     ):
         dependency = nested_value(environment, f"dependencies.{dependency_name}")
-        if not isinstance(dependency, dict) or dependency != {
+        expected = {
             "expected_commit": expected_commit,
             "resolved_commit": expected_commit,
-        }:
+        }
+        if not isinstance(dependency, dict) or dependency != expected:
             raise EvidenceError(
                 f"artifact dependency pin is not corroborated for {dependency_name}: "
                 f"{artifact_path}"
             )
+
+
+def validate_raw_binding(
+    raw_file: dict[str, Any],
+    artifact_path: Path,
+    run_id: str,
+    host_name: Any,
+    cpu_count: Any,
+) -> str:
+    context = raw_file.get("context", {})
+    expected_target = Path(str(raw_file.get("path", ""))).stem
+    expected = {
+        "scry_run_id": run_id,
+        "scry_benchmark_target": expected_target,
+        "host_name": host_name,
+        "num_cpus": cpu_count,
+    }
+    mismatches = [
+        key for key, value in expected.items() if str(context.get(key)) != str(value)
+    ]
+    if mismatches:
+        raise EvidenceError(
+            f"summary/raw binding mismatch in {artifact_path}: "
+            + ", ".join(mismatches)
+        )
+    if artifact_path.is_dir():
+        raw_path = artifact_path / "raw" / str(raw_file.get("path", ""))
+        if not raw_path.is_file() or sha256_file(raw_path) != raw_file.get("sha256"):
+            raise EvidenceError(f"raw artifact hash mismatch: {raw_path}")
+    return str(raw_file.get("mode"))
+
+
+def validate_summary_binding(summary: dict[str, Any], artifact_path: Path) -> None:
+    environment = summary.get("environment", {})
+    run_id = nested_value(environment, "run.id")
+    if not isinstance(run_id, str) or not run_id:
+        raise EvidenceError(f"artifact has no run id: {artifact_path}")
+    validate_artifact_states(environment, artifact_path)
+    validate_dependency_pins(environment, artifact_path)
     host_name = nested_value(environment, "host.node")
     cpu_count = nested_value(environment, "host.logical_cpu_count")
-    seen_modes: set[str] = set()
-    for raw_file in summary.get("raw_files", []):
-        context = raw_file.get("context", {})
-        expected_target = Path(str(raw_file.get("path", ""))).stem
-        expected = {
-            "scry_run_id": run_id,
-            "scry_benchmark_target": expected_target,
-            "host_name": host_name,
-            "num_cpus": cpu_count,
-        }
-        mismatches = [
-            key for key, value in expected.items() if str(context.get(key)) != str(value)
-        ]
-        if mismatches:
-            raise EvidenceError(
-                f"summary/raw binding mismatch in {artifact_path}: "
-                + ", ".join(mismatches)
-            )
-        seen_modes.add(str(raw_file.get("mode")))
-        if artifact_path.is_dir():
-            raw_path = artifact_path / "raw" / str(raw_file.get("path", ""))
-            if not raw_path.is_file() or sha256_file(raw_path) != raw_file.get("sha256"):
-                raise EvidenceError(f"raw artifact hash mismatch: {raw_path}")
+    seen_modes = {
+        validate_raw_binding(raw_file, artifact_path, run_id, host_name, cpu_count)
+        for raw_file in summary.get("raw_files", [])
+    }
     if seen_modes != {"timing", "allocations"}:
         raise EvidenceError(f"artifact does not bind both benchmark targets: {artifact_path}")
+
+
+def indexed_scenarios(summary: dict[str, Any], revision: str) -> dict[str, Any]:
+    scenarios = summary.get("scenarios")
+    if not isinstance(scenarios, list):
+        raise EvidenceError(f"{revision} artifact has no scenario list")
+    by_id = {
+        scenario.get("id"): scenario
+        for scenario in scenarios
+        if isinstance(scenario, dict)
+    }
+    if len(by_id) != len(scenarios) or None in by_id:
+        raise EvidenceError(f"{revision} artifact has malformed or duplicate scenarios")
+    return by_id
+
+
+def validate_aggregate_context(
+    aggregate: dict[str, Any],
+    summary: dict[str, Any],
+    source: Any,
+    tooling: Any,
+    revision: str,
+) -> None:
+    verify_compatible(aggregate, summary)
+    if nested_value(summary, "environment.source") != source:
+        raise EvidenceError(f"{revision} artifacts came from different source states")
+    if nested_value(summary, "environment.tooling") != tooling:
+        raise EvidenceError(f"{revision} artifacts used different common tooling states")
+
+
+def merge_scenario_samples(
+    destination: dict[str, Any], source: dict[str, Any], revision: str
+) -> None:
+    scenario_id = source.get("id")
+    source_samples = source.get("samples")
+    destination_samples = destination.get("samples")
+    if not isinstance(source_samples, dict) or not isinstance(
+        destination_samples, dict
+    ):
+        raise EvidenceError(f"malformed timing samples for {scenario_id}")
+    expected_metrics = {"cpu_time_ns", "real_time_ns"}
+    if (
+        set(source_samples) != set(destination_samples)
+        or set(source_samples) != expected_metrics
+    ):
+        raise EvidenceError(f"timing metric set mismatch for {scenario_id}")
+    source_counters = source.get("counters")
+    destination_counters = destination.get("counters")
+    if not isinstance(source_counters, dict) or not isinstance(
+        destination_counters, dict
+    ):
+        raise EvidenceError(f"malformed counters for {scenario_id}")
+    if set(source_counters) != set(destination_counters):
+        raise EvidenceError(
+            f"counter set mismatch across {revision} artifacts for {scenario_id}"
+        )
+    for metric, samples in source_samples.items():
+        if not isinstance(samples, list):
+            raise EvidenceError(f"malformed {metric} samples for {scenario_id}")
+        destination_samples[metric].extend(samples)
+    for counter_name, counter in source_counters.items():
+        samples = counter.get("samples") if isinstance(counter, dict) else None
+        destination_counter = destination_counters.get(counter_name)
+        if not isinstance(samples, list):
+            raise EvidenceError(f"malformed {counter_name} samples for {scenario_id}")
+        if not isinstance(destination_counter, dict) or not isinstance(
+            destination_counter.get("samples"), list
+        ):
+            raise EvidenceError(
+                f"malformed destination {counter_name} samples for {scenario_id}"
+            )
+        destination_counter["samples"].extend(samples)
+
+
+def refresh_scenario_statistics(
+    scenario: dict[str, Any], revision: str
+) -> None:
+    scenario["statistics"] = {
+        name: sample_statistics(samples)
+        for name, samples in scenario["samples"].items()
+    }
+    for counter_name, counter in scenario.get("counters", {}).items():
+        samples = counter["samples"]
+        if semantic_counter(counter_name) and any(
+            sample != samples[0] for sample in samples[1:]
+        ):
+            raise EvidenceError(
+                f"semantic counter {counter_name} is not constant across "
+                f"{revision} artifacts for {scenario['id']}"
+            )
+        counter["statistics"] = sample_statistics(samples)
 
 
 def aggregate_summaries(
@@ -1002,22 +1181,9 @@ def aggregate_summaries(
     aggregate = copy.deepcopy(artifacts[0][1])
     source = nested_value(aggregate, "environment.source")
     tooling = nested_value(aggregate, "environment.tooling")
-    aggregate_scenarios = aggregate.get("scenarios")
-    if not isinstance(aggregate_scenarios, list):
-        raise EvidenceError(f"{revision} artifact has no scenario list")
-    aggregate_by_id = {
-        scenario.get("id"): scenario
-        for scenario in aggregate_scenarios
-        if isinstance(scenario, dict)
-    }
-    if len(aggregate_by_id) != len(aggregate_scenarios) or None in aggregate_by_id:
-        raise EvidenceError(f"{revision} artifact has malformed or duplicate scenarios")
-    for path, summary in artifacts[1:]:
-        verify_compatible(aggregate, summary)
-        if nested_value(summary, "environment.source") != source:
-            raise EvidenceError(f"{revision} artifacts came from different source states")
-        if nested_value(summary, "environment.tooling") != tooling:
-            raise EvidenceError(f"{revision} artifacts used different common tooling states")
+    aggregate_by_id = indexed_scenarios(aggregate, revision)
+    for _, summary in artifacts[1:]:
+        validate_aggregate_context(aggregate, summary, source, tooling, revision)
         for scenario in summary.get("scenarios", []):
             scenario_id = scenario.get("id")
             destination = aggregate_by_id.get(scenario_id)
@@ -1025,61 +1191,10 @@ def aggregate_summaries(
                 raise EvidenceError(
                     f"{revision} artifact contains an unexpected scenario: {scenario_id}"
                 )
-            source_samples = scenario.get("samples")
-            destination_samples = destination.get("samples")
-            if not isinstance(source_samples, dict) or not isinstance(
-                destination_samples, dict
-            ):
-                raise EvidenceError(f"malformed timing samples for {scenario_id}")
-            if set(source_samples) != set(destination_samples) or set(source_samples) != {
-                "cpu_time_ns",
-                "real_time_ns",
-            }:
-                raise EvidenceError(f"timing metric set mismatch for {scenario_id}")
-            source_counters = scenario.get("counters")
-            destination_counters = destination.get("counters")
-            if not isinstance(source_counters, dict) or not isinstance(
-                destination_counters, dict
-            ):
-                raise EvidenceError(f"malformed counters for {scenario_id}")
-            if set(source_counters) != set(destination_counters):
-                raise EvidenceError(
-                    f"counter set mismatch across {revision} artifacts for {scenario_id}"
-                )
-            for metric, samples in source_samples.items():
-                if not isinstance(samples, list):
-                    raise EvidenceError(f"malformed {metric} samples for {scenario_id}")
-                destination_samples[metric].extend(samples)
-            for counter_name, counter in source_counters.items():
-                samples = counter.get("samples") if isinstance(counter, dict) else None
-                destination_counter = destination_counters.get(counter_name)
-                if not isinstance(samples, list):
-                    raise EvidenceError(
-                        f"malformed {counter_name} samples for {scenario_id}"
-                    )
-                if not isinstance(destination_counter, dict) or not isinstance(
-                    destination_counter.get("samples"), list
-                ):
-                    raise EvidenceError(
-                        f"malformed destination {counter_name} samples for {scenario_id}"
-                    )
-                destination_counter["samples"].extend(samples)
+            merge_scenario_samples(destination, scenario, revision)
         aggregate["raw_files"].extend(copy.deepcopy(summary.get("raw_files", [])))
     for scenario in aggregate_by_id.values():
-        scenario["statistics"] = {
-            name: sample_statistics(samples)
-            for name, samples in scenario["samples"].items()
-        }
-        for counter_name, counter in scenario.get("counters", {}).items():
-            samples = counter["samples"]
-            if semantic_counter(counter_name) and any(
-                sample != samples[0] for sample in samples[1:]
-            ):
-                raise EvidenceError(
-                    f"semantic counter {counter_name} is not constant across "
-                    f"{revision} artifacts for {scenario['id']}"
-                )
-            counter["statistics"] = sample_statistics(samples)
+        refresh_scenario_statistics(scenario, revision)
     aggregate["aggregation"] = {
         "artifact_count": len(artifacts),
         "run_ids": [
@@ -1180,10 +1295,9 @@ def make_pair_manifest(arguments: argparse.Namespace) -> None:
     write_json(output, manifest)
 
 
-def artifacts_from_manifest(
-    manifest_path: Path,
-) -> tuple[list[Path], list[Path], dict[str, Any], list[str]]:
-    manifest = read_json(manifest_path)
+def validate_pair_manifest(
+    manifest: dict[str, Any], manifest_path: Path
+) -> tuple[int, list[tuple[int, int, str, str]], list[Any]]:
     if manifest.get("schema_version") != PAIR_MANIFEST_SCHEMA:
         raise EvidenceError(f"unsupported paired manifest schema in {manifest_path}")
     cycles = manifest.get("cycles")
@@ -1199,89 +1313,143 @@ def artifacts_from_manifest(
     entries = manifest.get("entries")
     if not isinstance(entries, list) or len(entries) != len(expected):
         raise EvidenceError("paired manifest does not contain exactly four runs per cycle")
+    return cycles, expected, entries
+
+
+def manifest_artifact(
+    manifest_path: Path,
+    entry: Any,
+    expected: tuple[int, int, str, str],
+    seen_run_ids: set[str],
+) -> tuple[Path, str]:
+    ordinal, cycle, revision, directory_name = expected
+    if not isinstance(entry, dict):
+        raise EvidenceError("paired manifest entry is not an object")
+    if (
+        entry.get("ordinal") != ordinal
+        or entry.get("cycle") != cycle
+        or entry.get("slot") != ((ordinal - 1) % 4) + 1
+        or entry.get("revision") != revision
+    ):
+        raise EvidenceError("paired manifest order is not exact A-B-B-A")
+    run_id = entry.get("run_id")
+    if not isinstance(run_id, str) or not run_id or run_id in seen_run_ids:
+        raise EvidenceError("paired manifest run ids are missing or duplicated")
+    seen_run_ids.add(run_id)
+    artifact = (manifest_path.parent / str(entry.get("artifact", ""))).resolve()
+    expected_artifact = (
+        manifest_path.parent / "runs" / f"cycle-{cycle:02d}" / directory_name
+    ).resolve()
+    if artifact != expected_artifact:
+        raise EvidenceError("paired manifest artifact path does not match its slot")
+    if not artifact.is_dir():
+        raise EvidenceError(f"paired manifest artifact is not a directory: {artifact}")
+    return artifact, run_id
+
+
+def validate_manifest_artifact(
+    summary: dict[str, Any],
+    artifact: Path,
+    entry: dict[str, Any],
+    manifest: dict[str, Any],
+    revision: str,
+    run_id: str,
+    ordinal: int,
+) -> str:
+    validate_summary_binding(summary, artifact)
+    if nested_value(summary, "environment.tooling.common_orchestrator") is not True:
+        raise EvidenceError(
+            f"paired artifact does not declare common orchestration: {artifact}"
+        )
+    if nested_value(summary, "environment.run.id") != run_id:
+        raise EvidenceError(f"paired manifest run id mismatch for {artifact}")
+    if nested_value(summary, "environment.source.commit") != entry.get(
+        "source_commit"
+    ):
+        raise EvidenceError(f"paired manifest source mismatch for {artifact}")
+    tooling_commit = nested_value(summary, "environment.tooling.commit")
+    if tooling_commit != entry.get("tooling_commit"):
+        raise EvidenceError(f"paired manifest tooling mismatch for {artifact}")
+    if revision == "head" and tooling_commit != nested_value(
+        summary, "environment.source.commit"
+    ):
+        raise EvidenceError(
+            f"common tooling is not from the HEAD artifact revision: {artifact}"
+        )
+    if nested_value(summary, "environment.measurement.run_mode") != manifest.get(
+        "mode"
+    ):
+        raise EvidenceError(f"paired manifest mode mismatch for {artifact}")
+    if nested_value(summary, "environment.measurement.requested_repetitions") != 1:
+        raise EvidenceError(f"paired artifact must contain one repetition: {artifact}")
+    if nested_value(summary, "environment.measurement.filter") != manifest.get(
+        "filter", ""
+    ):
+        raise EvidenceError(f"paired manifest filter mismatch for {artifact}")
+    validate_aggregated_sample_counts(summary, 1, f"paired artifact {ordinal}")
+    return str(tooling_commit)
+
+
+def paired_protocol(
+    manifest_path: Path,
+    manifest: dict[str, Any],
+    cycles: int,
+    common_tooling_commit: str,
+) -> tuple[dict[str, Any], list[str]]:
+    expected_samples = cycles * 2
+    reasons: list[str] = []
+    if cycles != 5 or expected_samples != 10:
+        reasons.append("paired protocol is not five cycles / ten samples per revision")
+    if manifest.get("mode") != "full":
+        reasons.append("smoke-mode characterization is not review evidence")
+    return (
+        {
+            "manifest": str(manifest_path),
+            "name": manifest.get("protocol"),
+            "cycles": cycles,
+            "samples_per_revision": expected_samples,
+            "order_validated": True,
+            "common_tooling_commit": common_tooling_commit,
+        },
+        reasons,
+    )
+
+
+def artifacts_from_manifest(
+    manifest_path: Path,
+) -> tuple[list[Path], list[Path], dict[str, Any], list[str]]:
+    manifest = read_json(manifest_path)
+    cycles, expected, entries = validate_pair_manifest(manifest, manifest_path)
     base_paths: list[Path] = []
     head_paths: list[Path] = []
     seen_run_ids: set[str] = set()
     common_tooling_commits: set[str] = set()
-    for entry, (ordinal, cycle, revision, directory_name) in zip(entries, expected):
-        if not isinstance(entry, dict):
-            raise EvidenceError("paired manifest entry is not an object")
-        if (
-            entry.get("ordinal") != ordinal
-            or entry.get("cycle") != cycle
-            or entry.get("slot") != ((ordinal - 1) % 4) + 1
-            or entry.get("revision") != revision
-        ):
-            raise EvidenceError("paired manifest order is not exact A-B-B-A")
-        run_id = entry.get("run_id")
-        if not isinstance(run_id, str) or not run_id or run_id in seen_run_ids:
-            raise EvidenceError("paired manifest run ids are missing or duplicated")
-        seen_run_ids.add(run_id)
-        artifact = (manifest_path.parent / str(entry.get("artifact", ""))).resolve()
-        expected_artifact = (
-            manifest_path.parent
-            / "runs"
-            / f"cycle-{cycle:02d}"
-            / directory_name
-        ).resolve()
-        if artifact != expected_artifact:
-            raise EvidenceError("paired manifest artifact path does not match its slot")
-        if not artifact.is_dir():
-            raise EvidenceError(f"paired manifest artifact is not a directory: {artifact}")
+    for entry, expected_entry in zip(entries, expected):
+        ordinal, _, revision, _ = expected_entry
+        artifact, run_id = manifest_artifact(
+            manifest_path, entry, expected_entry, seen_run_ids
+        )
         summary = artifact_summary(artifact)
-        validate_summary_binding(summary, artifact)
-        if nested_value(summary, "environment.tooling.common_orchestrator") is not True:
-            raise EvidenceError(
-                f"paired artifact does not declare common orchestration: {artifact}"
+        common_tooling_commits.add(
+            validate_manifest_artifact(
+                summary,
+                artifact,
+                entry,
+                manifest,
+                revision,
+                run_id,
+                ordinal,
             )
-        if nested_value(summary, "environment.run.id") != run_id:
-            raise EvidenceError(f"paired manifest run id mismatch for {artifact}")
-        if nested_value(summary, "environment.source.commit") != entry.get(
-            "source_commit"
-        ):
-            raise EvidenceError(f"paired manifest source mismatch for {artifact}")
-        tooling_commit = nested_value(summary, "environment.tooling.commit")
-        if tooling_commit != entry.get("tooling_commit"):
-            raise EvidenceError(f"paired manifest tooling mismatch for {artifact}")
-        if revision == "head" and tooling_commit != nested_value(
-            summary, "environment.source.commit"
-        ):
-            raise EvidenceError(
-                f"common tooling is not from the HEAD artifact revision: {artifact}"
-            )
-        common_tooling_commits.add(str(tooling_commit))
-        if nested_value(summary, "environment.measurement.run_mode") != manifest.get(
-            "mode"
-        ):
-            raise EvidenceError(f"paired manifest mode mismatch for {artifact}")
-        if nested_value(
-            summary, "environment.measurement.requested_repetitions"
-        ) != 1:
-            raise EvidenceError(f"paired artifact must contain one repetition: {artifact}")
-        if nested_value(summary, "environment.measurement.filter") != manifest.get(
-            "filter", ""
-        ):
-            raise EvidenceError(f"paired manifest filter mismatch for {artifact}")
-        validate_aggregated_sample_counts(summary, 1, f"paired artifact {ordinal}")
+        )
         (base_paths if revision == "base" else head_paths).append(artifact)
     if len(common_tooling_commits) != 1:
         raise EvidenceError("paired artifacts did not use one common tooling revision")
     expected_samples = cycles * 2
     if len(base_paths) != expected_samples or len(head_paths) != expected_samples:
         raise EvidenceError("paired manifest sample count is inconsistent with its cycles")
-    reasons: list[str] = []
-    if cycles != 5 or expected_samples != 10:
-        reasons.append("paired protocol is not five cycles / ten samples per revision")
-    if manifest.get("mode") != "full":
-        reasons.append("smoke-mode characterization is not review evidence")
-    protocol = {
-        "manifest": str(manifest_path),
-        "name": manifest.get("protocol"),
-        "cycles": cycles,
-        "samples_per_revision": expected_samples,
-        "order_validated": True,
-        "common_tooling_commit": next(iter(common_tooling_commits)),
-    }
+    protocol, reasons = paired_protocol(
+        manifest_path, manifest, cycles, next(iter(common_tooling_commits))
+    )
     return base_paths, head_paths, protocol, reasons
 
 
@@ -1515,72 +1683,70 @@ def comparison_markdown(comparison: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def make_comparison(arguments: argparse.Namespace) -> None:
-    ineligibility_reasons: list[str] = []
+def comparison_inputs(
+    arguments: argparse.Namespace,
+) -> tuple[list[Path], list[Path], dict[str, Any], list[str]]:
     if arguments.manifest is not None:
         if arguments.base or arguments.head:
             raise EvidenceError("--manifest cannot be combined with --base or --head")
-        base_paths, head_paths, protocol, manifest_reasons = artifacts_from_manifest(
-            arguments.manifest.resolve()
-        )
-        ineligibility_reasons.extend(manifest_reasons)
-    else:
-        if not arguments.base or not arguments.head:
-            raise EvidenceError("comparison requires --manifest or both --base and --head")
-        base_paths = [path.resolve() for path in arguments.base]
-        head_paths = [path.resolve() for path in arguments.head]
-        protocol = {
-            "manifest": None,
-            "name": "unverified-direct-artifacts",
-            "cycles": None,
-            "samples_per_revision": None,
-            "order_validated": False,
-            "common_tooling_commit": None,
-        }
-        ineligibility_reasons.append("fresh-process A-B-B-A order was not manifest-validated")
-    base_artifacts = [(path, artifact_summary(path)) for path in base_paths]
-    head_artifacts = [(path, artifact_summary(path)) for path in head_paths]
-    base = aggregate_summaries(base_artifacts, "base")
-    head = aggregate_summaries(head_artifacts, "head")
-    verify_compatible(base, head)
-    protocol["common_tooling_commit"] = nested_value(
-        base, "environment.tooling.commit"
+        return artifacts_from_manifest(arguments.manifest.resolve())
+    if not arguments.base or not arguments.head:
+        raise EvidenceError("comparison requires --manifest or both --base and --head")
+    protocol = {
+        "manifest": None,
+        "name": "unverified-direct-artifacts",
+        "cycles": None,
+        "samples_per_revision": None,
+        "order_validated": False,
+        "common_tooling_commit": None,
+    }
+    return (
+        [path.resolve() for path in arguments.base],
+        [path.resolve() for path in arguments.head],
+        protocol,
+        ["fresh-process A-B-B-A order was not manifest-validated"],
     )
-    dirty_contexts = [
+
+
+def dirty_artifact_contexts(
+    base: dict[str, Any], head: dict[str, Any]
+) -> list[str]:
+    return [
         label
         for label, dirty in (
             ("base source", nested_value(base, "environment.source.dirty")),
             ("head source", nested_value(head, "environment.source.dirty")),
-            ("common tooling for base", nested_value(base, "environment.tooling.dirty")),
-            ("common tooling for head", nested_value(head, "environment.tooling.dirty")),
+            (
+                "common tooling for base",
+                nested_value(base, "environment.tooling.dirty"),
+            ),
+            (
+                "common tooling for head",
+                nested_value(head, "environment.tooling.dirty"),
+            ),
         )
         if dirty is True
     ]
-    if dirty_contexts and not arguments.allow_dirty:
-        raise EvidenceError(
-            "dirty profiling artifacts are rejected by default: "
-            + ", ".join(dirty_contexts)
-            + "; use --allow-dirty for diagnostics only"
-        )
-    if arguments.allow_dirty:
-        ineligibility_reasons.append(
-            "--allow-dirty accepted " + ", ".join(dirty_contexts)
-            if dirty_contexts
-            else "--allow-dirty diagnostic override was requested"
-        )
-    if arguments.informational_reason:
-        ineligibility_reasons.append(arguments.informational_reason)
-    if protocol["order_validated"]:
-        expected_sample_count = protocol["samples_per_revision"]
-        validate_aggregated_sample_counts(base, expected_sample_count, "base")
-        validate_aggregated_sample_counts(head, expected_sample_count, "head")
+
+
+def compared_scenarios(
+    base: dict[str, Any], head: dict[str, Any]
+) -> list[dict[str, Any]]:
     base_by_id = {scenario["id"]: scenario for scenario in base["scenarios"]}
     head_by_id = {scenario["id"]: scenario for scenario in head["scenarios"]}
-    scenarios = [
+    return [
         compare_scenario(base_by_id[scenario_id], head_by_id[scenario_id], index)
         for index, scenario_id in enumerate(sorted(base_by_id))
     ]
-    comparison = {
+
+
+def comparison_document(
+    base: dict[str, Any],
+    head: dict[str, Any],
+    protocol: dict[str, Any],
+    ineligibility_reasons: list[str],
+) -> dict[str, Any]:
+    return {
         "schema_version": COMPARISON_SCHEMA,
         "timing_threshold_is_gating": False,
         "evidence_eligible": not ineligibility_reasons,
@@ -1609,15 +1775,53 @@ def make_comparison(arguments: argparse.Namespace) -> None:
             "methodology_digest_sha256": nested_value(
                 base, "environment.scenario_contract.methodology_digest_sha256"
             ),
-            "common_tooling_commit": nested_value(base, "environment.tooling.commit"),
+            "common_tooling_commit": nested_value(
+                base, "environment.tooling.commit"
+            ),
         },
         "base_source": base["environment"]["source"],
         "head_source": head["environment"]["source"],
         "host": base["environment"]["host"],
         "toolchain": base["environment"]["toolchain"],
         "build": base["environment"]["build"],
-        "scenarios": scenarios,
+        "scenarios": compared_scenarios(base, head),
     }
+
+
+def make_comparison(arguments: argparse.Namespace) -> None:
+    base_paths, head_paths, protocol, ineligibility_reasons = comparison_inputs(
+        arguments
+    )
+    base_artifacts = [(path, artifact_summary(path)) for path in base_paths]
+    head_artifacts = [(path, artifact_summary(path)) for path in head_paths]
+    base = aggregate_summaries(base_artifacts, "base")
+    head = aggregate_summaries(head_artifacts, "head")
+    verify_compatible(base, head)
+    protocol["common_tooling_commit"] = nested_value(
+        base, "environment.tooling.commit"
+    )
+    dirty_contexts = dirty_artifact_contexts(base, head)
+    if dirty_contexts and not arguments.allow_dirty:
+        raise EvidenceError(
+            "dirty profiling artifacts are rejected by default: "
+            + ", ".join(dirty_contexts)
+            + "; use --allow-dirty for diagnostics only"
+        )
+    if arguments.allow_dirty:
+        ineligibility_reasons.append(
+            "--allow-dirty accepted " + ", ".join(dirty_contexts)
+            if dirty_contexts
+            else "--allow-dirty diagnostic override was requested"
+        )
+    if arguments.informational_reason:
+        ineligibility_reasons.append(arguments.informational_reason)
+    if protocol["order_validated"]:
+        expected_sample_count = protocol["samples_per_revision"]
+        validate_aggregated_sample_counts(base, expected_sample_count, "base")
+        validate_aggregated_sample_counts(head, expected_sample_count, "head")
+    comparison = comparison_document(
+        base, head, protocol, ineligibility_reasons
+    )
     output_dir = arguments.output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     write_json(output_dir / "comparison.json", comparison)

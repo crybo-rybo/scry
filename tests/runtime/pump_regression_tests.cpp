@@ -68,7 +68,7 @@ TEST_CASE("bounded terminal push preserves the per-turn event byte limit") {
 
   REQUIRE(queue.push(scry::detail::TextDeltaEvent{.turn_id = turn_id, .text = "1234"},
                      limit));
-  CHECK_FALSE(queue.push_terminal(
+  CHECK_FALSE(queue.push(
       scry::detail::ErrorEvent{
           .turn_id = turn_id,
           .error =
@@ -80,7 +80,7 @@ TEST_CASE("bounded terminal push preserves the per-turn event byte limit") {
       limit));
   CHECK(queue.size() == 1);
 
-  REQUIRE(queue.push_terminal(
+  REQUIRE(queue.push(
       scry::detail::ErrorEvent{
           .turn_id = turn_id,
           .error =
@@ -395,7 +395,7 @@ TEST_CASE("events no callback can consume are released on arrival") {
   pump.add_route(route);
   REQUIRE(fixture.events->push(
       scry::detail::TextDeltaEvent{.turn_id = route->id(), .text = "buffered"}, limit));
-  REQUIRE(fixture.events->push_terminal(
+  REQUIRE(fixture.events->push(
       scry::detail::ErrorEvent{
           .turn_id = route->id(),
           .error = {.category = scry::ErrorCategory::protocol, .message = "failed"},

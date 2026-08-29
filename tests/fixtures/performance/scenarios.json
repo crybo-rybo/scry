@@ -1,0 +1,228 @@
+[
+  {
+    "id": "allocations:SSE/chunk_bytes:64/crlf:0",
+    "name": "SSE/chunk_bytes:64/crlf:0",
+    "family": "SSE",
+    "parameters": [
+      "chunk_bytes:64",
+      "crlf:0"
+    ],
+    "scenario_version": 1,
+    "mode": "allocations",
+    "labels": [],
+    "samples": {
+      "cpu_time_ns": [2500.0],
+      "real_time_ns": [3000.0]
+    },
+    "statistics": {
+      "cpu_time_ns": {
+        "count": 1,
+        "median": 2500.0,
+        "mad": 0.0,
+        "normalized_mad": 0.0,
+        "minimum": 2500.0,
+        "maximum": 2500.0
+      },
+      "real_time_ns": {
+        "count": 1,
+        "median": 3000.0,
+        "mad": 0.0,
+        "normalized_mad": 0.0,
+        "minimum": 3000.0,
+        "maximum": 3000.0
+      }
+    },
+    "counters": {
+      "checksum_hi": {
+        "samples": [12.0],
+        "statistics": {
+          "count": 1,
+          "median": 12.0,
+          "mad": 0.0,
+          "normalized_mad": 0.0,
+          "minimum": 12.0,
+          "maximum": 12.0
+        }
+      },
+      "checksum_lo": {
+        "samples": [34.0],
+        "statistics": {
+          "count": 1,
+          "median": 34.0,
+          "mad": 0.0,
+          "normalized_mad": 0.0,
+          "minimum": 34.0,
+          "maximum": 34.0
+        }
+      },
+      "cpp_allocations": {
+        "samples": [5.0],
+        "statistics": {
+          "count": 1,
+          "median": 5.0,
+          "mad": 0.0,
+          "normalized_mad": 0.0,
+          "minimum": 5.0,
+          "maximum": 5.0
+        }
+      },
+      "cpp_live_requested_bytes": {
+        "samples": [7.0],
+        "statistics": {
+          "count": 1,
+          "median": 7.0,
+          "mad": 0.0,
+          "normalized_mad": 0.0,
+          "minimum": 7.0,
+          "maximum": 7.0
+        }
+      },
+      "cpp_peak_live_requested_bytes": {
+        "samples": [11.0],
+        "statistics": {
+          "count": 1,
+          "median": 11.0,
+          "mad": 0.0,
+          "normalized_mad": 0.0,
+          "minimum": 11.0,
+          "maximum": 11.0
+        }
+      },
+      "cpp_requested_bytes": {
+        "samples": [13.0],
+        "statistics": {
+          "count": 1,
+          "median": 13.0,
+          "mad": 0.0,
+          "normalized_mad": 0.0,
+          "minimum": 13.0,
+          "maximum": 13.0
+        }
+      },
+      "input_bytes": {
+        "samples": [128.0],
+        "statistics": {
+          "count": 1,
+          "median": 128.0,
+          "mad": 0.0,
+          "normalized_mad": 0.0,
+          "minimum": 128.0,
+          "maximum": 128.0
+        }
+      },
+      "items": {
+        "samples": [4.0],
+        "statistics": {
+          "count": 1,
+          "median": 4.0,
+          "mad": 0.0,
+          "normalized_mad": 0.0,
+          "minimum": 4.0,
+          "maximum": 4.0
+        }
+      },
+      "output_bytes": {
+        "samples": [96.0],
+        "statistics": {
+          "count": 1,
+          "median": 96.0,
+          "mad": 0.0,
+          "normalized_mad": 0.0,
+          "minimum": 96.0,
+          "maximum": 96.0
+        }
+      }
+    }
+  },
+  {
+    "id": "timing:SSE/chunk_bytes:64/crlf:0",
+    "name": "SSE/chunk_bytes:64/crlf:0",
+    "family": "SSE",
+    "parameters": [
+      "chunk_bytes:64",
+      "crlf:0"
+    ],
+    "scenario_version": 1,
+    "mode": "timing",
+    "labels": [],
+    "samples": {
+      "cpu_time_ns": [1500.0],
+      "real_time_ns": [2000.0]
+    },
+    "statistics": {
+      "cpu_time_ns": {
+        "count": 1,
+        "median": 1500.0,
+        "mad": 0.0,
+        "normalized_mad": 0.0,
+        "minimum": 1500.0,
+        "maximum": 1500.0
+      },
+      "real_time_ns": {
+        "count": 1,
+        "median": 2000.0,
+        "mad": 0.0,
+        "normalized_mad": 0.0,
+        "minimum": 2000.0,
+        "maximum": 2000.0
+      }
+    },
+    "counters": {
+      "checksum_hi": {
+        "samples": [12.0],
+        "statistics": {
+          "count": 1,
+          "median": 12.0,
+          "mad": 0.0,
+          "normalized_mad": 0.0,
+          "minimum": 12.0,
+          "maximum": 12.0
+        }
+      },
+      "checksum_lo": {
+        "samples": [34.0],
+        "statistics": {
+          "count": 1,
+          "median": 34.0,
+          "mad": 0.0,
+          "normalized_mad": 0.0,
+          "minimum": 34.0,
+          "maximum": 34.0
+        }
+      },
+      "input_bytes": {
+        "samples": [128.0],
+        "statistics": {
+          "count": 1,
+          "median": 128.0,
+          "mad": 0.0,
+          "normalized_mad": 0.0,
+          "minimum": 128.0,
+          "maximum": 128.0
+        }
+      },
+      "items": {
+        "samples": [4.0],
+        "statistics": {
+          "count": 1,
+          "median": 4.0,
+          "mad": 0.0,
+          "normalized_mad": 0.0,
+          "minimum": 4.0,
+          "maximum": 4.0
+        }
+      },
+      "output_bytes": {
+        "samples": [96.0],
+        "statistics": {
+          "count": 1,
+          "median": 96.0,
+          "mad": 0.0,
+          "normalized_mad": 0.0,
+          "minimum": 96.0,
+          "maximum": 96.0
+        }
+      }
+    }
+  }
+]

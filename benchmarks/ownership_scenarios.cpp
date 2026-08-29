@@ -1,5 +1,7 @@
+#include "prepared_operation_impl.hpp"
 #include "runtime/pump.hpp"
 #include "runtime/test_access.hpp"
+#include "scenario_support.hpp"
 #include "scenarios.hpp"
 
 #include <algorithm>
@@ -21,38 +23,7 @@
 namespace scry::bench {
 namespace {
 
-constexpr std::uint64_t fnv_offset = 14'695'981'039'346'656'037ULL;
-constexpr std::uint64_t fnv_prime = 1'099'511'628'211ULL;
 constexpr auto admission_text = std::string_view{"snapshot admission"};
-
-void digest_byte(std::uint64_t& digest, const std::uint8_t value) noexcept {
-  digest ^= value;
-  digest *= fnv_prime;
-}
-
-void digest_number(std::uint64_t& digest, std::uint64_t value) noexcept {
-  for (std::size_t index = 0; index < sizeof(value); ++index) {
-    digest_byte(digest, static_cast<std::uint8_t>(value & 0xffU));
-    value >>= 8U;
-  }
-}
-
-[[nodiscard]] std::string fixture_text(const std::size_t size, const std::size_t seed) {
-  return std::string(size, static_cast<char>('a' + static_cast<char>(seed % 26)));
-}
-
-[[nodiscard]] std::string representative_schema(const std::size_t size,
-                                                const std::size_t seed) {
-  constexpr auto prefix = std::string_view{R"({"description":")"};
-  constexpr auto suffix = std::string_view{
-      R"(","properties":{"payload":{"type":"string"}},"type":"object"})"};
-  const auto fixed_size = prefix.size() + suffix.size();
-  if (size <= fixed_size) {
-    return R"({"type":"object"})";
-  }
-  return std::string{prefix} + fixture_text(size - fixed_size, seed) +
-         std::string{suffix};
-}
 
 [[nodiscard]] ToolDefinition schema_definition(const std::size_t index,
                                                const std::size_t schema_bytes) {
@@ -175,11 +146,13 @@ history_route(const std::shared_ptr<detail::CommandQueue>& commands,
 
 } // namespace
 
-struct SchemaAdmissionOperation::Impl final {
-  Impl(const SchemaAdmissionShape operation_shape,
-       std::vector<ToolDefinition> schema_definitions,
-       const std::size_t logical_input_bytes, const bool semantic_validation,
-       const ScenarioResult expected)
+class SchemaAdmissionOperationState final {
+public:
+  SchemaAdmissionOperationState(const SchemaAdmissionShape operation_shape,
+                                std::vector<ToolDefinition> schema_definitions,
+                                const std::size_t logical_input_bytes,
+                                const bool semantic_validation,
+                                const ScenarioResult expected)
       : shape{operation_shape}, definitions{std::move(schema_definitions)},
         input_bytes{logical_input_bytes}, validate{semantic_validation},
         oracle{expected}, transport_state{std::make_shared<ParkingTransportState>()} {
@@ -199,7 +172,7 @@ struct SchemaAdmissionOperation::Impl final {
     }
   }
 
-  ~Impl() { transport_state->release(); }
+  ~SchemaAdmissionOperationState() { transport_state->release(); }
 
   void register_all() {
     if (!harness) {
@@ -340,6 +313,13 @@ struct SchemaAdmissionOperation::Impl final {
     };
   }
 
+  [[nodiscard]] ScenarioResult run() {
+    return shape == SchemaAdmissionShape::retained_generations
+               ? run_retained_generations()
+               : run_single();
+  }
+
+private:
   SchemaAdmissionShape shape{};
   std::vector<ToolDefinition> definitions{};
   std::size_t input_bytes{};
@@ -353,24 +333,6 @@ struct SchemaAdmissionOperation::Impl final {
   std::vector<Turn> turns{};
   bool setup_valid{true};
 };
-
-SchemaAdmissionOperation::SchemaAdmissionOperation(std::unique_ptr<Impl> impl) noexcept
-    : impl_(std::move(impl)) {}
-
-SchemaAdmissionOperation::~SchemaAdmissionOperation() = default;
-SchemaAdmissionOperation::SchemaAdmissionOperation(
-    SchemaAdmissionOperation&&) noexcept = default;
-SchemaAdmissionOperation&
-SchemaAdmissionOperation::operator=(SchemaAdmissionOperation&&) noexcept = default;
-
-ScenarioResult SchemaAdmissionOperation::run() {
-  if (!impl_) {
-    return {};
-  }
-  return impl_->shape == SchemaAdmissionShape::retained_generations
-             ? impl_->run_retained_generations()
-             : impl_->run_single();
-}
 
 SchemaAdmissionScenario::SchemaAdmissionScenario(const SchemaAdmissionShape shape,
                                                  const std::size_t schema_count,
@@ -386,7 +348,7 @@ SchemaAdmissionScenario::SchemaAdmissionScenario(const SchemaAdmissionShape shap
 
 SchemaAdmissionOperation
 SchemaAdmissionScenario::make_operation(const bool validate) const {
-  return SchemaAdmissionOperation{std::make_unique<SchemaAdmissionOperation::Impl>(
+  return SchemaAdmissionOperation{std::make_unique<SchemaAdmissionOperationState>(
       shape_, definitions_, input_bytes_, validate, oracle_)};
 }
 
@@ -400,10 +362,13 @@ SchemaAdmissionOperation SchemaAdmissionScenario::prepare() const {
   return make_operation(false);
 }
 
-struct HistoryCommitOperation::Impl final {
-  Impl(const HistoryCommitShape operation_shape, const std::size_t message_count,
-       const std::size_t message_bytes, const bool semantic_validation,
-       const ScenarioResult expected)
+class HistoryCommitOperationState final {
+public:
+  HistoryCommitOperationState(const HistoryCommitShape operation_shape,
+                              const std::size_t message_count,
+                              const std::size_t message_bytes,
+                              const bool semantic_validation,
+                              const ScenarioResult expected)
       : shape{operation_shape}, validate{semantic_validation}, oracle{expected},
         commands{std::make_shared<detail::CommandQueue>()},
         events{std::make_shared<detail::EventQueue>()}, pump{events},
@@ -426,7 +391,7 @@ struct HistoryCommitOperation::Impl final {
     input_bytes = conversation->payload_bytes;
   }
 
-  ~Impl() { pump.shutdown(); }
+  ~HistoryCommitOperationState() { pump.shutdown(); }
 
   [[nodiscard]] bool commit_is_valid(const UpdateStats& stats) const {
     const auto common_valid =
@@ -453,6 +418,18 @@ struct HistoryCommitOperation::Impl final {
     return digest;
   }
 
+  [[nodiscard]] ScenarioResult run() {
+    const auto stats = pump.update({});
+    return {
+        .digest = result_digest(),
+        .input_bytes = static_cast<std::uint64_t>(input_bytes),
+        .output_bytes = static_cast<std::uint64_t>(conversation->payload_bytes),
+        .items = 1,
+        .valid = commit_is_valid(stats) && (validate || oracle.valid),
+    };
+  }
+
+private:
   HistoryCommitShape shape{};
   bool validate{};
   ScenarioResult oracle{};
@@ -468,31 +445,6 @@ struct HistoryCommitOperation::Impl final {
   bool setup_valid{};
 };
 
-HistoryCommitOperation::HistoryCommitOperation(std::unique_ptr<Impl> impl) noexcept
-    : impl_(std::move(impl)) {}
-
-HistoryCommitOperation::~HistoryCommitOperation() = default;
-HistoryCommitOperation::HistoryCommitOperation(HistoryCommitOperation&&) noexcept =
-    default;
-HistoryCommitOperation&
-HistoryCommitOperation::operator=(HistoryCommitOperation&&) noexcept = default;
-
-ScenarioResult HistoryCommitOperation::run() {
-  if (!impl_) {
-    return {};
-  }
-  auto& operation = *impl_;
-  const auto stats = operation.pump.update({});
-  return {
-      .digest = operation.result_digest(),
-      .input_bytes = static_cast<std::uint64_t>(operation.input_bytes),
-      .output_bytes = static_cast<std::uint64_t>(operation.conversation->payload_bytes),
-      .items = 1,
-      .valid = operation.commit_is_valid(stats) &&
-               (operation.validate || operation.oracle.valid),
-  };
-}
-
 HistoryCommitScenario::HistoryCommitScenario(const HistoryCommitShape shape,
                                              const std::size_t message_count,
                                              const std::size_t message_bytes)
@@ -500,7 +452,7 @@ HistoryCommitScenario::HistoryCommitScenario(const HistoryCommitShape shape,
 
 HistoryCommitOperation
 HistoryCommitScenario::make_operation(const bool validate) const {
-  return HistoryCommitOperation{std::make_unique<HistoryCommitOperation::Impl>(
+  return HistoryCommitOperation{std::make_unique<HistoryCommitOperationState>(
       shape_, message_count_, message_bytes_, validate, oracle_)};
 }
 
@@ -513,5 +465,8 @@ ScenarioResult HistoryCommitScenario::validate() {
 HistoryCommitOperation HistoryCommitScenario::prepare() const {
   return make_operation(false);
 }
+
+template class PreparedOperation<SchemaAdmissionOperationState>;
+template class PreparedOperation<HistoryCommitOperationState>;
 
 } // namespace scry::bench

@@ -7,16 +7,6 @@
 #include <utility>
 
 namespace scry::reflection::detail {
-namespace {
-
-void append_control_escape(std::string& output, const unsigned char value) {
-  constexpr char hexadecimal[] = "0123456789abcdef";
-  output.append("\\u00");
-  output.push_back(hexadecimal[value >> 4U]);
-  output.push_back(hexadecimal[value & 0x0FU]);
-}
-
-} // namespace
 
 class JsonView::Document final {
 public:
@@ -148,44 +138,6 @@ Result<JsonView> parse_json(Json json) {
   }
   auto document = std::make_shared<JsonView::Document>(std::move(*value));
   return JsonView{document, &document->root};
-}
-
-void append_json_string(std::string& output, const std::string_view value) {
-  output.push_back('"');
-  for (const auto character : value) {
-    const auto byte = static_cast<unsigned char>(character);
-    switch (character) {
-    case '"':
-      output.append("\\\"");
-      break;
-    case '\\':
-      output.append("\\\\");
-      break;
-    case '\b':
-      output.append("\\b");
-      break;
-    case '\f':
-      output.append("\\f");
-      break;
-    case '\n':
-      output.append("\\n");
-      break;
-    case '\r':
-      output.append("\\r");
-      break;
-    case '\t':
-      output.append("\\t");
-      break;
-    default:
-      if (byte < 0x20U) {
-        append_control_escape(output, byte);
-      } else {
-        output.push_back(character);
-      }
-      break;
-    }
-  }
-  output.push_back('"');
 }
 
 Result<Json> canonicalize_encoded_json(Json json) {
