@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <scry/detail/reflection_json_string.hpp>
 #include <scry/error.hpp>
 #include <scry/json.hpp>
 #include <string>
@@ -51,7 +52,6 @@ private:
 };
 
 [[nodiscard]] Result<JsonView> parse_json(Json json);
-void append_json_string(std::string& output, std::string_view value);
 [[nodiscard]] Result<Json> canonicalize_encoded_json(Json json);
 
 } // namespace scry::reflection::detail

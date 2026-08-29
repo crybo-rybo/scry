@@ -37,6 +37,11 @@ struct PresenceArguments {
   [[= scry::reflection::description{"Annotation text"}]] std::string required;
 };
 
+struct EscapedDescriptionArguments {
+  [[= scry::reflection::description{
+      "quote\" slash\\\b\f\n\r\t\x01"}]] std::string value;
+};
+
 struct NestedResult {
   std::string label{};
 };
@@ -135,6 +140,9 @@ static_assert(!scry::reflection::ToolArguments<UnscopedEnumArguments>);
 static_assert(
     scry::reflection::input_schema_v<PresenceArguments> ==
     R"({"additionalProperties":false,"properties":{"defaulted":{"description":"C++ default","type":"string"},"nullable":{"anyOf":[{"maximum":32767,"minimum":-32768,"type":"integer"},{"type":"null"}]},"optional_nullable":{"anyOf":[{"maximum":32767,"minimum":-32768,"type":"integer"},{"type":"null"}]},"required":{"description":"Annotation text","type":"string"}},"required":["nullable","required"],"type":"object"})");
+static_assert(
+    scry::reflection::input_schema_v<EscapedDescriptionArguments> ==
+    R"({"additionalProperties":false,"properties":{"value":{"description":"quote\" slash\\\b\f\n\r\t\u0001","type":"string"}},"required":["value"],"type":"object"})");
 static_assert(
     scry::reflection::input_schema_v<AllTypesArguments> ==
     R"({"additionalProperties":false,"properties":{"fixed":{"items":{"maximum":2147483647,"minimum":-2147483648,"type":"integer"},"maxItems":2,"minItems":2,"type":"array"},"flag":{"type":"boolean"},"nested":{"additionalProperties":false,"properties":{"label":{"type":"string"}},"required":[],"type":"object"},"ratio":{"type":"number"},"unit":{"enum":["celsius","fahrenheit"],"type":"string"},"values":{"items":{"maximum":2147483647,"minimum":-2147483648,"type":"integer"},"type":"array"}},"required":[],"type":"object"})");

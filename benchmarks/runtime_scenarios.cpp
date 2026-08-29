@@ -1,5 +1,7 @@
 #include "machine/turn_machine.hpp"
+#include "prepared_operation_impl.hpp"
 #include "runtime/pump.hpp"
+#include "scenario_support.hpp"
 #include "scenarios.hpp"
 
 #include <algorithm>
@@ -13,35 +15,6 @@
 
 namespace scry::bench {
 namespace {
-
-constexpr std::uint64_t fnv_offset = 14'695'981'039'346'656'037ULL;
-constexpr std::uint64_t fnv_prime = 1'099'511'628'211ULL;
-
-void digest_byte(std::uint64_t& digest, const std::uint8_t value) noexcept {
-  digest ^= value;
-  digest *= fnv_prime;
-}
-
-void digest_number(std::uint64_t& digest, std::uint64_t value) noexcept {
-  for (std::size_t index = 0; index < sizeof(value); ++index) {
-    digest_byte(digest, static_cast<std::uint8_t>(value & 0xffU));
-    value >>= 8U;
-  }
-}
-
-void digest_text(std::uint64_t& digest, const std::string_view text) noexcept {
-  digest_number(digest, static_cast<std::uint64_t>(text.size()));
-  for (const char value : text) {
-    digest_byte(digest, static_cast<std::uint8_t>(value));
-  }
-}
-
-[[nodiscard]] std::string padded_text(const std::size_t size, const std::size_t seed) {
-  std::string value(size, static_cast<char>('a' + static_cast<char>(seed % 26)));
-  const auto prefix = std::to_string(seed) + ':';
-  value.replace(0, std::min(prefix.size(), value.size()), prefix);
-  return value;
-}
 
 [[nodiscard]] std::string noncanonical_arguments(const std::size_t target_size,
                                                  const std::size_t index) {
@@ -230,11 +203,13 @@ TurnMachineScenario::TurnMachineScenario(const std::size_t tool_count,
   }
 }
 
-struct TurnMachineOperation::Impl final {
-  Impl(std::vector<detail::ContentBlock> calls,
-       std::vector<detail::ToolResultBlock> tool_results,
-       const std::size_t logical_input_bytes, const bool semantic_validation,
-       const ScenarioResult expected)
+class TurnMachineOperationState final {
+public:
+  TurnMachineOperationState(std::vector<detail::ContentBlock> calls,
+                            std::vector<detail::ToolResultBlock> tool_results,
+                            const std::size_t logical_input_bytes,
+                            const bool semantic_validation,
+                            const ScenarioResult expected)
       : machine{TurnId{.value = 1}, machine_request(), no_retry_policy(),
                 detail::ToolLoopPolicy{
                     .max_rounds = 2,
@@ -248,6 +223,43 @@ struct TurnMachineOperation::Impl final {
     setup_valid = began_turn(machine.apply(detail::BeginTurn{}));
   }
 
+  [[nodiscard]] ScenarioResult run() {
+    bool valid = setup_valid;
+    auto published =
+        machine.apply(detail::ModelCompleted{.response = std::move(response)});
+    valid = published_expected_calls(published, results.size()) && valid;
+    auto digest = validate ? fnv_offset : oracle.digest;
+    auto output_bytes = std::size_t{0};
+    if (validate) {
+      digest_published_calls(published, digest, output_bytes, valid);
+    }
+    detail::TransitionResult transition{};
+    for (auto& result : results) {
+      if (validate) {
+        digest_text(digest, result.tool_call_id);
+        digest_text(digest, result.result.text);
+        output_bytes += detail::content_payload_bytes(result);
+      }
+      transition = machine.apply(detail::ToolResultReady{
+          .result = std::move(result),
+          .observed_at = detail::MachineTimePoint{},
+      });
+    }
+    valid = ready_for_next_model(machine, transition) && valid;
+    if (validate) {
+      observe_issued_request(transition, digest, valid);
+    }
+    return {
+        .digest = digest,
+        .input_bytes = static_cast<std::uint64_t>(input_bytes),
+        .output_bytes =
+            validate ? static_cast<std::uint64_t>(output_bytes) : oracle.output_bytes,
+        .items = static_cast<std::uint64_t>(results.size()),
+        .valid = valid && (validate || oracle.valid),
+    };
+  }
+
+private:
   detail::TurnMachine machine;
   detail::ModelResponse response{};
   std::vector<detail::ToolResultBlock> results{};
@@ -257,56 +269,8 @@ struct TurnMachineOperation::Impl final {
   bool setup_valid{};
 };
 
-TurnMachineOperation::TurnMachineOperation(std::unique_ptr<Impl> impl) noexcept
-    : impl_(std::move(impl)) {}
-
-TurnMachineOperation::~TurnMachineOperation() = default;
-TurnMachineOperation::TurnMachineOperation(TurnMachineOperation&&) noexcept = default;
-TurnMachineOperation&
-TurnMachineOperation::operator=(TurnMachineOperation&&) noexcept = default;
-
-ScenarioResult TurnMachineOperation::run() {
-  if (!impl_) {
-    return {};
-  }
-  auto& operation = *impl_;
-  bool valid = operation.setup_valid;
-  auto published = operation.machine.apply(
-      detail::ModelCompleted{.response = std::move(operation.response)});
-  valid = published_expected_calls(published, operation.results.size()) && valid;
-  auto digest = operation.validate ? fnv_offset : operation.oracle.digest;
-  auto output_bytes = std::size_t{0};
-  if (operation.validate) {
-    digest_published_calls(published, digest, output_bytes, valid);
-  }
-  detail::TransitionResult transition{};
-  for (auto& result : operation.results) {
-    if (operation.validate) {
-      digest_text(digest, result.tool_call_id);
-      digest_text(digest, result.result.text);
-      output_bytes += detail::content_payload_bytes(result);
-    }
-    transition = operation.machine.apply(detail::ToolResultReady{
-        .result = std::move(result),
-        .observed_at = detail::MachineTimePoint{},
-    });
-  }
-  valid = ready_for_next_model(operation.machine, transition) && valid;
-  if (operation.validate) {
-    observe_issued_request(transition, digest, valid);
-  }
-  return {
-      .digest = digest,
-      .input_bytes = static_cast<std::uint64_t>(operation.input_bytes),
-      .output_bytes = operation.validate ? static_cast<std::uint64_t>(output_bytes)
-                                         : operation.oracle.output_bytes,
-      .items = static_cast<std::uint64_t>(operation.results.size()),
-      .valid = valid && (operation.validate || operation.oracle.valid),
-  };
-}
-
 TurnMachineOperation TurnMachineScenario::make_operation(const bool validate) const {
-  return TurnMachineOperation{std::make_unique<TurnMachineOperation::Impl>(
+  return TurnMachineOperation{std::make_unique<TurnMachineOperationState>(
       calls_, results_, input_bytes_, validate, oracle_)};
 }
 
@@ -323,9 +287,10 @@ TurnMachineOperation TurnMachineScenario::prepare() const {
 PumpScenario::PumpScenario(const PumpShape shape, const std::size_t route_count)
     : shape_(shape), route_count_(route_count) {}
 
-struct PumpOperation::Impl final {
-  Impl(const PumpShape pump_shape, const std::size_t route_count,
-       const bool semantic_validation, const ScenarioResult expected)
+class PumpOperationState final {
+public:
+  PumpOperationState(const PumpShape pump_shape, const std::size_t route_count,
+                     const bool semantic_validation, const ScenarioResult expected)
       : shape{pump_shape}, validate{semantic_validation}, oracle{expected},
         commands{std::make_shared<detail::CommandQueue>()},
         events{std::make_shared<detail::EventQueue>()},
@@ -345,8 +310,25 @@ struct PumpOperation::Impl final {
     }
   }
 
-  ~Impl() { pump.shutdown(); }
+  ~PumpOperationState() { pump.shutdown(); }
 
+  [[nodiscard]] ScenarioResult run() {
+    const auto stats = pump.update({});
+    auto valid = setup_valid && callback_count == conversations.size() &&
+                 stats.callbacks_delivered == conversations.size() &&
+                 stats.events_remaining == 0 && !stats.budget_exhausted;
+    const auto output_bytes = validate ? pump_output_bytes(shape, conversations, valid)
+                                       : static_cast<std::size_t>(oracle.output_bytes);
+    return {
+        .digest = validate ? digest : oracle.digest,
+        .input_bytes = static_cast<std::uint64_t>(input_bytes),
+        .output_bytes = static_cast<std::uint64_t>(output_bytes),
+        .items = static_cast<std::uint64_t>(callback_count),
+        .valid = valid && (validate || oracle.valid),
+    };
+  }
+
+private:
   PumpShape shape{};
   bool validate{};
   ScenarioResult oracle{};
@@ -360,39 +342,9 @@ struct PumpOperation::Impl final {
   bool setup_valid{true};
 };
 
-PumpOperation::PumpOperation(std::unique_ptr<Impl> impl) noexcept
-    : impl_(std::move(impl)) {}
-
-PumpOperation::~PumpOperation() = default;
-PumpOperation::PumpOperation(PumpOperation&&) noexcept = default;
-PumpOperation& PumpOperation::operator=(PumpOperation&&) noexcept = default;
-
-ScenarioResult PumpOperation::run() {
-  if (!impl_) {
-    return {};
-  }
-  auto& operation = *impl_;
-  const auto stats = operation.pump.update({});
-  auto valid = operation.setup_valid &&
-               operation.callback_count == operation.conversations.size() &&
-               stats.callbacks_delivered == operation.conversations.size() &&
-               stats.events_remaining == 0 && !stats.budget_exhausted;
-  const auto output_bytes =
-      operation.validate
-          ? pump_output_bytes(operation.shape, operation.conversations, valid)
-          : static_cast<std::size_t>(operation.oracle.output_bytes);
-  return {
-      .digest = operation.validate ? operation.digest : operation.oracle.digest,
-      .input_bytes = static_cast<std::uint64_t>(operation.input_bytes),
-      .output_bytes = static_cast<std::uint64_t>(output_bytes),
-      .items = static_cast<std::uint64_t>(operation.callback_count),
-      .valid = valid && (operation.validate || operation.oracle.valid),
-  };
-}
-
 PumpOperation PumpScenario::make_operation(const bool validate) const {
   return PumpOperation{
-      std::make_unique<PumpOperation::Impl>(shape_, route_count_, validate, oracle_)};
+      std::make_unique<PumpOperationState>(shape_, route_count_, validate, oracle_)};
 }
 
 ScenarioResult PumpScenario::validate() {
@@ -402,5 +354,8 @@ ScenarioResult PumpScenario::validate() {
 }
 
 PumpOperation PumpScenario::prepare() const { return make_operation(false); }
+
+template class PreparedOperation<TurnMachineOperationState>;
+template class PreparedOperation<PumpOperationState>;
 
 } // namespace scry::bench

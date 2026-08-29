@@ -20,31 +20,48 @@ struct ScenarioResult {
   bool valid{};
 };
 
+template <typename State> class PreparedOperation final {
+public:
+  explicit PreparedOperation(std::unique_ptr<State> state) noexcept;
+  ~PreparedOperation();
+  PreparedOperation(PreparedOperation&&) noexcept;
+  PreparedOperation& operator=(PreparedOperation&&) noexcept;
+
+  PreparedOperation(const PreparedOperation&) = delete;
+  PreparedOperation& operator=(const PreparedOperation&) = delete;
+
+  [[nodiscard]] ScenarioResult run();
+
+private:
+  std::unique_ptr<State> state_{};
+};
+
+class SchemaAdmissionOperationState;
+class HistoryCommitOperationState;
+class TurnMachineOperationState;
+class PumpOperationState;
+class AdmissionOperationState;
+class ToolRegistryOperationState;
+
+using SchemaAdmissionOperation = PreparedOperation<SchemaAdmissionOperationState>;
+using HistoryCommitOperation = PreparedOperation<HistoryCommitOperationState>;
+using TurnMachineOperation = PreparedOperation<TurnMachineOperationState>;
+using PumpOperation = PreparedOperation<PumpOperationState>;
+using AdmissionOperation = PreparedOperation<AdmissionOperationState>;
+using ToolRegistryOperation = PreparedOperation<ToolRegistryOperationState>;
+
+extern template class PreparedOperation<SchemaAdmissionOperationState>;
+extern template class PreparedOperation<HistoryCommitOperationState>;
+extern template class PreparedOperation<TurnMachineOperationState>;
+extern template class PreparedOperation<PumpOperationState>;
+extern template class PreparedOperation<AdmissionOperationState>;
+extern template class PreparedOperation<ToolRegistryOperationState>;
+
 enum class SchemaAdmissionShape : std::uint8_t {
   cold_accepted,
   warm_accepted,
   rejected,
   retained_generations,
-};
-
-class SchemaAdmissionOperation final {
-public:
-  ~SchemaAdmissionOperation();
-  SchemaAdmissionOperation(SchemaAdmissionOperation&&) noexcept;
-  SchemaAdmissionOperation& operator=(SchemaAdmissionOperation&&) noexcept;
-
-  SchemaAdmissionOperation(const SchemaAdmissionOperation&) = delete;
-  SchemaAdmissionOperation& operator=(const SchemaAdmissionOperation&) = delete;
-
-  [[nodiscard]] ScenarioResult run();
-
-private:
-  struct Impl;
-  explicit SchemaAdmissionOperation(std::unique_ptr<Impl> impl) noexcept;
-
-  std::unique_ptr<Impl> impl_{};
-
-  friend class SchemaAdmissionScenario;
 };
 
 class SchemaAdmissionScenario final {
@@ -67,26 +84,6 @@ private:
 enum class HistoryCommitShape : std::uint8_t {
   unique,
   aliased,
-};
-
-class HistoryCommitOperation final {
-public:
-  ~HistoryCommitOperation();
-  HistoryCommitOperation(HistoryCommitOperation&&) noexcept;
-  HistoryCommitOperation& operator=(HistoryCommitOperation&&) noexcept;
-
-  HistoryCommitOperation(const HistoryCommitOperation&) = delete;
-  HistoryCommitOperation& operator=(const HistoryCommitOperation&) = delete;
-
-  [[nodiscard]] ScenarioResult run();
-
-private:
-  struct Impl;
-  explicit HistoryCommitOperation(std::unique_ptr<Impl> impl) noexcept;
-
-  std::unique_ptr<Impl> impl_{};
-
-  friend class HistoryCommitScenario;
 };
 
 class HistoryCommitScenario final {
@@ -162,26 +159,6 @@ private:
   ScenarioResult oracle_{};
 };
 
-class TurnMachineOperation final {
-public:
-  ~TurnMachineOperation();
-  TurnMachineOperation(TurnMachineOperation&&) noexcept;
-  TurnMachineOperation& operator=(TurnMachineOperation&&) noexcept;
-
-  TurnMachineOperation(const TurnMachineOperation&) = delete;
-  TurnMachineOperation& operator=(const TurnMachineOperation&) = delete;
-
-  [[nodiscard]] ScenarioResult run();
-
-private:
-  struct Impl;
-  explicit TurnMachineOperation(std::unique_ptr<Impl> impl) noexcept;
-
-  std::unique_ptr<Impl> impl_{};
-
-  friend class TurnMachineScenario;
-};
-
 class TurnMachineScenario final {
 public:
   TurnMachineScenario(std::size_t tool_count, std::size_t argument_bytes);
@@ -201,26 +178,6 @@ private:
 enum class PumpShape : std::uint8_t {
   text_delivery,
   completion_commit,
-};
-
-class PumpOperation final {
-public:
-  ~PumpOperation();
-  PumpOperation(PumpOperation&&) noexcept;
-  PumpOperation& operator=(PumpOperation&&) noexcept;
-
-  PumpOperation(const PumpOperation&) = delete;
-  PumpOperation& operator=(const PumpOperation&) = delete;
-
-  [[nodiscard]] ScenarioResult run();
-
-private:
-  struct Impl;
-  explicit PumpOperation(std::unique_ptr<Impl> impl) noexcept;
-
-  std::unique_ptr<Impl> impl_{};
-
-  friend class PumpScenario;
 };
 
 class PumpScenario final {
@@ -243,26 +200,6 @@ enum class AdmissionShape : std::uint8_t {
   schemas,
 };
 
-class AdmissionOperation final {
-public:
-  ~AdmissionOperation();
-  AdmissionOperation(AdmissionOperation&&) noexcept;
-  AdmissionOperation& operator=(AdmissionOperation&&) noexcept;
-
-  AdmissionOperation(const AdmissionOperation&) = delete;
-  AdmissionOperation& operator=(const AdmissionOperation&) = delete;
-
-  [[nodiscard]] ScenarioResult run();
-
-private:
-  struct Impl;
-  explicit AdmissionOperation(std::unique_ptr<Impl> impl) noexcept;
-
-  std::unique_ptr<Impl> impl_{};
-
-  friend class AdmissionScenario;
-};
-
 class AdmissionScenario final {
 public:
   AdmissionScenario(AdmissionShape shape, std::size_t element_count,
@@ -278,26 +215,6 @@ private:
   std::size_t element_count_{};
   std::size_t element_bytes_{};
   ScenarioResult oracle_{};
-};
-
-class ToolRegistryOperation final {
-public:
-  ~ToolRegistryOperation();
-  ToolRegistryOperation(ToolRegistryOperation&&) noexcept;
-  ToolRegistryOperation& operator=(ToolRegistryOperation&&) noexcept;
-
-  ToolRegistryOperation(const ToolRegistryOperation&) = delete;
-  ToolRegistryOperation& operator=(const ToolRegistryOperation&) = delete;
-
-  [[nodiscard]] ScenarioResult run();
-
-private:
-  struct Impl;
-  explicit ToolRegistryOperation(std::unique_ptr<Impl> impl) noexcept;
-
-  std::unique_ptr<Impl> impl_{};
-
-  friend class ToolRegistryScenario;
 };
 
 class ToolRegistryScenario final {

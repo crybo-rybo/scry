@@ -6,6 +6,7 @@
 #include <limits>
 #include <meta>
 #include <optional>
+#include <scry/detail/reflection_json_string.hpp>
 #include <scry/detail/reflection_meta.hpp>
 #include <string_view>
 #include <type_traits>
@@ -14,52 +15,11 @@
 namespace scry::reflection::detail {
 
 consteval void append_literal(std::vector<char>& output, const std::string_view value) {
-  output.insert(output.end(), value.begin(), value.end());
-}
-
-consteval void append_hex_escape(std::vector<char>& output, const unsigned char value) {
-  constexpr std::string_view hexadecimal = "0123456789abcdef";
-  append_literal(output, "\\u00");
-  output.push_back(hexadecimal[value >> 4U]);
-  output.push_back(hexadecimal[value & 0x0FU]);
+  append_json_literal(output, value);
 }
 
 consteval void append_quoted(std::vector<char>& output, const std::string_view value) {
-  output.push_back('"');
-  for (const char character : value) {
-    const auto byte = static_cast<unsigned char>(character);
-    switch (character) {
-    case '"':
-      append_literal(output, "\\\"");
-      break;
-    case '\\':
-      append_literal(output, "\\\\");
-      break;
-    case '\b':
-      append_literal(output, "\\b");
-      break;
-    case '\f':
-      append_literal(output, "\\f");
-      break;
-    case '\n':
-      append_literal(output, "\\n");
-      break;
-    case '\r':
-      append_literal(output, "\\r");
-      break;
-    case '\t':
-      append_literal(output, "\\t");
-      break;
-    default:
-      if (byte < 0x20U) {
-        append_hex_escape(output, byte);
-      } else {
-        output.push_back(character);
-      }
-      break;
-    }
-  }
-  output.push_back('"');
+  append_json_string(output, value);
 }
 
 consteval void append_unsigned(std::vector<char>& output, std::uint64_t value) {

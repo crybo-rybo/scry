@@ -554,8 +554,8 @@ Status WorkerActor::publish_command(MachineCommand command) {
 
 void WorkerActor::publish_terminal_event(WorkerEvent event) {
   event = bound_terminal_event(std::move(event));
-  const auto pushed = events_->push_terminal(
-      std::move(event), config_.limits.max_queued_event_bytes_per_turn);
+  const auto pushed =
+      events_->push(std::move(event), config_.limits.max_queued_event_bytes_per_turn);
   static_cast<void>(pushed);
   assert(pushed);
 }

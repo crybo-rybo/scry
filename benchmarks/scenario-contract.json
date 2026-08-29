@@ -18,6 +18,10 @@
     {
       "sha256": "51847a9c17539b03355b7638c4ebe0d45d9c2543901f7979a201bbbbddfd6b60",
       "reason": "live allocation accounting extends instrumentation without changing logical scenario work"
+    },
+    {
+      "sha256": "4e31e6d69cdb86665988f35878c05533bca9d3312bca063ff0efc9d9b18f1495",
+      "reason": "shared digest helpers and prepared-operation templates remove benchmark scaffolding without changing fixtures, timed boundaries, or semantic counters"
     }
   ]
 }

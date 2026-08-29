@@ -119,7 +119,7 @@ TEST_CASE("callback exceptions consume the event and leave the pump valid") {
                                 },
                         });
   pump.add_route(route);
-  REQUIRE(fixture.events->push_terminal(
+  REQUIRE(fixture.events->push(
       scry::detail::ErrorEvent{
           .turn_id = route->id(),
           .error = {.category = scry::ErrorCategory::network},

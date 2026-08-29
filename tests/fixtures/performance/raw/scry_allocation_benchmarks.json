@@ -1,0 +1,32 @@
+{
+  "context": {
+    "json_schema_version": 1,
+    "library_version": "v1.9.5",
+    "library_build_type": "release",
+    "host_name": "fixture-host",
+    "num_cpus": 8,
+    "scry_benchmark_schema": "1",
+    "scry_fixture_seed": "0",
+    "scry_measurement_mode": "allocation_pressure",
+    "scry_benchmark_target": "scry_allocation_benchmarks",
+    "scry_run_id": "fixture-run"
+  },
+  "benchmarks": [
+    {
+      "name": "SSE/chunk_bytes:64/crlf:0",
+      "run_type": "iteration",
+      "time_unit": "us",
+      "cpu_time": 2.5,
+      "real_time": 3.0,
+      "checksum_hi": 12,
+      "checksum_lo": 34,
+      "cpp_allocations": 5,
+      "cpp_live_requested_bytes": 7,
+      "cpp_peak_live_requested_bytes": 11,
+      "cpp_requested_bytes": 13,
+      "input_bytes": 128,
+      "items": 4,
+      "output_bytes": 96
+    }
+  ]
+}
