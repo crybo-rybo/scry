@@ -25,8 +25,8 @@
   keeps stable behavioral scenarios, semantic oracles, environment metadata,
   and same-host parent/candidate comparisons. Timing, C++ allocation, and RSS
   results are review evidence under QA-014 and never substitute for correctness
-  gates or portable promises. The
-  [profiling protocol](../development/performance-profiling.md) owns the method.
+  gates or portable promises. The profiling apparatus itself no longer lives in
+  this repository.
 - **Diagnostic logging build:** `-DSCRY_ENABLE_LOGGING=ON` (preset `dev-logging`)
   compiles the internal `SCRY_LOG` macro into a small thread-safe file logger
   (`src/core/log.*`); every other build compiles the macro to nothing. Even in

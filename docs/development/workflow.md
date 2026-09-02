@@ -11,9 +11,7 @@
   example; deliberate simplifications add a row to the evolution register. A
   performance or memory claim additionally includes compatible same-host
   parent/head measurements, unchanged semantic output, representative
-  guardrails, and the affected cumulative comparison against the profiling
-  foundation as required by QA-014 and the
-  [profiling protocol](performance-profiling.md).
+  guardrails, and the affected cumulative comparison as required by QA-014.
 - **Dependency policy** (restating the [dependency architecture](../architecture/dependencies-and-errors.md) as process): new dependencies require a written justification committed with the change. Toolchains are pinned and upgraded deliberately — on this project the reflection compiler is experimental, so "toolchain drift" is a first-class risk tracked like a dependency.
 
 ## 8. Right-Sized Process

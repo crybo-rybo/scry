@@ -9,21 +9,6 @@ build:
 test:
     ctest --test-dir build/dev --output-on-failure
 
-profile *args:
-    ./scripts/perf-run.sh --mode full {{ args }}
-
-profile-smoke *args:
-    ./scripts/perf-run.sh --mode smoke {{ args }}
-
-profile-dry *args:
-    ./scripts/perf-run.sh --mode dry {{ args }}
-
-profile-compare base head output="build/profile-comparison" *args:
-    python3 scripts/perf-compare.py compare --base "{{ base }}" --head "{{ head }}" --output-dir "{{ output }}" {{ args }}
-
-profile-pair base head output="build/profile-pair" *args:
-    ./scripts/perf-pair.sh --base-dir "{{ base }}" --head-dir "{{ head }}" --output "{{ output }}" {{ args }}
-
 format:
     cmake --build build/dev --target format
 

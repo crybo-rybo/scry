@@ -148,9 +148,8 @@ Before handing off a pull request, run the complete local preflight:
 ./scripts/preflight.sh
 ```
 
-That one command adds all-scenario semantic profiling and paired-orchestration
-smoke checks, clang-tidy, the ASan/UBSan and TSan suites, and the fuzz corpus
-replay. It runs all available legs and reports host-specific toolchains that are
+That one command adds the Doxygen site, clang-tidy, the ASan/UBSan and TSan
+suites, and the fuzz corpus replay. It runs all available legs and reports host-specific toolchains that are
 unavailable locally; hosted CI is authoritative for those environments. Long
 protocol fuzzing, deep static analysis, and the showcase gate run in the
 scheduled weekly workflow; `just showcase` runs the showcase gate locally.

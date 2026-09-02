@@ -58,8 +58,7 @@ Gates:
                           # ci preset build+ctest, install to build/stage, and a downstream
                           # find_package(scry) consumer that exercises both registration paths.
 ./scripts/preflight.sh    # just ci: the full ring, and what to run before every PR. Adds the Doxygen site,
-                          # profiling smoke, clang-tidy 18, ASan/UBSan, TSan (x3 repeat), and the fuzz corpus
-                          # replay. Legs whose toolchain the host lacks are skipped, not failed, and named again
+                          # clang-tidy 18, ASan/UBSan, TSan (x3 repeat), and the fuzz corpus replay. Legs whose toolchain the host lacks are skipped, not failed, and named again
                           # in the closing summary; hosted CI is authoritative for those. Each sanitizer leg
                           # probes its own flag with g++-16 first: GCC ships no thread-sanitizer runtime on
                           # Apple Silicon, so TSan skips locally while ASan still runs. On macOS,
@@ -68,7 +67,7 @@ Gates:
 just tidy | just asan | just tsan | just docs | just showcase   # individual legs
 ```
 
-Presets: `dev` (Debug), `ci` (RelWithDebInfo), `asan`, `tsan` — all GCC 16 — and `fuzz` (Clang, `SCRY_CLANG_TOOLING`). `dev-logging`, `profile`, `reflection-gcc16`, `showcase`, and `nightly-local-model` are gone; so are the options `SCRY_ENABLE_REFLECTION`, `SCRY_ENABLE_LOGGING`, `SCRY_USE_LIBCXX`, `SCRY_BUILD_BENCHMARKS`, `SCRY_BUILD_IMGUI_SHOWCASE`, and `SCRY_BUILD_LOCAL_MODEL_SMOKE`.
+Presets: `dev` (Debug), `ci` (RelWithDebInfo), `asan`, `tsan` — all GCC 16 — and `fuzz` (Clang, `SCRY_CLANG_TOOLING`). `dev-logging`, `profile`, `reflection-gcc16`, `showcase`, and `nightly-local-model` are gone; so are the options `SCRY_ENABLE_REFLECTION`, `SCRY_ENABLE_LOGGING`, `SCRY_USE_LIBCXX`, `SCRY_BUILD_BENCHMARKS`, `SCRY_BUILD_IMGUI_SHOWCASE`, and `SCRY_BUILD_LOCAL_MODEL_SMOKE`. There is no profiling apparatus: `benchmarks/`, the `perf-*` scripts, and the performance workflow are gone.
 
 ## Architecture map
 

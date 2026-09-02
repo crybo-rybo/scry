@@ -24,7 +24,6 @@ and a binding requirement disagree.
 
 - [Principles and testing](development/principles-and-testing.md)
 - [Quality gates](development/quality-gates.md)
-- [Performance profiling](development/performance-profiling.md)
 - [Workflow](development/workflow.md)
 
 ## Releases

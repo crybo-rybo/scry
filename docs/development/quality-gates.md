@@ -43,8 +43,7 @@ The opt-in profiling suite is separate from sanitizer and correctness builds.
 It may be built and smoke-run in hosted CI, but shared-runner timings, C++
 allocation counts, and RSS values do not pass or fail a pull request. A
 performance or memory claim instead supplies same-host paired evidence under
-`SCRY-QA-014`, following the
-[performance profiling protocol](performance-profiling.md). This preserves
+`SCRY-QA-014`. This preserves
 `SCRY-QA-007`: the compiler, tests, sanitizers, static analysis, complexity, and
 package audits remain the gates, while measurements inform whether an
 optimization deserves to exist.

@@ -50,8 +50,8 @@ Run the complete local preflight before every PR:
 ./scripts/preflight.sh
 ```
 
-This adds the Doxygen site, the profiling smoke, clang-tidy, the ASan/UBSan and
-TSan suites, and the fuzz corpus replay. It runs every leg, continues after
+This adds the Doxygen site, clang-tidy, the ASan/UBSan and TSan suites, and the
+fuzz corpus replay. It runs every leg, continues after
 failures, reports a leg whose toolchain the host lacks as a skip rather than a
 failure, and names every skipped leg again in the closing summary; hosted CI
 remains authoritative for those. Each sanitizer leg probes its own flag with
