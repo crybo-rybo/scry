@@ -141,7 +141,7 @@ std::size_t header_callback(char* data, const std::size_t size, const std::size_
     return status;
   }
   if (!context.response.deliver_body) {
-    constexpr std::size_t maximum_error_body_bytes = 8 * 1024;
+    constexpr std::size_t maximum_error_body_bytes = std::size_t{8} * 1024;
     if (context.error_body.size() < maximum_error_body_bytes) {
       context.error_body.append(
           chunk.substr(0, maximum_error_body_bytes - context.error_body.size()));
