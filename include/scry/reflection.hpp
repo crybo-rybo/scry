@@ -27,7 +27,7 @@ template <SupportedValue Type> [[nodiscard]] Result<Json> encode(const Type& val
   if (!encoded) {
     return encoded;
   }
-  return detail::canonicalize_encoded_json(std::move(*encoded));
+  return detail::canonicalize_encoded_json(*encoded);
 }
 
 } // namespace scry::reflection

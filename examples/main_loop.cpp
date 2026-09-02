@@ -38,19 +38,18 @@ private:
 // scry::JsonView reads the canonical arguments without a third-party parser;
 // the reflected overload in examples/reflection_tools.cpp decodes into typed
 // structs instead, when the optional component is available.
-[[nodiscard]] scry::Status validate_status_arguments(const scry::Json& arguments) {
+[[nodiscard]] scry::Status validate_status_arguments(const scry::JsonView& root) {
   const auto reject = [](std::string message) {
     return std::unexpected(scry::Error{
         .category = scry::ErrorCategory::tool,
         .message = std::move(message),
     });
   };
-  const auto root = scry::JsonView::parse(arguments);
-  if (!root || root->kind() != scry::JsonKind::object) {
+  if (root.kind() != scry::JsonKind::object) {
     return reject("get_application_status expects a JSON object");
   }
-  for (std::size_t index = 0; index < root->size(); ++index) {
-    const auto key = root->key_at(index);
+  for (std::size_t index = 0; index < root.size(); ++index) {
+    const auto key = root.key_at(index);
     if (!key || *key != "verbose") {
       return reject("get_application_status accepts only the verbose property");
     }
@@ -59,15 +58,19 @@ private:
 }
 
 [[nodiscard]] scry::ToolHandler status_handler(Application& app) {
-  return [&app](scry::Json arguments) -> scry::Result<scry::Json> {
+  return [&app](const scry::Json& arguments) -> scry::Result<scry::Json> {
     // Every handler runs synchronously in harness.update() on this app thread.
     // Keep it bounded; long-running work needs an explicit deferred-result
     // contract rather than a background handler mode.
-    if (auto valid = validate_status_arguments(arguments); !valid) {
+    //
+    // Parse once and read from the one view. A parse failure yields the empty
+    // view, which reports JsonKind::null and so fails the object check with the
+    // same message a non-object root gets.
+    const auto root = scry::JsonView::parse(arguments).value_or(scry::JsonView{});
+    if (auto valid = validate_status_arguments(root); !valid) {
       return std::unexpected(std::move(valid.error()));
     }
-    const auto root = scry::JsonView::parse(arguments);
-    const auto verbose = root->find("verbose");
+    const auto verbose = root.find("verbose");
     const auto wants_detail = verbose && verbose->boolean().value_or(false);
 
     // This tool is read-only. Side-effecting tools need an app-owned

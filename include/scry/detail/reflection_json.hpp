@@ -12,8 +12,8 @@ namespace scry::reflection::detail {
 using JsonKind = scry::JsonKind;
 using JsonView = scry::JsonView;
 
-[[nodiscard]] Result<JsonView> parse_json(Json json);
+[[nodiscard]] Result<JsonView> parse_json(const Json& json);
 void append_json_string(std::string& output, std::string_view value);
-[[nodiscard]] Result<Json> canonicalize_encoded_json(Json json);
+[[nodiscard]] Result<Json> canonicalize_encoded_json(const Json& json);
 
 } // namespace scry::reflection::detail
