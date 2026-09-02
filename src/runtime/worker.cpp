@@ -100,11 +100,11 @@ WorkerActor::WorkerActor(Config config, std::unique_ptr<ProviderAdapter> provide
                          std::unique_ptr<Transport> transport,
                          std::shared_ptr<CommandQueue> commands,
                          std::shared_ptr<EventQueue> events,
-                         const std::uint64_t retry_jitter_seed, WorkerTimeSource time)
+                         WorkerEnvironment environment)
     : config_(std::move(config)), provider_(std::move(provider)),
       transport_(std::move(transport)), commands_(std::move(commands)),
-      events_(std::move(events)), retry_jitter_seed_(retry_jitter_seed),
-      time_(std::move(time)) {
+      events_(std::move(events)), retry_jitter_seed_(environment.retry_jitter_seed),
+      time_(std::move(environment.time)) {
   // An empty member means production: the real steady clock and the real
   // deadline wait on the command queue.
   if (!time_.now) {

@@ -78,14 +78,16 @@ Struck-through findings were addressed by the Tier 4 remediation change (API pol
 
 ### Tier 4: internal quality and test infrastructure
 
+Struck-through findings were addressed by the Tier 5 remediation change (test infrastructure).
+
 | # | Finding | Where |
 |---|---|---|
 | 21 | Json-as-text means every request re-parses every tool schema and every historical tool call and result, per attempt and per tool round, then re-serializes them. Correct but wasteful. Store parsed values in the neutral model and serialize once at the wire. Best done after item 15. | `src/provider/*_request.cpp` |
-| 22 | The worker reads the steady clock directly and waits on real deadlines, so no runtime-tier test proves a nonzero backoff or a Retry-After is honored end to end. The retry tests use zero backoff or race a long wait against cancel. Inject a clock and waiter. | `src/runtime/worker.cpp` |
-| 23 | Curl connect and transfer timeouts are configured in tests but never allowed to expire, so THR-017's claim that every blocking curl phase is bounded has no mechanical coverage. Four assertions compare against wall-clock limits and run under TSan three times. | `tests/integration/curl_harness_tests.cpp:282`, `tests/transport/curl_transport_tests.cpp:314` |
-| 24 | `FakeTransport` state is written on the worker thread and read unsynchronized from the test thread. Five bespoke transports each re-add a mutex and a gate. The Anthropic SSE literal is retyped seven times. Widen the fake and add a harness fixture. | `tests/support/transport/fake_transport.hpp` |
-| 25 | Fuzz targets are never built per commit, so they rot between weekly runs. Two corpus seeds are non-streaming documents the decoders reject immediately. There is no fuzz target for response-header policy or `Conversation::from_json`. | `tests/fuzz/corpus` |
-| 26 | Golden fixtures are hand-synthesized with no provenance or capture recipe, and the OpenAI golden is an inline literal. The docs describe them as captured real payloads that are easy to re-capture. | `tests/fixtures` |
+| ~~22~~ | ~~The worker reads the steady clock directly and waits on real deadlines, so no runtime-tier test proves a nonzero backoff or a Retry-After is honored end to end. The retry tests use zero backoff or race a long wait against cancel. Inject a clock and waiter.~~ | ~~`src/runtime/worker.cpp`~~ |
+| ~~23~~ | ~~Curl connect and transfer timeouts are configured in tests but never allowed to expire, so THR-017's claim that every blocking curl phase is bounded has no mechanical coverage. Four assertions compare against wall-clock limits and run under TSan three times.~~ | ~~`tests/integration/curl_harness_tests.cpp:282`, `tests/transport/curl_transport_tests.cpp:314`~~ |
+| ~~24~~ | ~~`FakeTransport` state is written on the worker thread and read unsynchronized from the test thread. Five bespoke transports each re-add a mutex and a gate. The Anthropic SSE literal is retyped seven times. Widen the fake and add a harness fixture.~~ | ~~`tests/support/transport/fake_transport.hpp`~~ |
+| ~~25~~ | ~~Fuzz targets are never built per commit, so they rot between weekly runs. Two corpus seeds are non-streaming documents the decoders reject immediately. There is no fuzz target for response-header policy or `Conversation::from_json`.~~ | ~~`tests/fuzz/corpus`~~ |
+| ~~26~~ | ~~Golden fixtures are hand-synthesized with no provenance or capture recipe, and the OpenAI golden is an inline literal. The docs describe them as captured real payloads that are easy to re-capture.~~ | ~~`tests/fixtures`~~ |
 | 27 | clang-tidy is attached only to the core target. Tests, examples, and the reflection component are never analyzed, although the config names them. The tidy job builds Catch2 and every test binary for nothing. | `CMakeLists.txt` `CXX_CLANG_TIDY` |
 | 28 | The tidy and sanitizer legs exist as three hand-synced copies in the workflow, the preflight script, and the justfile. | `.github/workflows/ci.yml`, `scripts/preflight.sh`, `justfile` |
 

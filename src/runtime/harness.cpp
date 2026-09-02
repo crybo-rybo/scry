@@ -93,19 +93,17 @@ public:
 
   Impl(Config config, std::unique_ptr<detail::ProviderAdapter> provider,
        std::unique_ptr<detail::Transport> transport,
-       std::unique_ptr<ToolRegistry> tools, const std::uint64_t retry_jitter_seed,
-       detail::WorkerTimeSource time)
+       std::unique_ptr<ToolRegistry> tools, detail::WorkerEnvironment environment)
       : config_(std::move(config)), commands_(std::make_shared<detail::CommandQueue>()),
         events_(std::make_shared<detail::EventQueue>()), pump_(events_),
         tools_(std::move(tools)),
         worker_([config = config_, provider = std::move(provider),
                  transport = std::move(transport), commands = commands_,
-                 events = events_, retry_jitter_seed,
-                 time = std::move(time)](const std::stop_token& stopped) mutable {
+                 events = events_, environment = std::move(environment)](
+                    const std::stop_token& stopped) mutable {
           detail::WorkerActor actor{std::move(config),    std::move(provider),
                                     std::move(transport), std::move(commands),
-                                    std::move(events),    retry_jitter_seed,
-                                    std::move(time)};
+                                    std::move(events),    std::move(environment)};
           actor.run(stopped);
         }) {
     SCRY_LOG("Harness created (model: {})", config_.model);
@@ -232,7 +230,8 @@ Result<Harness> Harness::create(Config config) {
        retry_jitter_seed]() mutable {
         return Harness{std::make_unique<Impl>(
             std::move(config), std::move(provider), std::move(transport),
-            std::move(tools), retry_jitter_seed, detail::WorkerTimeSource{})};
+            std::move(tools),
+            detail::WorkerEnvironment{.retry_jitter_seed = retry_jitter_seed})};
       });
 }
 
@@ -326,7 +325,9 @@ Result<Harness> HarnessTestAccess::create(Config config,
        time = std::move(time)]() mutable {
         return Harness{std::make_unique<Harness::Impl>(
             std::move(config), std::move(provider), std::move(transport),
-            std::move(tools), retry_jitter_seed, std::move(time))};
+            std::move(tools),
+            WorkerEnvironment{.retry_jitter_seed = retry_jitter_seed,
+                              .time = std::move(time)})};
       });
 }
 

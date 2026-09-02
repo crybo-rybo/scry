@@ -29,13 +29,21 @@ struct WorkerTimeSource {
       wait_until{};
 };
 
+// Everything the worker would otherwise read from the ambient environment,
+// grouped so the actor's constructor stays inside the argument-count gate. In
+// production the seed is randomized per Harness and the time members are empty;
+// only the internal test seam pins either.
+struct WorkerEnvironment {
+  std::uint64_t retry_jitter_seed{};
+  WorkerTimeSource time{};
+};
+
 class WorkerActor final {
 public:
   WorkerActor(Config config, std::unique_ptr<ProviderAdapter> provider,
               std::unique_ptr<Transport> transport,
               std::shared_ptr<CommandQueue> commands,
-              std::shared_ptr<EventQueue> events, std::uint64_t retry_jitter_seed,
-              WorkerTimeSource time = {});
+              std::shared_ptr<EventQueue> events, WorkerEnvironment environment = {});
 
   void run(const std::stop_token& stopped) noexcept;
 

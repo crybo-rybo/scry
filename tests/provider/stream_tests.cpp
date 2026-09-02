@@ -1,10 +1,9 @@
 #include "core/model.hpp"
 #include "core/provider.hpp"
+#include "fixture_support.hpp"
 #include "protocol/sse.hpp"
 
 #include <catch2/catch_test_macros.hpp>
-#include <fstream>
-#include <iterator>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -18,9 +17,7 @@ using namespace scry;
 using namespace scry::detail;
 
 [[nodiscard]] std::string stream_fixture() {
-  std::ifstream input{std::string{SCRY_ANTHROPIC_FIXTURE_DIR} + "/stream.sse"};
-  REQUIRE(input.good());
-  return {std::istreambuf_iterator<char>{input}, std::istreambuf_iterator<char>{}};
+  return scry::test_fixtures::anthropic_fixture("stream.sse");
 }
 
 void append(std::vector<ProviderEvent>& destination,

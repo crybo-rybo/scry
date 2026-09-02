@@ -1,10 +1,9 @@
 #include "core/json_codec.hpp"
 #include "core/model.hpp"
 #include "core/provider.hpp"
+#include "fixture_support.hpp"
 
 #include <catch2/catch_test_macros.hpp>
-#include <fstream>
-#include <iterator>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -13,13 +12,6 @@ namespace {
 
 using namespace scry;
 using namespace scry::detail;
-
-[[nodiscard]] std::string fixture(const std::string_view name) {
-  std::ifstream input{std::string{SCRY_ANTHROPIC_FIXTURE_DIR} + "/" +
-                      std::string{name}};
-  REQUIRE(input.good());
-  return {std::istreambuf_iterator<char>{input}, std::istreambuf_iterator<char>{}};
-}
 
 [[nodiscard]] std::string canonical(const std::string_view json) {
   // Request fixtures assert JSON meaning. They deliberately do not promise
@@ -92,7 +84,8 @@ TEST_CASE("Anthropic request is semantically equivalent to its sanitized fixture
   CHECK(header(*encoded, "x-api-key") == "sanitized-test-key");
   CHECK(header(*encoded, "anthropic-version") == "2023-06-01");
   CHECK(header(*encoded, "accept") == "text/event-stream");
-  CHECK(canonical(encoded->body) == canonical(fixture("request.json")));
+  CHECK(canonical(encoded->body) ==
+        canonical(scry::test_fixtures::anthropic_fixture("request.json")));
 }
 
 TEST_CASE("Anthropic request carries the configured network options") {

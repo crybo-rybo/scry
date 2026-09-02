@@ -43,7 +43,7 @@ remains out of bounds.
 |---|---|---|---|
 | Machine tests | Sans-I/O loop: event sequences in, command sequences asserted | Pure, deterministic, sub-ms, no threads | The bulk (~70%) |
 | Component tests | SSE parser, retry classifier, reflected schema/codec, queue, pump budget | Pure or single-threaded; property-based where inputs are adversarial | Most of the rest |
-| Adapter golden tests | Captured real wire payloads ↔ neutral model round-trips | Data-driven; payloads are checked-in fixtures | Thin |
+| Adapter golden tests | Wire payloads hand-synthesized from the provider references, with a documented capture recipe in `tests/fixtures/README.md` ↔ neutral model round-trips | Data-driven; payloads are checked-in fixtures | Thin |
 | Integration tests | Real threads + fake transport; full harness against a local mock SSE server | The only tests where threading is real | Thin |
 | Showcase contract tests | Deterministic NPC world and fake-controller panel behavior; real ImGui headless frame and package audit | Network-free, fixed state; the real dependency is compiled only in its opt-in leg | Thin |
 | End-to-end smoke | Real local model (Ollama / llama.cpp server) | On demand, not per-commit; flakiness quarantined by design | Thinnest |

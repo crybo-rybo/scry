@@ -20,6 +20,7 @@ target_compile_definitions(
   scry_provider_tests
   PRIVATE
     "SCRY_ANTHROPIC_FIXTURE_DIR=\"${PROJECT_SOURCE_DIR}/tests/fixtures/anthropic\""
+    "SCRY_OPENAI_FIXTURE_DIR=\"${PROJECT_SOURCE_DIR}/tests/fixtures/openai\""
 )
 target_link_libraries(
   scry_provider_tests
