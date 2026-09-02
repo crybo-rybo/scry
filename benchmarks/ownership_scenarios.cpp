@@ -242,7 +242,9 @@ struct SchemaAdmissionOperation::Impl final {
 
   [[nodiscard]] bool rejected_send_is_valid(const std::expected<Turn, Error>& sent,
                                             const bool current_before) const {
-    return !sent && sent.error().category == ErrorCategory::invalid_state &&
+    // An empty user message is a caller-argument rejection, so it reports
+    // invalid_argument; invalid_state is reserved for lifecycle failures.
+    return !sent && sent.error().category == ErrorCategory::invalid_argument &&
            !current_before &&
            !detail::HarnessTestAccess::has_current_tool_snapshot(*harness);
   }
