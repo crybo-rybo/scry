@@ -14,6 +14,9 @@ static_assert(std::is_aggregate_v<scry::Config>);
 static_assert(std::is_enum_v<scry::ReasoningMode>);
 static_assert(std::is_aggregate_v<scry::Error>);
 static_assert(std::is_aggregate_v<scry::Json>);
+static_assert(std::is_enum_v<scry::JsonKind>);
+static_assert(std::is_default_constructible_v<scry::JsonView>);
+static_assert(std::is_copy_constructible_v<scry::JsonView>);
 static_assert(std::is_aggregate_v<scry::ToolDefinition>);
 static_assert(std::is_aggregate_v<scry::UpdateOptions>);
 static_assert(std::is_aggregate_v<scry::TurnCallbacks>);
@@ -171,6 +174,25 @@ struct Probe {
   void member() const {}
 };
 
+bool json_view_reads_a_parsed_document() {
+  const auto document = scry::JsonView::parse(scry::Json{.text = R"({"ok":true})"});
+  if (!document || document->kind() != scry::JsonKind::object ||
+      document->size() != 1) {
+    return false;
+  }
+  if (document->key_at(0) != "ok") {
+    return false;
+  }
+  const auto member = document->find("ok");
+  if (!member || member->boolean() != true) {
+    return false;
+  }
+  if (scry::escape_json_string("a\"b\n") != "\"a\\\"b\\n\"") {
+    return false;
+  }
+  return !scry::JsonView::parse(scry::Json{.text = "{"}).has_value();
+}
+
 bool null_pointer_callables_are_empty() {
   const scry::UniqueFunction<void()> from_null_function{
       static_cast<void (*)()>(nullptr)};
@@ -259,6 +281,10 @@ int main() {
   }
 
   if (!null_pointer_callables_are_empty()) {
+    return 1;
+  }
+
+  if (!json_view_reads_a_parsed_document()) {
     return 1;
   }
 

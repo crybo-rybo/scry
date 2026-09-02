@@ -103,6 +103,7 @@ add_library(
     src/core/error.cpp
     src/core/retry.cpp
     src/core/json_codec.cpp
+    src/core/json_view.cpp
     src/runtime/config.cpp
     src/runtime/conversation.cpp
     src/runtime/conversation_persistence.cpp
