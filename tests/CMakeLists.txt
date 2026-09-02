@@ -68,6 +68,21 @@ target_link_libraries(
 )
 add_test(NAME public-api-contract COMMAND scry_public_api_contract)
 
+if(SCRY_SANITIZER STREQUAL "address-undefined")
+  add_executable(
+    scry_ubsan_fatal_probe
+    sanitizer/ubsan_fatal_probe.cpp
+  )
+  target_link_libraries(scry_ubsan_fatal_probe PRIVATE scry_project_options)
+  add_test(
+    NAME sanitizer.ubsan-is-fatal
+    COMMAND
+      "${CMAKE_COMMAND}"
+      "-DPROBE=$<TARGET_FILE:scry_ubsan_fatal_probe>"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/sanitizer/verify_ubsan_fatal.cmake"
+  )
+endif()
+
 add_executable(
   scry_runtime_tests
   runtime/config_tests.cpp

@@ -85,6 +85,10 @@ struct InterruptedTransfer {
 
 } // namespace
 
+TEST_CASE("loopback server destruction wakes an unconnected listener") {
+  const scry::test::LoopbackServer server{response("200 OK", "", "unused")};
+}
+
 TEST_CASE("curl global initialization is process-wide and repeatable") {
   REQUIRE(scry::detail::curl_global_status());
   REQUIRE(scry::detail::curl_global_status());

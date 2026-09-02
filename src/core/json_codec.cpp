@@ -7,6 +7,8 @@
 namespace scry::detail {
 namespace {
 
+constexpr glz::opts json_read_options{.null_terminated = false};
+
 [[nodiscard]] Error field_error(const std::string_view name,
                                 const std::string_view expected) {
   return make_error(ErrorCategory::protocol, "JSON field '" + std::string{name} +
@@ -18,7 +20,7 @@ namespace {
 Result<JsonValue> parse_json(const std::string_view input, const ErrorCategory category,
                              const std::string_view failure_message) {
   JsonValue value{};
-  if (glz::read_json(value, input)) {
+  if (glz::read<json_read_options>(value, input)) {
     return std::unexpected(make_error(category, std::string{failure_message}));
   }
   return value;

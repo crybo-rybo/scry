@@ -6,6 +6,7 @@
 #include "protocol/sse.hpp"
 #include "runtime/queue.hpp"
 
+#include <cstdint>
 #include <deque>
 #include <memory>
 #include <optional>
@@ -21,7 +22,7 @@ public:
   WorkerActor(Config config, std::unique_ptr<ProviderAdapter> provider,
               std::unique_ptr<Transport> transport,
               std::shared_ptr<CommandQueue> commands,
-              std::shared_ptr<EventQueue> events);
+              std::shared_ptr<EventQueue> events, std::uint64_t retry_jitter_seed);
 
   void run(const std::stop_token& stopped) noexcept;
 
@@ -77,6 +78,7 @@ private:
   std::unique_ptr<Transport> transport_{};
   std::shared_ptr<CommandQueue> commands_{};
   std::shared_ptr<EventQueue> events_{};
+  std::uint64_t retry_jitter_seed_{};
   std::deque<SendTurnCommand> pending_{};
 };
 

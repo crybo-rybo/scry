@@ -1,5 +1,6 @@
 #include "core/json_codec.hpp"
 
+#include <array>
 #include <catch2/catch_test_macros.hpp>
 #include <string>
 #include <string_view>
@@ -17,6 +18,15 @@ using namespace scry::detail;
 }
 
 } // namespace
+
+TEST_CASE("JSON parsing bounds malformed non-null-terminated input") {
+  constexpr std::array input{'{'};
+  const auto text = std::string_view{input.data(), input.size()};
+
+  const auto parsed = parse_json(text, ErrorCategory::protocol, "invalid test JSON");
+
+  CHECK_FALSE(parsed);
+}
 
 TEST_CASE("JSON field accessors distinguish absence, null, type, and value") {
   const auto scalar = json_value("7");

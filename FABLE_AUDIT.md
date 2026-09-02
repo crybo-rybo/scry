@@ -35,14 +35,16 @@ Code hygiene counters any worry about generated cruft: ten lint suppressions, ze
 
 All are small fixes.
 
+Struck-through findings were addressed by the Tier 1 remediation change.
+
 | # | Finding | Where |
 |---|---|---|
-| 1 | UBSan is non-fatal. There is no `-fno-sanitize-recover` and no `UBSAN_OPTIONS` with `halt_on_error`, so undefined behavior prints and exits zero. The ASan+UBSan leg gates only ASan. | `CMakeLists.txt` `scry_enable_sanitizer` |
-| 2 | The weekly fuzz runs with no sanitizer at all. The `fuzz` preset sets no `SCRY_SANITIZER`, so only hard crashes are caught. One-line fix. | `CMakePresets.json` |
-| 3 | The loopback test server tears down as shutdown, join, close. On macOS, shutdown on a listening socket does not wake `accept`, so any transport or integration test where curl never connects becomes a ctest timeout with no message. Latent today because every current test connects. | `tests/support/transport/loopback_server.cpp:141` |
-| 4 | `cancel-in-progress: true` also applies to pushes on main, so back-to-back merges cancel the previous merge's run and main can carry commits with no completed CI. Same pattern in the performance workflow. | `.github/workflows/ci.yml` |
-| 5 | The reflection PR gate's path filter omits the core public headers and all of `src/`, which the bridge compiles against. A core header change that breaks the component merges untested until the weekly run. | `.github/workflows/reflection.yml` |
-| 6 | Retry jitter is a hash of turn id and attempt, so every process retries with identical jitter. Good for tests, but it defeats the purpose of jitter across a fleet. Seed per Harness, keep it injectable. | `src/runtime/worker.cpp` `jitter_sample` |
+| ~~1~~ | ~~UBSan is non-fatal. There is no `-fno-sanitize-recover` and no `UBSAN_OPTIONS` with `halt_on_error`, so undefined behavior prints and exits zero. The ASan+UBSan leg gates only ASan.~~ | ~~`CMakeLists.txt` `scry_enable_sanitizer`~~ |
+| ~~2~~ | ~~The weekly fuzz runs with no sanitizer at all. The `fuzz` preset sets no `SCRY_SANITIZER`, so only hard crashes are caught. One-line fix.~~ | ~~`CMakePresets.json`~~ |
+| ~~3~~ | ~~The loopback test server tears down as shutdown, join, close. On macOS, shutdown on a listening socket does not wake `accept`, so any transport or integration test where curl never connects becomes a ctest timeout with no message. Latent today because every current test connects.~~ | ~~`tests/support/transport/loopback_server.cpp:141`~~ |
+| ~~4~~ | ~~`cancel-in-progress: true` also applies to pushes on main, so back-to-back merges cancel the previous merge's run and main can carry commits with no completed CI. Same pattern in the performance workflow.~~ | ~~`.github/workflows/ci.yml`~~ |
+| ~~5~~ | ~~The reflection PR gate's path filter omits the core public headers and all of `src/`, which the bridge compiles against. A core header change that breaks the component merges untested until the weekly run.~~ | ~~`.github/workflows/reflection.yml`~~ |
+| ~~6~~ | ~~Retry jitter is a hash of turn id and attempt, so every process retries with identical jitter. Good for tests, but it defeats the purpose of jitter across a fleet. Seed per Harness, keep it injectable.~~ | ~~`src/runtime/worker.cpp` `jitter_sample`~~ |
 
 ### Tier 2: library correctness and robustness
 

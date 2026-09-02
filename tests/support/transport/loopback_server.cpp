@@ -143,8 +143,8 @@ LoopbackServer::~LoopbackServer() {
   release_response();
   if (listener_ >= 0) {
     ::shutdown(listener_, SHUT_RDWR);
-    thread_.join();
     ::close(listener_);
+    thread_.join();
     listener_ = -1;
   }
 }

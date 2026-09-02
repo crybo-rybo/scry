@@ -25,9 +25,9 @@ Enforced via lizard and clang-tidy on every commit:
 
 **Dynamic — sanitizers are first-class build modes:**
 
-- ASan + UBSan on the full unit/integration suite per pull request; TSan on all threaded tests per pull request. TSan especially is non-negotiable: the actor model's "no shared mutable state" claim is exactly the kind of invariant that erodes silently, and TSan is its enforcement mechanism. The sanitizer leg also configures `SCRY_ENABLE_LOGGING=ON`, so the opt-in diagnostic path is compiled and exercised rather than rotting behind a flag.
+- ASan + non-recovering UBSan on the full unit/integration suite per pull request; TSan on all threaded tests per pull request. TSan especially is non-negotiable: the actor model's "no shared mutable state" claim is exactly the kind of invariant that erodes silently, and TSan is its enforcement mechanism. The sanitizer leg also configures `SCRY_ENABLE_LOGGING=ON`, so the opt-in diagnostic path is compiled and exercised rather than rotting behind a flag.
 - **Fuzzing** (libFuzzer) covers the SSE, Anthropic, and OpenAI-compatible
-  wire-JSON boundaries because they consume attacker-adjacent input (a
+  wire-JSON boundaries under ASan + non-recovering UBSan because they consume attacker-adjacent input (a
   compromised or buggy server must not crash the host app). The fuzz targets
   run with long budgets in the scheduled ring; the deterministic golden,
   arbitrary-split, and boundary wire tests remain per-commit.

@@ -1,6 +1,7 @@
 #include "runtime/worker.hpp"
 
 #include "core/log.hpp"
+#include "core/retry.hpp"
 #include "protocol/sse.hpp"
 
 #include <algorithm>
@@ -49,17 +50,6 @@ void append_commands(std::deque<MachineCommand>& destination,
   }
 }
 
-[[nodiscard]] double jitter_sample(const TurnId turn_id,
-                                   const std::uint32_t attempt) noexcept {
-  auto value = turn_id.value ^ (static_cast<std::uint64_t>(attempt) *
-                                std::uint64_t{0x9E3779B97F4A7C15});
-  value ^= value >> 12U;
-  value ^= value << 25U;
-  value ^= value >> 27U;
-  const auto unit = static_cast<double>(value & std::uint64_t{0xFFFF}) / 65535.0;
-  return (unit * 2.0) - 1.0;
-}
-
 void redact_sensitive_fields(Error& error, const std::string_view secret) {
   if (secret.empty()) {
     return;
@@ -77,7 +67,8 @@ void redact_sensitive_fields(Error& error, const std::string_view secret) {
 
 [[nodiscard]] TransitionResult failed_attempt(TurnMachine& machine, Error error,
                                               const TurnId turn_id,
-                                              const std::string_view secret) {
+                                              const std::string_view secret,
+                                              const std::uint64_t retry_jitter_seed) {
   redact_sensitive_fields(error, secret);
   const auto attempt = machine.attempt_count();
   const auto retry_after = error.retry_after;
@@ -93,7 +84,7 @@ void redact_sensitive_fields(Error& error, const std::string_view secret) {
       .error = std::move(error),
       .observed_at = std::chrono::steady_clock::now(),
       .retry_after = retry_after,
-      .jitter_sample = jitter_sample(turn_id, attempt),
+      .jitter_sample = retry_jitter_sample(retry_jitter_seed, turn_id, attempt),
   });
 }
 
@@ -107,10 +98,11 @@ struct AttemptLimits final {
 WorkerActor::WorkerActor(Config config, std::unique_ptr<ProviderAdapter> provider,
                          std::unique_ptr<Transport> transport,
                          std::shared_ptr<CommandQueue> commands,
-                         std::shared_ptr<EventQueue> events)
+                         std::shared_ptr<EventQueue> events,
+                         const std::uint64_t retry_jitter_seed)
     : config_(std::move(config)), provider_(std::move(provider)),
       transport_(std::move(transport)), commands_(std::move(commands)),
-      events_(std::move(events)) {}
+      events_(std::move(events)), retry_jitter_seed_(retry_jitter_seed) {}
 
 struct WorkerActor::AttemptState {
   explicit AttemptState(const AttemptLimits& limits)
@@ -252,7 +244,7 @@ bool WorkerActor::process_machine_command(
   } else {
     append_commands(pending_commands,
                     failed_attempt(machine, std::move(published.error()), turn.turn_id,
-                                   config_.api_key));
+                                   config_.api_key, retry_jitter_seed_));
   }
   return true;
 }
@@ -266,7 +258,7 @@ WorkerActor::perform_attempt(TurnMachine& machine, const IssueModelRequest& issu
   auto request = provider_->make_request(config_, *issue.request);
   if (!request) {
     return failed_attempt(machine, std::move(request.error()), issue.turn_id,
-                          config_.api_key);
+                          config_.api_key, retry_jitter_seed_);
   }
 
   AttemptState state{AttemptLimits{
@@ -281,12 +273,12 @@ WorkerActor::perform_attempt(TurnMachine& machine, const IssueModelRequest& issu
   auto result = transport_->perform(*request, stopped, *cancelled, body_sink);
   if (!result) {
     return failed_attempt(machine, std::move(result.error()), issue.turn_id,
-                          config_.api_key);
+                          config_.api_key, retry_jitter_seed_);
   }
   auto response = finish_stream(machine, state);
   if (!response) {
     return failed_attempt(machine, std::move(response.error()), issue.turn_id,
-                          config_.api_key);
+                          config_.api_key, retry_jitter_seed_);
   }
   return complete_attempt(machine, std::move(*response), *result);
 }
