@@ -117,7 +117,7 @@ TEST_CASE("NPC tools register through the public app-thread tool boundary") {
   const auto duplicate =
       scry_showcase::npc::register_world_tools(harness.tools(), world);
   REQUIRE_FALSE(duplicate);
-  CHECK(duplicate.error().category == scry::ErrorCategory::invalid_state);
+  CHECK(duplicate.error().category == scry::ErrorCategory::invalid_argument);
   CHECK(harness.tools().size() == 5);
 }
 
@@ -141,7 +141,7 @@ TEST_CASE("NPC registration documents additive partial failure") {
   const auto registration = scry_showcase::npc::register_world_tools(
       harness.tools(), std::make_shared<World>());
   REQUIRE_FALSE(registration);
-  CHECK(registration.error().category == scry::ErrorCategory::invalid_state);
+  CHECK(registration.error().category == scry::ErrorCategory::invalid_argument);
   CHECK(harness.tools().size() == 3);
 }
 
@@ -157,6 +157,6 @@ TEST_CASE("NPC tool registration rejects a missing world") {
   const auto registration = scry_showcase::npc::register_world_tools(
       harness.tools(), std::shared_ptr<World>{});
   REQUIRE_FALSE(registration);
-  CHECK(registration.error().category == scry::ErrorCategory::invalid_state);
+  CHECK(registration.error().category == scry::ErrorCategory::invalid_argument);
   CHECK(harness.tools().empty());
 }

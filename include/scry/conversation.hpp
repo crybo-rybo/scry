@@ -21,9 +21,13 @@ struct ConversationConfig {
 /// and cancelled turns do not modify it.
 class Conversation final {
 public:
-  /// Validates configuration and creates an empty conversation.
+  /// Creates an empty conversation.
+  ///
+  /// Every ConversationConfig is currently accepted; the factory returns Result so a
+  /// future constraint can be reported as ErrorCategory::invalid_config without a
+  /// source break (API-010).
   /// @param config Initial conversation configuration.
-  /// @return A conversation, or ErrorCategory::invalid_config on validation failure.
+  /// @return A conversation. No configuration is rejected today.
   [[nodiscard]] static Result<Conversation> create(ConversationConfig config = {});
 
   /// Restores committed history from a canonical document produced by to_json().

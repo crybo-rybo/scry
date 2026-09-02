@@ -130,6 +130,17 @@ TEST_CASE("OpenAI request is semantically equivalent to the common contract") {
   CHECK(encoded->body.find("\"strict\"") == std::string::npos);
 }
 
+TEST_CASE("OpenAI request omits max_tokens when the sampling value is unset") {
+  OpenAiAdapter adapter;
+  auto model_request = request();
+  model_request.sampling.max_tokens.reset();
+
+  const auto encoded = adapter.make_request(config(), model_request);
+  REQUIRE(encoded);
+  CHECK(encoded->body.find("max_tokens") == std::string::npos);
+  CHECK(encoded->body.find(R"("temperature":1.5)") != std::string::npos);
+}
+
 TEST_CASE("OpenAI request encodes committed history before the turn suffix") {
   OpenAiAdapter adapter;
   auto model_request = request();

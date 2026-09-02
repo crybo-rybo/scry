@@ -620,19 +620,19 @@ TEST_CASE("ToolRegistry rejects invalid and duplicate registrations") {
   auto status =
       tools.add(tool("", R"({"type":"object"})"), static_handler(R"({"ok":true})"));
   REQUIRE_FALSE(status);
-  CHECK(status.error().category == scry::ErrorCategory::invalid_state);
+  CHECK(status.error().category == scry::ErrorCategory::invalid_argument);
 
   status = tools.add(tool("missing_schema", ""), static_handler(R"({"ok":true})"));
   REQUIRE_FALSE(status);
-  CHECK(status.error().category == scry::ErrorCategory::invalid_state);
+  CHECK(status.error().category == scry::ErrorCategory::invalid_argument);
 
   status = tools.add(tool("missing_handler"), {});
   REQUIRE_FALSE(status);
-  CHECK(status.error().category == scry::ErrorCategory::invalid_state);
+  CHECK(status.error().category == scry::ErrorCategory::invalid_argument);
 
   REQUIRE(tools.add(tool(), static_handler(R"({"ok":true})")));
   status = tools.add(tool(), static_handler(R"({"ok":true})"));
   REQUIRE_FALSE(status);
-  CHECK(status.error().category == scry::ErrorCategory::invalid_state);
+  CHECK(status.error().category == scry::ErrorCategory::invalid_argument);
   CHECK(tools.size() == 1);
 }

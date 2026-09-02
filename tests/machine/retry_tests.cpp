@@ -16,6 +16,7 @@ TEST_CASE("retry classifier accepts only transient categories") {
 
   CHECK_FALSE(is_retryable(ErrorCategory::invalid_config));
   CHECK_FALSE(is_retryable(ErrorCategory::invalid_state));
+  CHECK_FALSE(is_retryable(ErrorCategory::invalid_argument));
   CHECK_FALSE(is_retryable(ErrorCategory::busy));
   CHECK_FALSE(is_retryable(ErrorCategory::authentication));
   CHECK_FALSE(is_retryable(ErrorCategory::protocol));

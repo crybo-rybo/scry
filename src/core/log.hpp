@@ -28,6 +28,8 @@ error_category_name(const ErrorCategory category) noexcept {
     return "invalid_config";
   case ErrorCategory::invalid_state:
     return "invalid_state";
+  case ErrorCategory::invalid_argument:
+    return "invalid_argument";
   case ErrorCategory::busy:
     return "busy";
   case ErrorCategory::authentication:

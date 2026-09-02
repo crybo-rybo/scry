@@ -261,7 +261,7 @@ TEST_CASE("rejected admission does not freeze a new tool snapshot generation") {
 
   const auto rejected = harness->send(*conversation, "");
   REQUIRE_FALSE(rejected);
-  CHECK(rejected.error().category == scry::ErrorCategory::invalid_state);
+  CHECK(rejected.error().category == scry::ErrorCategory::invalid_argument);
   CHECK_FALSE(scry::detail::HarnessTestAccess::has_current_tool_snapshot(*harness));
 
   const auto accepted = harness->send(*conversation, "freeze after validation");

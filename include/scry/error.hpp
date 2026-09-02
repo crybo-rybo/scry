@@ -15,6 +15,8 @@ enum class ErrorCategory : std::uint8_t {
   invalid_config,
   /// An operation is invalid for the object's current state.
   invalid_state,
+  /// A caller-supplied argument failed validation, including a duplicate tool name.
+  invalid_argument,
   /// A Conversation already has a queued or active turn.
   busy,
   /// Provider authentication failed.
@@ -27,7 +29,7 @@ enum class ErrorCategory : std::uint8_t {
   protocol,
   /// A configured admission, payload, or memory bound was exceeded.
   resource_limit,
-  /// Tool registration, dispatch, arguments, or results were invalid.
+  /// Tool dispatch, arguments, or results were invalid.
   tool,
   /// A turn requested more tool rounds than Config::max_tool_rounds permits.
   max_tool_rounds,

@@ -124,7 +124,7 @@ public:
   send(const std::shared_ptr<detail::ConversationState>& conversation, std::string text,
        TurnCallbacks callbacks) {
     if (text.empty()) {
-      return std::unexpected(immediate_error(ErrorCategory::invalid_state,
+      return std::unexpected(immediate_error(ErrorCategory::invalid_argument,
                                              "user message must not be empty"));
     }
     if (conversation->busy) {
