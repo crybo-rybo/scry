@@ -1,3 +1,10 @@
+/// @file
+/// @brief Encodes neutral model requests for the Anthropic Messages API.
+///
+/// The encoder preserves message/content order, embeds canonical tool schemas
+/// and values, normalizes the `/v1/messages` endpoint, and constructs the
+/// streaming/authentication headers from already-validated Harness config.
+
 #include "core/error.hpp"
 #include "core/json_codec.hpp"
 #include "provider/anthropic.hpp"

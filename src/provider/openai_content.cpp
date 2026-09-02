@@ -1,3 +1,10 @@
+/// @file
+/// @brief Implements OpenAI-compatible shared content and error interpretation.
+///
+/// This translation layer validates tool argument objects, maps portable finish
+/// reasons and usage, and reduces provider-controlled error envelopes to
+/// bounded tokens before they enter public diagnostics.
+
 #include "provider/openai_content.hpp"
 
 #include "core/error.hpp"

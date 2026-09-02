@@ -1,3 +1,10 @@
+/// @file
+/// @brief Implements chunk-boundary-independent Server-Sent Events parsing.
+///
+/// Line framing handles LF, CRLF, and split CR/LF pairs; field accumulation
+/// follows SSE data-line rules while a single configured byte ledger bounds
+/// both parsed event state and incomplete input.
+
 #include "protocol/sse.hpp"
 
 #include <algorithm>

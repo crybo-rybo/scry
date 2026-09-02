@@ -1,3 +1,10 @@
+/// @file
+/// @brief Implements curl-independent HTTP safety and accounting policy.
+///
+/// Header syntax, status lines, response/request IDs, declared and received
+/// lengths, outgoing injection defenses, and HTTP-to-error classification are
+/// checked here at deterministic seams before provider payload processing.
+
 #include "transport/transport_policy.hpp"
 
 #include "core/error.hpp"

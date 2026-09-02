@@ -1,3 +1,10 @@
+/// @file
+/// @brief Implements Anthropic content blocks, finish mapping, and usage updates.
+///
+/// Required text/tool-use blocks are translated into Scry's neutral model;
+/// unsupported required content is rejected, while Anthropic's incremental
+/// usage reports update only counters actually present in each event.
+
 #include "provider/anthropic_content.hpp"
 
 #include "core/error.hpp"

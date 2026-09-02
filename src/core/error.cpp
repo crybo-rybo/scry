@@ -1,3 +1,10 @@
+/// @file
+/// @brief Implements the common internal `Error` construction path.
+///
+/// Centralizing scalar initialization keeps every subsystem on the same
+/// value-based failure contract while leaving correlation metadata to the
+/// layer that owns it.
+
 #include "core/error.hpp"
 
 #include <utility>

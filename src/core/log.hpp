@@ -1,10 +1,12 @@
-#pragma once
+/// @file
+/// @brief Compile-time optional, privacy-preserving diagnostic logging.
+///
+/// Call sites use `SCRY_LOG(...)`, which disappears entirely unless Scry was
+/// built with `SCRY_ENABLE_LOGGING`. Logged messages may contain coarse
+/// lifecycle facts only—never credentials, prompts, tool arguments, or tool
+/// results (SCRY-ERR-004).
 
-// Compile-time diagnostic logging for the SCRY_ENABLE_LOGGING build. Call
-// sites use SCRY_LOG("..."), which compiles to nothing in ordinary builds.
-// Logged lines carry coarse lifecycle facts only — turn ids, tool names,
-// attempt counts, error categories. Prompt text, tool arguments, tool
-// results, and credentials must never reach a log line (ERR-004).
+#pragma once
 
 #if defined(SCRY_ENABLE_LOGGING)
 
@@ -15,12 +17,19 @@
 
 namespace scry::detail {
 
-// Appends one timestamped line to the diagnostic log file named by the
-// SCRY_LOG_FILE environment variable. When that variable is unset or empty no
-// file is opened and every line is dropped. Logging failures are swallowed:
-// diagnostics must never alter library behavior.
+/// @brief Appends one timestamped diagnostic line when an explicit sink exists.
+///
+/// `SCRY_LOG_FILE` names the destination. When it is unset or empty, no file is
+/// opened and every line is dropped. All failures are swallowed so diagnostics
+/// can never alter library behavior.
+///
+/// @param message Sanitized lifecycle diagnostic to append. The view is
+///        borrowed for this call only.
 void log_line(std::string_view message) noexcept;
 
+/// @brief Returns the stable diagnostic spelling of an error category.
+/// @param category Category to render.
+/// @return A static string; unknown underlying values map to `"unknown"`.
 [[nodiscard]] constexpr std::string_view
 error_category_name(const ErrorCategory category) noexcept {
   switch (category) {
@@ -50,6 +59,11 @@ error_category_name(const ErrorCategory category) noexcept {
   return "unknown";
 }
 
+/// @brief Formats and writes a diagnostic event without affecting control flow.
+/// @tparam Args Format argument types.
+/// @param fmt Compile-time checked format string.
+/// @param args Values to format; callers must not pass sensitive content.
+/// @note Allocation/formatting failures are deliberately ignored.
 template <typename... Args>
 void log_event(const std::format_string<Args...> fmt, Args&&... args) noexcept {
   try {
@@ -61,10 +75,12 @@ void log_event(const std::format_string<Args...> fmt, Args&&... args) noexcept {
 
 } // namespace scry::detail
 
+/// @brief Emits a sanitized diagnostic in logging-enabled builds.
 #define SCRY_LOG(...) ::scry::detail::log_event(__VA_ARGS__)
 
 #else
 
+/// @brief Compiles diagnostic call sites away in ordinary builds.
 #define SCRY_LOG(...) static_cast<void>(0)
 
 #endif

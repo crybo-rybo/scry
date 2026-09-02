@@ -1,3 +1,11 @@
+/// @file
+/// @brief Implements the optional reflection component's Scry-owned JSON view bridge.
+///
+/// The C++26 templates operate on JsonView rather than exposing the private
+/// Glaze-backed representation. Each parsed view shares document lifetime, and
+/// reflected output is canonicalized through the same core codec used by explicit tools
+/// and persistence.
+
 #include "core/json_codec.hpp"
 
 #include <iterator>
@@ -9,6 +17,10 @@
 namespace scry::reflection::detail {
 namespace {
 
+/// Appends the canonical JSON `\u00xx` escape for one ASCII control byte.
+///
+/// @param output Destination JSON string under construction.
+/// @param value Byte below 0x20 that requires escaping.
 void append_control_escape(std::string& output, const unsigned char value) {
   constexpr char hexadecimal[] = "0123456789abcdef";
   output.append("\\u00");
@@ -18,10 +30,19 @@ void append_control_escape(std::string& output, const unsigned char value) {
 
 } // namespace
 
+/// Shared owner of the parsed tree referenced by a family of JsonView values.
+///
+/// Child views store raw pointers into @ref root for inexpensive recursive decoding
+/// while retaining this document through a shared pointer. The parsed tree is never
+/// mutated, so those pointers remain stable for every descendant view's lifetime.
 class JsonView::Document final {
 public:
+  /// Takes ownership of one fully parsed canonical JSON tree.
+  ///
+  /// @param value Root representation transferred from the core codec.
   explicit Document(scry::detail::JsonValue value) : root(std::move(value)) {}
 
+  /// Immutable-by-convention tree backing the root and all descendant views.
   scry::detail::JsonValue root{};
 };
 
@@ -140,6 +161,10 @@ std::optional<JsonView> JsonView::find(const std::string_view name) const noexce
   return JsonView{document_, &found->second};
 }
 
+/// Parses reflected tool arguments into a lifetime-owning immutable view tree.
+///
+/// @param json Scry-owned serialized JSON transferred to the bridge.
+/// @return Root view, or ErrorCategory::tool when the input is malformed.
 Result<JsonView> parse_json(Json json) {
   auto value = scry::detail::parse_json(json.text, ErrorCategory::tool,
                                         "reflected tool arguments are not valid JSON");
@@ -150,6 +175,13 @@ Result<JsonView> parse_json(Json json) {
   return JsonView{document, &document->root};
 }
 
+/// Appends one string using canonical JSON quoting and control-character escapes.
+///
+/// The function appends rather than replacing so the compile-time reflection encoder
+/// can compose arrays and objects without constructing intermediate JSON values.
+///
+/// @param output Destination JSON text under construction.
+/// @param value Unquoted string bytes to encode.
 void append_json_string(std::string& output, const std::string_view value) {
   output.push_back('"');
   for (const auto character : value) {
@@ -188,6 +220,10 @@ void append_json_string(std::string& output, const std::string_view value) {
   output.push_back('"');
 }
 
+/// Validates and canonicalizes JSON assembled by a reflected value encoder.
+///
+/// @param json Encoded reflected value transferred to the core codec.
+/// @return Canonical JSON, or ErrorCategory::tool for an invalid representation.
 Result<Json> canonicalize_encoded_json(Json json) {
   return scry::detail::canonicalize_json(
       json, ErrorCategory::tool, "reflected value could not be encoded as JSON");

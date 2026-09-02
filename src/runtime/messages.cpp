@@ -1,3 +1,10 @@
+/// @file
+/// @brief Implements common WorkerEvent identity and bounded-payload accounting.
+///
+/// Event byte counts follow retained semantic payload rather than allocator footprint
+/// and saturate on overflow so queue admission cannot be bypassed by arithmetic
+/// wraparound.
+
 #include "runtime/messages.hpp"
 
 #include "runtime/state.hpp"

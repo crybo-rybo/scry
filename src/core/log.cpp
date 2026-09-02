@@ -1,3 +1,10 @@
+/// @file
+/// @brief Implements the opt-in file-backed diagnostic sink.
+///
+/// The sink is opened only from a nonempty `SCRY_LOG_FILE`, serializes writes,
+/// and treats every formatting, environment, clock, and I/O failure as a
+/// dropped diagnostic rather than a library failure.
+
 #include "core/log.hpp"
 
 #include <chrono>

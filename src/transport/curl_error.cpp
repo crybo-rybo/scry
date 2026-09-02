@@ -1,3 +1,10 @@
+/// @file
+/// @brief Implements curl failure classification and `Retry-After` decoding.
+///
+/// Callback-originated Scry errors and cooperative abort causes take precedence
+/// over generic curl codes; remaining codes are collapsed into the stable
+/// public categories without leaking dependency-specific detail.
+
 #include "transport/curl_error.hpp"
 
 #include "core/error.hpp"

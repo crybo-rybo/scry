@@ -1,3 +1,9 @@
+/// @file
+/// @brief Implements the detached, move-only Turn identity and cancellation handle.
+///
+/// A handle never owns worker execution or callbacks. Its strong atomic and weak pump
+/// route make repeated cancellation and cancellation after Harness teardown harmless.
+
 #include "runtime/turn_impl.hpp"
 
 #include <utility>

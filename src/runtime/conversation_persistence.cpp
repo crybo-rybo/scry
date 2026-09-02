@@ -1,3 +1,10 @@
+/// @file
+/// @brief Implements strict, canonical Conversation persistence encoding and decoding.
+///
+/// The boundary round-trips the system prompt and committed provider-neutral messages.
+/// It rejects unknown fields, unsupported versions, invalid role/content pairings, and
+/// size overflow rather than accepting a partially meaningful session document.
+
 #include "core/json_codec.hpp"
 #include "runtime/conversation_impl.hpp"
 
@@ -16,6 +23,10 @@
 namespace scry {
 namespace {
 
+/// Current canonical Conversation document shape accepted by this pre-1.0 build.
+///
+/// The field detects unsupported documents; it is not a promise of cross-release
+/// migration support while Scry remains before 1.0.
 constexpr std::uint64_t conversation_document_version = 1;
 
 [[nodiscard]] Error invalid_document(const std::string_view message) {

@@ -1,3 +1,9 @@
+/// @file
+/// @brief Implements the lightweight Conversation handle and empty-state construction.
+///
+/// Persistence lives in conversation_persistence.cpp; this unit contains only PImpl
+/// lifetime and committed-history observations.
+
 #include "runtime/conversation_impl.hpp"
 
 #include <utility>

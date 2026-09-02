@@ -1,3 +1,10 @@
+/// @file
+/// @brief Implements Harness ownership, turn admission, and async/synchronous API
+/// wiring.
+///
+/// Harness::Impl joins the worker actor, pump, queues, ToolRegistry, and accepted-turn
+/// routes while preserving the host's ownership of its main loop and callback thread.
+
 #include "core/log.hpp"
 #include "core/provider.hpp"
 #include "runtime/config.hpp"
@@ -54,16 +61,30 @@ make_request(const Config& config, const detail::ConversationState& conversation
 
 } // namespace
 
+/// Runtime owner behind the public Harness PImpl handle.
+///
+/// Impl owns both sides of the actor boundary: queues and the worker jthread on one
+/// side, PumpState, accepted-turn routes, and ToolRegistry handlers on the other. Its
+/// destructor stops and joins worker I/O before abandoning pump routes, ensuring no
+/// callback or tool handler can run after Harness destruction begins.
 class Harness::Impl final {
 public:
   /// ToolRegistry's constructor is private to its friend Harness, which extends to
   /// Harness's members. Keeping the factory here spares the public header a
   /// declaration that no consumer can use.
+  ///
+  /// @return A fresh Harness-owned additive registry.
   [[nodiscard]] static std::unique_ptr<ToolRegistry> make_tool_registry() {
     return std::unique_ptr<ToolRegistry>{
         new ToolRegistry{std::make_unique<ToolRegistry::Impl>()}};
   }
 
+  /// Starts the worker actor after every fallible dependency has been validated.
+  ///
+  /// @param config Validated policy shared by admission and worker ownership.
+  /// @param provider Selected provider adapter transferred to the worker.
+  /// @param transport Ready transport transferred to the worker.
+  /// @param tools Fresh registry retained exclusively on the pump side.
   Impl(Config config, std::unique_ptr<detail::ProviderAdapter> provider,
        std::unique_ptr<detail::Transport> transport,
        std::unique_ptr<ToolRegistry> tools)
@@ -81,6 +102,7 @@ public:
     SCRY_LOG("Harness created (model: {})", config_.model);
   }
 
+  /// Stops transport work, joins the worker, then discards undelivered pump activity.
   ~Impl() {
     worker_.request_stop();
     if (worker_.joinable()) {
@@ -92,6 +114,16 @@ public:
   Impl(const Impl&) = delete;
   Impl& operator=(const Impl&) = delete;
 
+  /// Performs synchronous admission and atomically publishes one accepted turn.
+  ///
+  /// Validation occurs before registry freezing or Conversation mutation. On success
+  /// the callback-bearing route is installed and busy state is set before
+  /// SendTurnCommand is made visible, so no worker event can outrun its pump route.
+  ///
+  /// @param conversation Active pump-side Conversation state.
+  /// @param text User message transferred into request and potential commit state.
+  /// @param callbacks Immutable callback set attached to the accepted route.
+  /// @return Installed route, or an immediate admission error.
   [[nodiscard]] Result<std::shared_ptr<detail::TurnRoute>>
   send(const std::shared_ptr<detail::ConversationState>& conversation, std::string text,
        TurnCallbacks callbacks) {
@@ -150,15 +182,28 @@ public:
     return route;
   }
 
+  /// @return Mutable Harness-owned registry for future accepted turns.
   [[nodiscard]] ToolRegistry& tools() noexcept { return *tools_; }
+  /// @return Read-only Harness-owned registry view.
   [[nodiscard]] const ToolRegistry& tools() const noexcept { return *tools_; }
+  /// Pumps app-thread work under the caller's soft limits.
+  ///
+  /// @param options Limits forwarded to PumpState::update().
+  /// @return Pump delivery statistics.
   [[nodiscard]] UpdateStats update(const UpdateOptions options) {
     return pump_.update(options);
   }
+  /// @return true during the dynamic extent of any update() invocation.
   [[nodiscard]] bool updating() const noexcept { return pump_.updating(); }
+  /// Waits briefly for worker activity while implementing synchronous send-and-wait.
+  ///
+  /// @return true when at least one event is queued before the wait expires.
   [[nodiscard]] bool wait_for_event() {
     return events_->wait_for_data(std::chrono::milliseconds{10});
   }
+  /// Test observation of lazy ToolRegistry snapshot generation state.
+  ///
+  /// @return true when the frozen entries match the mutable working set.
   [[nodiscard]] bool has_current_tool_snapshot() const noexcept {
     const auto& state = tools_->impl_->state;
     return state.frozen.entries != nullptr &&
@@ -166,12 +211,19 @@ public:
   }
 
 private:
+  /// Validated policy retained for app-thread admission and snapshot limits.
   Config config_{};
+  /// Shared app-to-worker message-passing boundary.
   std::shared_ptr<detail::CommandQueue> commands_{};
+  /// Shared bounded worker-to-pump message-passing boundary.
   std::shared_ptr<detail::EventQueue> events_{};
+  /// App-thread route, callback, and transactional-commit owner.
   detail::PumpState pump_;
+  /// Harness-owned registry whose handlers stay on the pump side.
   std::unique_ptr<ToolRegistry> tools_{};
+  /// Sole worker actor thread; declared after pump dependencies and joined explicitly.
   std::jthread worker_{};
+  /// Monotonic Harness-local identity source; zero remains the invalid TurnId.
   std::uint64_t next_turn_id_{};
 };
 

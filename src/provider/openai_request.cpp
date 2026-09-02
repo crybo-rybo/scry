@@ -1,3 +1,10 @@
+/// @file
+/// @brief Encodes neutral requests for OpenAI-compatible Chat Completions.
+///
+/// The encoder targets the documented common subset: system/user/assistant/tool
+/// messages, function tools, optional Bearer auth, streaming usage, endpoint
+/// normalization, and the single supported reasoning disable control.
+
 #include "core/error.hpp"
 #include "core/json_codec.hpp"
 #include "provider/openai.hpp"

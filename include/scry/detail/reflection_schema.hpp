@@ -1,5 +1,15 @@
 #pragma once
 
+/**
+ * @file reflection_schema.hpp
+ * @brief Constant-evaluated canonical JSON Schema generation for reflected arguments.
+ *
+ * The generator emits Scry's closed provider-neutral JSON Schema 2020-12 subset
+ * directly into compile-time character storage. Object keys, property names, and
+ * required names are lexical; enum values retain declaration order. Nested aggregate
+ * schemas are closed and inline, with no references, definitions, titles, or defaults.
+ */
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -13,10 +23,16 @@
 
 namespace scry::reflection::detail {
 
+/// Appends bytes that are already valid JSON syntax to compile-time output.
+/// @param output Schema buffer under construction.
+/// @param value Literal bytes to append unchanged.
 consteval void append_literal(std::vector<char>& output, const std::string_view value) {
   output.insert(output.end(), value.begin(), value.end());
 }
 
+/// Appends a lowercase `\\u00xx` escape for one ASCII control byte.
+/// @param output Schema buffer under construction.
+/// @param value Byte below 0x20 requiring a JSON escape.
 consteval void append_hex_escape(std::vector<char>& output, const unsigned char value) {
   constexpr std::string_view hexadecimal = "0123456789abcdef";
   append_literal(output, "\\u00");
@@ -24,6 +40,9 @@ consteval void append_hex_escape(std::vector<char>& output, const unsigned char 
   output.push_back(hexadecimal[value & 0x0FU]);
 }
 
+/// Appends a quoted JSON string with canonical control-character escaping.
+/// @param output Schema buffer under construction.
+/// @param value Unquoted bytes to encode.
 consteval void append_quoted(std::vector<char>& output, const std::string_view value) {
   output.push_back('"');
   for (const char character : value) {
@@ -62,6 +81,9 @@ consteval void append_quoted(std::vector<char>& output, const std::string_view v
   output.push_back('"');
 }
 
+/// Appends an unsigned decimal integer without allocation or locale dependence.
+/// @param output Schema buffer under construction.
+/// @param value Integer to render in base ten.
 consteval void append_unsigned(std::vector<char>& output, std::uint64_t value) {
   std::array<char, std::numeric_limits<std::uint64_t>::digits10 + 2U> digits{};
   std::size_t size = 0;
@@ -76,6 +98,9 @@ consteval void append_unsigned(std::vector<char>& output, std::uint64_t value) {
   }
 }
 
+/// Appends a signed decimal integer, including the full `int64_t` minimum.
+/// @param output Schema buffer under construction.
+/// @param value Integer to render in base ten.
 consteval void append_signed(std::vector<char>& output, const std::int64_t value) {
   if (value >= 0) {
     append_unsigned(output, static_cast<std::uint64_t>(value));
@@ -86,6 +111,10 @@ consteval void append_signed(std::vector<char>& output, const std::int64_t value
   append_unsigned(output, magnitude);
 }
 
+/// Appends any supported integer using its signedness-correct decimal representation.
+/// @tparam Integer Supported integral type no wider than 64 bits.
+/// @param output Schema buffer under construction.
+/// @param value Integer value to render.
 template <typename Integer>
 consteval void append_integer(std::vector<char>& output, const Integer value) {
   if constexpr (std::is_signed_v<Integer>) {
@@ -95,6 +124,9 @@ consteval void append_integer(std::vector<char>& output, const Integer value) {
   }
 }
 
+/// Recognizes a specialization of scry::reflection::description in P3394 metadata.
+/// @param annotation Candidate annotation reflection value.
+/// @return true only for a Scry description annotation.
 consteval bool is_description_annotation(const std::meta::info annotation) {
   if (!std::meta::is_annotation(annotation)) {
     return false;
@@ -104,6 +136,9 @@ consteval bool is_description_annotation(const std::meta::info annotation) {
          std::meta::template_of(type) == ^^description;
 }
 
+/// Counts Scry description annotations attached to one reflected member.
+/// @tparam Member Reflection value naming a non-static data member.
+/// @return Number of matching annotations.
 template <std::meta::info Member> consteval std::size_t description_annotation_count() {
   std::size_t count = 0;
   static constexpr auto annotations =
@@ -116,6 +151,10 @@ template <std::meta::info Member> consteval std::size_t description_annotation_c
   return count;
 }
 
+/// Appends a JSON Schema `description` member while maintaining object punctuation.
+/// @param output Schema buffer under construction.
+/// @param text Description text to quote and emit.
+/// @param needs_comma Whether an earlier object member exists; set true on return.
 consteval void append_description_key(std::vector<char>& output,
                                       const std::string_view text, bool& needs_comma) {
   if (needs_comma) {
@@ -126,10 +165,19 @@ consteval void append_description_key(std::vector<char>& output,
   needs_comma = true;
 }
 
+/// Emits the complete schema for one supported reflected value.
+/// @tparam Type Supported value type whose shape determines the schema.
+/// @param output Schema buffer under construction.
+/// @param description_text Optional member-level description to attach to this schema.
 template <typename Type>
 consteval void append_schema(std::vector<char>& output,
                              std::optional<std::string_view> description_text);
 
+/// Emits one aggregate member's schema and optional P3394 description.
+///
+/// More than one Scry description annotation produces a stable compile-time diagnostic.
+/// @tparam Member Reflection value naming the member to describe.
+/// @param output Schema buffer under construction.
 template <std::meta::info Member>
 consteval void append_member_schema(std::vector<char>& output) {
   using MemberType = [:std::meta::type_of(Member):];
@@ -153,6 +201,14 @@ consteval void append_member_schema(std::vector<char>& output) {
   }
 }
 
+/// Emits a closed inline object schema for a reflected aggregate.
+///
+/// Properties and required names use lexical member order. A member is omitted from
+/// `required` only when its C++ declaration has a default member initializer; JSON
+/// nullability is independently represented by optional schemas.
+/// @tparam Type Supported aggregate type.
+/// @param output Schema buffer under construction.
+/// @param description_text Optional description inherited from the containing member.
 template <typename Type>
 consteval void
 append_aggregate_schema(std::vector<char>& output,
@@ -191,6 +247,10 @@ append_aggregate_schema(std::vector<char>& output,
   append_literal(output, "],\"type\":\"object\"}");
 }
 
+/// Emits a scalar schema containing only optional description and JSON type.
+/// @param output Schema buffer under construction.
+/// @param description_text Optional member description.
+/// @param type JSON Schema primitive type name.
 consteval void
 append_described_type(std::vector<char>& output,
                       const std::optional<std::string_view> description_text,
@@ -208,6 +268,10 @@ append_described_type(std::vector<char>& output,
   output.push_back('}');
 }
 
+/// Emits an integer schema with exact C++ minimum and maximum bounds.
+/// @tparam Integer Supported integral type supplying numeric limits.
+/// @param output Schema buffer under construction.
+/// @param description_text Optional member description.
 template <typename Integer>
 consteval void
 append_integer_schema(std::vector<char>& output,
@@ -227,6 +291,10 @@ append_integer_schema(std::vector<char>& output,
   append_literal(output, ",\"type\":\"integer\"}");
 }
 
+/// Emits a string enum schema preserving C++ enumerator declaration order.
+/// @tparam Enum Supported scoped enum with unique values.
+/// @param output Schema buffer under construction.
+/// @param description_text Optional member description.
 template <typename Enum>
 consteval void
 append_enum_schema(std::vector<char>& output,
@@ -252,6 +320,13 @@ append_enum_schema(std::vector<char>& output,
   append_literal(output, "],\"type\":\"string\"}");
 }
 
+/// Emits a nullable `anyOf` schema for one supported optional layer.
+///
+/// The description belongs to the optional member as a whole, not only its non-null
+/// alternative.
+/// @tparam Optional Recognized supported optional specialization.
+/// @param output Schema buffer under construction.
+/// @param description_text Optional member description.
 template <typename Optional>
 consteval void
 append_optional_schema(std::vector<char>& output,
@@ -267,6 +342,9 @@ append_optional_schema(std::vector<char>& output,
   output.push_back('}');
 }
 
+/// Starts an array schema and emits its optional description plus `items` key.
+/// @param output Schema buffer under construction.
+/// @param description_text Optional member description.
 consteval void
 append_sequence_prefix(std::vector<char>& output,
                        const std::optional<std::string_view> description_text) {
@@ -279,6 +357,10 @@ append_sequence_prefix(std::vector<char>& output,
   append_literal(output, "\"items\":");
 }
 
+/// Emits an unbounded array schema for a supported vector specialization.
+/// @tparam Vector Recognized vector whose element schema is recursively supported.
+/// @param output Schema buffer under construction.
+/// @param description_text Optional member description.
 template <typename Vector>
 consteval void
 append_vector_schema(std::vector<char>& output,
@@ -289,6 +371,10 @@ append_vector_schema(std::vector<char>& output,
   append_literal(output, ",\"type\":\"array\"}");
 }
 
+/// Emits an exact-length array schema for a supported `std::array` specialization.
+/// @tparam Array Recognized fixed array whose element schema is recursively supported.
+/// @param output Schema buffer under construction.
+/// @param description_text Optional member description.
 template <typename Array>
 consteval void
 append_array_schema(std::vector<char>& output,
@@ -303,6 +389,9 @@ append_array_schema(std::vector<char>& output,
   append_literal(output, ",\"type\":\"array\"}");
 }
 
+// Dispatches through the SupportedValue classification documented on the declaration
+// above. The static assertion supplies a stable diagnostic if an internal caller
+// bypasses the public concept.
 template <typename Type>
 consteval void append_schema(std::vector<char>& output,
                              const std::optional<std::string_view> description_text) {
@@ -331,6 +420,9 @@ consteval void append_schema(std::vector<char>& output,
   }
 }
 
+/// Materializes one argument schema in compiler-managed static string storage.
+/// @tparam Args Complete reflected tool-argument aggregate.
+/// @return View with static lifetime over minified canonical schema bytes.
 template <ToolArguments Args> consteval std::string_view make_input_schema() {
   std::vector<char> output{};
   append_schema<Args>(output, std::nullopt);
@@ -343,6 +435,10 @@ template <ToolArguments Args> consteval std::string_view make_input_schema() {
 namespace scry::reflection {
 
 /// Canonical provider-neutral JSON Schema generated for a reflected argument aggregate.
+///
+/// The value is produced entirely during constant evaluation and has static storage
+/// duration. It is the exact schema text passed to explicit ToolRegistry registration
+/// by reflection::add(); there is no runtime schema cache or alternate representation.
 /// @tparam Args Type satisfying ToolArguments.
 template <ToolArguments Args>
 inline constexpr std::string_view input_schema_v = detail::make_input_schema<Args>();

@@ -1,3 +1,10 @@
+/// @file
+/// @brief Implements budgeted event pumping and transactional terminal processing.
+///
+/// Events may remain staged across main-loop ticks, but their queue charges remain
+/// live. Successful terminal events commit a complete exchange copy-on-write; every
+/// failure or cancellation releases busy state without changing committed history.
+
 #include "runtime/pump.hpp"
 
 #include <algorithm>
@@ -19,11 +26,16 @@ namespace {
   return text;
 }
 
-// Appends one committed exchange onto the Conversation's history block. The
-// block is shared with accepted-turn request snapshots, so a commit reseats it
-// copy-on-write whenever a live request still holds it. Terminalization releases
-// the worker's request before publishing completion, so ordinary commit reuses
-// the block deterministically; retained external snapshots still take this path.
+/// Appends one complete successful exchange to committed Conversation history.
+///
+/// The history block is shared with accepted-turn request snapshots, so commit reseats
+/// it copy-on-write whenever another reader still holds it. The worker releases its
+/// terminal request snapshot before publication, making the ordinary completion path
+/// uniquely owned; deliberately retained readers still exercise this guard.
+///
+/// @param conversation Pump-owned state whose history is mutated.
+/// @param user_text Original accepted user message.
+/// @param exchange Complete assistant/tool exchange transferred into history.
 void append_history(ConversationState& conversation, const std::string_view user_text,
                     std::vector<Message>&& exchange) {
   if (conversation.messages.use_count() > 1) {
@@ -43,20 +55,34 @@ void append_history(ConversationState& conversation, const std::string_view user
   }
 }
 
+/// RAII latch preventing recursive callback pumping.
+///
+/// The referenced flag is restored even when an application callback throws through
+/// PumpState::update().
 class UpdateGuard final {
 public:
+  /// Marks the owning pump as actively updating.
+  ///
+  /// @param updating Pump reentrancy flag retained through this guard's lifetime.
   explicit UpdateGuard(bool& updating) noexcept : updating_(updating) {
     updating_ = true;
   }
+  /// Restores the pump to its non-updating state.
   ~UpdateGuard() { updating_ = false; }
 
   UpdateGuard(const UpdateGuard&) = delete;
   UpdateGuard& operator=(const UpdateGuard&) = delete;
 
 private:
+  /// PumpState::updating_ observed and restored by the guard.
   bool& updating_;
 };
 
+/// Computes a saturating absolute deadline from an optional relative budget.
+///
+/// @param started Clock observation at update entry.
+/// @param time_budget Optional soft budget; absent means no deadline.
+/// @return Immediate, finite, or maximum deadline without time-point overflow.
 [[nodiscard]] std::chrono::steady_clock::time_point
 update_deadline(const std::chrono::steady_clock::time_point started,
                 const std::optional<std::chrono::microseconds> time_budget) {

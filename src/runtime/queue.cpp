@@ -1,3 +1,10 @@
+/// @file
+/// @brief Implements the bounded, coalescing worker-to-pump event queue.
+///
+/// Per-turn accounting spans both queued and pump-staged events. Atomic batch insertion
+/// prevents queue pressure from exposing only a prefix of one provider tool-call
+/// response.
+
 #include "runtime/queue.hpp"
 
 #include <algorithm>

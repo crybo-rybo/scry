@@ -1,3 +1,11 @@
+/// @file
+/// @brief Implements the event-to-command transitions for one agentic turn.
+///
+/// This file is the control-policy heart of Scry: it validates response shape,
+/// gates retry before semantic output, coordinates atomic tool batches, tracks
+/// cumulative budgets/usage, and releases request snapshots before terminal
+/// publication—all without performing I/O.
+
 #include "machine/turn_machine.hpp"
 
 #include "core/json_codec.hpp"

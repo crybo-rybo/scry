@@ -1,3 +1,10 @@
+/// @file
+/// @brief Implements accepted-turn routing, app-thread tool dispatch, and callbacks.
+///
+/// TurnRoute is the pump-owned lifetime boundary: it retains callbacks and Conversation
+/// state after handle detachment while communicating with the worker only through the
+/// cancellation atomic and command messages.
+
 #include "runtime/pump.hpp"
 
 #include "core/log.hpp"

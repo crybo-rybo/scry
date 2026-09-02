@@ -1,3 +1,10 @@
+/// @file
+/// @brief Implements the worker actor's FIFO turn driver and streaming transport loop.
+///
+/// The driver feeds time, provider, tool-result, and cancellation events into the
+/// sans-I/O TurnMachine, then publishes its commands through the bounded pump queue. No
+/// application callable or mutable Conversation state enters this thread.
+
 #include "runtime/worker.hpp"
 
 #include "core/log.hpp"
@@ -18,6 +25,11 @@
 namespace scry::detail {
 namespace {
 
+/// Bytes withheld from ordinary event admission so terminal state remains publishable.
+///
+/// Config validation requires at least 1024 queued bytes per turn. The worker admits
+/// streaming/tool/completion payload against the reduced ceiling and uses the full
+/// limit only for a bounded terminal outcome.
 constexpr std::size_t terminal_event_reserve = 512;
 
 [[nodiscard]] Error worker_error(const ErrorCategory category, std::string message,
@@ -31,6 +43,10 @@ constexpr std::size_t terminal_event_reserve = 512;
   };
 }
 
+/// Replaces an oversized terminal diagnostic with a fixed, content-free error.
+///
+/// @param event Terminal event transferred for possible compaction.
+/// @return Event compacted to fit the reserved terminal capacity.
 [[nodiscard]] WorkerEvent bound_terminal_event(WorkerEvent event) {
   auto* error = std::get_if<ErrorEvent>(&event);
   if (error == nullptr || event_payload_bytes(event) <= terminal_event_reserve) {
@@ -49,6 +65,15 @@ void append_commands(std::deque<MachineCommand>& destination,
   }
 }
 
+/// Derives a deterministic retry-jitter sample from turn identity and attempt number.
+///
+/// Determinism keeps the loop replayable while distributing retries across
+/// independently identified turns. Policy scales this normalized value; the worker does
+/// not choose the backoff duration itself.
+///
+/// @param turn_id Accepted-turn correlation identity.
+/// @param attempt One-based model-request attempt number.
+/// @return Stable value in the inclusive range [-1, 1].
 [[nodiscard]] double jitter_sample(const TurnId turn_id,
                                    const std::uint32_t attempt) noexcept {
   auto value = turn_id.value ^ (static_cast<std::uint64_t>(attempt) *
@@ -97,8 +122,11 @@ void redact_sensitive_fields(Error& error, const std::string_view secret) {
   });
 }
 
+/// Resource bounds used to initialize one streaming request attempt.
 struct AttemptLimits final {
+  /// Maximum bytes retained for one incrementally framed SSE event.
   std::size_t maximum_event_bytes{};
+  /// Maximum accumulated serialized argument bytes for one provider tool call.
   std::size_t maximum_tool_arguments_bytes{};
 };
 
@@ -112,13 +140,23 @@ WorkerActor::WorkerActor(Config config, std::unique_ptr<ProviderAdapter> provide
       transport_(std::move(transport)), commands_(std::move(commands)),
       events_(std::move(events)) {}
 
+/// Attempt-local framing, provider decoding, and sole-completion state.
+///
+/// Recreating this object for every retry is what makes adapters effectively stateless
+/// and prevents partial wire state from contaminating a subsequent request.
 struct WorkerActor::AttemptState {
+  /// Creates parser/decoder state with the accepted turn's configured bounds.
+  ///
+  /// @param limits SSE and tool-argument limits for this attempt.
   explicit AttemptState(const AttemptLimits& limits)
       : parser(limits.maximum_event_bytes),
         decode{.max_tool_arguments_bytes = limits.maximum_tool_arguments_bytes} {}
 
+  /// Pure incremental SSE framer retaining an incomplete trailing event.
   SseParser parser;
+  /// Dialect-specific streaming state and semantic-output retry latch.
   ProviderDecodeState decode{};
+  /// Exactly one completed response captured before transport finalization.
   std::optional<ModelResponse> completed{};
 };
 

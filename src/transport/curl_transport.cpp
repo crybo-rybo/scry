@@ -1,3 +1,11 @@
+/// @file
+/// @brief Implements bounded streaming HTTP over RAII-managed libcurl handles.
+///
+/// The implementation validates inputs, configures one easy handle under a
+/// multi handle, translates C callbacks into exception-safe Scry operations,
+/// polls within shutdown bounds, distinguishes turn cancellation from Harness
+/// shutdown, and returns provider-neutral transport metadata.
+
 #include "transport/curl_transport.hpp"
 
 #include "core/error.hpp"

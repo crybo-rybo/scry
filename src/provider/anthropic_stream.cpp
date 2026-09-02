@@ -1,3 +1,10 @@
+/// @file
+/// @brief Implements the strict Anthropic Messages streaming lifecycle.
+///
+/// Event handlers validate message/content-block ordering, append bounded tool
+/// argument fragments, surface text deltas, preserve usage/request metadata,
+/// and emit one neutral completion only after a valid `message_stop`.
+
 #include "core/error.hpp"
 #include "core/json_codec.hpp"
 #include "provider/anthropic.hpp"

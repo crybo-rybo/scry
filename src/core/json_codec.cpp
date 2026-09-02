@@ -1,3 +1,10 @@
+/// @file
+/// @brief Implements Scry's single canonical JSON codec.
+///
+/// Parsing, sorted-key serialization, object-boundary validation, and typed
+/// field access all converge here so providers, tools, and persistence cannot
+/// acquire subtly different JSON behavior.
+
 #include "core/json_codec.hpp"
 
 #include "core/error.hpp"

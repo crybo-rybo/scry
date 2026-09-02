@@ -1,3 +1,9 @@
+/// @file
+/// @brief Implements fail-fast validation of provider and runtime configuration.
+///
+/// Validation is intentionally completed before any provider, Curl, queue, or worker
+/// resource is created, so downstream runtime code can rely on coherent Config values.
+
 #include "runtime/config.hpp"
 
 #include <cmath>

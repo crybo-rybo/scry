@@ -1,3 +1,9 @@
+/// @file
+/// @brief Implements deterministic retry classification and bounded backoff.
+///
+/// Exponential growth, jitter, `Retry-After`, and duration conversion use
+/// clamping/saturation so hostile or extreme policy values cannot overflow.
+
 #include "core/retry.hpp"
 
 #include <algorithm>

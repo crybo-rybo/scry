@@ -1,3 +1,11 @@
+/// @file
+/// @brief Implements strict OpenAI-compatible streaming completion decoding.
+///
+/// Arbitrarily split chunks accumulate text and sparse indexed tool fragments
+/// under byte limits. The decoder enforces stable IDs, one choice, complete
+/// contiguous calls, a finish reason, optional trailing usage, and `[DONE]` as
+/// the sole successful terminal marker.
+
 #include "core/error.hpp"
 #include "core/json_codec.hpp"
 #include "provider/openai.hpp"

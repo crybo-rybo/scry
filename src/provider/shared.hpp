@@ -1,7 +1,10 @@
-#pragma once
+/// @file
+/// @brief Small safety helpers shared by both provider dialect adapters.
+///
+/// Only behavior that is intentionally identical between dialects belongs
+/// here. Their stream lifecycle machines and wire mappings remain independent.
 
-// Small helpers both dialect adapters need. The two stream state machines stay
-// independent; only the pieces that are byte-for-byte identical live here.
+#pragma once
 
 #include "core/error.hpp"
 #include "core/json_codec.hpp"
@@ -16,8 +19,14 @@
 
 namespace scry::detail {
 
-// Provider error identifiers reach Error::provider_detail, so only a bounded
-// alphanumeric token survives; anything else collapses to a fixed placeholder.
+/// @brief Reduces an untrusted provider error identifier to a safe token.
+///
+/// Provider error identifiers can reach `Error::provider_detail`, so only a
+/// nonempty, at-most-96-byte alphanumeric/underscore token survives. Everything
+/// else collapses to the fixed `unknown_error` placeholder.
+///
+/// @param value Untrusted provider-controlled bytes.
+/// @return Owning sanitized token safe for diagnostics.
 [[nodiscard]] inline std::string sanitize_error_token(const std::string_view value) {
   constexpr std::size_t maximum_bytes = 96;
   if (value.empty() || value.size() > maximum_bytes) {
@@ -30,8 +39,12 @@ namespace scry::detail {
   return safe ? std::string{value} : std::string{"unknown_error"};
 }
 
-// Claims the shared decode state for one dialect, rejecting a state another
-// dialect already owns.
+/// @brief Claims or retrieves the dialect alternative in shared decode state.
+/// @tparam Dialect One alternative of `ProviderDialectDecodeState`.
+/// @param state Per-request state to claim.
+/// @param message Sanitized protocol diagnostic used on dialect mismatch.
+/// @return Borrowed mutable dialect state, or a protocol error when another
+///         dialect already owns the context.
 template <typename Dialect>
 [[nodiscard]] Result<Dialect*> dialect_decode_state(ProviderDecodeState& state,
                                                     const std::string_view message) {
@@ -45,8 +58,14 @@ template <typename Dialect>
   return decode;
 }
 
-// The terminal event moves the accumulated response out of the decode state,
-// so every later event must be refused before anything reads it again.
+/// @brief Rejects wire input after the decoder emitted its terminal event.
+///
+/// Completion moves the accumulated response out of `state`; this guard must
+/// run before later handlers inspect that moved-from value.
+///
+/// @param state Per-request decode state.
+/// @param message Sanitized dialect-specific protocol diagnostic.
+/// @return Success before terminal state, otherwise a protocol error.
 [[nodiscard]] inline Status
 reject_event_after_terminal(const ProviderDecodeState& state,
                             const std::string_view message) {
@@ -56,8 +75,16 @@ reject_event_after_terminal(const ProviderDecodeState& state,
   return {};
 }
 
-// Rejects a tool-argument fragment before it is appended, so an over-limit
-// stream never grows the destination past the configured budget.
+/// @brief Checks an argument fragment against its per-call byte ceiling.
+///
+/// Validation occurs before append, so retained untrusted input can never grow
+/// beyond the configured limit. The subtraction form is overflow-safe.
+///
+/// @param accumulated Bytes already retained for the call.
+/// @param fragment Bytes in the prospective fragment.
+/// @param limit Configured maximum bytes for one call's arguments.
+/// @param message Sanitized diagnostic for overflow/limit failure.
+/// @return Success when the append fits, otherwise `resource_limit`.
 [[nodiscard]] inline Status accept_tool_argument_bytes(const std::size_t accumulated,
                                                        const std::size_t fragment,
                                                        const std::size_t limit,

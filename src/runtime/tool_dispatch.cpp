@@ -1,3 +1,11 @@
+/// @file
+/// @brief Implements bounded app-thread tool lookup, invocation, and result
+/// normalization.
+///
+/// Application failures become canonical model-visible error payloads when possible;
+/// framework resource failures remain fatal so the pump can suppress later batch
+/// effects.
+
 #include "runtime/tool_dispatch.hpp"
 
 #include "core/json_codec.hpp"

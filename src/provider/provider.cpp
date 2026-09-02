@@ -1,3 +1,10 @@
+/// @file
+/// @brief Implements config-driven selection of built-in provider strategies.
+///
+/// The closed factory is deliberately internal: adding a public plugin system
+/// is deferred until a concrete third-party provider requires its lifecycle and
+/// compatibility contract.
+
 #include "core/provider.hpp"
 
 #include "provider/anthropic.hpp"

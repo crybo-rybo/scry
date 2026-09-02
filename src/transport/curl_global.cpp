@@ -1,3 +1,10 @@
+/// @file
+/// @brief Implements one-shot process-wide libcurl ownership.
+///
+/// A function-static RAII owner serializes the first initialization attempt,
+/// validates version/thread-safety/asynchronous-DNS capabilities, caches either
+/// outcome, and pairs successful startup with exactly one static cleanup.
+
 #include "transport/curl_global.hpp"
 
 #include "core/error.hpp"

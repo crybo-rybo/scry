@@ -1,3 +1,10 @@
+/// @file
+/// @brief Implements additive tool registration and immutable generation snapshots.
+///
+/// Schemas are validated and canonicalized at registration. The first accepted turn
+/// after a change freezes matched handler/schema blocks that subsequent turns share
+/// unchanged.
+
 #include "core/json_codec.hpp"
 #include "runtime/tool_registry_impl.hpp"
 
