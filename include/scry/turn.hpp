@@ -33,6 +33,15 @@ public:
   /// @return Accepted-turn identifier.
   [[nodiscard]] TurnId id() const noexcept;
 
+  /// Reports whether this turn has reached its terminal outcome.
+  ///
+  /// True once the terminal Completion or Error has been delivered to
+  /// TurnCallbacks::on_finished, or once Harness::update() has processed the terminal
+  /// event when no on_finished was supplied. A moved-from handle and a handle whose
+  /// Harness is gone both report true, so a poll loop always terminates.
+  /// @return true when nothing more will be delivered for this turn.
+  [[nodiscard]] bool finished() const noexcept;
+
   /// Requests cooperative cancellation.
   ///
   /// When a non-empty TurnCallbacks::on_finished was supplied to Harness::send(), the

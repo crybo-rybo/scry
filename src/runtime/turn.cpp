@@ -14,6 +14,14 @@ TurnId Turn::id() const noexcept {
   return impl_ == nullptr ? TurnId{} : impl_->turn_id;
 }
 
+bool Turn::finished() const noexcept {
+  if (impl_ == nullptr) {
+    return true;
+  }
+  const auto route = impl_->route.lock();
+  return route == nullptr || route->finished();
+}
+
 bool Turn::cancel() noexcept {
   if (impl_ == nullptr || impl_->cancelled == nullptr) {
     return false;

@@ -16,6 +16,7 @@ TEST_CASE("two-tool turn snapshots tools, resends results, and commits atomicall
 
   std::vector<std::string> timeline;
   std::vector<std::thread::id> callback_threads;
+  std::vector<scry::ToolCall> observed;
   std::string first_arguments;
   std::string second_arguments;
   bool reentrant_registration_succeeded = false;
@@ -50,6 +51,14 @@ TEST_CASE("two-tool turn snapshots tools, resends results, and commits atomicall
                            [&](const scry::ToolCall& call) {
                              timeline.push_back("observer:" + call.name);
                              callback_threads.push_back(std::this_thread::get_id());
+                             observed.push_back(scry::ToolCall{
+                                 .turn_id = call.turn_id,
+                                 .id = call.id,
+                                 .name = call.name,
+                                 .arguments = call.arguments,
+                                 .result = call.result,
+                                 .is_error = call.is_error,
+                             });
                            },
                        .on_finished =
                            [&](scry::Result<scry::Completion> finished) {
@@ -78,6 +87,18 @@ TEST_CASE("two-tool turn snapshots tools, resends results, and commits atomicall
 
   CHECK(first_arguments == R"({"ordinal":1})");
   CHECK(second_arguments == R"({"ordinal":2})");
+
+  REQUIRE(observed.size() == 2);
+  CHECK(observed[0].id == "call-a");
+  CHECK(observed[0].name == "first_tool");
+  CHECK(observed[0].arguments.text == R"({"ordinal":1})");
+  CHECK(observed[0].result.text == R"({"handled":"first"})");
+  CHECK_FALSE(observed[0].is_error);
+  CHECK(observed[1].id == "call-b");
+  CHECK(observed[1].name == "second_tool");
+  CHECK(observed[1].arguments.text == R"({"ordinal":2})");
+  CHECK(observed[1].result.text == R"({"handled":"second"})");
+  CHECK_FALSE(observed[1].is_error);
   CHECK(reentrant_registration_succeeded);
   CHECK(harness.tools().size() == 4);
   for (const auto callback_thread : callback_threads) {
@@ -116,6 +137,61 @@ TEST_CASE("two-tool turn snapshots tools, resends results, and commits atomicall
   require_order(resend_body, R"("tool_use_id":"call-a")", R"("tool_use_id":"call-b")");
   require_order(resend_body, R"({\"handled\":\"first\"})",
                 R"({\"handled\":\"second\"})");
+}
+
+TEST_CASE("a failing tool handler reaches the observer as an error result") {
+  auto fake = std::make_unique<scry::test::FakeTransport>();
+  fake->enqueue(scripted_exchange(two_tool_stream, "tool-request"));
+  fake->enqueue(scripted_exchange(final_stream, "final-request"));
+  auto harness_result = scry::detail::HarnessTestAccess::create(
+      test_config(), provider(), std::move(fake));
+  REQUIRE(harness_result);
+  auto harness = std::move(*harness_result);
+
+  REQUIRE(harness.tools().add(ordinal_tool_definition("first_tool"),
+                              [](scry::Json) -> scry::Result<scry::Json> {
+                                return std::unexpected(scry::Error{
+                                    .category = scry::ErrorCategory::tool,
+                                    .message = "handler said no",
+                                });
+                              }));
+  REQUIRE(harness.tools().add(ordinal_tool_definition("second_tool"),
+                              static_handler(R"({"handled":"second"})")));
+
+  auto conversation_result = scry::Conversation::create();
+  REQUIRE(conversation_result);
+  auto conversation = std::move(*conversation_result);
+  std::vector<scry::ToolCall> observed;
+  bool finished = false;
+  auto turn_result =
+      harness.send(conversation, "Run both tools",
+                   {
+                       .on_tool_call =
+                           [&observed](const scry::ToolCall& call) {
+                             observed.push_back(scry::ToolCall{
+                                 .turn_id = call.turn_id,
+                                 .id = call.id,
+                                 .name = call.name,
+                                 .arguments = call.arguments,
+                                 .result = call.result,
+                                 .is_error = call.is_error,
+                             });
+                           },
+                       .on_finished =
+                           [&finished](scry::Result<scry::Completion> outcome) {
+                             finished = outcome.has_value();
+                           },
+                   });
+  REQUIRE(turn_result);
+  REQUIRE(pump_until(harness, [&finished] { return finished; }));
+
+  REQUIRE(observed.size() == 2);
+  CHECK(observed[0].name == "first_tool");
+  CHECK(observed[0].is_error);
+  CHECK(observed[0].result.text == R"({"error":"tool handler returned an error"})");
+  CHECK(observed[1].name == "second_tool");
+  CHECK_FALSE(observed[1].is_error);
+  CHECK(observed[1].result.text == R"({"handled":"second"})");
 }
 
 TEST_CASE("a queued turn waits for the active turn's app-thread tool round") {

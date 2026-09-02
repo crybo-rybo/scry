@@ -4,6 +4,7 @@
 #include "runtime/tool_dispatch.hpp"
 
 #include <algorithm>
+#include <optional>
 #include <type_traits>
 #include <utility>
 
@@ -65,6 +66,12 @@ bool TurnRoute::attached() const noexcept { return attached_; }
 
 bool TurnRoute::terminal() const noexcept { return terminal_; }
 
+// A turn is finished once its terminal outcome reached the host, or once it
+// would have when no on_finished was supplied.
+bool TurnRoute::finished() const noexcept {
+  return terminal_ && (!callbacks_.on_finished || terminal_delivered_);
+}
+
 void TurnRoute::mark_terminal() noexcept { terminal_ = true; }
 
 bool TurnRoute::has_callback(const WorkerEvent& event) const noexcept {
@@ -100,6 +107,7 @@ void TurnRoute::invoke(const WorkerEvent& event) {
         } else if constexpr (std::is_same_v<Event, CompletionEvent>) {
           // commit_completion captured the text before moving the exchange
           // into the Conversation.
+          terminal_delivered_ = true;
           callbacks_.on_finished(Completion{
               .turn_id = value.turn_id,
               .text = value.text,
@@ -109,8 +117,10 @@ void TurnRoute::invoke(const WorkerEvent& event) {
               .provider_request_id = value.provider_request_id,
           });
         } else if constexpr (std::is_same_v<Event, ErrorEvent>) {
+          terminal_delivered_ = true;
           callbacks_.on_finished(std::unexpected(value.error));
         } else if constexpr (std::is_same_v<Event, CancelledEvent>) {
+          terminal_delivered_ = true;
           callbacks_.on_finished(std::unexpected(cancellation_error(value.turn_id)));
         } else {
           static_assert(unhandled_worker_event<Event>,
@@ -146,24 +156,32 @@ void TurnRoute::dispatch(const ToolCallEvent& event) {
   if (cancelled_->load(std::memory_order_acquire)) {
     return;
   }
-  const auto result_ready = result.has_value();
+  // The observer sees the same result block the model receives, so it is copied
+  // out before the command queue takes ownership. A framework failure leaves the
+  // result empty and fails the turn instead, and the observer does not fire.
+  auto observed = result.has_value() && callbacks_.on_tool_call
+                      ? std::optional<ToolResultBlock>{*result}
+                      : std::nullopt;
   if (const auto commands = commands_.lock()) {
     commands->push(ToolResultCommand{
         .turn_id = turn_id_,
         .result = std::move(result),
     });
   }
-  if (result_ready && callbacks_.on_tool_call) {
-    notify_tool_observer(event.call);
+  if (observed) {
+    notify_tool_observer(event.call, *observed);
   }
 }
 
-void TurnRoute::notify_tool_observer(const ToolCallBlock& call) {
+void TurnRoute::notify_tool_observer(const ToolCallBlock& call,
+                                     const ToolResultBlock& result) {
   callbacks_.on_tool_call(ToolCall{
       .turn_id = turn_id_,
       .id = call.id,
       .name = call.name,
       .arguments = call.arguments,
+      .result = result.result,
+      .is_error = result.is_error,
   });
 }
 

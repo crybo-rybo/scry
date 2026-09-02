@@ -6,6 +6,8 @@
 #include <scry/json.hpp>
 #include <scry/unique_function.hpp>
 #include <string>
+#include <string_view>
+#include <vector>
 
 namespace scry {
 
@@ -50,6 +52,16 @@ public:
   /// Reports whether no tools are registered.
   /// @return true when size() is zero.
   [[nodiscard]] bool empty() const noexcept;
+
+  /// Reports whether a tool with the given name is registered.
+  /// @param name Tool name to look for. Comparison is exact.
+  /// @return true when a registration with that name exists; false for an inactive
+  /// registry.
+  [[nodiscard]] bool contains(std::string_view name) const noexcept;
+
+  /// Lists every registered tool name in registration order.
+  /// @return The names, or an empty vector for an inactive registry.
+  [[nodiscard]] std::vector<std::string> names() const;
 
 private:
   class Impl;

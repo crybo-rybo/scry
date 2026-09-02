@@ -15,6 +15,7 @@
 #include <string_view>
 #include <thread>
 #include <utility>
+#include <vector>
 
 using namespace std::chrono_literals;
 using namespace scry::test_support;
@@ -635,4 +636,28 @@ TEST_CASE("ToolRegistry rejects invalid and duplicate registrations") {
   REQUIRE_FALSE(status);
   CHECK(status.error().category == scry::ErrorCategory::invalid_argument);
   CHECK(tools.size() == 1);
+}
+
+TEST_CASE("ToolRegistry reports registered names in registration order") {
+  auto harness = scry::detail::HarnessTestAccess::create(
+      retrying_config(), provider(), std::make_unique<scry::test::FakeTransport>());
+  REQUIRE(harness);
+  auto& tools = harness->tools();
+  CHECK(tools.names().empty());
+  CHECK_FALSE(tools.contains("edge_tool"));
+
+  REQUIRE(tools.add(tool("zulu"), static_handler(R"({"ok":true})")));
+  REQUIRE(tools.add(tool("alpha"), static_handler(R"({"ok":true})")));
+
+  CHECK(tools.contains("zulu"));
+  CHECK(tools.contains("alpha"));
+  CHECK_FALSE(tools.contains("bravo"));
+  CHECK_FALSE(tools.contains(""));
+  CHECK_FALSE(tools.contains("zul"));
+
+  const auto names = tools.names();
+  REQUIRE(names.size() == 2);
+  CHECK(names[0] == "zulu");
+  CHECK(names[1] == "alpha");
+  CHECK(names.size() == tools.size());
 }

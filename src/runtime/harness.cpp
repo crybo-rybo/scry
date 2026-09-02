@@ -178,6 +178,10 @@ public:
     return route;
   }
 
+  [[nodiscard]] bool cancel(const TurnId turn_id) noexcept {
+    const auto route = pump_.find_route(turn_id);
+    return route != nullptr && route->cancel();
+  }
   [[nodiscard]] ToolRegistry& tools() noexcept { return *tools_; }
   [[nodiscard]] const ToolRegistry& tools() const noexcept { return *tools_; }
   [[nodiscard]] UpdateStats update(const UpdateOptions options) {
@@ -228,6 +232,17 @@ Result<Harness> Harness::create(Config config) {
                                               std::move(transport), std::move(tools),
                                               retry_jitter_seed)};
       });
+}
+
+Status Harness::validate(const Config& config) {
+  return detail::validate_config(config);
+}
+
+bool Harness::cancel(const TurnId turn_id) noexcept {
+  if (impl_ == nullptr) {
+    return false;
+  }
+  return impl_->cancel(turn_id);
 }
 
 ToolRegistry& Harness::tools() noexcept {

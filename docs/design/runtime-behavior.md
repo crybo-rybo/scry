@@ -33,6 +33,16 @@ worker boundary. The complete provider batch is admitted atomically; `update()`
 then walks it, invoking each handler, running the optional `on_tool_call`
 observer, and applying the canonical result before admitting the next call.
 
+**Blocking-mode escape hatch.** `send_and_wait()` is the one public operation
+that waits for network I/O, and it is a pump loop over the same async path
+rather than a private wait. Three consequences follow and are documented on the
+operation: it drives `update()` until the waited turn terminates, so callbacks
+and app-thread tool handlers belonging to every other accepted turn run inside
+the call; the waited turn exposes no `Turn` handle and therefore cannot be
+cancelled by the caller, ending only through completion, a terminal error, or
+Harness destruction; and calling it from inside a callback is rejected with
+`invalid_state`.
+
 The cost is explicit: a slow handler spends the host's frame budget, because
 Scry never preempts user code. The intended answer is an asynchronous/deferred
 tool-result API described in [future directions](roadmap.md), not a hidden

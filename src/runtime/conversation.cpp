@@ -1,6 +1,8 @@
 #include "runtime/conversation_impl.hpp"
 
+#include <string>
 #include <utility>
+#include <vector>
 
 namespace scry {
 
@@ -23,6 +25,20 @@ bool Conversation::empty() const noexcept {
 
 std::size_t Conversation::message_count() const noexcept {
   return impl_ == nullptr ? 0 : impl_->state->messages->size();
+}
+
+const std::vector<Message>& Conversation::messages() const noexcept {
+  static const std::vector<Message> none{};
+  return impl_ == nullptr ? none : *impl_->state->messages;
+}
+
+const std::string& Conversation::system_prompt() const noexcept {
+  static const std::string none{};
+  return impl_ == nullptr ? none : impl_->state->config.system_prompt;
+}
+
+bool Conversation::busy() const noexcept {
+  return impl_ != nullptr && impl_->state->busy;
 }
 
 } // namespace scry

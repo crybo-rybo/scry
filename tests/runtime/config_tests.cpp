@@ -9,6 +9,7 @@
 #include <new>
 #include <scry/config.hpp>
 #include <scry/error.hpp>
+#include <scry/harness.hpp>
 #include <string>
 #include <system_error>
 
@@ -26,6 +27,31 @@ namespace {
 
 TEST_CASE("valid Anthropic configuration is accepted") {
   CHECK(scry::detail::validate_config(valid_config()));
+}
+
+TEST_CASE("Harness::validate runs the create-time configuration checks") {
+  CHECK(scry::Harness::validate(valid_config()));
+
+  auto missing_model = valid_config();
+  missing_model.model.clear();
+  auto rejected = scry::Harness::validate(missing_model);
+  REQUIRE_FALSE(rejected);
+  CHECK(rejected.error().category == scry::ErrorCategory::invalid_config);
+  CHECK(rejected.error().message == "model must not be empty");
+
+  auto zero_rounds = valid_config();
+  zero_rounds.max_tool_rounds = 0;
+  rejected = scry::Harness::validate(zero_rounds);
+  REQUIRE_FALSE(rejected);
+  CHECK(rejected.error().message == "max_tool_rounds must be greater than 0");
+
+  auto no_max_tokens = valid_config();
+  no_max_tokens.sampling.max_tokens.reset();
+  rejected = scry::Harness::validate(no_max_tokens);
+  REQUIRE_FALSE(rejected);
+  CHECK(rejected.error().category == scry::ErrorCategory::invalid_config);
+
+  CHECK_FALSE(scry::Harness::validate(scry::Config{}));
 }
 
 TEST_CASE("configuration rejects missing endpoint and model") {

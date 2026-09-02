@@ -7,39 +7,22 @@
 #include <scry/config.hpp>
 #include <scry/events.hpp>
 #include <scry/json.hpp>
+#include <scry/message.hpp>
 #include <string>
 #include <variant>
 #include <vector>
 
 namespace scry::detail {
 
-enum class Role : std::uint8_t {
-  user,
-  assistant,
-};
-
-struct TextBlock {
-  std::string text{};
-};
-
-struct ToolCallBlock {
-  std::string id{};
-  std::string name{};
-  Json arguments{};
-};
-
-struct ToolResultBlock {
-  std::string tool_call_id{};
-  Json result{};
-  bool is_error{false};
-};
-
-using ContentBlock = std::variant<TextBlock, ToolCallBlock, ToolResultBlock>;
-
-struct Message {
-  Role role{Role::user};
-  std::vector<ContentBlock> content{};
-};
+// The neutral message model is the public scry::Message family re-exported here,
+// so adapters, persistence, and the pump keep their detail-namespace spelling
+// while hosts see exactly the types the runtime commits.
+using Role = ::scry::Role;
+using TextBlock = ::scry::TextBlock;
+using ToolCallBlock = ::scry::ToolCallBlock;
+using ToolResultBlock = ::scry::ToolResultBlock;
+using ContentBlock = ::scry::ContentBlock;
+using Message = ::scry::Message;
 
 struct ToolSchema {
   std::string name{};

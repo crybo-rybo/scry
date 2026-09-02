@@ -4,9 +4,11 @@
 #include <scry/conversation.hpp>
 #include <scry/error.hpp>
 #include <scry/json.hpp>
+#include <scry/message.hpp>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace {
@@ -93,6 +95,59 @@ TEST_CASE("Conversation persistence uses a canonical versioned document") {
   CHECK(reencoded->text == encoded->text);
 }
 
+TEST_CASE(
+    "restored Conversation history is readable through the public message model") {
+  const std::string input = R"({
+    "version": 1,
+    "system_prompt": "Guide carefully.",
+    "messages": [
+      {"role":"user","content":[{"type":"text","text":"Question"}]},
+      {"content":[{"name":"lookup","type":"tool_call",
+                   "arguments":{"z":2,"a":1},"id":"call-1"}],
+       "role":"assistant"},
+      {"role":"user","content":[{"result":{"ok":true},
+         "type":"tool_result","tool_call_id":"call-1","is_error":true}]},
+      {"role":"assistant","content":[{"type":"text","text":"Answer"}]}
+    ]
+  })";
+  const auto restored = scry::Conversation::from_json({.text = input});
+  REQUIRE(restored);
+  CHECK(restored->system_prompt() == "Guide carefully.");
+  CHECK_FALSE(restored->busy());
+
+  const auto& messages = restored->messages();
+  REQUIRE(messages.size() == 4);
+  CHECK(messages.size() == restored->message_count());
+  CHECK(messages[0].role == scry::Role::user);
+  CHECK(messages[1].role == scry::Role::assistant);
+  CHECK(messages[2].role == scry::Role::user);
+  CHECK(messages[3].role == scry::Role::assistant);
+
+  REQUIRE(messages[0].content.size() == 1);
+  const auto* question = std::get_if<scry::TextBlock>(&messages[0].content.front());
+  REQUIRE(question != nullptr);
+  CHECK(question->text == "Question");
+
+  REQUIRE(messages[1].content.size() == 1);
+  const auto* call = std::get_if<scry::ToolCallBlock>(&messages[1].content.front());
+  REQUIRE(call != nullptr);
+  CHECK(call->id == "call-1");
+  CHECK(call->name == "lookup");
+  CHECK(call->arguments.text == R"({"a":1,"z":2})");
+
+  REQUIRE(messages[2].content.size() == 1);
+  const auto* result = std::get_if<scry::ToolResultBlock>(&messages[2].content.front());
+  REQUIRE(result != nullptr);
+  CHECK(result->tool_call_id == "call-1");
+  CHECK(result->result.text == R"({"ok":true})");
+  CHECK(result->is_error);
+
+  REQUIRE(messages[3].content.size() == 1);
+  const auto* answer = std::get_if<scry::TextBlock>(&messages[3].content.front());
+  REQUIRE(answer != nullptr);
+  CHECK(answer->text == "Answer");
+}
+
 TEST_CASE("Conversation persistence rejects malformed document structure") {
   const std::vector<std::string> invalid{
       "",
@@ -174,8 +229,13 @@ TEST_CASE("moved-from Conversation observers report an empty history") {
 
   CHECK(source->empty());
   CHECK(source->message_count() == 0);
+  CHECK(source->messages().empty());
+  CHECK(source->system_prompt().empty());
+  CHECK_FALSE(source->busy());
   CHECK(active.empty());
   CHECK(active.message_count() == 0);
+  CHECK(active.messages().empty());
+  CHECK_FALSE(active.busy());
 }
 
 TEST_CASE("private JSON codec canonicalizes values and validates object roots") {

@@ -38,6 +38,7 @@ public:
   void detach() noexcept;
   [[nodiscard]] bool attached() const noexcept;
   [[nodiscard]] bool terminal() const noexcept;
+  [[nodiscard]] bool finished() const noexcept;
   void mark_terminal() noexcept;
 
   [[nodiscard]] bool has_callback(const WorkerEvent& event) const noexcept;
@@ -49,7 +50,7 @@ public:
 
 private:
   void dispatch(const ToolCallEvent& event);
-  void notify_tool_observer(const ToolCallBlock& call);
+  void notify_tool_observer(const ToolCallBlock& call, const ToolResultBlock& result);
 
   TurnId turn_id_{};
   std::shared_ptr<std::atomic<bool>> cancelled_{};
@@ -62,6 +63,7 @@ private:
   std::size_t max_conversation_bytes_{};
   bool attached_{true};
   bool terminal_{false};
+  bool terminal_delivered_{false};
   bool tool_dispatch_failed_{false};
   TurnCallbacks callbacks_{};
 };

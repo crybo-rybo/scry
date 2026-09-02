@@ -10,7 +10,9 @@
 #include <stop_token>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
+#include <variant>
 #include <vector>
 
 using namespace scry::test_support;
@@ -158,6 +160,34 @@ public:
   }
 };
 
+// Holds one transfer open until the turn's cancel flag is set, so a test can
+// address an in-flight turn by identifier. The spin is bounded by the flag and
+// by Harness shutdown; there is no sleep or wall-clock deadline.
+class HeldTransport final : public scry::detail::Transport {
+public:
+  [[nodiscard]] scry::Result<scry::detail::TransportResult>
+  perform(const scry::detail::TransportRequest&, const std::stop_token stopped,
+          const std::atomic<bool>& cancelled, scry::detail::BodyChunkSink&) override {
+    entered_.store(true, std::memory_order_release);
+    while (!cancelled.load(std::memory_order_acquire) && !stopped.stop_requested()) {
+      std::this_thread::yield();
+    }
+    return std::unexpected(scry::Error{
+        .category = scry::ErrorCategory::cancelled,
+        .message = "held transport cancelled",
+    });
+  }
+
+  void wait_for_entry() const {
+    while (!entered_.load(std::memory_order_acquire)) {
+      std::this_thread::yield();
+    }
+  }
+
+private:
+  std::atomic<bool> entered_{false};
+};
+
 class ThrowingTransport final : public scry::detail::Transport {
 public:
   [[nodiscard]] scry::Result<scry::detail::TransportResult>
@@ -219,6 +249,101 @@ TEST_CASE("a Turn can cancel safely after its Harness has been destroyed") {
   CHECK(survivor->id() == accepted_id);
   CHECK(survivor->cancel());
   CHECK_FALSE(survivor->cancel());
+}
+
+TEST_CASE("a completed turn publishes its history, busy state, and finished flag") {
+  auto harness_result =
+      fake_harness(test_config(), scripted_exchange(completed_stream));
+  REQUIRE(harness_result);
+  auto harness = std::move(*harness_result);
+  auto conversation_result = scry::Conversation::create({.system_prompt = "Be brief."});
+  REQUIRE(conversation_result);
+  auto conversation = std::move(*conversation_result);
+  CHECK(conversation.system_prompt() == "Be brief.");
+  CHECK_FALSE(conversation.busy());
+
+  bool finished = false;
+  auto turn_result =
+      harness.send(conversation, "question",
+                   {
+                       .on_finished =
+                           [&finished](scry::Result<scry::Completion> outcome) {
+                             finished = outcome.has_value();
+                           },
+                   });
+  REQUIRE(turn_result);
+  const auto turn = std::move(*turn_result);
+  CHECK(conversation.busy());
+  CHECK_FALSE(turn.finished());
+
+  REQUIRE(pump_until(harness, [&finished] { return finished; }));
+  CHECK(turn.finished());
+  CHECK_FALSE(conversation.busy());
+
+  const auto& messages = conversation.messages();
+  REQUIRE(messages.size() == 2);
+  CHECK(messages[0].role == scry::Role::user);
+  const auto* asked = std::get_if<scry::TextBlock>(&messages[0].content.at(0));
+  REQUIRE(asked != nullptr);
+  CHECK(asked->text == "question");
+  CHECK(messages[1].role == scry::Role::assistant);
+  const auto* answered = std::get_if<scry::TextBlock>(&messages[1].content.at(0));
+  REQUIRE(answered != nullptr);
+  CHECK(answered->text == "coverage answer");
+}
+
+TEST_CASE("a turn without on_finished still reports finished once update runs") {
+  auto harness_result =
+      fake_harness(test_config(), scripted_exchange(completed_stream));
+  REQUIRE(harness_result);
+  auto harness = std::move(*harness_result);
+  auto conversation_result = scry::Conversation::create();
+  REQUIRE(conversation_result);
+  auto conversation = std::move(*conversation_result);
+
+  auto turn_result = harness.send(conversation, "question");
+  REQUIRE(turn_result);
+  const auto turn = std::move(*turn_result);
+  CHECK_FALSE(turn.finished());
+
+  REQUIRE(pump_until(harness, [&turn] { return turn.finished(); }));
+  CHECK_FALSE(conversation.busy());
+  CHECK(conversation.message_count() == 2);
+}
+
+TEST_CASE("Harness::cancel addresses an in-flight turn by identifier") {
+  auto transport = std::make_unique<HeldTransport>();
+  auto* held = transport.get();
+  auto harness_result = scry::detail::HarnessTestAccess::create(
+      test_config(), provider(), std::move(transport));
+  REQUIRE(harness_result);
+  auto harness = std::move(*harness_result);
+  auto conversation_result = scry::Conversation::create();
+  REQUIRE(conversation_result);
+  auto conversation = std::move(*conversation_result);
+
+  bool cancelled = false;
+  auto turn_result =
+      harness.send(conversation, "hold the transfer",
+                   {
+                       .on_finished =
+                           [&cancelled](scry::Result<scry::Completion> outcome) {
+                             cancelled = !outcome && outcome.error().category ==
+                                                         scry::ErrorCategory::cancelled;
+                           },
+                   });
+  REQUIRE(turn_result);
+  const auto turn = std::move(*turn_result);
+  held->wait_for_entry();
+
+  CHECK_FALSE(harness.cancel(scry::TurnId{999}));
+  CHECK(harness.cancel(turn.id()));
+  CHECK_FALSE(harness.cancel(turn.id()));
+  REQUIRE(pump_until(harness, [&cancelled] { return cancelled; }));
+  CHECK(turn.finished());
+  CHECK_FALSE(harness.cancel(turn.id()));
+  CHECK(conversation.empty());
+  CHECK_FALSE(conversation.busy());
 }
 
 TEST_CASE("construction and synchronous admission failures are immediate") {

@@ -9,6 +9,8 @@
 #include <string_view>
 #include <type_traits>
 #include <utility>
+#include <variant>
+#include <vector>
 
 static_assert(std::is_aggregate_v<scry::Config>);
 static_assert(std::is_enum_v<scry::ReasoningMode>);
@@ -17,6 +19,16 @@ static_assert(std::is_aggregate_v<scry::Json>);
 static_assert(std::is_enum_v<scry::JsonKind>);
 static_assert(std::is_default_constructible_v<scry::JsonView>);
 static_assert(std::is_copy_constructible_v<scry::JsonView>);
+static_assert(std::is_enum_v<scry::Role>);
+static_assert(std::is_aggregate_v<scry::Message>);
+static_assert(std::is_aggregate_v<scry::TextBlock>);
+static_assert(std::is_aggregate_v<scry::ToolCallBlock>);
+static_assert(std::is_aggregate_v<scry::ToolResultBlock>);
+static_assert(
+    std::same_as<scry::ContentBlock, std::variant<scry::TextBlock, scry::ToolCallBlock,
+                                                  scry::ToolResultBlock>>);
+static_assert(
+    std::same_as<decltype(scry::Message::content), std::vector<scry::ContentBlock>>);
 static_assert(std::is_aggregate_v<scry::ToolDefinition>);
 static_assert(std::is_aggregate_v<scry::UpdateOptions>);
 static_assert(std::is_aggregate_v<scry::TurnCallbacks>);
@@ -32,6 +44,8 @@ static_assert(std::same_as<decltype(scry::Usage::input_tokens), std::uint64_t>);
 static_assert(std::same_as<decltype(scry::Usage::output_tokens), std::uint64_t>);
 static_assert(std::same_as<decltype(scry::ToolCall::turn_id), scry::TurnId>);
 static_assert(std::same_as<decltype(scry::ToolCall::arguments), scry::Json>);
+static_assert(std::same_as<decltype(scry::ToolCall::result), scry::Json>);
+static_assert(std::same_as<decltype(scry::ToolCall::is_error), bool>);
 static_assert(std::same_as<decltype(scry::Completion::turn_id), scry::TurnId>);
 static_assert(
     std::same_as<decltype(scry::Completion::finish_reason), scry::FinishReason>);
@@ -103,6 +117,26 @@ static_assert(requires(scry::Turn& turn) {
 });
 static_assert(!registers_completion<scry::Turn>);
 static_assert(!registers_text_delta<scry::Turn>);
+static_assert(requires(const scry::Turn& turn) {
+  { turn.finished() } -> std::same_as<bool>;
+});
+
+// Thin queries over state the runtime already holds.
+static_assert(requires(scry::Harness& harness) {
+  { harness.cancel(scry::TurnId{}) } -> std::same_as<bool>;
+});
+static_assert(requires(const scry::Config& config) {
+  { scry::Harness::validate(config) } -> std::same_as<scry::Status>;
+});
+static_assert(requires(const scry::ToolRegistry& registry) {
+  { registry.contains(std::string_view{}) } -> std::same_as<bool>;
+  { registry.names() } -> std::same_as<std::vector<std::string>>;
+});
+static_assert(requires(const scry::Conversation& conversation) {
+  { conversation.messages() } -> std::same_as<const std::vector<scry::Message>&>;
+  { conversation.system_prompt() } -> std::same_as<const std::string&>;
+  { conversation.busy() } -> std::same_as<bool>;
+});
 
 // send() takes the callbacks atomically, and they are optional.
 static_assert(requires(scry::Harness& harness, scry::Conversation& conversation) {
