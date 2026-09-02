@@ -59,6 +59,19 @@ bool TurnRoute::cancel() noexcept {
   return changed;
 }
 
+// Clearing the callbacks is the whole operation: has_callback then reports
+// false for text and terminal events, so the pump releases them instead of
+// delivering them, while tool dispatch — which belongs to the registry, not to
+// the callbacks — keeps running and history still commits.
+bool TurnRoute::disconnect() noexcept {
+  if (disconnected_ || finished()) {
+    return false;
+  }
+  disconnected_ = true;
+  callbacks_ = TurnCallbacks{};
+  return true;
+}
+
 void TurnRoute::detach() noexcept { attached_ = false; }
 
 bool TurnRoute::attached() const noexcept { return attached_; }

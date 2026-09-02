@@ -16,8 +16,9 @@ Built for the apps that live in C++ — games, GUI tools, simulators — where y
 
 - **The complete agentic tool loop, owned by the library.** One `send()` covers
   the model request, streamed output, tool dispatch, automatic resend of tool
-  results, and the final answer — with cancellation, bounded retries, and
-  transactional conversation history.
+  results, and the final answer — with cancellation and callback disconnection
+  as separate controls, bounded retries, and transactional conversation
+  history.
 - **Fits the loop you already own.** `send()` never waits on network I/O, and
   every callback and tool handler runs inside the `update()` you call from your
   own main loop, on your own thread. No event loop is imposed and no locks are

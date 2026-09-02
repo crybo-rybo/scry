@@ -2,6 +2,7 @@
 
 #include <array>
 #include <imgui.h>
+#include <memory>
 #include <optional>
 #include <string_view>
 #include <utility>
@@ -11,7 +12,6 @@ namespace {
 
 struct PanelState {
   ChatPhase phase{ChatPhase::idle};
-  std::uint64_t generation{};
   std::string user_message{};
   std::string assistant_text{};
   std::string error_message{};
@@ -37,44 +37,35 @@ public:
     return turn_.has_value() && turn_->cancel();
   }
 
+  [[nodiscard]] bool disconnect() noexcept override {
+    return turn_.has_value() && turn_->disconnect();
+  }
+
 private:
   scry::Harness& harness_;
   scry::Conversation& conversation_;
   std::optional<scry::Turn> turn_{};
 };
 
-struct CallbackContext {
-  std::shared_ptr<PanelState> state;
-  std::uint64_t generation;
-};
-
-[[nodiscard]] scry::TurnCallbacks make_callbacks(CallbackContext context) {
-  const std::weak_ptr<PanelState> weak_state{context.state};
-  const auto generation = context.generation;
+// The callbacks hold the panel state directly. Nothing here has to ask whether
+// the delivery is stale: a superseded or dropped turn is disconnected, so the
+// library never invokes these again.
+[[nodiscard]] scry::TurnCallbacks make_callbacks(std::shared_ptr<PanelState> state) {
   return scry::TurnCallbacks{
       .on_text_delta =
-          [weak_state, generation](std::string_view delta) {
-            if (const auto locked = weak_state.lock();
-                locked && locked->generation == generation) {
-              locked->assistant_text.append(delta);
-            }
-          },
+          [state](std::string_view delta) { state->assistant_text.append(delta); },
       .on_finished =
-          [weak_state, generation](scry::Result<scry::Completion> finished) {
-            const auto locked = weak_state.lock();
-            if (!locked || locked->generation != generation) {
-              return;
-            }
+          [state](scry::Result<scry::Completion> finished) {
             if (finished) {
-              if (locked->assistant_text.empty()) {
-                locked->assistant_text = std::move(finished->text);
+              if (state->assistant_text.empty()) {
+                state->assistant_text = std::move(finished->text);
               }
-              locked->phase = ChatPhase::completed;
+              state->phase = ChatPhase::completed;
             } else if (finished.error().category == scry::ErrorCategory::cancelled) {
-              locked->phase = ChatPhase::cancelled;
+              state->phase = ChatPhase::cancelled;
             } else {
-              locked->error_message = std::move(finished.error().message);
-              locked->phase = ChatPhase::failed;
+              state->error_message = std::move(finished.error().message);
+              state->phase = ChatPhase::failed;
             }
           },
   };
@@ -113,6 +104,9 @@ public:
     if (can_cancel()) {
       static_cast<void>(controller_.cancel());
     }
+    // The panel is going away; the turn may not be. Disconnecting releases the
+    // callbacks holding the panel state, so nothing keeps writing into it.
+    static_cast<void>(controller_.disconnect());
   }
 
   [[nodiscard]] SubmitStatus submit(std::string user_message) {
@@ -123,15 +117,16 @@ public:
       return std::unexpected("A turn is already active");
     }
 
+    // Whatever a previous turn is still doing, it stops reporting here: the
+    // library releases its callbacks, so no stale delivery can reach the panel.
+    static_cast<void>(controller_.disconnect());
     state_->phase = ChatPhase::streaming;
     state_->user_message = user_message;
     state_->assistant_text.clear();
     state_->error_message.clear();
-    const auto generation = ++state_->generation;
-    auto status = controller_.submit(std::move(user_message),
-                                     make_callbacks({state_, generation}));
+    auto status = controller_.submit(std::move(user_message), make_callbacks(state_));
     if (!status) {
-      ++state_->generation;
+      static_cast<void>(controller_.disconnect());
       state_->phase = ChatPhase::failed;
       state_->error_message = status.error();
     }

@@ -13,6 +13,7 @@ struct ControllerState {
   std::vector<std::string> messages{};
   std::string submit_error{};
   std::size_t cancel_requests{};
+  std::size_t disconnect_requests{};
   bool cancellation_accepted{true};
 };
 
@@ -53,6 +54,19 @@ public:
   [[nodiscard]] bool cancel() noexcept override {
     ++state_->cancel_requests;
     return state_->cancellation_accepted;
+  }
+
+  // Models what the library does: the callbacks of the current turn are
+  // released, so a later attempt to deliver through them finds nothing.
+  [[nodiscard]] bool disconnect() noexcept override {
+    ++state_->disconnect_requests;
+    if (state_->submissions.empty()) {
+      return false;
+    }
+    auto& callbacks = state_->submissions.back();
+    const bool connected = static_cast<bool>(callbacks.on_finished);
+    callbacks = scry::TurnCallbacks{};
+    return connected;
   }
 
 private:
@@ -107,7 +121,9 @@ TEST_CASE("Chat panel reports synchronous submit errors") {
   CHECK(fixture.panel.snapshot().phase == scry_showcase::ChatPhase::failed);
   CHECK(fixture.panel.snapshot().error_message == "provider unavailable");
 
-  complete(fixture.controller_state->submissions.back(), "late completion");
+  // A submission that never became a turn is disconnected, so the callbacks
+  // the panel handed over can no longer deliver anything into it.
+  CHECK_FALSE(fixture.controller_state->submissions.back().on_finished);
   CHECK(fixture.panel.snapshot().phase == scry_showcase::ChatPhase::failed);
 }
 
@@ -159,21 +175,25 @@ TEST_CASE("Chat panel remains active when cancellation is refused") {
   CHECK(fixture.controller_state->cancel_requests == 1);
 }
 
-TEST_CASE("Chat panel ignores callbacks from an older submission") {
+TEST_CASE("Chat panel disconnects an older submission before starting another") {
   PanelFixture fixture;
 
   REQUIRE(fixture.panel.submit("first"));
   complete(fixture.controller_state->submissions.front(), "first response");
   REQUIRE(fixture.panel.submit("second"));
-  fail(fixture.controller_state->submissions.front(), "stale error");
 
+  // The older turn was disconnected as the new one started, so it has no
+  // callbacks left to deliver a stale outcome through.
+  CHECK(fixture.controller_state->disconnect_requests == 2);
+  CHECK_FALSE(fixture.controller_state->submissions.front().on_finished);
+  CHECK_FALSE(fixture.controller_state->submissions.front().on_text_delta);
   const auto snapshot = fixture.panel.snapshot();
   CHECK(snapshot.phase == scry_showcase::ChatPhase::streaming);
   CHECK(snapshot.user_message == "second");
   CHECK(snapshot.error_message.empty());
 }
 
-TEST_CASE("Chat panel destruction requests cancellation without retaining state") {
+TEST_CASE("Chat panel destruction cancels and disconnects the live turn") {
   auto controller_state = std::make_shared<ControllerState>();
   FakeController controller{controller_state};
   {
@@ -182,8 +202,10 @@ TEST_CASE("Chat panel destruction requests cancellation without retaining state"
   }
 
   CHECK(controller_state->cancel_requests == 1);
-  controller_state->submissions.back().on_text_delta("late");
-  cancel(controller_state->submissions.back());
+  // Nothing can deliver into the destroyed panel: the turn keeps running, but
+  // its callbacks are gone.
+  CHECK_FALSE(controller_state->submissions.back().on_text_delta);
+  CHECK_FALSE(controller_state->submissions.back().on_finished);
 }
 
 TEST_CASE("Chat panel destruction cancels only a live streaming turn") {

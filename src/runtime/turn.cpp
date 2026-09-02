@@ -32,4 +32,16 @@ bool Turn::cancel() noexcept {
   return !impl_->cancelled->exchange(true, std::memory_order_relaxed);
 }
 
+bool Turn::disconnect() noexcept {
+  if (impl_ == nullptr) {
+    return false;
+  }
+  // Unlike cancellation there is no flag outliving the route: with the Harness
+  // gone there are no callbacks left to clear.
+  if (const auto route = impl_->route.lock()) {
+    return route->disconnect();
+  }
+  return false;
+}
+
 } // namespace scry

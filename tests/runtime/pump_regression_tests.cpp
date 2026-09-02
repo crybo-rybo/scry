@@ -433,6 +433,78 @@ TEST_CASE("events no callback can consume are released on arrival") {
       limit));
 }
 
+TEST_CASE("a disconnected route keeps its turn but delivers nothing") {
+  PumpFixture fixture;
+  scry::detail::PumpState pump{fixture.events};
+  constexpr std::size_t limit = 64;
+  std::string streamed;
+  bool finished = false;
+  const auto route = fixture.route(
+      221, {
+               .callbacks = scry::TurnCallbacks{
+                   .on_text_delta =
+                       [&streamed](std::string_view delta) { streamed.append(delta); },
+                   .on_finished =
+                       [&finished](scry::Result<scry::Completion>) { finished = true; },
+               },
+           });
+  pump.add_route(route);
+  REQUIRE(fixture.events->push(
+      scry::detail::TextDeltaEvent{.turn_id = route->id(), .text = "streamed"}, limit));
+  REQUIRE(fixture.events->push_terminal(completion_event(route->id()), limit));
+  // Ingest both without delivering either, so the disconnect below lands on a
+  // turn whose terminal outcome is queued but not yet reported.
+  CHECK(pump.update({.max_callbacks = 0}).events_remaining == 2);
+
+  CHECK(route->disconnect());
+  CHECK_FALSE(route->disconnect());
+
+  const auto stats = pump.update({});
+  CHECK(stats.callbacks_delivered == 0);
+  // Both queued events were released rather than delivered, so the whole
+  // per-turn budget is free again.
+  CHECK(stats.events_remaining == 0);
+  CHECK(streamed.empty());
+  CHECK_FALSE(finished);
+  // The turn itself ran to completion: history committed and busy cleared.
+  REQUIRE(fixture.conversation->messages->size() == 2);
+  CHECK(std::get<scry::detail::TextBlock>(
+            fixture.conversation->messages->back().content.front())
+            .text == "done");
+  CHECK_FALSE(fixture.conversation->busy);
+  // With no delivery left to wait for, the turn is finished as soon as the
+  // terminal event is processed.
+  CHECK(route->finished());
+  CHECK(fixture.events->push(
+      scry::detail::TextDeltaEvent{
+          .turn_id = route->id(),
+          .text = std::string(limit, 'x'),
+      },
+      limit));
+}
+
+TEST_CASE("a route that already reported its outcome cannot be disconnected") {
+  PumpFixture fixture;
+  scry::detail::PumpState pump{fixture.events};
+  bool finished = false;
+  const auto route = fixture.route(
+      222,
+      {
+          .callbacks =
+              scry::TurnCallbacks{
+                  .on_finished =
+                      [&finished](scry::Result<scry::Completion>) { finished = true; },
+              },
+      });
+  pump.add_route(route);
+  REQUIRE(fixture.events->push_terminal(completion_event(route->id()), 1024));
+
+  CHECK(pump.update({}).callbacks_delivered == 1);
+
+  REQUIRE(finished);
+  CHECK_FALSE(route->disconnect());
+}
+
 TEST_CASE("pump shutdown releases pending and queued event ownership") {
   PumpFixture fixture;
   scry::detail::PumpState pump{fixture.events};

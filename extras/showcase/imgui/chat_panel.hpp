@@ -35,6 +35,8 @@ public:
   [[nodiscard]] virtual SubmitStatus submit(std::string user_message,
                                             scry::TurnCallbacks callbacks) = 0;
   [[nodiscard]] virtual bool cancel() noexcept = 0;
+  /// Stops delivery from the current turn without stopping the turn itself.
+  [[nodiscard]] virtual bool disconnect() noexcept = 0;
 };
 
 class ChatPanel final {

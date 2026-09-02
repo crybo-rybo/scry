@@ -34,6 +34,7 @@ public:
   [[nodiscard]] TurnId id() const noexcept;
   [[nodiscard]] std::shared_ptr<std::atomic<bool>> cancel_flag() const noexcept;
   [[nodiscard]] bool cancel() noexcept;
+  [[nodiscard]] bool disconnect() noexcept;
 
   void detach() noexcept;
   [[nodiscard]] bool attached() const noexcept;
@@ -62,6 +63,7 @@ private:
   std::size_t remaining_exchange_bytes_{std::numeric_limits<std::size_t>::max()};
   std::size_t max_conversation_bytes_{};
   bool attached_{true};
+  bool disconnected_{false};
   bool terminal_{false};
   bool terminal_delivered_{false};
   bool tool_dispatch_failed_{false};

@@ -14,6 +14,8 @@ public:
   }
 
   [[nodiscard]] bool cancel() noexcept override { return false; }
+
+  [[nodiscard]] bool disconnect() noexcept override { return false; }
 };
 
 } // namespace

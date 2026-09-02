@@ -93,7 +93,21 @@ public:
   /// @return true only when this call issued the cancellation request; false when
   /// cancellation was already requested, the turn was terminal, no such turn is known
   /// to this Harness, or this Harness is moved from.
+  /// @see disconnect(TurnId)
   bool cancel(TurnId turn_id) noexcept;
+
+  /// Clears every callback supplied to send() for one accepted turn by identifier.
+  ///
+  /// This is Turn::disconnect() addressed by id, for hosts that retain TurnId values
+  /// rather than Turn handles. The contract is identical: the turn keeps running,
+  /// history still commits or rolls back, the Conversation's busy state still clears,
+  /// and nothing further reaches the host.
+  /// @param turn_id Identifier returned by Turn::id().
+  /// @return true only when this call cleared the callbacks of a turn that had not yet
+  /// delivered its terminal outcome; false on a second call, on a finished turn, when
+  /// no such turn is known to this Harness, or when this Harness is moved from.
+  /// @see cancel(TurnId)
+  bool disconnect(TurnId turn_id) noexcept;
 
   /// Runs one turn synchronously on top of send() and update().
   ///

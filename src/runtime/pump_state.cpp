@@ -295,9 +295,10 @@ bool PumpState::has_deliverable() const noexcept {
 }
 
 void PumpState::release_discarded() {
-  // Every pending event was retained because its route could consume it. Only a
-  // tool call can lose that claim afterwards, by reaching a terminal state or a
-  // failed dispatch.
+  // Every pending event was retained because its route could consume it. Two
+  // things revoke that claim afterwards: a tool call whose route reached a
+  // terminal state or failed a dispatch, and any event on a route the host
+  // disconnected.
   std::erase_if(pending_callbacks_, [this](const auto& event) {
     const auto route = find_route(event_turn_id(event.event));
     const auto discard = !route || !route->has_callback(event.event);

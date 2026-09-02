@@ -116,6 +116,9 @@ static_assert(requires(const scry::Turn& turn) {
 static_assert(requires(scry::Turn& turn) {
   { turn.cancel() } -> std::same_as<bool>;
 });
+static_assert(requires(scry::Turn& turn) {
+  { turn.disconnect() } -> std::same_as<bool>;
+});
 static_assert(!registers_completion<scry::Turn>);
 static_assert(!registers_text_delta<scry::Turn>);
 static_assert(requires(const scry::Turn& turn) {
@@ -125,6 +128,7 @@ static_assert(requires(const scry::Turn& turn) {
 // Thin queries over state the runtime already holds.
 static_assert(requires(scry::Harness& harness) {
   { harness.cancel(scry::TurnId{}) } -> std::same_as<bool>;
+  { harness.disconnect(scry::TurnId{}) } -> std::same_as<bool>;
 });
 static_assert(requires(const scry::Config& config) {
   { scry::Harness::validate(config) } -> std::same_as<scry::Status>;

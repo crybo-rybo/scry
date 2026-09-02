@@ -178,6 +178,10 @@ public:
     const auto route = pump_.find_route(turn_id);
     return route != nullptr && route->cancel();
   }
+  [[nodiscard]] bool disconnect(const TurnId turn_id) noexcept {
+    const auto route = pump_.find_route(turn_id);
+    return route != nullptr && route->disconnect();
+  }
   [[nodiscard]] ToolRegistry& tools() noexcept { return *tools_; }
   [[nodiscard]] const ToolRegistry& tools() const noexcept { return *tools_; }
   [[nodiscard]] UpdateStats update(const UpdateOptions options) {
@@ -240,6 +244,13 @@ bool Harness::cancel(const TurnId turn_id) noexcept {
     return false;
   }
   return impl_->cancel(turn_id);
+}
+
+bool Harness::disconnect(const TurnId turn_id) noexcept {
+  if (impl_ == nullptr) {
+    return false;
+  }
+  return impl_->disconnect(turn_id);
 }
 
 ToolRegistry& Harness::tools() noexcept {

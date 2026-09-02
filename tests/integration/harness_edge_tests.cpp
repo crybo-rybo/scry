@@ -196,6 +196,7 @@ TEST_CASE("moved-from public runtime handles remain safely observable") {
   auto turn = std::move(*turn_result);
   CHECK_FALSE(turn_result->id());
   CHECK_FALSE(turn_result->cancel());
+  CHECK_FALSE(turn_result->disconnect());
   CHECK(turn.id());
 }
 
@@ -305,6 +306,46 @@ TEST_CASE("Harness::cancel addresses an in-flight turn by identifier") {
   CHECK_FALSE(harness.cancel(turn.id()));
   CHECK(conversation.empty());
   CHECK_FALSE(conversation.busy());
+}
+
+TEST_CASE("Harness::disconnect stops delivery while the turn still runs") {
+  auto transport = std::make_unique<HeldTransport>();
+  auto* held = transport.get();
+  auto harness_result = scry::detail::HarnessTestAccess::create(
+      test_config(), provider(), std::move(transport));
+  REQUIRE(harness_result);
+  auto harness = std::move(*harness_result);
+  auto conversation_result = scry::Conversation::create();
+  REQUIRE(conversation_result);
+  auto conversation = std::move(*conversation_result);
+
+  std::string streamed;
+  bool reported = false;
+  auto turn_result = harness.send(
+      conversation, "hold the transfer",
+      {
+          .on_text_delta =
+              [&streamed](std::string_view delta) { streamed.append(delta); },
+          .on_finished =
+              [&reported](scry::Result<scry::Completion>) { reported = true; },
+      });
+  REQUIRE(turn_result);
+  const auto turn = std::move(*turn_result);
+  held->wait_for_entry();
+
+  CHECK_FALSE(harness.disconnect(scry::TurnId{999}));
+  CHECK(harness.disconnect(turn.id()));
+  CHECK_FALSE(harness.disconnect(turn.id()));
+  // Disconnection stopped the reporting; cancellation still stops the work,
+  // and the two compose in either order.
+  CHECK(harness.cancel(turn.id()));
+
+  REQUIRE(pump_until(harness, [&turn] { return turn.finished(); }));
+  CHECK_FALSE(reported);
+  CHECK(streamed.empty());
+  CHECK(conversation.empty());
+  CHECK_FALSE(conversation.busy());
+  CHECK_FALSE(harness.disconnect(turn.id()));
 }
 
 TEST_CASE("construction and synchronous admission failures are immediate") {

@@ -114,7 +114,9 @@ using ToolCallCallback = UniqueFunction<void(const ToolCall&)>;
 ///
 /// Every member is optional; an empty member simply means no delivery of that kind.
 /// Callbacks are supplied to Harness::send() and are attached from the moment the turn
-/// is accepted, so no event can precede them.
+/// is accepted, so no event can precede them. They are detached only by
+/// Turn::disconnect() or Harness::disconnect(), which clears all of them at once and
+/// lets the turn run on undelivered.
 struct TurnCallbacks {
   /// Observes coalesced fragments of streamed assistant text.
   TextDeltaCallback on_text_delta{};
