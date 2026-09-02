@@ -1,7 +1,8 @@
 # Per-commit CI ring; see docs/development/quality-gates.md section 6.
 #
 # Live gates: the warning-clean Doxygen site plus format (pinned
-# clang-format-18), core build matrix with warnings-as-errors plus complexity,
+# clang-format-18), main-only GitHub Pages publication, core build matrix with
+# warnings-as-errors plus complexity,
 # contract tests, and the install/package-consumer audit via ci-local.sh,
 # ASan/UBSan/TSan, and clang-tidy. The GCC 16 reflection leg gates
 # reflection-affecting pull requests from reflection.yml (path-aware) and runs
@@ -52,6 +53,31 @@ jobs:
         run: git ls-files '*.cpp' '*.hpp' |
           grep -E '^(examples|benchmarks|include|src|tests)/' |
           xargs clang-format-18 --dry-run --Werror
+      - name: Package website for GitHub Pages
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v4.0.0
+        with:
+          path: build/docs/html
+
+  deploy-documentation:
+    name: Deploy Doxygen API site
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: documentation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5.0.0
+      - name: Deploy website
+        id: deployment
+        uses: actions/deploy-pages@v4.0.5
 
   core:
     name: Core (${{ matrix.name }})
