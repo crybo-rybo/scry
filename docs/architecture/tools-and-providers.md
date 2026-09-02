@@ -137,4 +137,5 @@ The second sanctioned interface, existing for one reason: **dependency injection
   split byte chunks (the classic bug in SSE parsers is
   delimiter-across-chunk; the test generator targets it directly).
 - Curl's progress callback checks both the worker `stop_token` (Harness shutdown) and the active turn's atomic cancellation flag. Neither signal is repurposed for the other.
+- A non-2xx response body is never delivered to the stream decoder. The transport retains at most 8 KiB of it solely to extract the provider's own error token, which reaches `Error::provider_detail` under the dialect namespace; the retained bytes are then discarded with the transfer.
 - Connection reuse (curl multi/share) is an internal optimization invisible above the seam.

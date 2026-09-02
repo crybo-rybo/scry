@@ -216,26 +216,42 @@ TEST_CASE("a rejected reentrant pump update reports an exhausted budget") {
   CHECK(pump.update({}).callbacks_delivered == 1);
 }
 
-TEST_CASE("a nonpositive pump budget expires before queued work") {
+TEST_CASE("a nonpositive pump budget still ingests and delivers one unit of work") {
   PumpFixture fixture;
   auto now = std::chrono::steady_clock::time_point{};
   scry::detail::PumpState pump{fixture.events, [&now] { return now; }};
-  const auto route =
+  // Deltas for the same turn coalesce, so two turns are needed to observe two
+  // separate ingests.
+  const auto first =
       fixture.route(105, {
                              .callbacks =
                                  scry::TurnCallbacks{
                                      .on_text_delta = [](std::string_view) {},
                                  },
                          });
-  pump.add_route(route);
+  const auto second =
+      fixture.route(106, {
+                             .callbacks =
+                                 scry::TurnCallbacks{
+                                     .on_text_delta = [](std::string_view) {},
+                                 },
+                         });
+  pump.add_route(first);
+  pump.add_route(second);
   REQUIRE(fixture.events->push(
-      scry::detail::TextDeltaEvent{.turn_id = route->id(), .text = "deferred"}, 1024));
+      scry::detail::TextDeltaEvent{.turn_id = first->id(), .text = "first"}, 1024));
+  REQUIRE(fixture.events->push(
+      scry::detail::TextDeltaEvent{.turn_id = second->id(), .text = "second"}, 1024));
 
+  // An expired budget buys one ingest and one delivery, never zero progress.
   const auto bounded = pump.update({.time_budget = std::chrono::microseconds{0}});
-  CHECK(bounded.callbacks_delivered == 0);
+  CHECK(bounded.callbacks_delivered == 1);
   CHECK(bounded.events_remaining == 1);
   CHECK(bounded.budget_exhausted);
-  CHECK(pump.update({}).callbacks_delivered == 1);
+
+  const auto drained = pump.update({.time_budget = std::chrono::microseconds{0}});
+  CHECK(drained.callbacks_delivered == 1);
+  CHECK(drained.events_remaining == 0);
 }
 
 TEST_CASE("completion callback text concatenates only the exchange text blocks") {

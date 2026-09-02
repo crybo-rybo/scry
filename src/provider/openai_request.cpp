@@ -304,6 +304,7 @@ OpenAiAdapter::make_request(const Config& config, const ModelRequest& request) c
       .url = endpoint(config.base_url),
       .headers = request_headers(config),
       .body = std::move(*encoded),
+      .provider_namespace = "openai",
       .tls_verify_peer = config.tls_verify_peer,
       .timeouts = config.timeouts,
       .limits = config.limits,

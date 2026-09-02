@@ -230,7 +230,8 @@ int main() {
       config.retry.max_backoff == std::chrono::seconds{10},
       config.retry.max_elapsed == std::chrono::seconds{30},
       config.timeouts.connect == std::chrono::seconds{10},
-      config.timeouts.transfer == std::chrono::seconds{120},
+      config.timeouts.idle == std::chrono::seconds{120},
+      !config.timeouts.transfer.has_value(),
       config.timeouts.shutdown == std::chrono::seconds{2},
       config.tls_verify_peer,
   });

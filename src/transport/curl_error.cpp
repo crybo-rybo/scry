@@ -45,6 +45,11 @@ Error classify(const int code_value, const std::optional<Error>& callback_error,
       code == CURLE_URL_MALFORMAT) {
     return make_error(ErrorCategory::protocol, "invalid server response");
   }
+  // Curl reports the idle (low-speed) bound and the total bound with the same
+  // code, so the message must not claim which one fired.
+  if (code == CURLE_OPERATION_TIMEDOUT) {
+    return make_error(ErrorCategory::network, "transfer timed out", true);
+  }
   return make_error(ErrorCategory::network, "network transfer failed", true);
 }
 

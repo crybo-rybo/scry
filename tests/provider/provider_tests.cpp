@@ -85,6 +85,9 @@ TEST_CASE("Anthropic request is semantically equivalent to its sanitized fixture
   REQUIRE(encoded.has_value());
   CHECK(encoded->url == "https://api.anthropic.test/v1/messages");
   CHECK(encoded->tls_verify_peer);
+  // The transport prefixes body-derived error tokens with this namespace, so it
+  // must match the one the stream decoder uses.
+  CHECK(encoded->provider_namespace == "anthropic");
   CHECK(header(*encoded, "content-type") == "application/json");
   CHECK(header(*encoded, "x-api-key") == "sanitized-test-key");
   CHECK(header(*encoded, "anthropic-version") == "2023-06-01");
