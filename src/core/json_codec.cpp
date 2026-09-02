@@ -17,11 +17,20 @@ constexpr glz::opts json_read_options{.null_terminated = false};
 
 } // namespace
 
+Status parse_json_into(JsonValue& destination, const std::string_view input,
+                       const ErrorCategory category,
+                       const std::string_view failure_message) {
+  if (glz::read<json_read_options>(destination, input)) {
+    return std::unexpected(make_error(category, std::string{failure_message}));
+  }
+  return {};
+}
+
 Result<JsonValue> parse_json(const std::string_view input, const ErrorCategory category,
                              const std::string_view failure_message) {
   JsonValue value{};
-  if (glz::read<json_read_options>(value, input)) {
-    return std::unexpected(make_error(category, std::string{failure_message}));
+  if (auto status = parse_json_into(value, input, category, failure_message); !status) {
+    return std::unexpected(std::move(status.error()));
   }
   return value;
 }

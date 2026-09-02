@@ -20,21 +20,22 @@ void append_control_escape(std::string& output, const unsigned char value) {
 
 class JsonView::Document final {
 public:
-  explicit Document(detail::JsonValue value) : root(std::move(value)) {}
-
   detail::JsonValue root{};
 };
 
 JsonView::JsonView(std::shared_ptr<const Document> document, const void* value) noexcept
     : document_(std::move(document)), value_(value) {}
 
+// The value is parsed in place because GCC 14 reports a maybe-uninitialized false
+// positive inside std::variant when a JsonValue is moved into the document.
 Result<JsonView> JsonView::parse(const Json& json) {
-  auto value = detail::parse_json(json.text, ErrorCategory::invalid_argument,
-                                  "JSON text is not valid");
-  if (!value) {
-    return std::unexpected(std::move(value.error()));
+  auto document = std::make_shared<Document>();
+  if (auto status = detail::parse_json_into(document->root, json.text,
+                                            ErrorCategory::invalid_argument,
+                                            "JSON text is not valid");
+      !status) {
+    return std::unexpected(std::move(status.error()));
   }
-  auto document = std::make_shared<Document>(std::move(*value));
   return JsonView{document, &document->root};
 }
 
