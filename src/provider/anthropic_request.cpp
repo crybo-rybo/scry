@@ -161,6 +161,7 @@ encode_tools(const std::vector<ToolSchema>& tools) {
   root["model"] = config.model;
   // Validation rejects an unset max_tokens for this dialect, so the optional is
   // always engaged here.
+  // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
   root["max_tokens"] = *request.sampling.max_tokens;
   root["temperature"] = request.sampling.temperature;
   root["stream"] = true;

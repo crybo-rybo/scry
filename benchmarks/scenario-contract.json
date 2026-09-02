@@ -18,6 +18,10 @@
     {
       "sha256": "51847a9c17539b03355b7638c4ebe0d45d9c2543901f7979a201bbbbddfd6b60",
       "reason": "live allocation accounting extends instrumentation without changing logical scenario work"
+    },
+    {
+      "sha256": "2b76769dc66801a71b0f11271b39967d1de0a591f918e3871369356621ef1a59",
+      "reason": "rejected admission expects invalid_argument after the caller-argument error split; the scenario performs the same logical work"
     }
   ]
 }
