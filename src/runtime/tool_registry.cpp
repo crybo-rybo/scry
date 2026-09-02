@@ -12,7 +12,7 @@ namespace {
 
 [[nodiscard]] Error invalid_registration(std::string message) {
   return Error{
-      .category = ErrorCategory::invalid_state,
+      .category = ErrorCategory::invalid_argument,
       .message = std::move(message),
   };
 }
@@ -28,7 +28,7 @@ Status add_tool_registration(ToolRegistryState& state, ToolDefinition definition
     return std::unexpected(invalid_registration("tool handler must not be empty"));
   }
   auto schema =
-      canonicalize_json_object(definition.input_schema, ErrorCategory::invalid_state,
+      canonicalize_json_object(definition.input_schema, ErrorCategory::invalid_argument,
                                "tool input schema must be a valid JSON object");
   if (!schema) {
     return std::unexpected(std::move(schema.error()));

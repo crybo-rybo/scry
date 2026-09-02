@@ -479,7 +479,7 @@ TEST_CASE("reflected registration lowers into the additive registry") {
                                                     },
                                                     DirectHandler{});
   REQUIRE_FALSE(status);
-  CHECK(status.error().category == scry::ErrorCategory::invalid_state);
+  CHECK(status.error().category == scry::ErrorCategory::invalid_argument);
   CHECK(harness.tools().size() == 1);
 
   status = scry::reflection::add<PresenceArguments>(

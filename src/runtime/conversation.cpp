@@ -11,6 +11,8 @@ Conversation::~Conversation() = default;
 Conversation::Conversation(Conversation&&) noexcept = default;
 Conversation& Conversation::operator=(Conversation&&) noexcept = default;
 
+// No ConversationConfig is rejected today; see the create() contract in
+// include/scry/conversation.hpp before adding a check here.
 Result<Conversation> Conversation::create(ConversationConfig config) {
   return Conversation{std::make_unique<Impl>(std::move(config))};
 }
