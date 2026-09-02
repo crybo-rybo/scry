@@ -12,7 +12,7 @@ Configure a local or hosted OpenAI-compatible endpoint, then run the
 export SCRY_LOCAL_MODEL_BASE_URL=http://127.0.0.1:11434/v1
 export SCRY_LOCAL_MODEL_MODEL=qwen3:8b
 # SCRY_LOCAL_MODEL_API_KEY is optional for local servers.
-./build/showcase/examples/scry_npc_showcase
+./build/showcase/scry_npc_showcase
 ```
 
 Pass command-line arguments to replace the default movement request.

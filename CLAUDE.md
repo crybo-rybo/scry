@@ -67,7 +67,7 @@ Gates:
 just tidy | just asan | just tsan | just docs | just showcase   # individual legs
 ```
 
-Presets: `dev` (Debug), `ci` (RelWithDebInfo), `asan`, `tsan` — all GCC 16 — and `fuzz` (Clang, `SCRY_CLANG_TOOLING`). `dev-logging`, `profile`, `reflection-gcc16`, `showcase`, and `nightly-local-model` are gone; so are the options `SCRY_ENABLE_REFLECTION`, `SCRY_ENABLE_LOGGING`, `SCRY_USE_LIBCXX`, `SCRY_BUILD_BENCHMARKS`, `SCRY_BUILD_IMGUI_SHOWCASE`, and `SCRY_BUILD_LOCAL_MODEL_SMOKE`. There is no profiling apparatus: `benchmarks/`, the `perf-*` scripts, and the performance workflow are gone.
+Presets: `dev` (Debug), `ci` (RelWithDebInfo), `asan`, `tsan` — all GCC 16 — and `fuzz` (Clang, `SCRY_CLANG_TOOLING`). `dev-logging`, `profile`, `reflection-gcc16`, `showcase`, and `nightly-local-model` are gone; so are the options `SCRY_ENABLE_REFLECTION`, `SCRY_ENABLE_LOGGING`, `SCRY_USE_LIBCXX`, `SCRY_BUILD_BENCHMARKS`, `SCRY_BUILD_IMGUI_SHOWCASE`, and `SCRY_BUILD_LOCAL_MODEL_SMOKE`. There is no profiling apparatus: `benchmarks/`, the `perf-*` scripts, and the performance workflow are gone. The Dear ImGui and NPC showcase is a standalone project under `extras/showcase/` that the root build never sees; `./scripts/ci-showcase.sh` (`just showcase`) configures it directly.
 
 ## Architecture map
 

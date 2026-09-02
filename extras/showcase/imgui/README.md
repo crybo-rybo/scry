@@ -25,6 +25,7 @@ The harness and conversation must outlive the panel. Destroying the panel reques
 cancellation of an active turn but never waits for it. Callback captures use weak
 shared state, so queued callbacks become harmless after panel destruction.
 
-Enable the showcase with `-DSCRY_BUILD_IMGUI_SHOWCASE=ON`, or use the `showcase`
-preset. Scry fetches the pinned Dear ImGui core only for this build; it deliberately
-does not select or link GLFW, SDL, OpenGL, or another host backend.
+The showcase is a standalone CMake project outside Scry's root build; configure
+`extras/showcase` directly, or run `./scripts/ci-showcase.sh` (`just showcase`). It
+fetches the pinned Dear ImGui core only for this build and deliberately does not
+select or link GLFW, SDL, OpenGL, or another host backend.

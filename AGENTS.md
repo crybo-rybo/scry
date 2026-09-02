@@ -61,7 +61,8 @@ clang-tidy leg runnable locally — CI pins clang-tidy 18, so the keg-only
 `llvm@18` is probed before the unversioned `llvm` formula. Long fuzz runs, deep
 static analysis, and the showcase gate run in the scheduled weekly workflow
 (`docs/development/quality-gates.md` §6); `just showcase` runs the showcase gate
-locally.
+locally against the standalone project under `extras/showcase/`, which the root
+build never configures.
 
 For a normal edit/build loop:
 

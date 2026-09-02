@@ -105,13 +105,11 @@ if(SCRY_BUILD_FUZZERS)
 endif()
 
 add_subdirectory(machine)
+add_subdirectory(nightly)
 add_subdirectory(protocol)
 add_subdirectory(provider)
 add_subdirectory(transport)
 add_subdirectory(integration)
-if(SCRY_BUILD_IMGUI_SHOWCASE)
-  add_subdirectory(showcase)
-endif()
 
 # The reflected surface is the public API; it cannot compile under Clang, so
 # the fuzz/tidy tooling build skips it.
