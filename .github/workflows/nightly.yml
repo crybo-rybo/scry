@@ -74,6 +74,8 @@ jobs:
           - sse
           - anthropic
           - openai
+          - response_policy
+          - conversation
     env:
       CC: clang-21
       CXX: clang++-21

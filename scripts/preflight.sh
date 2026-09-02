@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 
 # Local equivalent of the per-commit CI ring: documentation, core, profiling
-# infrastructure, clang-tidy, sanitizers, and the GCC 16 reflection component.
-# Fuzzing, the showcase, and the local-model smoke live in the
-# scheduled/manual nightly workflow.
+# infrastructure, clang-tidy, sanitizers, the fuzz corpus replay, and the
+# GCC 16 reflection component. Long fuzz runs, the showcase, and the
+# local-model smoke live in the scheduled/manual nightly workflow.
 
 set -uo pipefail
 
@@ -15,8 +15,14 @@ run_gate() {
   shift
   echo
   echo "==> ${name}"
-  if "$@"; then
+  local status=0
+  "$@" || status=$?
+  if [[ "${status}" -eq 0 ]]; then
     echo "PASS: ${name}"
+  elif [[ "${status}" -eq 77 ]]; then
+    # 77 is the conventional "skipped" status: this host cannot run the leg at
+    # all, so hosted CI is authoritative for it.
+    echo "SKIP: ${name} (unavailable on this host; hosted CI is authoritative)"
   else
     echo "FAIL: ${name}" >&2
     failures=$((failures + 1))
@@ -73,6 +79,35 @@ run_reflection() {
   ./scripts/ci-reflection.sh
 }
 
+# libFuzzer needs a runtime the compiler must ship; AppleClang does not, so the
+# gate reports host-unavailable instead of failing a local preflight.
+fuzzer_link_available() {
+  local probe_dir=""
+  probe_dir="$(mktemp -d)" || return 1
+  cat >"${probe_dir}/probe.cpp" <<'PROBE'
+#include <cstddef>
+#include <cstdint>
+extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t*, std::size_t) { return 0; }
+PROBE
+  local status=0
+  "${CXX:-c++}" -std=c++23 -fsanitize=fuzzer \
+    "${probe_dir}/probe.cpp" -o "${probe_dir}/probe" >/dev/null 2>&1 || status=1
+  rm -rf "${probe_dir}"
+  return "${status}"
+}
+
+run_fuzz_replay() {
+  if ! fuzzer_link_available; then
+    echo "${CXX:-c++} cannot link -fsanitize=fuzzer; the hosted fuzz replay leg is authoritative" >&2
+    return 77
+  fi
+  # SCRY_FUZZ_RUNS=0 makes libFuzzer execute the seed corpus once and exit,
+  # which is a deterministic replay rather than a search.
+  cmake --preset fuzz -DSCRY_FUZZ_RUNS=0 &&
+    cmake --build build/fuzz &&
+    ctest --test-dir build/fuzz --output-on-failure -R 'fuzz$'
+}
+
 run_profile_smoke() {
   local artifact_dir=""
   mkdir -p "${root_dir}/build/profile-artifacts"
@@ -105,6 +140,7 @@ run_gate "clang-tidy" run_tidy
 run_gate "ASan + UBSan" run_preset asan
 # TSan is where nondeterminism surfaces; the repeat runs live here (QA-008).
 run_gate "TSan" run_preset tsan --repeat until-fail:3
+run_gate "fuzz corpus replay" run_fuzz_replay
 run_gate "GCC 16 supported reflection component" run_reflection
 
 if [[ "${failures}" -ne 0 ]]; then

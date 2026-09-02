@@ -23,3 +23,17 @@ catch_discover_tests(
   TEST_PREFIX "transport."
   PROPERTIES TIMEOUT 15
 )
+
+if(SCRY_BUILD_FUZZERS)
+  scry_require_fuzzer_compiler()
+  set(SCRY_FUZZ_TEST_PREFIX "transport.")
+  scry_add_fuzzer(
+    scry_response_policy_fuzz
+    response_policy
+    SOURCES
+      response_policy_fuzz.cpp
+      "${PROJECT_SOURCE_DIR}/src/core/error.cpp"
+      "${PROJECT_SOURCE_DIR}/src/core/json_codec.cpp"
+      "${PROJECT_SOURCE_DIR}/src/transport/transport_policy.cpp"
+  )
+endif()

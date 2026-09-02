@@ -110,6 +110,20 @@ target_link_libraries(
 )
 catch_discover_tests(scry_runtime_tests TEST_PREFIX "runtime.")
 
+if(SCRY_BUILD_FUZZERS)
+  scry_require_fuzzer_compiler()
+  set(SCRY_FUZZ_TEST_PREFIX "runtime.")
+  # The document codec pulls in the pump and worker through Conversation's
+  # translation units, so this target links the library rather than curating a
+  # minimal source set that would drift with every runtime change.
+  scry_add_fuzzer(
+    scry_conversation_fuzz
+    conversation
+    SOURCES runtime/conversation_fuzz.cpp
+    LINK_LIBRARIES scry::scry
+  )
+endif()
+
 add_subdirectory(machine)
 if(SCRY_ENABLE_LOGGING)
   add_subdirectory(logging)

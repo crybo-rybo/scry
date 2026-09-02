@@ -152,6 +152,20 @@ jobs:
             # TSan is where nondeterminism shows up; the repeat runs live here
             # (QA-008) instead of on every leg.
             ctest_flags: --repeat until-fail:3
+          # Every fuzz target builds and replays its checked-in seed corpus
+          # per pull request (QA-015), so the targets cannot rot between the
+          # long scheduled runs. Toolchain pins match nightly.yml's long-fuzz
+          # job because libFuzzer needs the matching clang runtime.
+          - name: Fuzz corpus replay (ASan + UBSan)
+            preset: fuzz
+            cc: clang-21
+            cxx: clang++-21
+            packages: >-
+              clang-21 g++-14 libclang-rt-21-dev libcurl4-openssl-dev
+              libfuzzer-21-dev ninja-build
+            use_libcxx: false
+            extra_cmake_flags: -DSCRY_FUZZ_RUNS=0
+            ctest_flags: -R 'fuzz$'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
@@ -159,6 +173,15 @@ jobs:
       CXX: ${{ matrix.cxx }}
     steps:
       - uses: actions/checkout@v7.0.0
+      - name: Add the pinned LLVM repository
+        # Only the fuzz replay leg needs clang-21 and its libFuzzer runtime;
+        # the same pin as nightly.yml's long-fuzz job.
+        if: matrix.preset == 'fuzz'
+        run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
+            | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
+          echo "deb https://apt.llvm.org/noble/ llvm-toolchain-noble-21 main" \
+            | sudo tee /etc/apt/sources.list.d/llvm-21.list
       - name: Install sanitizer toolchain
         run: |
           sudo apt-get update

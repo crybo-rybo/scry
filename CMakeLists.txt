@@ -28,9 +28,11 @@ if(NOT SCRY_HEADER_VERSION STREQUAL PROJECT_VERSION)
   )
 endif()
 
+list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
 include(CMakePackageConfigHelpers)
 include(FetchContent)
 include(GNUInstallDirs)
+include(ScryFuzz)
 
 option(SCRY_BUILD_TESTS "Build Scry's tests" ${PROJECT_IS_TOP_LEVEL})
 option(SCRY_BUILD_EXAMPLES "Compile Scry's canonical examples" ${PROJECT_IS_TOP_LEVEL})

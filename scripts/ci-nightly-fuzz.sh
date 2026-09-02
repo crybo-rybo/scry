@@ -8,7 +8,7 @@ readonly fuzz_seconds="${SCRY_NIGHTLY_FUZZ_SECONDS:-900}"
 readonly per_input_timeout="${SCRY_NIGHTLY_FUZZ_INPUT_TIMEOUT_SECONDS:-10}"
 
 usage() {
-  echo "Usage: $0 {sse|anthropic|openai}" >&2
+  echo "Usage: $0 {sse|anthropic|openai|response_policy|conversation}" >&2
 }
 
 require_positive_integer() {
@@ -50,6 +50,14 @@ case "${fuzz_kind}" in
   openai)
     readonly target="scry_openai_fuzz"
     readonly binary_subdir="tests/provider"
+    ;;
+  response_policy)
+    readonly target="scry_response_policy_fuzz"
+    readonly binary_subdir="tests/transport"
+    ;;
+  conversation)
+    readonly target="scry_conversation_fuzz"
+    readonly binary_subdir="tests"
     ;;
   *)
     usage

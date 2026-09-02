@@ -26,11 +26,15 @@ Enforced via lizard and clang-tidy on every commit:
 **Dynamic — sanitizers are first-class build modes:**
 
 - ASan + non-recovering UBSan on the full unit/integration suite per pull request; TSan on all threaded tests per pull request. TSan especially is non-negotiable: the actor model's "no shared mutable state" claim is exactly the kind of invariant that erodes silently, and TSan is its enforcement mechanism. The sanitizer leg also configures `SCRY_ENABLE_LOGGING=ON`, so the opt-in diagnostic path is compiled and exercised rather than rotting behind a flag.
-- **Fuzzing** (libFuzzer) covers the SSE, Anthropic, and OpenAI-compatible
-  wire-JSON boundaries under ASan + non-recovering UBSan because they consume attacker-adjacent input (a
-  compromised or buggy server must not crash the host app). The fuzz targets
-  run with long budgets in the scheduled ring; the deterministic golden,
-  arbitrary-split, and boundary wire tests remain per-commit.
+- **Fuzzing** (libFuzzer) covers five boundaries that consume
+  attacker-adjacent input, all under ASan + non-recovering UBSan (a compromised
+  or buggy server must not crash the host app): the SSE framer, the Anthropic
+  and OpenAI-compatible wire-JSON decoders, the HTTP response-header and body
+  policy, and the `Conversation` persistence document. Every target builds and
+  replays its checked-in seed corpus on every pull request
+  (`SCRY_FUZZ_RUNS=0`), so a target cannot rot between long runs; long budgets
+  run in the scheduled ring. The deterministic golden, arbitrary-split, and
+  boundary wire tests remain per-commit.
 - Valgrind/memcheck occasionally as a differently-shaped net; not gating.
 
 ### Performance evidence — informational, not a timing gate
@@ -63,7 +67,9 @@ Three rings, ordered by feedback speed; a failure in an inner ring stops the out
    Clang 18 with libc++, AppleClang on macOS 15 — running unit, component,
    golden, deterministic fake-transport and local-loopback integration suites
    with warnings-as-errors and the complexity gates, clang-tidy, an ASan+UBSan
-   leg (which also compiles `SCRY_ENABLE_LOGGING=ON`), and a TSan leg. The core
+   leg (which also compiles `SCRY_ENABLE_LOGGING=ON`), a TSan leg, and a fuzz
+   corpus replay leg that builds all five fuzz targets under ASan+UBSan and
+   replays their seed corpora once each. The core
    matrix installs to a clean prefix and builds a downstream
    `find_package(scry)` consumer, proving the reflection-OFF package surface.
    A path-aware reflection gate additionally runs the full GCC 16 reflection
@@ -73,7 +79,7 @@ Three rings, ordered by feedback speed; a failure in an inner ring stops the out
    skip the experimental toolchain. A separate path-aware profiling job builds
    both opt-in executables, runs every semantic oracle in smoke mode, and
    validates the artifact contract without applying a timing threshold.
-2. **Scheduled weekly:** CodeQL, long fuzz runs on all three protocol targets,
+2. **Scheduled weekly:** CodeQL, long fuzz runs on all five fuzz targets,
    the showcase contract gate (a default-OFF leg that enables the examples,
    builds them with warnings as errors, runs the deterministic NPC and
    fake-panel cases (including the NPC reasoning-control request), executes a
