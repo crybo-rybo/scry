@@ -4,6 +4,9 @@
 # sanitizers, and the fuzz corpus replay. Long fuzz runs, the showcase, and the
 # local-model smoke live in the scheduled/manual nightly workflow.
 #
+# Every gate runs the same scripts/ci-*.sh script the hosted leg runs; the only
+# thing that lives here is the host-capability probe in front of it.
+#
 # A leg whose toolchain this host cannot provide is reported as SKIP rather than
 # FAIL, and named again in the summary, so a reader can see exactly which hosted
 # legs remain authoritative for the change.
@@ -59,29 +62,7 @@ run_tidy() {
     echo "Clang is unavailable; the clang-tidy leg requires its matching compiler" >&2
     return 1
   fi
-  # SCRY_CLANG_TOOLING builds only the portable C++23 implementation, which is
-  # the whole analyzable surface: the public API is C++26 and GCC-only. The
-  # compiler is named explicitly because the ci preset pins g++-16.
-  PATH="${tidy_path}" cmake \
-    --preset ci \
-    --fresh \
-    -B build/tidy \
-    -DCMAKE_CXX_COMPILER=clang++ \
-    -DSCRY_CLANG_TOOLING=ON \
-    -DSCRY_ENABLE_CLANG_TIDY=ON \
-    -DSCRY_ENABLE_FORMAT_CHECK=OFF &&
-    PATH="${tidy_path}" cmake --build build/tidy
-}
-
-run_preset() {
-  local preset="$1"
-  shift
-  cmake --preset "${preset}" &&
-    cmake --build "build/${preset}" &&
-    ctest \
-      --test-dir "build/${preset}" \
-      --output-on-failure \
-      "$@"
+  PATH="${tidy_path}" ./scripts/ci-tidy.sh
 }
 
 # GCC ships no sanitizer runtime for some host/sanitizer combinations — on Apple
@@ -99,11 +80,10 @@ gcc_sanitizer_links() {
   return "${status}"
 }
 
-# run_sanitizer_preset <preset> <sanitizer flag> [extra ctest args...]
-run_sanitizer_preset() {
-  local preset="$1"
+# run_sanitizer_leg <asan|tsan> <sanitizer flag>
+run_sanitizer_leg() {
+  local leg="$1"
   local flag="$2"
-  shift 2
   if ! command -v g++-16 >/dev/null 2>&1; then
     echo "g++-16 is unavailable; the hosted Linux legs are authoritative" >&2
     return 77
@@ -113,11 +93,12 @@ run_sanitizer_preset() {
 host; the hosted Linux legs are authoritative" >&2
     return 77
   fi
-  run_preset "${preset}" "$@"
+  ./scripts/ci-sanitizer.sh "${leg}"
 }
 
 # libFuzzer needs a runtime the compiler must ship; AppleClang does not, so the
-# gate reports host-unavailable instead of failing a local preflight.
+# gate reports host-unavailable instead of failing a local preflight. The
+# probe uses the same compiler default as scripts/ci-fuzz-replay.sh.
 fuzzer_link_available() {
   local probe_dir=""
   probe_dir="$(mktemp -d)" || return 1
@@ -127,7 +108,7 @@ fuzzer_link_available() {
 extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t*, std::size_t) { return 0; }
 PROBE
   local status=0
-  "${CXX:-c++}" -std=c++23 -fsanitize=fuzzer \
+  "${CXX:-clang++}" -std=c++23 -fsanitize=fuzzer \
     "${probe_dir}/probe.cpp" -o "${probe_dir}/probe" >/dev/null 2>&1 || status=1
   rm -rf "${probe_dir}"
   return "${status}"
@@ -135,23 +116,20 @@ PROBE
 
 run_fuzz_replay() {
   if ! fuzzer_link_available; then
-    echo "${CXX:-c++} cannot link -fsanitize=fuzzer; the hosted fuzz replay leg is authoritative" >&2
+    echo "${CXX:-clang++} cannot link -fsanitize=fuzzer; the hosted fuzz replay leg is authoritative" >&2
     return 77
   fi
-  # SCRY_FUZZ_RUNS=0 makes libFuzzer execute the seed corpus once and exit,
-  # which is a deterministic replay rather than a search.
-  cmake --preset fuzz -DSCRY_FUZZ_RUNS=0 &&
-    cmake --build build/fuzz &&
-    ctest --test-dir build/fuzz --output-on-failure -R 'fuzz$'
+  ./scripts/ci-fuzz-replay.sh
 }
 
 cd "${root_dir}"
 run_gate "Doxygen API site" ./scripts/ci-docs.sh
 run_gate "core" ./scripts/ci-local.sh
 run_gate "clang-tidy" run_tidy
-run_gate "ASan + UBSan" run_sanitizer_preset asan -fsanitize=address,undefined
-# TSan is where nondeterminism surfaces; the repeat runs live here (QA-008).
-run_gate "TSan" run_sanitizer_preset tsan -fsanitize=thread --repeat until-fail:3
+run_gate "ASan + UBSan" run_sanitizer_leg asan -fsanitize=address,undefined
+# TSan is where nondeterminism surfaces; ci-sanitizer.sh puts the repeat runs
+# on that leg (QA-008).
+run_gate "TSan" run_sanitizer_leg tsan -fsanitize=thread
 run_gate "fuzz corpus replay" run_fuzz_replay
 
 if [[ -n "${skipped_gates}" ]]; then

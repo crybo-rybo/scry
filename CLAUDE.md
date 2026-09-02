@@ -51,7 +51,7 @@ cmake --build build/dev --target format         # just format
 cmake --build build/dev --target format-check   # just format-check
 ```
 
-Gates:
+Gates. Every leg is one script under `scripts/`; `preflight.sh` and the GitHub workflows both call it, so a local gate and its hosted twin cannot drift.
 
 ```sh
 ./scripts/ci-local.sh     # just ci-fast: diff check, lizard complexity, unlinked-TODO check, format-check,
@@ -64,7 +64,8 @@ Gates:
                           # Apple Silicon, so TSan skips locally while ASan still runs. On macOS,
                           # `brew install llvm@18` turns the clang-tidy leg on locally (CI pins clang-tidy 18,
                           # so llvm@18 is probed before llvm).
-just tidy | just asan | just tsan | just docs | just showcase   # individual legs
+just tidy | just asan | just tsan | just fuzz | just docs | just showcase   # individual legs
+./scripts/check-release-tag.sh v0.2.0   # a release tag must name the project() version
 ```
 
 Presets: `dev` (Debug), `ci` (RelWithDebInfo), `asan`, `tsan` — all GCC 16 — and `fuzz` (Clang, `SCRY_CLANG_TOOLING`). `dev-logging`, `profile`, `reflection-gcc16`, `showcase`, and `nightly-local-model` are gone; so are the options `SCRY_ENABLE_REFLECTION`, `SCRY_ENABLE_LOGGING`, `SCRY_USE_LIBCXX`, `SCRY_BUILD_BENCHMARKS`, `SCRY_BUILD_IMGUI_SHOWCASE`, and `SCRY_BUILD_LOCAL_MODEL_SMOKE`. There is no profiling apparatus: `benchmarks/`, the `perf-*` scripts, and the performance workflow are gone. The Dear ImGui and NPC showcase is a standalone project under `extras/showcase/` that the root build never sees; `./scripts/ci-showcase.sh` (`just showcase`) configures it directly.
