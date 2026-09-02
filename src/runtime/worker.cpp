@@ -111,9 +111,9 @@ WorkerActor::WorkerActor(Config config, std::unique_ptr<ProviderAdapter> provide
     time_.now = [] { return std::chrono::steady_clock::now(); };
   }
   if (!time_.wait_until) {
-    time_.wait_until = [](CommandQueue& commands, const std::stop_token& stopped,
+    time_.wait_until = [](CommandQueue& queue, const std::stop_token& stopped,
                           const MachineTimePoint deadline) {
-      return commands.wait_pop_until(stopped, deadline);
+      return queue.wait_pop_until(stopped, deadline);
     };
   }
 }

@@ -52,9 +52,13 @@ Gates:
 ```sh
 ./scripts/ci-local.sh     # just ci-fast: diff check, lizard complexity, unlinked-TODO check, format-check,
                           # ci preset build+ctest, install to build/stage, reflection-leak audit,
-                          # downstream find_package(scry) consumer build. Run before every PR.
-./scripts/preflight.sh    # just ci: adds Doxygen site, profiling smoke, clang-tidy, ASan/UBSan, TSan (x3 repeat),
-                          # GCC 16 reflection leg. Reports host-unavailable legs; hosted CI is authoritative for those.
+                          # downstream find_package(scry) consumer build. The quick inner loop.
+./scripts/preflight.sh    # just ci: the full ring, and what to run before every PR. Adds the Doxygen site,
+                          # the GCC 14 core leg, profiling smoke, clang-tidy 18, ASan/UBSan, TSan (x3 repeat),
+                          # the fuzz corpus replay, and the GCC 16 reflection leg. Legs whose toolchain the host
+                          # lacks are skipped, not failed, and named again in the closing summary; hosted CI is
+                          # authoritative for those. On macOS, `brew install gcc@14 llvm@18` turns the GCC 14 and
+                          # clang-tidy legs on locally (CI pins clang-tidy 18, so llvm@18 is probed before llvm).
 just tidy | just asan | just tsan | just reflection | just docs | just showcase   # individual legs
 ```
 

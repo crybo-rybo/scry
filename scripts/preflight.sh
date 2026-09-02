@@ -1,14 +1,21 @@
 #!/usr/bin/env bash
 
-# Local equivalent of the per-commit CI ring: documentation, core, profiling
-# infrastructure, clang-tidy, sanitizers, the fuzz corpus replay, and the
-# GCC 16 reflection component. Long fuzz runs, the showcase, and the
-# local-model smoke live in the scheduled/manual nightly workflow.
+# Local equivalent of the per-commit CI ring: documentation, core, the GCC 14
+# core leg, profiling infrastructure, clang-tidy, sanitizers, the fuzz corpus
+# replay, and the GCC 16 reflection component. Long fuzz runs, the showcase, and
+# the local-model smoke live in the scheduled/manual nightly workflow.
+#
+# A leg whose toolchain this host cannot provide is reported as SKIP rather than
+# FAIL, and named again in the summary, so a reader can see exactly which hosted
+# legs remain authoritative for the change.
 
 set -uo pipefail
 
 readonly root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 failures=0
+# Newline-separated so gate names containing spaces survive; bash 3.2 makes
+# empty arrays under `set -u` more trouble than they are worth.
+skipped_gates=""
 
 run_gate() {
   local name="$1"
@@ -23,6 +30,7 @@ run_gate() {
     # 77 is the conventional "skipped" status: this host cannot run the leg at
     # all, so hosted CI is authoritative for it.
     echo "SKIP: ${name} (unavailable on this host; hosted CI is authoritative)"
+    skipped_gates="${skipped_gates}${name}"$'\n'
   else
     echo "FAIL: ${name}" >&2
     failures=$((failures + 1))
@@ -31,10 +39,17 @@ run_gate() {
 
 run_tidy() {
   local tidy_path="${PATH}"
+  # CI pins clang-tidy 18, so a keg-only llvm@18 is preferred over whatever
+  # major version the unversioned llvm formula currently points at.
   if ! command -v clang-tidy >/dev/null 2>&1 &&
-    command -v brew >/dev/null 2>&1 &&
-    brew list --versions llvm >/dev/null 2>&1; then
-    tidy_path="$(brew --prefix llvm)/bin:${tidy_path}"
+    command -v brew >/dev/null 2>&1; then
+    local formula=""
+    for formula in llvm@18 llvm; do
+      if brew list --versions "${formula}" >/dev/null 2>&1; then
+        tidy_path="$(brew --prefix "${formula}")/bin:${tidy_path}"
+        break
+      fi
+    done
   fi
   if ! PATH="${tidy_path}" command -v clang-tidy >/dev/null 2>&1; then
     echo "clang-tidy is unavailable" >&2
@@ -71,10 +86,27 @@ run_preset() {
       "$@"
 }
 
+run_gcc14_core() {
+  if ! command -v g++-14 >/dev/null 2>&1; then
+    echo "g++-14 is unavailable; the hosted Linux GCC 14 leg is authoritative" >&2
+    return 77
+  fi
+  # Mirrors the "Linux GCC 14" core matrix entry in .github/workflows/ci.yml:
+  # libstdc++ rather than libc++, and no format check because the documentation
+  # job owns that gate with a pinned clang-format.
+  CC=gcc-14 CXX=g++-14 cmake \
+    --preset ci \
+    -B build/ci-gcc14 \
+    -DSCRY_ENABLE_FORMAT_CHECK=OFF \
+    -DSCRY_USE_LIBCXX=OFF &&
+    cmake --build build/ci-gcc14 &&
+    ctest --test-dir build/ci-gcc14 --output-on-failure
+}
+
 run_reflection() {
   if ! command -v g++-16 >/dev/null 2>&1; then
     echo "g++-16 is unavailable; the hosted Linux reflection leg is authoritative" >&2
-    return 1
+    return 77
   fi
   ./scripts/ci-reflection.sh
 }
@@ -135,6 +167,7 @@ run_profile_smoke() {
 cd "${root_dir}"
 run_gate "Doxygen API site" ./scripts/ci-docs.sh
 run_gate "core" ./scripts/ci-local.sh
+run_gate "Core (GCC 14)" run_gcc14_core
 run_gate "profiling semantic + paired smoke" run_profile_smoke
 run_gate "clang-tidy" run_tidy
 run_gate "ASan + UBSan" run_preset asan
@@ -142,6 +175,14 @@ run_gate "ASan + UBSan" run_preset asan
 run_gate "TSan" run_preset tsan --repeat until-fail:3
 run_gate "fuzz corpus replay" run_fuzz_replay
 run_gate "GCC 16 supported reflection component" run_reflection
+
+if [[ -n "${skipped_gates}" ]]; then
+  echo
+  echo "Skipped on this host; hosted CI is authoritative for:"
+  printf '%s' "${skipped_gates}" | while IFS= read -r gate; do
+    echo "  - ${gate}"
+  done
+fi
 
 if [[ "${failures}" -ne 0 ]]; then
   echo

@@ -27,7 +27,7 @@ affected `SCRY-<AREA>-NNN` requirements in PR-facing summaries.
 
 ## Build and test
 
-Run the core local gate from the repository root:
+Use the core gate as the quick inner loop while iterating:
 
 ```sh
 ./scripts/ci-local.sh
@@ -37,17 +37,22 @@ This checks the diff, complexity, formatting, public-header boundaries,
 the linked canonical example, contract tests, installation, and a downstream
 `find_package(scry)` consumer. `just ci-fast` is an optional equivalent.
 
-Run the complete local preflight before a PR handoff:
+Run the complete local preflight before every PR:
 
 ```sh
 ./scripts/preflight.sh
 ```
 
-This adds clang-tidy, the ASan/UBSan and TSan suites, and the GCC 16
-reflection leg. It runs every leg and reports unavailable host toolchains
-explicitly; hosted CI remains authoritative for those legs. `just ci` is an
-optional equivalent. Fuzzing, deep static analysis, the reflection gate, and
-the showcase gate run in the scheduled weekly workflow
+This adds the Doxygen site, the GCC 14 core leg, the profiling smoke,
+clang-tidy, the ASan/UBSan and TSan suites, the fuzz corpus replay, and the
+GCC 16 reflection leg. It runs every leg, continues after failures, reports a
+leg whose toolchain the host lacks as a skip rather than a failure, and names
+every skipped leg again in the closing summary; hosted CI remains authoritative
+for those. `just ci` is an optional equivalent. On macOS,
+`brew install gcc@14 llvm@18` makes the GCC 14 and clang-tidy legs runnable
+locally — CI pins clang-tidy 18, so the keg-only `llvm@18` is probed before the
+unversioned `llvm` formula. Long fuzz runs, deep static analysis, and the
+showcase gate run in the scheduled weekly workflow
 (`docs/development/quality-gates.md` §6); `just showcase` runs the showcase gate
 locally.
 
