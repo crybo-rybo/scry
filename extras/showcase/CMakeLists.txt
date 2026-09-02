@@ -12,6 +12,10 @@ cmake_minimum_required(VERSION 3.28)
 
 project(scry_showcase LANGUAGES CXX)
 
+# No C++ modules here either; see the root CMakeLists.txt for why scanning
+# must be off for GCC on macOS.
+set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
+
 include(CTest)
 include(FetchContent)
 

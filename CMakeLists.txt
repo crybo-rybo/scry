@@ -23,6 +23,12 @@ configure_file(
   @ONLY
 )
 
+# Scry uses no C++ modules. From CMake 3.28 the default is to scan every
+# C++20-and-later source for module dependencies, which adds -fmodules-ts to
+# each GCC compile; GCC's module mode then fails on libstdc++ headers against
+# the macOS SDK. Scanning is off everywhere this project compiles C++.
+set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
+
 list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
 include(CMakePackageConfigHelpers)
 include(FetchContent)
