@@ -10,7 +10,12 @@ dispatches calls on the `update()` thread, and automatically resends ordered
 results. The handler is responsible for validating its explicit JSON arguments
 and returning valid JSON; Scry converts unknown tools, handler errors,
 exceptions, and malformed handler output into bounded model-visible tool
-errors.
+errors. Handlers read their arguments with `scry::JsonView` — kind, `find()`,
+`at()`, and ordered `key_at()` over the canonical document — rather than
+comparing argument text, and build small results with
+`scry::escape_json_string()`. The messages those calls and results become are
+the public `scry::Message` family, so a host can render the same history the
+next request will send.
 
 P2996 is an optional, experimental ergonomics layer over that boundary. Its
 contract is defined here and in the SCRY-TOOL requirements. Its public shape is

@@ -1,10 +1,12 @@
 #include "core/error.hpp"
 #include "core/json_codec.hpp"
 #include "provider/openai.hpp"
+#include "provider/shared.hpp"
 
 #include <string>
 #include <utility>
 #include <variant>
+#include <vector>
 
 namespace scry::detail {
 namespace {
@@ -281,6 +283,7 @@ encode_tools(const std::vector<ToolSchema>& tools) {
         .value = "Bearer " + config.api_key,
     });
   }
+  append_extra_headers(headers, config);
   return headers;
 }
 
@@ -306,6 +309,8 @@ OpenAiAdapter::make_request(const Config& config, const ModelRequest& request) c
       .body = std::move(*encoded),
       .provider_namespace = "openai",
       .tls_verify_peer = config.tls_verify_peer,
+      .ca_bundle_path = config.ca_bundle_path,
+      .proxy = config.proxy,
       .timeouts = config.timeouts,
       .limits = config.limits,
   };

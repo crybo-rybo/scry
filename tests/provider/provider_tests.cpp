@@ -95,6 +95,25 @@ TEST_CASE("Anthropic request is semantically equivalent to its sanitized fixture
   CHECK(canonical(encoded->body) == canonical(fixture("request.json")));
 }
 
+TEST_CASE("Anthropic request carries the configured network options") {
+  const auto adapter = make_provider_adapter(ProviderDialect::anthropic);
+  REQUIRE(adapter);
+
+  auto networked = config();
+  networked.extra_headers = {HttpHeader{.name = "x-scry-example", .value = "1"}};
+  networked.ca_bundle_path = "/tmp/ca.pem";
+  networked.proxy = "http://proxy.internal:3128";
+
+  const auto encoded = adapter->make_request(networked, request());
+  REQUIRE(encoded.has_value());
+  CHECK(encoded->ca_bundle_path == "/tmp/ca.pem");
+  CHECK(encoded->proxy == "http://proxy.internal:3128");
+  REQUIRE(encoded->headers.size() == 5);
+  CHECK(encoded->headers.back().name == "x-scry-example");
+  CHECK(encoded->headers.back().value == "1");
+  CHECK(header(*encoded, "x-api-key") == "sanitized-test-key");
+}
+
 TEST_CASE("Anthropic request encodes committed history before the turn suffix") {
   const auto adapter = make_provider_adapter(ProviderDialect::anthropic);
   REQUIRE(adapter);

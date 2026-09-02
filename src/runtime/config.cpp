@@ -1,5 +1,9 @@
 #include "runtime/config.hpp"
 
+#include "transport/transport_policy.hpp"
+
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <string>
 #include <string_view>
@@ -158,6 +162,42 @@ namespace {
   return {};
 }
 
+[[nodiscard]] bool collides_with_managed_header(const std::string_view name) noexcept {
+  // Every header Scry sets itself for either dialect. A host header with one of
+  // these names would either duplicate or shadow a Scry-managed value.
+  constexpr std::array<std::string_view, 5> managed{
+      "content-type", "accept", "authorization", "x-api-key", "anthropic-version",
+  };
+  return std::ranges::any_of(managed, [name](const std::string_view reserved) {
+    return transport_policy::header_name_equal(name, reserved);
+  });
+}
+
+[[nodiscard]] bool has_forbidden_characters(const std::string_view value,
+                                            const std::string_view forbidden) noexcept {
+  return value.find_first_of(forbidden) != std::string_view::npos;
+}
+
+[[nodiscard]] Status validate_network_options(const Config& config) {
+  if (!transport_policy::validate_headers(config.extra_headers)) {
+    return invalid("extra header name or value is invalid");
+  }
+  const auto collision =
+      std::ranges::any_of(config.extra_headers, [](const HttpHeader& header) {
+        return collides_with_managed_header(header.name);
+      });
+  if (collision) {
+    return invalid("extra header collides with a Scry-managed header");
+  }
+  constexpr auto control = std::string_view{"\0\r\n", 3};
+  constexpr auto control_and_space = std::string_view{"\0\r\n \t", 5};
+  if (has_forbidden_characters(config.ca_bundle_path, control) ||
+      has_forbidden_characters(config.proxy, control_and_space)) {
+    return invalid("proxy or CA bundle path contains invalid characters");
+  }
+  return {};
+}
+
 } // namespace
 
 Status validate_config(const Config& config) {
@@ -170,7 +210,10 @@ Status validate_config(const Config& config) {
   if (auto status = validate_retry_policy(config.retry); !status) {
     return status;
   }
-  return validate_runtime_bounds(config);
+  if (auto status = validate_runtime_bounds(config); !status) {
+    return status;
+  }
+  return validate_network_options(config);
 }
 
 } // namespace scry::detail

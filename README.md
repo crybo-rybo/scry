@@ -30,6 +30,11 @@ Built for the apps that live in C++ — games, GUI tools, simulators — where y
   tools; an optional, experimental C++26 reflection component (GCC 16 or
   newer) derives schemas and argument marshalling from plain structs and lowers
   onto the same registry.
+- **JSON and history you can read without a parser.** `scry::JsonView` reads
+  the Scry-owned `Json` boundary type — kind, scalar accessors, array index,
+  object lookup, ordered keys — and `scry::escape_json_string()` writes one by
+  hand. `Conversation::messages()` exposes committed history as the public
+  message model, so a chat UI renders state instead of mirroring it.
 
 Scry is pre-1.0: no API or ABI stability is promised yet.
 

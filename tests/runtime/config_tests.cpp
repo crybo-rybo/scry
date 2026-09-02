@@ -11,6 +11,7 @@
 #include <scry/error.hpp>
 #include <scry/harness.hpp>
 #include <string>
+#include <string_view>
 #include <system_error>
 
 namespace {
@@ -27,6 +28,52 @@ namespace {
 
 TEST_CASE("valid Anthropic configuration is accepted") {
   CHECK(scry::detail::validate_config(valid_config()));
+}
+
+TEST_CASE("configuration validates proxy, CA bundle, and extra headers") {
+  auto accepted = valid_config();
+  accepted.extra_headers = {scry::HttpHeader{.name = "x-scry-example", .value = "1"}};
+  accepted.proxy = "http://proxy.internal:3128";
+  accepted.ca_bundle_path = "/etc/ssl/certs/corporate.pem";
+  CHECK(scry::detail::validate_config(accepted));
+
+  const auto reject = [](const scry::Config& config, const std::string_view message) {
+    auto status = scry::detail::validate_config(config);
+    REQUIRE_FALSE(status);
+    CHECK(status.error().category == scry::ErrorCategory::invalid_config);
+    CHECK(status.error().message == message);
+  };
+
+  auto empty_name = valid_config();
+  empty_name.extra_headers = {scry::HttpHeader{.name = "", .value = "1"}};
+  reject(empty_name, "extra header name or value is invalid");
+
+  auto spaced_name = valid_config();
+  spaced_name.extra_headers = {scry::HttpHeader{.name = "x scry", .value = "1"}};
+  reject(spaced_name, "extra header name or value is invalid");
+
+  auto injected_value = valid_config();
+  injected_value.extra_headers = {
+      scry::HttpHeader{.name = "x-scry-example", .value = "1\r\nx-evil: 2"}};
+  reject(injected_value, "extra header name or value is invalid");
+
+  auto collision = valid_config();
+  collision.extra_headers = {
+      scry::HttpHeader{.name = "Content-Type", .value = "text/plain"}};
+  reject(collision, "extra header collides with a Scry-managed header");
+
+  auto key_collision = valid_config();
+  key_collision.extra_headers = {
+      scry::HttpHeader{.name = "X-Api-Key", .value = "other"}};
+  reject(key_collision, "extra header collides with a Scry-managed header");
+
+  auto spaced_proxy = valid_config();
+  spaced_proxy.proxy = "http://a b";
+  reject(spaced_proxy, "proxy or CA bundle path contains invalid characters");
+
+  auto broken_bundle = valid_config();
+  broken_bundle.ca_bundle_path = "/etc/ssl/ca\n.pem";
+  reject(broken_bundle, "proxy or CA bundle path contains invalid characters");
 }
 
 TEST_CASE("Harness::validate runs the create-time configuration checks") {

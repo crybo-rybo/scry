@@ -12,10 +12,9 @@
 
 namespace scry::detail {
 
-struct HttpHeader {
-  std::string name{};
-  std::string value{};
-};
+// The public request-header value type; the transport layer keeps the historical
+// detail-namespace spelling.
+using HttpHeader = ::scry::HttpHeader;
 
 struct TransportRequest {
   std::string url{};
@@ -26,6 +25,10 @@ struct TransportRequest {
   // token with it; empty means no body-derived detail is produced.
   std::string provider_namespace{};
   bool tls_verify_peer{true};
+  // Optional PEM CA bundle used instead of libcurl's default trust store.
+  std::string ca_bundle_path{};
+  // Optional proxy URL handed to libcurl.
+  std::string proxy{};
   TransportTimeouts timeouts{};
   ResourceLimits limits{};
 };

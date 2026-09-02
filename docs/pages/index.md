@@ -50,8 +50,11 @@ blocking exception.
 
 The stable C++23 substrate accepts a `scry::ToolDefinition` and a move-only
 `scry::ToolHandler`. The handler receives canonical JSON and returns a `scry::Result<scry::Json>`.
-Registration is additive, duplicate names are rejected, and accepted turns retain immutable
-snapshots.
+It reads those arguments with `scry::JsonView` — value kind, `find()`, `at()`, and ordered
+`key_at()` — and builds small results with `scry::escape_json_string()`; neither needs a
+third-party parser. Registration is additive, duplicate names are rejected, and accepted turns
+retain immutable snapshots. `scry::ToolRegistry::contains()` and `names()` report what is
+registered.
 
 The optional, experimental `scry::reflection` package component uses C++26 P2996 reflection to
 generate schemas and strictly marshal typed arguments and results. It lowers into the same
@@ -68,7 +71,11 @@ still occurs when the callback is empty. Successful completion commits the full 
 exchange atomically; error and cancellation commit nothing.
 
 Dropping `scry::Turn` detaches without cancellation or blocking. `scry::Turn::cancel()` is an
-explicit cooperative request. The streamed `std::string_view` and `const scry::ToolCall&` observer
+explicit cooperative request, and `scry::Harness::cancel(TurnId)` is the same request addressed by
+identifier. `scry::Turn::finished()` reports whether the terminal outcome has been delivered, so a
+poll loop can stop on the turn rather than on a mirrored flag, and
+`scry::Conversation::messages()` exposes the committed history — borrowed until the next
+committing `update()` — for a UI that renders it. The streamed `std::string_view` and `const scry::ToolCall&` observer
 arguments are borrowed only for the callback invocation and must be copied if retained;
 `on_finished` receives its result by value.
 

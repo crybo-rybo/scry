@@ -65,14 +65,16 @@ Struck-through findings were addressed by the Tier 2 remediation change. Items 9
 
 Thin additions over state the runtime already holds, not features.
 
+Struck-through findings were addressed by the Tier 4 remediation change (API polish).
+
 | # | Finding |
 |---|---|
-| 15 | `Json` is a bare string with no read API. The canonical example validates arguments by comparing text to `{}`, the NPC example hand-concatenates JSON, and the header points typed users at a component that needs GCC 16. A minimal read-only view with kind, at, find, string, and number plus an escape helper closes this. The private `JsonView` in `include/scry/detail/reflection_json.hpp` already has the right shape. This is the single biggest ergonomic gap for C++23 users. |
-| 16 | `Conversation` exposes only `empty`, `message_count`, and `to_json`. A chat UI must parse the document or mirror state to render history. |
-| 17 | Missing thin queries: `Conversation::busy()`, `Turn::finished()`, `Harness::cancel(TurnId)`, `ToolRegistry::contains` and names, and a public `validate(const Config&)`. Today the only way to validate a settings dialog's config is to spin up a curl transport and a worker thread. |
-| 18 | `on_tool_call` fires for handler errors but the payload has no result and no `is_error`, so a UI cannot show what a tool returned. |
-| 19 | `Config` has no CA bundle path, no extra headers, and no proxy setting. The only TLS knob is verify on or off, so corporate CAs and self-signed local servers force verification off. |
-| 20 | `send_and_wait` delivers other turns' callbacks while it waits and cannot be cancelled. Neither is documented. |
+| ~~15~~ | ~~`Json` is a bare string with no read API. The canonical example validates arguments by comparing text to `{}`, the NPC example hand-concatenates JSON, and the header points typed users at a component that needs GCC 16. A minimal read-only view with kind, at, find, string, and number plus an escape helper closes this. The private `JsonView` in `include/scry/detail/reflection_json.hpp` already has the right shape. This is the single biggest ergonomic gap for C++23 users.~~ |
+| ~~16~~ | ~~`Conversation` exposes only `empty`, `message_count`, and `to_json`. A chat UI must parse the document or mirror state to render history.~~ |
+| ~~17~~ | ~~Missing thin queries: `Conversation::busy()`, `Turn::finished()`, `Harness::cancel(TurnId)`, `ToolRegistry::contains` and names, and a public `validate(const Config&)`. Today the only way to validate a settings dialog's config is to spin up a curl transport and a worker thread.~~ |
+| ~~18~~ | ~~`on_tool_call` fires for handler errors but the payload has no result and no `is_error`, so a UI cannot show what a tool returned.~~ |
+| ~~19~~ | ~~`Config` has no CA bundle path, no extra headers, and no proxy setting. The only TLS knob is verify on or off, so corporate CAs and self-signed local servers force verification off.~~ |
+| ~~20~~ | ~~`send_and_wait` delivers other turns' callbacks while it waits and cannot be cancelled. Neither is documented.~~ |
 
 ### Tier 4: internal quality and test infrastructure
 

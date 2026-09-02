@@ -6,8 +6,8 @@ The app touches five core concepts:
 
 | Type | Responsibility |
 |------|---------------|
-| `scry::Config` | Plain value aggregate: base URL, API key, model, sampling params, reasoning mode, provider dialect. Designated-initializer friendly. |
-| `scry::Conversation` | Owns message history (system prompt, user/assistant turns, tool calls/results). Serializable for persistence. |
+| `scry::Config` | Plain value aggregate: base URL, API key, model, sampling params, reasoning mode, provider dialect, and the network options — CA bundle path, proxy URL, and verbatim extra request headers. Designated-initializer friendly. `Harness::validate(config)` checks one without building a runtime. |
+| `scry::Conversation` | Owns message history (system prompt, user/assistant turns, tool calls/results). Inspectable through `messages()`, `system_prompt()`, and `busy()`, and serializable for persistence. |
 | `scry::ToolRegistry` | Named tools: description + schema + callable. Owned by a Harness and snapshotted when a turn is accepted. |
 | `scry::Turn` | Move-only handle to one in-flight agentic exchange. Exposes `id()` and `cancel()`; the callbacks for the turn are supplied to `send()`. |
 | `scry::Harness` | Created from `Config`; owns provider/auth state, the tool registry, worker thread, and event queue. `send()` starts a turn; `update()` pumps completions into the app thread. |
@@ -38,7 +38,11 @@ auto registered = harness->tools().add(
         },
     },
     [&](scry::Json arguments) -> scry::Result<scry::Json> {
-        return app.status(arguments); // validate JSON; return valid JSON
+        // scry::JsonView reads the canonical arguments; scry::escape_json_string
+        // quotes any host string that goes back into the result.
+        auto root = scry::JsonView::parse(arguments);
+        if (!root || root->kind() != scry::JsonKind::object) { /* tool error */ }
+        return app.status(*root);  // must return valid JSON
     });
 if (!registered) { /* invalid schema, duplicate name, or inactive registry */ }
 
@@ -46,6 +50,9 @@ if (!registered) { /* invalid schema, duplicate name, or inactive registry */ }
 auto turn = harness->send(*conversation, "Is the host application still running?",
     scry::TurnCallbacks{
         .on_text_delta = [&](std::string_view chunk) { ui.append(chunk); },
+        .on_tool_call = [&](const scry::ToolCall& call) {
+            ui.show_tool(call.name, call.result.text, call.is_error);
+        },
         .on_finished = [&](scry::Result<scry::Completion> outcome) {
             if (outcome) { ui.show(outcome->text); }
             else { ui.show_error(outcome.error()); }  // includes cancellation
@@ -67,6 +74,24 @@ adds `scry::reflection::add<Args>()` schema generation and marshalling as
 compile-time sugar over the same registry. It also exposes
 `scry::reflection::encode(value)` for converting a supported typed value to
 canonical `Json` without registration; both paths use the same encoder.
+
+`scry::Json` is the Scry-owned serialized JSON boundary type. It is read through
+`scry::JsonView` — kind, scalar accessors, `at()`, `find()`, and `key_at()` in
+canonical lexicographic key order — and written by hand with
+`scry::escape_json_string()`, which quotes and escapes one string literal. Both
+are core C++23 API; neither needs the reflection component.
+
+**Inspecting state.** The runtime answers the questions a host would otherwise
+mirror by hand. `Conversation::messages()` returns the committed history as the
+public `scry::Message` family — a borrowed reference valid until the next
+`update()` that commits into that Conversation — alongside `system_prompt()` and
+`busy()`. `Turn::finished()` reports whether the terminal outcome has been
+delivered, and `Harness::cancel(TurnId)` cancels a turn a host tracks by
+identifier rather than by handle. `ToolRegistry::contains()` and `names()` list
+what is registered. `Harness::validate(const Config&)` runs the create-time
+configuration checks without initializing libcurl or starting a worker, so a
+settings dialog can report problems before paying for a runtime; `create()` can
+still fail afterwards for runtime reasons.
 
 **Conversation persistence.** `Conversation::to_json()` returns a canonical,
 versioned Scry-owned JSON document suitable for app-managed storage;

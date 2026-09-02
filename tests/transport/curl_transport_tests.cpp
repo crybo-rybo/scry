@@ -160,6 +160,33 @@ TEST_CASE("curl transport posts request data and returns response metadata") {
   CHECK(posted.ends_with(R"({"prompt":"request-body-never-log"})"));
 }
 
+TEST_CASE("curl transport sends extra headers and routes through a configured proxy") {
+  // The loopback server stands in for the proxy: curl sends an absolute-form
+  // request line to it rather than resolving the unreachable origin host. No
+  // TLS loopback exists, so the CA bundle option is covered by configuration
+  // validation and the provider request carry-through tests instead.
+  scry::test::LoopbackServer server{
+      response("200 OK", "Content-Type: application/json\r\n", R"({"text":"via"})")};
+  CurlTransport transport;
+  std::string body;
+  auto sink = append_to(body);
+  std::stop_source shutdown;
+  const std::atomic cancelled{false};
+
+  auto proxied = request("http://example.invalid/v1/messages");
+  proxied.proxy = server.url();
+  proxied.headers.push_back({"x-scry-example", "1"});
+
+  const auto result = transport.perform(proxied, shutdown.get_token(), cancelled, sink);
+
+  REQUIRE(result);
+  CHECK(result->status_code == 200);
+  CHECK(body == R"({"text":"via"})");
+  const auto posted = server.request();
+  CHECK(posted.starts_with("POST http://example.invalid/v1/messages HTTP/1.1"));
+  CHECK(posted.find("x-scry-example: 1") != std::string::npos);
+}
+
 TEST_CASE("curl transport enforces declared response size before the sink") {
   scry::test::LoopbackServer server{response("200 OK", "", "response-too-large")};
   CurlTransport transport;

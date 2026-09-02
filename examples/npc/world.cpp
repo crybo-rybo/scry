@@ -66,9 +66,7 @@ void append_quoted_move(std::string& json, const std::string_view move,
   if (has_move) {
     json.push_back(',');
   }
-  json.push_back('"');
-  json.append(move);
-  json.push_back('"');
+  json.append(scry::escape_json_string(move));
   has_move = true;
 }
 
@@ -123,9 +121,11 @@ void append_quoted_move(std::string& json, const std::string_view move,
 
 [[nodiscard]] scry::Status validate_arguments(const scry::Json& arguments,
                                               const NpcTool tool) {
-  // Exact-text comparison only holds for these zero-argument schemas; tools
-  // with real arguments parse the JSON instead of comparing strings.
-  if (arguments.text == "{}") {
+  // These schemas take no arguments, so the check is "an empty JSON object" and
+  // not "the exact text {}". scry::JsonView reads the canonical arguments; tools
+  // with real arguments read their properties through the same view.
+  const auto root = scry::JsonView::parse(arguments);
+  if (root && root->kind() == scry::JsonKind::object && root->size() == 0) {
     return {};
   }
   return std::unexpected(scry::Error{
@@ -166,9 +166,9 @@ scry::Json World::move(const Direction direction) {
     position_ = candidate;
   }
 
-  auto json = R"({"direction":)" + std::string{"\""} +
-              std::string{direction_name(direction)} + R"(","moved":)" +
-              (moved ? "true" : "false") + R"(,"position":)" + position_json(position_);
+  auto json = R"({"direction":)" + scry::escape_json_string(direction_name(direction)) +
+              R"(,"moved":)" + (moved ? "true" : "false") + R"(,"position":)" +
+              position_json(position_);
   if (!moved) {
     json += R"(,"reason":"boundary")";
   }

@@ -283,6 +283,14 @@ private:
   if (request.timeouts.transfer) {
     options.set(CURLOPT_TIMEOUT_MS, timeout_milliseconds(*request.timeouts.transfer));
   }
+  // Same pattern for the optional network options: an empty value leaves
+  // libcurl's default trust store and its proxy environment handling alone.
+  if (!request.ca_bundle_path.empty()) {
+    options.set(CURLOPT_CAINFO, request.ca_bundle_path.c_str());
+  }
+  if (!request.proxy.empty()) {
+    options.set(CURLOPT_PROXY, request.proxy.c_str());
+  }
   return options.status();
 }
 

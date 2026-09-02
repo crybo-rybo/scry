@@ -13,6 +13,7 @@
 #include <vector>
 
 static_assert(std::is_aggregate_v<scry::Config>);
+static_assert(std::is_aggregate_v<scry::HttpHeader>);
 static_assert(std::is_enum_v<scry::ReasoningMode>);
 static_assert(std::is_aggregate_v<scry::Error>);
 static_assert(std::is_aggregate_v<scry::Json>);
@@ -290,6 +291,9 @@ int main() {
       !config.timeouts.transfer.has_value(),
       config.timeouts.shutdown == std::chrono::seconds{2},
       config.tls_verify_peer,
+      config.ca_bundle_path.empty(),
+      config.proxy.empty(),
+      config.extra_headers.empty(),
   });
   if (std::find(default_checks.begin(), default_checks.end(), false) !=
       default_checks.end()) {

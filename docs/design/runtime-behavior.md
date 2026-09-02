@@ -55,7 +55,16 @@ and moves it into the turn before acceptance. Every member is optional;
 omitting one changes no loop behavior. The immutable callback set is installed
 before the worker command becomes visible, so no event can precede that set;
 an event with no matching callback is released immediately. The `Turn` handle
-needs no registration surface at all: it carries `id()` and `cancel()`.
+needs no registration surface at all: it carries `id()`, `finished()`, and
+`cancel()`.
+
+The `on_tool_call` payload describes the completed call, not just the request:
+alongside the turn id, call id, name, and canonical arguments it carries the
+canonical JSON result handed back to the model and an `is_error` flag, which is
+true when the handler returned an error, threw, returned invalid JSON, or the
+model requested an unknown tool. The observer is skipped only when a framework
+failure — an oversized result, for example — fails the whole turn instead of
+producing a result to send.
 
 **One terminal outcome.** The turn becomes terminal exactly once whether or not
 it has a terminal observer. When non-empty, `on_finished` is invoked exactly
@@ -120,6 +129,7 @@ lower. These defaults are conservative starting points and remain configurable:
 | Retry initial / maximum backoff | 250 ms / 10 s |
 | Connect / idle / shutdown timeout | 10 s / 120 s / 2 s |
 | Total transfer timeout | unset |
+| Proxy / CA bundle / extra headers | unset |
 
 TLS peer verification defaults on. The runtime uses Curl with asynchronous DNS
 and applies Curl's connect timeout, which covers name resolution and
