@@ -11,18 +11,31 @@
 #include <memory>
 #include <optional>
 #include <scry/config.hpp>
+#include <scry/unique_function.hpp>
 #include <stop_token>
 #include <string_view>
 #include <vector>
 
 namespace scry::detail {
 
+// The worker's only two reads of real time. Empty members mean the real steady
+// clock and CommandQueue::wait_pop_until; only the internal test seam supplies
+// anything else, which is what makes backoff and Retry-After scheduling
+// assertable without waiting on a wall clock.
+struct WorkerTimeSource {
+  UniqueFunction<MachineTimePoint()> now{};
+  UniqueFunction<std::optional<WorkerCommand>(CommandQueue&, const std::stop_token&,
+                                              MachineTimePoint)>
+      wait_until{};
+};
+
 class WorkerActor final {
 public:
   WorkerActor(Config config, std::unique_ptr<ProviderAdapter> provider,
               std::unique_ptr<Transport> transport,
               std::shared_ptr<CommandQueue> commands,
-              std::shared_ptr<EventQueue> events, std::uint64_t retry_jitter_seed);
+              std::shared_ptr<EventQueue> events, std::uint64_t retry_jitter_seed,
+              WorkerTimeSource time = {});
 
   void run(const std::stop_token& stopped) noexcept;
 
@@ -79,6 +92,7 @@ private:
   std::shared_ptr<CommandQueue> commands_{};
   std::shared_ptr<EventQueue> events_{};
   std::uint64_t retry_jitter_seed_{};
+  WorkerTimeSource time_{};
   std::deque<SendTurnCommand> pending_{};
 };
 

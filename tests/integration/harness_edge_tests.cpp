@@ -19,45 +19,11 @@ using namespace scry::test_support;
 
 namespace {
 
-constexpr std::string_view completed_stream = R"(event: message_start
-data: {"type":"message_start","message":{"id":"msg_coverage","type":"message","role":"assistant","content":[],"model":"test-model","stop_reason":null,"usage":{"input_tokens":3,"output_tokens":0}}}
+const std::string completed_stream =
+    anthropic_text_stream("coverage answer", "msg_coverage", {}, 3, 2);
 
-event: content_block_start
-data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
-
-event: content_block_delta
-data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"coverage answer"}}
-
-event: content_block_stop
-data: {"type":"content_block_stop","index":0}
-
-event: message_delta
-data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}}
-
-event: message_stop
-data: {"type":"message_stop"}
-
-)";
-
-constexpr std::string_view correlated_stream = R"(event: message_start
-data: {"type":"message_start","message":{"id":"msg_correlated","request_id":"stream-request","type":"message","role":"assistant","content":[],"model":"test-model","stop_reason":null,"usage":{"input_tokens":3,"output_tokens":0}}}
-
-event: content_block_start
-data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
-
-event: content_block_delta
-data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"correlated"}}
-
-event: content_block_stop
-data: {"type":"content_block_stop","index":0}
-
-event: message_delta
-data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}
-
-event: message_stop
-data: {"type":"message_stop"}
-
-)";
+const std::string correlated_stream =
+    anthropic_text_stream("correlated", "msg_correlated", "stream-request", 3, 1);
 
 constexpr std::string_view tool_stream = R"(event: message_start
 data: {"type":"message_start","message":{"id":"msg_tool","type":"message","role":"assistant","content":[],"model":"test-model","stop_reason":null,"usage":{"input_tokens":3,"output_tokens":0}}}
@@ -161,8 +127,9 @@ public:
 };
 
 // Holds one transfer open until the turn's cancel flag is set, so a test can
-// address an in-flight turn by identifier. The spin is bounded by the flag and
-// by Harness shutdown; there is no sleep or wall-clock deadline.
+// address an in-flight turn by identifier. The shared fake's held exchange
+// waits for an explicit release instead, so it cannot express this. The spin is bounded
+// by the flag and by Harness shutdown; there is no sleep or wall-clock deadline.
 class HeldTransport final : public scry::detail::Transport {
 public:
   [[nodiscard]] scry::Result<scry::detail::TransportResult>
@@ -188,6 +155,8 @@ private:
   std::atomic<bool> entered_{false};
 };
 
+// Deliberately violates the transport seam contract by throwing; the shared
+// fake reports failures as values and cannot express this.
 class ThrowingTransport final : public scry::detail::Transport {
 public:
   [[nodiscard]] scry::Result<scry::detail::TransportResult>
@@ -234,12 +203,9 @@ TEST_CASE("a Turn can cancel safely after its Harness has been destroyed") {
   std::optional<scry::Turn> survivor;
   scry::TurnId accepted_id{};
   {
-    auto harness_result =
-        fake_harness(test_config(), scripted_exchange(completed_stream));
-    auto conversation = scry::Conversation::create();
-    REQUIRE(harness_result);
-    REQUIRE(conversation);
-    auto turn = harness_result->send(*conversation, "outlive the harness");
+    auto fixture =
+        make_harness_fixture(test_config(), {scripted_exchange(completed_stream)});
+    auto turn = fixture.harness.send(fixture.conversation, "outlive the harness");
     REQUIRE(turn);
     accepted_id = turn->id();
     survivor.emplace(std::move(*turn));
@@ -293,22 +259,17 @@ TEST_CASE("a completed turn publishes its history, busy state, and finished flag
 }
 
 TEST_CASE("a turn without on_finished still reports finished once update runs") {
-  auto harness_result =
-      fake_harness(test_config(), scripted_exchange(completed_stream));
-  REQUIRE(harness_result);
-  auto harness = std::move(*harness_result);
-  auto conversation_result = scry::Conversation::create();
-  REQUIRE(conversation_result);
-  auto conversation = std::move(*conversation_result);
+  auto fixture =
+      make_harness_fixture(test_config(), {scripted_exchange(completed_stream)});
 
-  auto turn_result = harness.send(conversation, "question");
+  auto turn_result = fixture.harness.send(fixture.conversation, "question");
   REQUIRE(turn_result);
   const auto turn = std::move(*turn_result);
   CHECK_FALSE(turn.finished());
 
-  REQUIRE(pump_until(harness, [&turn] { return turn.finished(); }));
-  CHECK_FALSE(conversation.busy());
-  CHECK(conversation.message_count() == 2);
+  REQUIRE(pump_until(fixture.harness, [&turn] { return turn.finished(); }));
+  CHECK_FALSE(fixture.conversation.busy());
+  CHECK(fixture.conversation.message_count() == 2);
 }
 
 TEST_CASE("Harness::cancel addresses an in-flight turn by identifier") {
@@ -377,21 +338,20 @@ TEST_CASE("construction and synchronous admission failures are immediate") {
 }
 
 TEST_CASE("rejected admission does not freeze a new tool snapshot generation") {
-  auto harness = fake_harness(test_config(), scripted_exchange(completed_stream));
-  auto conversation = scry::Conversation::create();
-  REQUIRE(harness);
-  REQUIRE(conversation);
-  REQUIRE(harness->tools().add(tool(), static_handler(R"({"ok":true})")));
-  REQUIRE_FALSE(scry::detail::HarnessTestAccess::has_current_tool_snapshot(*harness));
+  auto fixture =
+      make_harness_fixture(test_config(), {scripted_exchange(completed_stream)});
+  auto& harness = fixture.harness;
+  REQUIRE(harness.tools().add(tool(), static_handler(R"({"ok":true})")));
+  REQUIRE_FALSE(scry::detail::HarnessTestAccess::has_current_tool_snapshot(harness));
 
-  const auto rejected = harness->send(*conversation, "");
+  const auto rejected = harness.send(fixture.conversation, "");
   REQUIRE_FALSE(rejected);
   CHECK(rejected.error().category == scry::ErrorCategory::invalid_argument);
-  CHECK_FALSE(scry::detail::HarnessTestAccess::has_current_tool_snapshot(*harness));
+  CHECK_FALSE(scry::detail::HarnessTestAccess::has_current_tool_snapshot(harness));
 
-  const auto accepted = harness->send(*conversation, "freeze after validation");
+  const auto accepted = harness.send(fixture.conversation, "freeze after validation");
   REQUIRE(accepted);
-  CHECK(scry::detail::HarnessTestAccess::has_current_tool_snapshot(*harness));
+  CHECK(scry::detail::HarnessTestAccess::has_current_tool_snapshot(harness));
 }
 
 TEST_CASE("oversized terminal diagnostics are bounded before publication") {
@@ -462,59 +422,52 @@ TEST_CASE("accepted results redact the configured API key from correlation field
 TEST_CASE("an oversized completion becomes a bounded queue-limit error") {
   auto config = test_config();
   config.limits.max_queued_event_bytes_per_turn = 1024;
-  auto harness =
-      fake_harness(config, scripted_exchange(completed_stream, std::string(600, 'r')));
-  auto conversation = scry::Conversation::create();
-  REQUIRE(harness);
-  REQUIRE(conversation);
+  auto fixture = make_harness_fixture(
+      config, {scripted_exchange(completed_stream, std::string(600, 'r'))});
 
-  auto completion = harness->send_and_wait(*conversation, "oversized completion");
+  auto completion =
+      fixture.harness.send_and_wait(fixture.conversation, "oversized completion");
 
   REQUIRE_FALSE(completion);
   CHECK(completion.error().category == scry::ErrorCategory::resource_limit);
   CHECK(completion.error().message == "turn events exceed the configured queue limit");
-  CHECK(conversation->empty());
+  CHECK(fixture.conversation.empty());
 }
 
 TEST_CASE("an oversized streamed delta terminates with a queue-limit error") {
   auto config = test_config();
   config.limits.max_queued_event_bytes_per_turn = 1024;
-  auto harness = fake_harness(config, scripted_exchange(large_delta_stream()));
-  auto conversation = scry::Conversation::create();
-  REQUIRE(harness);
-  REQUIRE(conversation);
+  auto fixture =
+      make_harness_fixture(config, {scripted_exchange(large_delta_stream())});
 
-  auto completion = harness->send_and_wait(*conversation, "oversized delta");
+  auto completion =
+      fixture.harness.send_and_wait(fixture.conversation, "oversized delta");
 
   REQUIRE_FALSE(completion);
   CHECK(completion.error().category == scry::ErrorCategory::resource_limit);
   CHECK(completion.error().message == "turn events exceed the configured queue limit");
-  CHECK(conversation->empty());
+  CHECK(fixture.conversation.empty());
 }
 
 TEST_CASE("tool content and finish reason must agree before dispatch") {
-  auto harness = fake_harness(test_config(), scripted_exchange(tool_stream));
-  auto conversation = scry::Conversation::create();
-  REQUIRE(harness);
-  REQUIRE(conversation);
+  auto fixture = make_harness_fixture(test_config(), {scripted_exchange(tool_stream)});
 
-  auto completion = harness->send_and_wait(*conversation, "request a tool");
+  auto completion =
+      fixture.harness.send_and_wait(fixture.conversation, "request a tool");
 
   REQUIRE_FALSE(completion);
   CHECK(completion.error().category == scry::ErrorCategory::protocol);
   CHECK(completion.error().message ==
         "tool-use finish reason and tool-call content are inconsistent");
-  CHECK(conversation->empty());
+  CHECK(fixture.conversation.empty());
 }
 
 TEST_CASE("stream correlation wins over transport correlation") {
-  auto harness = fake_harness(
-      test_config(), scripted_exchange(correlated_stream, "transport-request"));
-  auto conversation = scry::Conversation::create();
-  REQUIRE(harness);
-  REQUIRE(conversation);
+  auto fixture = make_harness_fixture(
+      test_config(), {scripted_exchange(correlated_stream, "transport-request")});
 
-  auto completion = harness->send_and_wait(*conversation, "preserve correlation");
+  auto completion =
+      fixture.harness.send_and_wait(fixture.conversation, "preserve correlation");
 
   REQUIRE(completion);
   CHECK(completion->provider_request_id == "stream-request");

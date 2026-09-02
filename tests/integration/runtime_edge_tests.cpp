@@ -23,25 +23,8 @@ using namespace scry::test_support;
 namespace {
 
 constexpr std::string_view answer = "edge answer";
-constexpr std::string_view completed_stream = R"(event: message_start
-data: {"type":"message_start","message":{"id":"msg_edge","type":"message","role":"assistant","content":[],"model":"test-model","stop_reason":null,"usage":{"input_tokens":3,"output_tokens":0}}}
-
-event: content_block_start
-data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
-
-event: content_block_delta
-data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"edge answer"}}
-
-event: content_block_stop
-data: {"type":"content_block_stop","index":0}
-
-event: message_delta
-data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}}
-
-event: message_stop
-data: {"type":"message_stop"}
-
-)";
+const std::string completed_stream =
+    anthropic_text_stream("edge answer", "msg_edge", {}, 3, 2);
 
 constexpr std::string_view partial_stream = R"(event: message_start
 data: {"type":"message_start","message":{"id":"msg_partial","type":"message","role":"assistant","content":[],"model":"test-model","stop_reason":null,"usage":{"input_tokens":3,"output_tokens":0}}}
@@ -84,105 +67,11 @@ transient_failure(const std::string_view message = "transient failure") {
   };
 }
 
-class RetrySignalTransport final : public scry::detail::Transport {
-public:
-  [[nodiscard]] scry::Result<scry::detail::TransportResult>
-  perform(const scry::detail::TransportRequest&, const std::stop_token,
-          const std::atomic<bool>&, scry::detail::BodyChunkSink&) override {
-    {
-      const std::scoped_lock lock{mutex_};
-      ++calls_;
-    }
-    changed_.notify_all();
-    return std::unexpected(scry::Error{
-        .category = scry::ErrorCategory::network,
-        .retryable = true,
-        .message = "retry signal",
-    });
-  }
-
-  void wait_for_first_call() {
-    std::unique_lock lock{mutex_};
-    changed_.wait(lock, [this] { return calls_ != 0; });
-  }
-
-  [[nodiscard]] std::size_t calls() const {
-    const std::scoped_lock lock{mutex_};
-    return calls_;
-  }
-
-private:
-  mutable std::mutex mutex_{};
-  std::condition_variable changed_{};
-  std::size_t calls_{};
-};
-
-class HeldRetryTransport final : public scry::detail::Transport {
-public:
-  [[nodiscard]] scry::Result<scry::detail::TransportResult>
-  perform(const scry::detail::TransportRequest&, const std::stop_token stopped,
-          const std::atomic<bool>& cancelled,
-          scry::detail::BodyChunkSink& sink) override {
-    std::size_t call_number{};
-    {
-      std::unique_lock lock{mutex_};
-      call_number = ++calls_;
-      changed_.notify_all();
-      if (call_number == 1 &&
-          !changed_.wait(lock, stopped, [this] { return first_call_released_; })) {
-        return std::unexpected(cancelled_error());
-      }
-    }
-    if (cancelled.load(std::memory_order_acquire)) {
-      return std::unexpected(cancelled_error());
-    }
-    if (call_number == 1) {
-      return std::unexpected(scry::Error{
-          .category = scry::ErrorCategory::network,
-          .retryable = true,
-          .message = "held transient failure",
-      });
-    }
-    if (auto status = sink(completed_stream); !status) {
-      return std::unexpected(std::move(status.error()));
-    }
-    return scry::detail::TransportResult{
-        .status_code = 200,
-        .provider_request_id = "request-held-retry",
-    };
-  }
-
-  void wait_for_first_call() {
-    std::unique_lock lock{mutex_};
-    changed_.wait(lock, [this] { return calls_ != 0; });
-  }
-
-  void release_first_call() {
-    {
-      const std::scoped_lock lock{mutex_};
-      first_call_released_ = true;
-    }
-    changed_.notify_all();
-  }
-
-  [[nodiscard]] std::size_t calls() const {
-    const std::scoped_lock lock{mutex_};
-    return calls_;
-  }
-
-private:
-  [[nodiscard]] static scry::Error cancelled_error() {
-    return {
-        .category = scry::ErrorCategory::cancelled,
-        .message = "held retry transport cancelled",
-    };
-  }
-
-  mutable std::mutex mutex_{};
-  std::condition_variable_any changed_{};
-  std::size_t calls_{};
-  bool first_call_released_{false};
-};
+[[nodiscard]] scry::test::ScriptedExchange held_transient_failure() {
+  auto exchange = transient_failure("held transient failure");
+  exchange.hold = true;
+  return exchange;
+}
 
 struct OverlapState {
   std::mutex mutex{};
@@ -191,6 +80,9 @@ struct OverlapState {
   bool released{false};
 };
 
+// Two transports share one state block so a single rendezvous proves both
+// Harness workers are inside a transfer at once; the shared fake cannot express
+// a gate that spans two independent transport instances.
 class OverlapTransport final : public scry::detail::Transport {
 public:
   explicit OverlapTransport(std::shared_ptr<OverlapState> state)
@@ -319,10 +211,13 @@ TEST_CASE("cancelling a pending retry wakes the worker without another attempt")
   config.retry.initial_backoff = 30s;
   config.retry.max_backoff = 30s;
   config.retry.max_elapsed = 60s;
-  auto transport = std::make_unique<RetrySignalTransport>();
-  auto* observer = transport.get();
+  auto fake = std::make_unique<scry::test::FakeTransport>();
+  auto* observer = fake.get();
+  // One scripted failure only: a second attempt would exhaust the script and
+  // fail loudly instead of silently retrying.
+  fake->enqueue(transient_failure("retry signal"));
   auto harness =
-      scry::detail::HarnessTestAccess::create(config, provider(), std::move(transport));
+      scry::detail::HarnessTestAccess::create(config, provider(), std::move(fake));
   auto conversation = scry::Conversation::create();
   REQUIRE(harness);
   REQUIRE(conversation);
@@ -338,7 +233,7 @@ TEST_CASE("cancelling a pending retry wakes the worker without another attempt")
               },
       });
   REQUIRE(turn);
-  observer->wait_for_first_call();
+  observer->wait_for_call(1);
 
   CHECK(turn->cancel());
   REQUIRE(pump_until(*harness, [&cancelled] { return cancelled; }));
@@ -352,10 +247,16 @@ TEST_CASE("a queued turn command is consumed before a zero-backoff retry wakes")
   config.retry.max_attempts = 2;
   config.retry.initial_backoff = 0ms;
   config.retry.max_backoff = 0ms;
-  auto transport = std::make_unique<HeldRetryTransport>();
-  auto* observer = transport.get();
+  auto fake = std::make_unique<scry::test::FakeTransport>();
+  auto* observer = fake.get();
+  // The first attempt is held so the second turn's command is already queued
+  // when the zero-backoff retry wait evaluates its predicate; the retry and the
+  // second turn then consume the two successes.
+  fake->enqueue(held_transient_failure());
+  fake->enqueue(success());
+  fake->enqueue(success());
   auto harness =
-      scry::detail::HarnessTestAccess::create(config, provider(), std::move(transport));
+      scry::detail::HarnessTestAccess::create(config, provider(), std::move(fake));
   auto first_conversation = scry::Conversation::create();
   auto second_conversation = scry::Conversation::create();
   REQUIRE(harness);
@@ -378,7 +279,7 @@ TEST_CASE("a queued turn command is consumed before a zero-backoff retry wakes")
                             },
                     });
   REQUIRE(first_turn);
-  observer->wait_for_first_call();
+  observer->wait_for_call(1);
 
   std::optional<scry::Completion> second_completion;
   std::optional<scry::Error> second_failure;
@@ -399,7 +300,7 @@ TEST_CASE("a queued turn command is consumed before a zero-backoff retry wakes")
 
   // The worker is still inside the held transfer, so the second SendTurnCommand
   // is queued when the zero-backoff retry wait evaluates its predicate.
-  observer->release_first_call();
+  observer->release();
 
   REQUIRE(pump_until(*harness, [&] {
     return (first_completion || first_failure) && (second_completion || second_failure);

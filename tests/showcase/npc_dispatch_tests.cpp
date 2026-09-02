@@ -97,8 +97,9 @@ TEST_CASE("NPC registrations execute on the update thread and resend observation
   CHECK(completion->text == "done");
   CHECK(world->position() == scry_showcase::npc::Position{.x = 2, .y = 2});
 
-  REQUIRE(requests->requests().size() == 2);
-  const auto& initial = requests->requests().front().body;
+  const auto recorded = requests->requests();
+  REQUIRE(recorded.size() == 2);
+  const auto& initial = recorded.front().body;
   for (const std::string_view name :
        {"look", "move_north", "move_south", "move_east", "move_west"}) {
     CHECK(initial.find(name) != std::string::npos);
@@ -106,7 +107,7 @@ TEST_CASE("NPC registrations execute on the update thread and resend observation
   CHECK(initial.find(R"("additionalProperties":false)") != std::string::npos);
   CHECK(initial.find(R"("reasoning_effort":"none")") != std::string::npos);
 
-  const auto& resend = requests->requests().back().body;
+  const auto& resend = recorded.back().body;
   CHECK(resend.find(R"("tool_call_id":"call-look")") != std::string::npos);
   CHECK(resend.find("available_moves") != std::string::npos);
 }

@@ -140,5 +140,5 @@ total transfer timeout is optional and unset by default, for hosts that want a
 hard cap on one transfer. Each multi-poll wait is capped by the shutdown
 timeout. A runtime that cannot provide the required resolver/global
 capabilities is rejected. Deterministic tests cover held transfers, cancellation,
-and capability rejection; the idle bound is exercised against a held loopback
-response, while connect and total bounds remain source-reviewed.
+and capability rejection; the idle and total bounds are exercised against a held
+loopback response, while the connect bound remains source-reviewed.

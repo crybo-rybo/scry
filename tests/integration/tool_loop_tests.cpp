@@ -117,9 +117,10 @@ TEST_CASE("two-tool turn snapshots tools, resends results, and commits atomicall
       serialized->text ==
       R"({"messages":[{"content":[{"text":"Run both tools","type":"text"}],"role":"user"},{"content":[{"arguments":{"ordinal":1},"id":"call-a","name":"first_tool","type":"tool_call"},{"arguments":{"ordinal":2},"id":"call-b","name":"second_tool","type":"tool_call"}],"role":"assistant"},{"content":[{"is_error":false,"result":{"handled":"first"},"tool_call_id":"call-a","type":"tool_result"},{"is_error":false,"result":{"handled":"second"},"tool_call_id":"call-b","type":"tool_result"}],"role":"user"},{"content":[{"text":"all done","type":"text"}],"role":"assistant"}],"system_prompt":"","version":1})");
 
-  REQUIRE(requests->requests().size() == 2);
-  const auto& initial_body = requests->requests()[0].body;
-  const auto& resend_body = requests->requests()[1].body;
+  const auto recorded = requests->requests();
+  REQUIRE(recorded.size() == 2);
+  const auto& initial_body = recorded[0].body;
+  const auto& resend_body = recorded[1].body;
   CHECK(initial_body.find(R"("input_schema")") != std::string::npos);
   CHECK(initial_body.find(R"("properties":{"ordinal":{"type":"integer"}})") !=
         std::string::npos);
@@ -235,13 +236,13 @@ TEST_CASE("a queued turn waits for the active turn's app-thread tool round") {
   REQUIRE(second_turn);
   REQUIRE(pump_until(harness, [&] { return first_completed && second_completed; }));
 
-  REQUIRE(requests->requests().size() == 3);
-  CHECK(requests->requests()[0].body.find("first queued turn") != std::string::npos);
-  CHECK(requests->requests()[1].body.find("first queued turn") != std::string::npos);
-  CHECK(requests->requests()[1].body.find(R"("tool_use_id":"call-a")") !=
-        std::string::npos);
-  CHECK(requests->requests()[2].body.find("second queued turn") != std::string::npos);
-  CHECK(requests->requests()[2].body.find("call-a") == std::string::npos);
+  const auto recorded = requests->requests();
+  REQUIRE(recorded.size() == 3);
+  CHECK(recorded[0].body.find("first queued turn") != std::string::npos);
+  CHECK(recorded[1].body.find("first queued turn") != std::string::npos);
+  CHECK(recorded[1].body.find(R"("tool_use_id":"call-a")") != std::string::npos);
+  CHECK(recorded[2].body.find("second queued turn") != std::string::npos);
+  CHECK(recorded[2].body.find("call-a") == std::string::npos);
   CHECK(first_conversation->message_count() == 4);
   CHECK(second_conversation->message_count() == 2);
 }

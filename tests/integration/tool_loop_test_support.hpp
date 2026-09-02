@@ -41,25 +41,8 @@ data: {"type":"message_stop"}
 
 )";
 
-inline constexpr std::string_view final_stream = R"(event: message_start
-data: {"type":"message_start","message":{"id":"msg_final","type":"message","role":"assistant","content":[],"model":"test-model","stop_reason":null,"usage":{"input_tokens":7,"output_tokens":0}}}
-
-event: content_block_start
-data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
-
-event: content_block_delta
-data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"all done"}}
-
-event: content_block_stop
-data: {"type":"content_block_stop","index":0}
-
-event: message_delta
-data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}
-
-event: message_stop
-data: {"type":"message_stop"}
-
-)";
+inline const std::string final_stream =
+    anthropic_text_stream("all done", "msg_final", {}, 7, 5);
 
 [[nodiscard]] inline scry::ToolDefinition ordinal_tool_definition(std::string name) {
   return {

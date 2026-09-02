@@ -18,7 +18,7 @@ A `Turn` is a **handle**: a move-only PImpl value holding an immutable `TurnId`,
 | Per-turn cancel flag (`atomic<bool>`) | Shared | Third sanctioned crossing point |
 | `TurnId` | Immutable value | Freely copied everywhere |
 
-The worker never touches callbacks or buffers; it emits events tagged with `TurnId`. The pump owns routing, buffering, and delivery. This split is what makes the shared-state enumeration in the [architecture overview](overview.md) true.
+The worker never touches callbacks or buffers; it emits events tagged with `TurnId`. The worker's clock and its retry wait are injected through the internal test seam only, so backoff scheduling can be asserted without real time; the public `Harness::create` always installs the steady clock and the real command-queue wait. The pump owns routing, buffering, and delivery. This split is what makes the shared-state enumeration in the [architecture overview](overview.md) true.
 
 ### Send / cancel / shutdown
 

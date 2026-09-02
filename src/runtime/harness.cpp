@@ -93,17 +93,19 @@ public:
 
   Impl(Config config, std::unique_ptr<detail::ProviderAdapter> provider,
        std::unique_ptr<detail::Transport> transport,
-       std::unique_ptr<ToolRegistry> tools, const std::uint64_t retry_jitter_seed)
+       std::unique_ptr<ToolRegistry> tools, const std::uint64_t retry_jitter_seed,
+       detail::WorkerTimeSource time)
       : config_(std::move(config)), commands_(std::make_shared<detail::CommandQueue>()),
         events_(std::make_shared<detail::EventQueue>()), pump_(events_),
         tools_(std::move(tools)),
         worker_([config = config_, provider = std::move(provider),
                  transport = std::move(transport), commands = commands_,
-                 events = events_,
-                 retry_jitter_seed](const std::stop_token& stopped) mutable {
+                 events = events_, retry_jitter_seed,
+                 time = std::move(time)](const std::stop_token& stopped) mutable {
           detail::WorkerActor actor{std::move(config),    std::move(provider),
                                     std::move(transport), std::move(commands),
-                                    std::move(events),    retry_jitter_seed};
+                                    std::move(events),    retry_jitter_seed,
+                                    std::move(time)};
           actor.run(stopped);
         }) {
     SCRY_LOG("Harness created (model: {})", config_.model);
@@ -228,9 +230,9 @@ Result<Harness> Harness::create(Config config) {
       [config = std::move(config), provider = std::move(provider),
        transport = std::move(transport), tools = std::move(tools),
        retry_jitter_seed]() mutable {
-        return Harness{std::make_unique<Impl>(std::move(config), std::move(provider),
-                                              std::move(transport), std::move(tools),
-                                              retry_jitter_seed)};
+        return Harness{std::make_unique<Impl>(
+            std::move(config), std::move(provider), std::move(transport),
+            std::move(tools), retry_jitter_seed, detail::WorkerTimeSource{})};
       });
 }
 
@@ -307,7 +309,8 @@ namespace detail {
 Result<Harness> HarnessTestAccess::create(Config config,
                                           std::unique_ptr<ProviderAdapter> provider,
                                           std::unique_ptr<Transport> transport,
-                                          const std::uint64_t retry_jitter_seed) {
+                                          const std::uint64_t retry_jitter_seed,
+                                          WorkerTimeSource time) {
   if (auto status = validate_config(config); !status) {
     return std::unexpected(std::move(status.error()));
   }
@@ -319,11 +322,11 @@ Result<Harness> HarnessTestAccess::create(Config config,
   auto tools = Harness::Impl::make_tool_registry();
   return translate_worker_start_failure<Harness>(
       [config = std::move(config), provider = std::move(provider),
-       transport = std::move(transport), tools = std::move(tools),
-       retry_jitter_seed]() mutable {
+       transport = std::move(transport), tools = std::move(tools), retry_jitter_seed,
+       time = std::move(time)]() mutable {
         return Harness{std::make_unique<Harness::Impl>(
             std::move(config), std::move(provider), std::move(transport),
-            std::move(tools), retry_jitter_seed)};
+            std::move(tools), retry_jitter_seed, std::move(time))};
       });
 }
 
