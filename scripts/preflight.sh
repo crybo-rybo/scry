@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 
-# Local equivalent of the per-commit CI ring: documentation, core, the GCC 14
-# core leg, profiling infrastructure, clang-tidy, sanitizers, the fuzz corpus
-# replay, and the GCC 16 reflection component. Long fuzz runs, the showcase, and
-# the local-model smoke live in the scheduled/manual nightly workflow.
+# Local equivalent of the per-commit CI ring: documentation, core, profiling
+# infrastructure, clang-tidy, sanitizers, and the fuzz corpus replay. Long fuzz
+# runs, the showcase, and the local-model smoke live in the scheduled/manual
+# nightly workflow.
 #
 # A leg whose toolchain this host cannot provide is reported as SKIP rather than
 # FAIL, and named again in the summary, so a reader can see exactly which hosted
@@ -60,18 +60,18 @@ run_tidy() {
     echo "Clang is unavailable; the clang-tidy leg requires its matching compiler" >&2
     return 1
   fi
-  if ! PATH="${tidy_path}" clang++ -std=c++23 -stdlib=libc++ -x c++ \
-    -fsyntax-only - <<<"#include <version>" >/dev/null 2>&1; then
-    echo "libc++ is unavailable; the hosted clang-tidy leg is authoritative" >&2
-    return 1
-  fi
-  PATH="${tidy_path}" CC=clang CXX=clang++ cmake \
+  # SCRY_CLANG_TOOLING builds only the portable C++23 implementation, which is
+  # the whole analyzable surface: the public API is C++26 and GCC-only. The
+  # compiler is named explicitly because the ci preset pins g++-16.
+  PATH="${tidy_path}" cmake \
     --preset ci \
     --fresh \
     -B build/tidy \
+    -DCMAKE_C_COMPILER=clang \
+    -DCMAKE_CXX_COMPILER=clang++ \
+    -DSCRY_CLANG_TOOLING=ON \
     -DSCRY_ENABLE_CLANG_TIDY=ON \
-    -DSCRY_ENABLE_FORMAT_CHECK=OFF \
-    -DSCRY_USE_LIBCXX=ON &&
+    -DSCRY_ENABLE_FORMAT_CHECK=OFF &&
     PATH="${tidy_path}" cmake --build build/tidy
 }
 
@@ -86,29 +86,36 @@ run_preset() {
       "$@"
 }
 
-run_gcc14_core() {
-  if ! command -v g++-14 >/dev/null 2>&1; then
-    echo "g++-14 is unavailable; the hosted Linux GCC 14 leg is authoritative" >&2
-    return 77
-  fi
-  # Mirrors the "Linux GCC 14" core matrix entry in .github/workflows/ci.yml:
-  # libstdc++ rather than libc++, and no format check because the documentation
-  # job owns that gate with a pinned clang-format.
-  CC=gcc-14 CXX=g++-14 cmake \
-    --preset ci \
-    -B build/ci-gcc14 \
-    -DSCRY_ENABLE_FORMAT_CHECK=OFF \
-    -DSCRY_USE_LIBCXX=OFF &&
-    cmake --build build/ci-gcc14 &&
-    ctest --test-dir build/ci-gcc14 --output-on-failure
+# GCC ships no sanitizer runtime for some host/sanitizer combinations — on Apple
+# Silicon the thread runtime is missing entirely — so each sanitizer leg probes
+# its own flag and reports host-unavailable rather than failing a preflight.
+gcc_sanitizer_links() {
+  local flag="$1"
+  local probe_dir=""
+  probe_dir="$(mktemp -d)" || return 1
+  printf 'int main() { return 0; }\n' >"${probe_dir}/probe.cpp"
+  local status=0
+  g++-16 -std=c++23 "${flag}" \
+    "${probe_dir}/probe.cpp" -o "${probe_dir}/probe" >/dev/null 2>&1 || status=1
+  rm -rf "${probe_dir}"
+  return "${status}"
 }
 
-run_reflection() {
+# run_sanitizer_preset <preset> <sanitizer flag> [extra ctest args...]
+run_sanitizer_preset() {
+  local preset="$1"
+  local flag="$2"
+  shift 2
   if ! command -v g++-16 >/dev/null 2>&1; then
-    echo "g++-16 is unavailable; the hosted Linux reflection leg is authoritative" >&2
+    echo "g++-16 is unavailable; the hosted Linux legs are authoritative" >&2
     return 77
   fi
-  ./scripts/ci-reflection.sh
+  if ! gcc_sanitizer_links "${flag}"; then
+    echo "g++-16 cannot link ${flag}: GCC sanitizers are unavailable on this \
+host; the hosted Linux legs are authoritative" >&2
+    return 77
+  fi
+  run_preset "${preset}" "$@"
 }
 
 # libFuzzer needs a runtime the compiler must ship; AppleClang does not, so the
@@ -167,14 +174,12 @@ run_profile_smoke() {
 cd "${root_dir}"
 run_gate "Doxygen API site" ./scripts/ci-docs.sh
 run_gate "core" ./scripts/ci-local.sh
-run_gate "Core (GCC 14)" run_gcc14_core
 run_gate "profiling semantic + paired smoke" run_profile_smoke
 run_gate "clang-tidy" run_tidy
-run_gate "ASan + UBSan" run_preset asan
+run_gate "ASan + UBSan" run_sanitizer_preset asan -fsanitize=address,undefined
 # TSan is where nondeterminism surfaces; the repeat runs live here (QA-008).
-run_gate "TSan" run_preset tsan --repeat until-fail:3
+run_gate "TSan" run_sanitizer_preset tsan -fsanitize=thread --repeat until-fail:3
 run_gate "fuzz corpus replay" run_fuzz_replay
-run_gate "GCC 16 supported reflection component" run_reflection
 
 if [[ -n "${skipped_gates}" ]]; then
   echo

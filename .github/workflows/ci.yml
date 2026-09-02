@@ -3,13 +3,12 @@
 # Live gates: the warning-clean Doxygen site plus format (pinned
 # clang-format-18), core build matrix with warnings-as-errors plus complexity,
 # contract tests, and the install/package-consumer audit via ci-local.sh,
-# ASan/UBSan/TSan, and clang-tidy. The GCC 16 reflection leg gates
-# reflection-affecting pull requests from reflection.yml (path-aware) and runs
-# unconditionally in the weekly ring; fuzzing, the showcase, and the
-# local-model smoke live in nightly.yml.
+# ASan/UBSan/TSan, and clang-tidy. Fuzzing, the showcase, and the local-model
+# smoke live in nightly.yml.
 #
-# Toolchains are pinned deliberately: compiler drift on
-# experimental legs is a first-class risk.
+# Scry's public API is C++26 reflection, so every core leg is GCC 16 from
+# ppa:ubuntu-toolchain-r/test or Homebrew. Toolchains are pinned deliberately:
+# compiler drift on an experimental compiler is a first-class risk.
 name: CI
 
 on:
@@ -50,7 +49,7 @@ jobs:
           retention-days: 14
       - name: Check formatting
         run: git ls-files '*.cpp' '*.hpp' |
-          grep -E '^(examples|benchmarks|include|src|tests)/' |
+          grep -E '^(examples|extras|include|src|tests)/' |
           xargs clang-format-18 --dry-run --Werror
 
   core:
@@ -59,48 +58,46 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: Linux GCC 14
+          - name: Linux GCC 16
             os: ubuntu-24.04
-            cc: gcc-14
-            cxx: g++-14
-            libcxx: false
-            packages: g++-14 libcurl4-openssl-dev
-          - name: Linux Clang 18
-            os: ubuntu-24.04
-            cc: clang-18
-            cxx: clang++-18
-            libcxx: true
-            packages: clang-18 libc++-dev libc++abi-dev libcurl4-openssl-dev
-          - name: macOS AppleClang
+          - name: macOS GCC 16
             os: macos-15
-            cc: clang
-            cxx: clang++
-            libcxx: false
-            packages: ""
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     env:
-      CC: ${{ matrix.cc }}
-      CXX: ${{ matrix.cxx }}
+      CC: gcc-16
+      CXX: g++-16
       # The documentation job owns the formatting gate with a pinned
       # clang-format; core legs skip it so unpinned tool versions can't skew.
       SCRY_FORMAT_CHECK: "0"
     steps:
       - uses: actions/checkout@v7.0.0
-      - name: Install Linux build tools
+      - name: Install Linux GCC 16 toolchain
         if: runner.os == 'Linux'
-        run: >
-          sudo apt-get update &&
-          sudo apt-get install -y ninja-build ${{ matrix.packages }}
-      - name: Install macOS build tools
+        run: |
+          sudo add-apt-repository --yes ppa:ubuntu-toolchain-r/test
+          sudo apt-get update
+          sudo apt-get install -y g++-16 libcurl4-openssl-dev ninja-build
+      - name: Install macOS GCC 16 toolchain
         if: runner.os == 'macOS'
-        run: brew install ninja
+        run: |
+          brew install ninja
+          brew info gcc
+          if ! command -v g++-16 >/dev/null 2>&1; then
+            brew install gcc || true
+          fi
+          if ! command -v g++-16 >/dev/null 2>&1; then
+            brew install gcc@16 || true
+          fi
+          if ! command -v g++-16 >/dev/null 2>&1; then
+            echo "Homebrew did not provide g++-16 on this runner" >&2
+            exit 1
+          fi
+          g++-16 --version
       - name: Install complexity checker
         run: python3 -m pip install --user --break-system-packages lizard==1.22.1
       - name: Run local-equivalent CI
-        run: >
-          ./scripts/ci-local.sh
-          -DSCRY_USE_LIBCXX=${{ matrix.libcxx }}
+        run: ./scripts/ci-local.sh
 
   static-analysis:
     name: clang-tidy
@@ -114,15 +111,19 @@ jobs:
       - run: >
           sudo apt-get update &&
           sudo apt-get install -y
-          clang-18 clang-tidy-18 libc++-dev libc++abi-dev
-          libcurl4-openssl-dev ninja-build
+          clang-18 clang-tidy-18 libcurl4-openssl-dev ninja-build
       - name: Configure
+        # SCRY_CLANG_TOOLING builds only the portable C++23 implementation,
+        # which is the whole Clang-analyzable surface; the ci preset pins
+        # g++-16, so the compiler is named explicitly here.
         run: >
           cmake --preset ci
           -B build/tidy
+          -DCMAKE_C_COMPILER=clang-18
+          -DCMAKE_CXX_COMPILER=clang++-18
+          -DSCRY_CLANG_TOOLING=ON
           -DSCRY_ENABLE_CLANG_TIDY=ON
           -DSCRY_ENABLE_FORMAT_CHECK=OFF
-          -DSCRY_USE_LIBCXX=ON
       - name: Analyze
         run: cmake --build build/tidy
 
@@ -134,23 +135,19 @@ jobs:
         include:
           - name: ASan + UBSan
             preset: asan
-            cc: gcc-14
-            cxx: g++-14
-            packages: g++-14 libcurl4-openssl-dev ninja-build
-            use_libcxx: false
-            # The only leg that compiles the logging build; it has rotted
-            # before (aeabd8f) when nothing in CI exercised it.
-            extra_cmake_flags: -DSCRY_ENABLE_LOGGING=ON
+            cc: gcc-16
+            cxx: g++-16
+            packages: g++-16 libcurl4-openssl-dev ninja-build
+            extra_cmake_flags: ""
             ctest_flags: ""
           - name: TSan
             preset: tsan
-            cc: clang-18
-            cxx: clang++-18
-            packages: clang-18 libc++-dev libc++abi-dev libcurl4-openssl-dev ninja-build
-            use_libcxx: true
-            extra_cmake_flags: ""
+            cc: gcc-16
+            cxx: g++-16
+            packages: g++-16 libcurl4-openssl-dev ninja-build
             # TSan is where nondeterminism shows up; the repeat runs live here
             # (QA-008) instead of on every leg.
+            extra_cmake_flags: ""
             ctest_flags: --repeat until-fail:3
           # Every fuzz target builds and replays its checked-in seed corpus
           # per pull request (QA-015), so the targets cannot rot between the
@@ -163,7 +160,6 @@ jobs:
             packages: >-
               clang-21 g++-14 libclang-rt-21-dev libcurl4-openssl-dev
               libfuzzer-21-dev ninja-build
-            use_libcxx: false
             extra_cmake_flags: -DSCRY_FUZZ_RUNS=0
             ctest_flags: -R 'fuzz$'
     runs-on: ubuntu-24.04
@@ -182,6 +178,9 @@ jobs:
             | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
           echo "deb https://apt.llvm.org/noble/ llvm-toolchain-noble-21 main" \
             | sudo tee /etc/apt/sources.list.d/llvm-21.list
+      - name: Add the GCC 16 toolchain repository
+        if: matrix.preset != 'fuzz'
+        run: sudo add-apt-repository --yes ppa:ubuntu-toolchain-r/test
       - name: Install sanitizer toolchain
         run: |
           sudo apt-get update
@@ -191,10 +190,7 @@ jobs:
         # shadow-memory mapping on Ubuntu 24.04 runners.
         run: sudo sysctl vm.mmap_rnd_bits=28
       - run: |
-          # GCC keeps alloc/dealloc mismatch detection live for ASan; Ubuntu's
-          # libc++ packaging otherwise triggers LP #2000322 on std exceptions.
-          cmake --preset ${{ matrix.preset }} \
-            -DSCRY_USE_LIBCXX=${{ matrix.use_libcxx }} ${{ matrix.extra_cmake_flags }}
+          cmake --preset ${{ matrix.preset }} ${{ matrix.extra_cmake_flags }}
           cmake --build build/${{ matrix.preset }}
           ctest --test-dir build/${{ matrix.preset }} --output-on-failure \
             ${{ matrix.ctest_flags }}

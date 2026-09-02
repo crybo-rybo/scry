@@ -34,8 +34,8 @@ and a binding requirement disagree.
 
 ## API reference
 
-The generated reference covers Scry's exported C++23 API and its optional C++26 reflection
-component. Private implementation headers and namespaces are deliberately excluded.
+The generated reference covers Scry's exported C++26 API, including the reflected typed-tool
+surface. Private implementation headers and namespaces are deliberately excluded.
 
 Build it from the repository root:
 

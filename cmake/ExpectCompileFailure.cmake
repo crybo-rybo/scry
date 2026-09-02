@@ -29,9 +29,8 @@ set(object_file "${OUTPUT_DIRECTORY}/${fixture_id}.o")
 
 execute_process(
   COMMAND
-    "${CXX_COMPILER}" -std=c++26 -freflection
-    -DSCRY_ENABLE_REFLECTION=1 "-I${PROJECT_INCLUDE_DIR}" -c "${SOURCE_FILE}" -o
-    "${object_file}"
+    "${CXX_COMPILER}" -std=c++26 -freflection "-I${PROJECT_INCLUDE_DIR}" -c
+    "${SOURCE_FILE}" -o "${object_file}"
   RESULT_VARIABLE compile_result
   OUTPUT_VARIABLE compiler_stdout
   ERROR_VARIABLE compiler_stderr)

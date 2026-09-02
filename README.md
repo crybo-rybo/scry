@@ -2,13 +2,13 @@
 
 > *Scrying: consulting an oracle by gazing into a mirror.*
 
-A C++ LLM harness for applications with their own main loops. The stable C++23
-surface supports explicit-schema tools and hides the full agentic loop — HTTP,
-streaming, tool dispatch, retries — behind a small, poll-friendly async API
-with an explicitly named synchronous convenience. C++26 reflection (P2996) is
-an isolated optional component that lowers typed tools onto that same runtime
-registry. The name is the design: reflection (the mirror) +
-consulting an oracle (the LLM).
+A C++ LLM harness for applications with their own main loops. It hides the full
+agentic loop — HTTP, streaming, tool dispatch, retries — behind a small,
+poll-friendly async API with an explicitly named synchronous convenience. Tools
+register either with an explicit JSON schema or, through C++26 reflection
+(P2996), straight from a plain struct; both lower onto the same runtime
+registry. The name is the design: reflection (the mirror) + consulting an
+oracle (the LLM).
 
 Built for the apps that live in C++ — games, GUI tools, simulators — where you can't block a frame, can't shell out to Python, and want tool use, not just chat.
 
@@ -26,10 +26,10 @@ Built for the apps that live in C++ — games, GUI tools, simulators — where y
   strict OpenAI-compatible Chat Completions subset that also drives local
   servers such as Ollama, vLLM, and llama.cpp server with no API key. Optional
   typed reasoning disablement leaves the portable request unchanged by default.
-- **Typed tools, optionally.** The stable surface registers explicit-schema
-  tools; an optional, experimental C++26 reflection component (GCC 16 or
-  newer) derives schemas and argument marshalling from plain structs and lowers
-  onto the same registry.
+- **Typed tools, two ways.** Register a tool with an explicit JSON schema, or
+  let C++26 reflection derive the schema and the argument marshalling from a
+  plain struct. Both lower onto the same registry, and both are part of the
+  library's one target.
 - **JSON and history you can read without a parser.** `scry::JsonView` reads
   the Scry-owned `Json` boundary type — kind, scalar accessors, array index,
   object lookup, ordered keys — and `scry::escape_json_string()` writes one by
@@ -40,10 +40,11 @@ Scry is pre-1.0: no API or ABI stability is promised yet.
 
 ## Requirements
 
-Scry supports Linux and macOS and requires a C++23 toolchain, CMake ≥ 3.25,
-and libcurl ≥ 7.84 development headers. CI covers GCC 14, Clang 18 (with
-libc++), and AppleClang on macOS 15. The C++26 reflection component is
-optional and requires GCC 16 or newer.
+Scry supports Linux and macOS and requires **GCC 16 or newer**, CMake ≥ 3.25,
+and libcurl ≥ 7.84 development headers. C++26 reflection (P2996) is part of the
+core public API, and GCC 16 is currently the only compiler that implements it,
+so Clang is not yet supported for consumers. CI covers GCC 16 on Ubuntu 24.04
+(from `ppa:ubuntu-toolchain-r/test`) and on macOS 15 (from Homebrew).
 
 ## Installation
 
@@ -76,29 +77,17 @@ FetchContent_MakeAvailable(scry)
 target_link_libraries(app PRIVATE scry::scry)
 ```
 
-### Reflection component
-
-The core `scry::scry` target is plain C++23 on stable compilers; core-only
-builds and installations contain no reflection component and no experimental
-language flags. Reflected typed tools are an explicit opt-in on a
-reflection-enabled install (GCC 16+, `-std=c++26 -freflection`):
-
-```cmake
-find_package(scry CONFIG REQUIRED COMPONENTS reflection)
-target_link_libraries(app PRIVATE scry::reflection)
-```
-
-The component provides typed tool registration and
-`scry::reflection::encode(value)` for converting any supported reflected value
-to canonical Scry-owned `Json` without registering a tool.
-
 ## Getting started
 
-The canonical first program is [examples/main_loop.cpp](examples/main_loop.cpp):
-create a `Harness` from a `Config`, register a tool, `send()` a message with the
+[examples/main_loop.cpp](examples/main_loop.cpp) is the one example, and it is
+the canonical first program: create a `Harness` from a `Config`, register one
+reflected tool and one explicit-schema tool, `send()` a message with the
 callbacks you want, and pump `update()` from the loop you already own. It assumes
 a local Ollama server at `http://127.0.0.1:11434/v1` with the `qwen3:8b` model
 installed.
+
+`scry::reflection::encode(value)` converts any supported reflected value to
+canonical Scry-owned `Json` without registering a tool.
 
 [Public API design](docs/design/public-api.md) walks through the same five public concepts —
 `Config`, `Conversation`, `ToolRegistry`, `Turn`, `Harness` — with a complete
@@ -160,13 +149,13 @@ Before handing off a pull request, run the complete local preflight:
 ```
 
 That one command adds all-scenario semantic profiling and paired-orchestration
-smoke checks, clang-tidy, the ASan/UBSan and TSan suites, and the
-host-specific GCC 16 reflection leg. It runs all available legs and reports
-host-specific toolchains that are unavailable locally; hosted CI is
-authoritative for those environments. Long protocol fuzzing, deep static
-analysis, the reflection leg, and the showcase gate run in the scheduled weekly
-workflow; `just showcase` runs the showcase gate locally. `just ci` is the
-optional convenience wrapper. [Development documentation](docs/development/principles-and-testing.md)
+smoke checks, clang-tidy, the ASan/UBSan and TSan suites, and the fuzz corpus
+replay. It runs all available legs and reports host-specific toolchains that are
+unavailable locally; hosted CI is authoritative for those environments. Long
+protocol fuzzing, deep static analysis, and the showcase gate run in the
+scheduled weekly workflow; `just showcase` runs the showcase gate locally.
+`just ci` is the optional convenience wrapper.
+[Development documentation](docs/development/principles-and-testing.md)
 describes the full quality machinery and the definition of done.
 
 ## License

@@ -1,6 +1,7 @@
 #include <chrono>
 #include <cstddef>
 #include <iostream>
+#include <scry/reflection.hpp>
 #include <scry/scry.hpp>
 #include <string>
 #include <thread>
@@ -34,11 +35,23 @@ private:
   bool done_{false};
 };
 
-// Explicit-schema handlers own argument validation at the C++23 boundary.
-// scry::JsonView reads the canonical arguments without a third-party parser;
-// the reflected overload in examples/reflection_tools.cpp decodes into typed
-// structs instead, when the optional component is available.
-[[nodiscard]] scry::Status validate_status_arguments(const scry::JsonView& root) {
+// The reflected path is the flagship: the schema, the strict argument decode,
+// and the result encode are all generated from these two aggregates. The
+// annotation supplies the provider-visible property description.
+struct StatusArguments {
+  [[= scry::reflection::description{
+      "Include a human-readable state label in the result"}]] bool verbose{false};
+};
+
+struct StatusResult {
+  bool running{};
+  std::string state{};
+};
+
+// Explicit-schema handlers own argument validation at the JSON boundary
+// instead, and scry::JsonView reads the canonical arguments without a
+// third-party parser.
+[[nodiscard]] scry::Status validate_echo_arguments(const scry::JsonView& root) {
   const auto reject = [](std::string message) {
     return std::unexpected(scry::Error{
         .category = scry::ErrorCategory::tool,
@@ -46,19 +59,19 @@ private:
     });
   };
   if (root.kind() != scry::JsonKind::object) {
-    return reject("get_application_status expects a JSON object");
+    return reject("echo expects a JSON object");
   }
   for (std::size_t index = 0; index < root.size(); ++index) {
     const auto key = root.key_at(index);
-    if (!key || *key != "verbose") {
-      return reject("get_application_status accepts only the verbose property");
+    if (!key || *key != "text") {
+      return reject("echo accepts only the text property");
     }
   }
   return {};
 }
 
-[[nodiscard]] scry::ToolHandler status_handler(Application& app) {
-  return [&app](const scry::Json& arguments) -> scry::Result<scry::Json> {
+[[nodiscard]] scry::ToolHandler echo_handler() {
+  return [](const scry::Json& arguments) -> scry::Result<scry::Json> {
     // Every handler runs synchronously in harness.update() on this app thread.
     // Keep it bounded; long-running work needs an explicit deferred-result
     // contract rather than a background handler mode.
@@ -67,24 +80,54 @@ private:
     // view, which reports JsonKind::null and so fails the object check with the
     // same message a non-object root gets.
     const auto root = scry::JsonView::parse(arguments).value_or(scry::JsonView{});
-    if (auto valid = validate_status_arguments(root); !valid) {
+    if (auto valid = validate_echo_arguments(root); !valid) {
       return std::unexpected(std::move(valid.error()));
     }
-    const auto verbose = root.find("verbose");
-    const auto wants_detail = verbose && verbose->boolean().value_or(false);
-
-    // This tool is read-only. Side-effecting tools need an app-owned
-    // idempotency key and reconciliation policy; see
-    // docs/design/tools-and-providers.md section 8.
-    std::string result = R"({"running":)";
-    result += app.loop_is_live() ? "true" : "false";
-    if (wants_detail) {
-      result += R"(,"state":)";
-      result += scry::escape_json_string(app.state_label());
+    const auto text = root.find("text");
+    if (!text || text->kind() != scry::JsonKind::string) {
+      return std::unexpected(scry::Error{
+          .category = scry::ErrorCategory::tool,
+          .message = "echo requires a string text property",
+      });
     }
+    std::string result = R"({"echo":)";
+    result += scry::escape_json_string(text->string().value_or(""));
     result += "}";
     return scry::Json{.text = std::move(result)};
   };
+}
+
+[[nodiscard]] scry::Status register_tools(scry::ToolRegistry& tools, Application& app) {
+  // This tool is read-only. Side-effecting tools need an app-owned idempotency
+  // key and reconciliation policy; see docs/design/tools-and-providers.md
+  // section 8.
+  if (auto reflected = scry::reflection::add<StatusArguments>(
+          tools,
+          {
+              .name = "get_application_status",
+              .description =
+                  "Report whether the host application's main loop is running",
+          },
+          [&app](StatusArguments arguments) {
+            return StatusResult{
+                .running = app.loop_is_live(),
+                .state = arguments.verbose ? app.state_label() : "",
+            };
+          });
+      !reflected) {
+    return reflected;
+  }
+  return tools.add(
+      scry::ToolDefinition{
+          .name = "echo",
+          .description = "Return the supplied text unchanged",
+          .input_schema =
+              {
+                  .text =
+                      R"({"type":"object","properties":{"text":{"type":"string"}},"required":["text"],"additionalProperties":false})",
+              },
+      },
+      echo_handler());
 }
 
 void print_block(const scry::ContentBlock& block) {
@@ -136,7 +179,7 @@ void print_history(const scry::Conversation& conversation) {
 } // namespace
 
 int main() {
-  // The Application outlives the Harness on purpose. The tool handler and the
+  // The Application outlives the Harness on purpose. The tool handlers and the
   // turn callbacks below capture it by reference, and a Harness delivers nothing
   // after its destructor begins, so the Harness must be destroyed first. Declaring
   // the app afterwards would leave those captures dangling during shutdown.
@@ -169,19 +212,8 @@ int main() {
   }
   auto harness = std::move(*harness_result);
 
-  auto registration = harness.tools().add(
-      scry::ToolDefinition{
-          .name = "get_application_status",
-          .description = "Report whether the host application's main loop is running",
-          .input_schema =
-              {
-                  .text =
-                      R"({"type":"object","properties":{"verbose":{"type":"boolean"}},"additionalProperties":false})",
-              },
-      },
-      status_handler(app));
-  if (!registration) {
-    std::cerr << registration.error().message << '\n';
+  if (const auto registered = register_tools(harness.tools(), app); !registered) {
+    std::cerr << registered.error().message << '\n';
     return 1;
   }
 

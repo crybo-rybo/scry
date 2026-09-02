@@ -40,7 +40,7 @@ docs:
     ./scripts/ci-docs.sh
 
 tidy:
-    CC=clang CXX=clang++ cmake --preset ci --fresh -B build/tidy -DSCRY_ENABLE_CLANG_TIDY=ON -DSCRY_ENABLE_FORMAT_CHECK=OFF -DSCRY_USE_LIBCXX=ON
+    cmake --preset ci --fresh -B build/tidy -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DSCRY_CLANG_TOOLING=ON -DSCRY_ENABLE_CLANG_TIDY=ON -DSCRY_ENABLE_FORMAT_CHECK=OFF
     cmake --build build/tidy
 
 asan:
@@ -52,9 +52,6 @@ tsan:
     cmake --preset tsan
     cmake --build build/tsan
     ctest --test-dir build/tsan --output-on-failure --repeat until-fail:3
-
-reflection:
-    ./scripts/ci-reflection.sh
 
 nightly-local-model:
     ./scripts/ci-local-model.sh

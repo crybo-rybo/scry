@@ -98,7 +98,7 @@ MACRO_EXPANSION         = NO
 EXPAND_ONLY_PREDEF      = NO
 SEARCH_INCLUDES         = YES
 INCLUDE_PATH            = "@SCRY_ROOT_DIR@/include"
-PREDEFINED              = SCRY_ENABLE_REFLECTION=1 __cpp_impl_reflection=202506L
+PREDEFINED              = __cpp_impl_reflection=202506L
 SKIP_FUNCTION_MACROS    = YES
 
 HAVE_DOT                = YES

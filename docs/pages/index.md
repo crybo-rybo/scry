@@ -1,14 +1,15 @@
 # Scry C++ API {#mainpage}
 
-Scry is a C++23 LLM harness for applications that own their main loop. It keeps network I/O,
+Scry is a C++26 LLM harness for applications that own their main loop. It keeps network I/O,
 streaming, retries, and the agentic tool loop behind a small pump-driven API while leaving the
-host in control of its threads, state, and lifecycle.
+host in control of its threads, state, and lifecycle. It requires GCC 16 or newer, because its
+public API uses C++26 reflection (P2996).
 
-The stable surface has five core concepts:
+The public surface has five core concepts:
 
 - `scry::Config` selects the provider and defines operational bounds.
 - `scry::Conversation` owns transactionally committed history.
-- `scry::ToolRegistry` holds explicit-schema tools snapshotted for each accepted turn.
+- `scry::ToolRegistry` holds the tools snapshotted for each accepted turn.
 - `scry::Turn` is a move-only handle to one asynchronous exchange: `id()` and `cancel()`.
 - `scry::Harness` owns the configured runtime, worker, tools, and callback pump.
 
@@ -48,7 +49,7 @@ blocking exception.
 
 ## Tool registration
 
-The stable C++23 substrate accepts a `scry::ToolDefinition` and a move-only
+The explicit-schema path accepts a `scry::ToolDefinition` and a move-only
 `scry::ToolHandler`. The handler receives canonical JSON and returns a `scry::Result<scry::Json>`.
 It reads those arguments with `scry::JsonView` — value kind, `find()`, `at()`, and ordered
 `key_at()` — and builds small results with `scry::escape_json_string()`; neither needs a
@@ -56,10 +57,9 @@ third-party parser. Registration is additive, duplicate names are rejected, and 
 retain immutable snapshots. `scry::ToolRegistry::contains()` and `names()` report what is
 registered.
 
-The optional, experimental `scry::reflection` package component uses C++26 P2996 reflection to
-generate schemas and strictly marshal typed arguments and results. It lowers into the same
-registry rather than creating a second dispatch path. Core-only consumers remain ordinary C++23
-programs and receive no reflection headers or compiler flags.
+`scry::reflection` uses C++26 P2996 reflection to generate schemas and strictly marshal typed
+arguments and results from a plain struct. It lowers into the same registry rather than creating a
+second dispatch path, and it ships in the same `scry::scry` target as the explicit-schema path.
 
 ## Lifetime and error model
 

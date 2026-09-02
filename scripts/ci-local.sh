@@ -15,9 +15,9 @@ cd "${root_dir}"
 readonly format_check="${SCRY_FORMAT_CHECK:-1}"
 
 git diff --check
-python3 -m lizard include src examples tests benchmarks -l cpp -C 15 -a 6
+python3 -m lizard include src examples tests -l cpp -C 15 -a 6
 unlinked_todos="$(
-  git grep -nE '//[[:space:]]*TODO\b' -- include src examples tests benchmarks |
+  git grep -nE '//[[:space:]]*TODO\b' -- include src examples tests |
     grep -vE 'https?://|#[0-9]+' || true
 )"
 if [[ -n "${unlinked_todos}" ]]; then
@@ -37,22 +37,16 @@ ctest \
   --output-on-failure
 cmake -E remove_directory "${stage_dir}"
 cmake --install "${build_dir}" --prefix "${stage_dir}"
-for reflection_artifact in \
-  "${stage_dir}/include/scry/reflection.hpp" \
-  "${stage_dir}/include/scry/detail" \
-  "${stage_dir}/lib/libscry_reflection.a" \
-  "${stage_dir}/lib/cmake/scry/scryReflectionTargets.cmake"; do
-  if [[ -e "${reflection_artifact}" ]]; then
-    echo "Reflection artifact leaked into the core package: ${reflection_artifact}" >&2
-    exit 1
-  fi
-done
+# The installed package must be usable by a downstream project: the consumer
+# exercises the explicit-schema surface and the reflected surface through
+# scry::scry alone, so the reflected API cannot silently stop being installed.
 cmake -E remove_directory "${consumer_dir}"
 cmake \
   -S tests/package_consumer \
   -B "${consumer_dir}" \
   -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_CXX_COMPILER="${CXX:-g++-16}" \
   -DCMAKE_PREFIX_PATH="${stage_dir}"
 cmake --build "${consumer_dir}"
 "${consumer_dir}/scry_package_consumer"

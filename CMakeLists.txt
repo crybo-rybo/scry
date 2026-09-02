@@ -35,29 +35,17 @@ include(GNUInstallDirs)
 include(ScryFuzz)
 
 option(SCRY_BUILD_TESTS "Build Scry's tests" ${PROJECT_IS_TOP_LEVEL})
-option(SCRY_BUILD_EXAMPLES "Compile Scry's canonical examples" ${PROJECT_IS_TOP_LEVEL})
-option(SCRY_BUILD_BENCHMARKS "Build Scry's profiling executables" OFF)
+option(SCRY_BUILD_EXAMPLES "Compile Scry's canonical example" ${PROJECT_IS_TOP_LEVEL})
 option(SCRY_ENABLE_FORMAT_CHECK "Create clang-format check and fix targets" OFF)
 option(SCRY_ENABLE_CLANG_TIDY "Run clang-tidy while compiling" OFF)
 option(SCRY_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ${PROJECT_IS_TOP_LEVEL})
-option(SCRY_USE_LIBCXX "Use libc++ with a Clang-family compiler" OFF)
-option(SCRY_ENABLE_REFLECTION "Build the supported GCC 16+ reflection component" OFF)
 option(
-  SCRY_ENABLE_LOGGING
-  "Compile lifecycle diagnostics written only to an explicit SCRY_LOG_FILE"
+  SCRY_CLANG_TOOLING
+  "Build only the portable C++23 implementation with a Clang compiler, for \
+clang-tidy and libFuzzer. Not a supported consumer build."
   OFF
 )
 option(SCRY_BUILD_FUZZERS "Build short protocol fuzz targets" OFF)
-option(
-  SCRY_BUILD_IMGUI_SHOWCASE
-  "Build the opt-in Dear ImGui and grid-NPC showcase"
-  OFF
-)
-option(
-  SCRY_BUILD_LOCAL_MODEL_SMOKE
-  "Build the nightly public-API local-model smoke executable"
-  OFF
-)
 
 set(
   SCRY_SANITIZER
@@ -70,238 +58,57 @@ set_property(
   PROPERTY STRINGS none address-undefined thread
 )
 
-find_package(CURL 7.84 REQUIRED)
-find_package(Threads REQUIRED)
-
-FetchContent_Declare(
-  glaze
-  GIT_REPOSITORY https://github.com/stephenberry/glaze.git
-  GIT_TAG 8b60d82c66311c145c4d03be3b556b555a9cb111
-  SYSTEM
-  EXCLUDE_FROM_ALL
-)
-FetchContent_MakeAvailable(glaze)
-
-if(SCRY_BUILD_BENCHMARKS)
-  # Google Benchmark is a build-only profiling dependency. Keep its own tests,
-  # documentation, and install rules out of Scry's build and package surface.
-  set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
-  set(BENCHMARK_ENABLE_GTEST_TESTS OFF CACHE BOOL "" FORCE)
-  set(BENCHMARK_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
-  set(BENCHMARK_INSTALL_DOCS OFF CACHE BOOL "" FORCE)
-  set(BENCHMARK_ENABLE_WERROR OFF CACHE BOOL "" FORCE)
-  FetchContent_Declare(
-    google_benchmark
-    GIT_REPOSITORY https://github.com/google/benchmark.git
-    GIT_TAG 192ef10025eb2c4cdd392bc502f0c852196baa48
-    SYSTEM
-  )
-  FetchContent_MakeAvailable(google_benchmark)
-endif()
-
-add_library(
-  scry
-  STATIC
-    src/core/error.cpp
-    src/core/retry.cpp
-    src/core/json_codec.cpp
-    src/core/json_view.cpp
-    src/runtime/config.cpp
-    src/runtime/conversation.cpp
-    src/runtime/conversation_persistence.cpp
-    src/runtime/harness.cpp
-    src/runtime/messages.cpp
-    src/runtime/pump.cpp
-    src/runtime/pump_state.cpp
-    src/runtime/queue.cpp
-    src/runtime/tool_registry.cpp
-    src/runtime/tool_dispatch.cpp
-    src/runtime/turn.cpp
-    src/runtime/worker.cpp
-)
-add_library(scry::scry ALIAS scry)
-set_target_properties(scry PROPERTIES EXPORT_NAME scry)
-target_compile_features(scry PUBLIC cxx_std_23)
-target_include_directories(
-  scry
-  PUBLIC
-    "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>"
-    "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
-  PRIVATE
-    "${PROJECT_SOURCE_DIR}/src"
-)
-target_include_directories(scry SYSTEM PRIVATE "${glaze_SOURCE_DIR}/include")
-
-if(SCRY_ENABLE_LOGGING)
-  target_sources(scry PRIVATE src/core/log.cpp)
-  target_compile_definitions(scry PRIVATE SCRY_ENABLE_LOGGING=1)
-endif()
-
-add_library(scry_project_options INTERFACE)
-target_compile_options(
-  scry_project_options
-  INTERFACE
-    "$<$<COMPILE_LANG_AND_ID:CXX,AppleClang,Clang,GNU>:-Wall;-Wextra;-Wconversion;-Wshadow>"
-)
-target_link_libraries(
-  scry
-  PRIVATE
-    CURL::libcurl
-    Threads::Threads
-    "$<BUILD_INTERFACE:scry_project_options>"
-)
-add_subdirectory(src/machine)
-add_subdirectory(src/protocol)
-add_subdirectory(src/provider)
-add_subdirectory(src/transport)
-
-if(SCRY_USE_LIBCXX)
+# Scry's public API is C++26: the reflected typed-tool surface is part of the
+# library, not an option. The implementation under src/ is deliberately kept to
+# portable C++23 with no reflection syntax so Clang tooling — clang-tidy and
+# libFuzzer — can still compile it; SCRY_CLANG_TOOLING selects exactly that
+# build and nothing a consumer should ever link against.
+if(SCRY_CLANG_TOOLING)
   if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-    message(FATAL_ERROR "SCRY_USE_LIBCXX requires Clang or AppleClang")
+    message(
+      FATAL_ERROR
+      "SCRY_CLANG_TOOLING builds the implementation with a Clang-family "
+      "compiler; ${CMAKE_CXX_COMPILER_ID} was selected"
+    )
   endif()
-  target_compile_options(scry PUBLIC -stdlib=libc++)
-  target_link_options(scry PUBLIC -stdlib=libc++)
-  target_compile_options(scry_project_options INTERFACE -stdlib=libc++)
-  target_link_options(scry_project_options INTERFACE -stdlib=libc++)
-endif()
-
-# LLVM 18 and Apple libc++ expose the standard C++20 stop-token/jthread
-# surface only when their matching experimental-library mode is enabled.
-if(CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang" OR SCRY_USE_LIBCXX)
-  target_compile_options(scry PUBLIC -fexperimental-library)
-  target_link_options(scry PUBLIC -fexperimental-library)
-  target_compile_options(scry_project_options INTERFACE -fexperimental-library)
-  target_link_options(scry_project_options INTERFACE -fexperimental-library)
-endif()
-
-if(SCRY_WARNINGS_AS_ERRORS)
-  target_compile_options(
-    scry_project_options
-    INTERFACE
-      "$<$<COMPILE_LANG_AND_ID:CXX,AppleClang,Clang,GNU>:-Werror>"
-  )
-endif()
-
-function(scry_enable_sanitizer FLAG)
-  target_compile_options(
-    scry_project_options
-    INTERFACE "${FLAG}" -fno-omit-frame-pointer
-  )
-  target_link_options(
-    scry_project_options
-    INTERFACE "${FLAG}" -fno-omit-frame-pointer
-  )
-endfunction()
-
-if(SCRY_SANITIZER STREQUAL "address-undefined")
-  scry_enable_sanitizer("-fsanitize=address,undefined")
-  target_compile_options(
-    scry_project_options
-    INTERFACE -fno-sanitize-recover=undefined
-  )
-elseif(SCRY_SANITIZER STREQUAL "thread")
-  scry_enable_sanitizer("-fsanitize=thread")
-elseif(NOT SCRY_SANITIZER STREQUAL "none")
-  message(FATAL_ERROR "Unsupported SCRY_SANITIZER: ${SCRY_SANITIZER}")
-endif()
-
-# libFuzzer can only steer through code carrying SanitizerCoverage, and targets
-# like scry_conversation_fuzz link the whole library, so without this every
-# mutation past the fuzz entry point would be blind. The "-no-link" spelling adds
-# the instrumentation without libFuzzer's main, which ordinary test executables
-# must not link; the fuzz targets add plain -fsanitize=fuzzer themselves.
-if(SCRY_BUILD_FUZZERS AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-  target_compile_options(
-    scry_project_options
-    INTERFACE -fsanitize=fuzzer-no-link
-  )
-endif()
-
-if(SCRY_ENABLE_CLANG_TIDY)
-  find_program(SCRY_CLANG_TIDY_EXECUTABLE NAMES clang-tidy REQUIRED)
-  set_property(
-    TARGET scry
-    PROPERTY
-      CXX_CLANG_TIDY
-        "${SCRY_CLANG_TIDY_EXECUTABLE};--warnings-as-errors=*"
-  )
-endif()
-
-set(
-  SCRY_CORE_PUBLIC_HEADERS
-  include/scry/config.hpp
-  include/scry/conversation.hpp
-  include/scry/error.hpp
-  include/scry/events.hpp
-  include/scry/harness.hpp
-  include/scry/json.hpp
-  include/scry/message.hpp
-  include/scry/scry.hpp
-  include/scry/tool_registry.hpp
-  include/scry/turn.hpp
-  include/scry/turn_id.hpp
-  include/scry/unique_function.hpp
-  include/scry/version.hpp
-)
-target_sources(
-  scry
-  PUBLIC
-    FILE_SET scry_core_headers
-    TYPE HEADERS
-    BASE_DIRS "${PROJECT_SOURCE_DIR}/include"
-    FILES ${SCRY_CORE_PUBLIC_HEADERS}
-)
-
-add_custom_target(
-  scry_header_audit ALL
-  COMMAND
-    "${CMAKE_COMMAND}"
-    "-DSCRY_PUBLIC_INCLUDE_DIR=${PROJECT_SOURCE_DIR}/include"
-    -P "${PROJECT_SOURCE_DIR}/cmake/CheckPublicHeaders.cmake"
-  COMMENT "Auditing the public-header boundary"
-  VERBATIM
-)
-
-if(SCRY_ENABLE_FORMAT_CHECK)
-  find_program(SCRY_CLANG_FORMAT_EXECUTABLE NAMES clang-format REQUIRED)
-  file(
-    GLOB_RECURSE
-    SCRY_FORMAT_SOURCES
-    CONFIGURE_DEPENDS
-      "${PROJECT_SOURCE_DIR}/examples/*.cpp"
-      "${PROJECT_SOURCE_DIR}/benchmarks/*.cpp"
-      "${PROJECT_SOURCE_DIR}/benchmarks/*.hpp"
-      "${PROJECT_SOURCE_DIR}/include/*.hpp"
-      "${PROJECT_SOURCE_DIR}/src/*.cpp"
-      "${PROJECT_SOURCE_DIR}/src/*.hpp"
-      "${PROJECT_SOURCE_DIR}/tests/*.cpp"
-      "${PROJECT_SOURCE_DIR}/tests/*.hpp"
-  )
-
-  add_custom_target(
-    format-check
-    COMMAND
-      "${SCRY_CLANG_FORMAT_EXECUTABLE}"
-      --dry-run
-      --Werror
-      ${SCRY_FORMAT_SOURCES}
-    COMMENT "Checking C++ formatting"
-    VERBATIM
-  )
-  add_custom_target(
-    format
-    COMMAND "${SCRY_CLANG_FORMAT_EXECUTABLE}" -i ${SCRY_FORMAT_SOURCES}
-    COMMENT "Formatting C++ sources"
-    VERBATIM
-  )
-endif()
-
-if(SCRY_ENABLE_REFLECTION)
-  if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-    message(FATAL_ERROR "Scry reflection is supported only with GCC 16 or newer")
+  # The reflected public API cannot compile under Clang, so nothing that
+  # includes it is built here.
+  set(SCRY_BUILD_EXAMPLES OFF)
+  if(NOT SCRY_BUILD_FUZZERS)
+    # The fuzz targets live under tests/ and are the one thing this mode builds
+    # besides the library itself.
+    set(SCRY_BUILD_TESTS OFF)
   endif()
-  if(CMAKE_CXX_COMPILER_VERSION VERSION_LESS 16)
-    message(FATAL_ERROR "Scry reflection requires GCC 16 or newer")
+
+  # The implementation uses std::jthread and std::stop_token. libstdc++ and
+  # recent libc++ expose that C++20 surface directly; LLVM 18's libc++ still
+  # gates it behind experimental-library mode. Probe rather than assume, so the
+  # flag appears only on the standard libraries that need it.
+  include(CheckCXXSourceCompiles)
+  set(SCRY_SAVED_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS}")
+  set(CMAKE_REQUIRED_FLAGS "-std=c++23")
+  check_cxx_source_compiles(
+    [=[
+      #include <stop_token>
+      int main() {
+        std::stop_source source;
+        return source.get_token().stop_requested() ? 1 : 0;
+      }
+    ]=]
+    SCRY_TOOLING_HAS_STOP_TOKEN
+  )
+  set(CMAKE_REQUIRED_FLAGS "${SCRY_SAVED_REQUIRED_FLAGS}")
+else()
+  if(
+    NOT CMAKE_CXX_COMPILER_ID STREQUAL "GNU"
+    OR CMAKE_CXX_COMPILER_VERSION VERSION_LESS 16
+  )
+    message(
+      FATAL_ERROR
+      "Scry requires GCC 16 or newer: its public API uses C++26 reflection "
+      "(P2996). Set SCRY_CLANG_TOOLING=ON only for clang-tidy or fuzzing "
+      "builds of the implementation."
+    )
   endif()
 
   include(CheckCXXSourceCompiles)
@@ -365,75 +172,223 @@ if(SCRY_ENABLE_REFLECTION)
       "reflection annotation-query surface"
     )
   endif()
+endif()
 
-  file(
-    GLOB_RECURSE
-    SCRY_REFLECTION_DETAIL_HEADERS
-    CONFIGURE_DEPENDS
-    "${PROJECT_SOURCE_DIR}/include/scry/detail/reflection*.hpp"
-  )
-  set(
-    SCRY_REFLECTION_PUBLIC_HEADERS
-    include/scry/reflection.hpp
-    ${SCRY_REFLECTION_DETAIL_HEADERS}
-  )
+find_package(CURL 7.84 REQUIRED)
+find_package(Threads REQUIRED)
 
-  add_library(scry_reflection STATIC src/reflection/json_bridge.cpp)
-  add_library(scry::reflection ALIAS scry_reflection)
+FetchContent_Declare(
+  glaze
+  GIT_REPOSITORY https://github.com/stephenberry/glaze.git
+  GIT_TAG 8b60d82c66311c145c4d03be3b556b555a9cb111
+  SYSTEM
+  EXCLUDE_FROM_ALL
+)
+FetchContent_MakeAvailable(glaze)
+
+add_library(
+  scry
+  STATIC
+    src/core/error.cpp
+    src/core/retry.cpp
+    src/core/json_codec.cpp
+    src/core/json_view.cpp
+    src/reflection/json_bridge.cpp
+    src/runtime/config.cpp
+    src/runtime/conversation.cpp
+    src/runtime/conversation_persistence.cpp
+    src/runtime/harness.cpp
+    src/runtime/messages.cpp
+    src/runtime/pump.cpp
+    src/runtime/pump_state.cpp
+    src/runtime/queue.cpp
+    src/runtime/tool_registry.cpp
+    src/runtime/tool_dispatch.cpp
+    src/runtime/turn.cpp
+    src/runtime/worker.cpp
+)
+add_library(scry::scry ALIAS scry)
+set_target_properties(scry PROPERTIES EXPORT_NAME scry)
+if(SCRY_CLANG_TOOLING)
+  target_compile_features(scry PUBLIC cxx_std_23)
+else()
+  target_compile_features(scry PUBLIC cxx_std_26)
+  target_compile_options(scry PUBLIC -freflection)
   set_target_properties(
-    scry_reflection
+    scry
     PROPERTIES
       CXX_EXTENSIONS OFF
       CXX_STANDARD 26
       CXX_STANDARD_REQUIRED ON
-      EXPORT_NAME reflection
   )
-  target_sources(
-    scry_reflection
-    PUBLIC
-      FILE_SET scry_reflection_headers
-      TYPE HEADERS
-      BASE_DIRS "${PROJECT_SOURCE_DIR}/include"
-      FILES ${SCRY_REFLECTION_PUBLIC_HEADERS}
-  )
-  target_compile_features(scry_reflection PUBLIC cxx_std_26)
-  target_compile_definitions(scry_reflection PUBLIC SCRY_ENABLE_REFLECTION=1)
+endif()
+target_include_directories(
+  scry
+  PUBLIC
+    "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>"
+    "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
+  PRIVATE
+    "${PROJECT_SOURCE_DIR}/src"
+)
+target_include_directories(scry SYSTEM PRIVATE "${glaze_SOURCE_DIR}/include")
+
+add_library(scry_project_options INTERFACE)
+target_compile_options(
+  scry_project_options
+  INTERFACE
+    "$<$<COMPILE_LANG_AND_ID:CXX,AppleClang,Clang,GNU>:-Wall;-Wextra;-Wconversion;-Wshadow>"
+)
+
+if(SCRY_CLANG_TOOLING AND NOT SCRY_TOOLING_HAS_STOP_TOKEN)
+  target_compile_options(scry PUBLIC -fexperimental-library)
+  target_link_options(scry PUBLIC -fexperimental-library)
+  target_compile_options(scry_project_options INTERFACE -fexperimental-library)
+  target_link_options(scry_project_options INTERFACE -fexperimental-library)
+endif()
+target_link_libraries(
+  scry
+  PRIVATE
+    CURL::libcurl
+    Threads::Threads
+    "$<BUILD_INTERFACE:scry_project_options>"
+)
+add_subdirectory(src/machine)
+add_subdirectory(src/protocol)
+add_subdirectory(src/provider)
+add_subdirectory(src/transport)
+
+if(SCRY_WARNINGS_AS_ERRORS)
   target_compile_options(
-    scry_reflection
-    PUBLIC -std=c++26 -freflection
+    scry_project_options
+    INTERFACE
+      "$<$<COMPILE_LANG_AND_ID:CXX,AppleClang,Clang,GNU>:-Werror>"
   )
-  target_include_directories(
-    scry_reflection
-    PUBLIC
-      "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>"
-      "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
-    PRIVATE "${PROJECT_SOURCE_DIR}/src"
-  )
-  target_include_directories(
-    scry_reflection
-    SYSTEM PRIVATE "${glaze_SOURCE_DIR}/include"
-  )
-  target_link_libraries(
-    scry_reflection
-    PUBLIC scry::scry
-    PRIVATE "$<BUILD_INTERFACE:scry_project_options>"
-  )
-
 endif()
 
-if(SCRY_BUILD_EXAMPLES OR SCRY_BUILD_IMGUI_SHOWCASE)
+function(scry_enable_sanitizer FLAG)
+  target_compile_options(
+    scry_project_options
+    INTERFACE "${FLAG}" -fno-omit-frame-pointer
+  )
+  target_link_options(
+    scry_project_options
+    INTERFACE "${FLAG}" -fno-omit-frame-pointer
+  )
+endfunction()
+
+if(SCRY_SANITIZER STREQUAL "address-undefined")
+  scry_enable_sanitizer("-fsanitize=address,undefined")
+  target_compile_options(
+    scry_project_options
+    INTERFACE -fno-sanitize-recover=undefined
+  )
+elseif(SCRY_SANITIZER STREQUAL "thread")
+  scry_enable_sanitizer("-fsanitize=thread")
+elseif(NOT SCRY_SANITIZER STREQUAL "none")
+  message(FATAL_ERROR "Unsupported SCRY_SANITIZER: ${SCRY_SANITIZER}")
+endif()
+
+# libFuzzer can only steer through code carrying SanitizerCoverage, and targets
+# like scry_conversation_fuzz link the whole library, so without this every
+# mutation past the fuzz entry point would be blind. The "-no-link" spelling adds
+# the instrumentation without libFuzzer's main, which ordinary test executables
+# must not link; the fuzz targets add plain -fsanitize=fuzzer themselves.
+if(SCRY_BUILD_FUZZERS AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  target_compile_options(
+    scry_project_options
+    INTERFACE -fsanitize=fuzzer-no-link
+  )
+endif()
+
+if(SCRY_ENABLE_CLANG_TIDY)
+  find_program(SCRY_CLANG_TIDY_EXECUTABLE NAMES clang-tidy REQUIRED)
+  set_property(
+    TARGET scry
+    PROPERTY
+      CXX_CLANG_TIDY
+        "${SCRY_CLANG_TIDY_EXECUTABLE};--warnings-as-errors=*"
+  )
+endif()
+
+set(
+  SCRY_CORE_PUBLIC_HEADERS
+  include/scry/config.hpp
+  include/scry/conversation.hpp
+  include/scry/detail/reflection_codec.hpp
+  include/scry/detail/reflection_json.hpp
+  include/scry/detail/reflection_meta.hpp
+  include/scry/detail/reflection_registration.hpp
+  include/scry/detail/reflection_schema.hpp
+  include/scry/error.hpp
+  include/scry/events.hpp
+  include/scry/harness.hpp
+  include/scry/json.hpp
+  include/scry/message.hpp
+  include/scry/reflection.hpp
+  include/scry/scry.hpp
+  include/scry/tool_registry.hpp
+  include/scry/turn.hpp
+  include/scry/turn_id.hpp
+  include/scry/unique_function.hpp
+  include/scry/version.hpp
+)
+target_sources(
+  scry
+  PUBLIC
+    FILE_SET scry_core_headers
+    TYPE HEADERS
+    BASE_DIRS "${PROJECT_SOURCE_DIR}/include"
+    FILES ${SCRY_CORE_PUBLIC_HEADERS}
+)
+
+if(NOT SCRY_CLANG_TOOLING)
+  add_custom_target(
+    scry_header_audit ALL
+    COMMAND
+      "${CMAKE_COMMAND}"
+      "-DSCRY_PUBLIC_INCLUDE_DIR=${PROJECT_SOURCE_DIR}/include"
+      -P "${PROJECT_SOURCE_DIR}/cmake/CheckPublicHeaders.cmake"
+    COMMENT "Auditing the public-header boundary"
+    VERBATIM
+  )
+endif()
+
+if(SCRY_ENABLE_FORMAT_CHECK)
+  find_program(SCRY_CLANG_FORMAT_EXECUTABLE NAMES clang-format REQUIRED)
+  file(
+    GLOB_RECURSE
+    SCRY_FORMAT_SOURCES
+    CONFIGURE_DEPENDS
+      "${PROJECT_SOURCE_DIR}/examples/*.cpp"
+      "${PROJECT_SOURCE_DIR}/extras/*.cpp"
+      "${PROJECT_SOURCE_DIR}/extras/*.hpp"
+      "${PROJECT_SOURCE_DIR}/include/*.hpp"
+      "${PROJECT_SOURCE_DIR}/src/*.cpp"
+      "${PROJECT_SOURCE_DIR}/src/*.hpp"
+      "${PROJECT_SOURCE_DIR}/tests/*.cpp"
+      "${PROJECT_SOURCE_DIR}/tests/*.hpp"
+  )
+
+  add_custom_target(
+    format-check
+    COMMAND
+      "${SCRY_CLANG_FORMAT_EXECUTABLE}"
+      --dry-run
+      --Werror
+      ${SCRY_FORMAT_SOURCES}
+    COMMENT "Checking C++ formatting"
+    VERBATIM
+  )
+  add_custom_target(
+    format
+    COMMAND "${SCRY_CLANG_FORMAT_EXECUTABLE}" -i ${SCRY_FORMAT_SOURCES}
+    COMMENT "Formatting C++ sources"
+    VERBATIM
+  )
+endif()
+
+if(SCRY_BUILD_EXAMPLES)
   add_subdirectory(examples)
-endif()
-
-if(SCRY_BUILD_LOCAL_MODEL_SMOKE)
-  add_executable(
-    scry_local_model_smoke
-    tests/nightly/local_model_smoke.cpp
-  )
-  target_link_libraries(
-    scry_local_model_smoke
-    PRIVATE scry::scry scry_project_options
-  )
 endif()
 
 if(SCRY_BUILD_TESTS)
@@ -441,10 +396,6 @@ if(SCRY_BUILD_TESTS)
   # suites registered under tests/, so CTest is included here rather than there.
   include(CTest)
   add_subdirectory(tests)
-endif()
-
-if(SCRY_BUILD_BENCHMARKS)
-  add_subdirectory(benchmarks)
 endif()
 
 configure_package_config_file(
@@ -466,20 +417,6 @@ install(
   FILE_SET scry_core_headers
     DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
 )
-if(TARGET scry_reflection)
-  install(
-    TARGETS scry_reflection
-    EXPORT scryReflectionTargets
-    FILE_SET scry_reflection_headers
-      DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
-  )
-  install(
-    EXPORT scryReflectionTargets
-    FILE scryReflectionTargets.cmake
-    NAMESPACE scry::
-    DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/scry"
-  )
-endif()
 install(
   EXPORT scryTargets
   FILE scryTargets.cmake

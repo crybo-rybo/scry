@@ -8,57 +8,37 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(Catch2)
 foreach(SCRY_CATCH_TARGET IN ITEMS Catch2 Catch2WithMain)
   target_compile_features("${SCRY_CATCH_TARGET}" PRIVATE cxx_std_23)
-  if(SCRY_USE_LIBCXX)
-    target_compile_options("${SCRY_CATCH_TARGET}" PRIVATE -stdlib=libc++)
-  endif()
 endforeach()
 list(APPEND CMAKE_MODULE_PATH "${catch2_SOURCE_DIR}/extras")
 include(Catch)
 
 # Every public header must compile on its own, so each one becomes a lone
-# translation unit that includes nothing else.
-file(MAKE_DIRECTORY "${PROJECT_BINARY_DIR}/generated/header_checks")
-foreach(SCRY_HEADER IN LISTS SCRY_CORE_PUBLIC_HEADERS)
-  get_filename_component(SCRY_HEADER_NAME "${SCRY_HEADER}" NAME_WE)
-  string(REGEX REPLACE "^include/" "" SCRY_HEADER_INCLUDE "${SCRY_HEADER}")
-  set(
-    SCRY_HEADER_CHECK_SOURCE
-    "${PROJECT_BINARY_DIR}/generated/header_checks/${SCRY_HEADER_NAME}.cpp"
-  )
-  file(
-    GENERATE
-    OUTPUT "${SCRY_HEADER_CHECK_SOURCE}"
-    CONTENT "#include <${SCRY_HEADER_INCLUDE}>\n"
-  )
-  add_library(
-    "scry_header_${SCRY_HEADER_NAME}"
-    OBJECT
-    "${SCRY_HEADER_CHECK_SOURCE}"
-  )
-  target_link_libraries(
-    "scry_header_${SCRY_HEADER_NAME}"
-    PRIVATE scry::scry scry_project_options
-  )
-endforeach()
-if(SCRY_ENABLE_REFLECTION)
-  set(
-    SCRY_REFLECTION_HEADER_CHECK_SOURCE
-    "${PROJECT_BINARY_DIR}/generated/header_checks/reflection.cpp"
-  )
-  file(
-    GENERATE
-    OUTPUT "${SCRY_REFLECTION_HEADER_CHECK_SOURCE}"
-    CONTENT "#include <scry/reflection.hpp>\n"
-  )
-  add_library(
-    scry_header_reflection
-    OBJECT
-    "${SCRY_REFLECTION_HEADER_CHECK_SOURCE}"
-  )
-  target_link_libraries(
-    scry_header_reflection
-    PRIVATE scry::reflection scry_project_options
-  )
+# translation unit that includes nothing else. The reflected headers are part of
+# that set, so this cannot run under SCRY_CLANG_TOOLING.
+if(NOT SCRY_CLANG_TOOLING)
+  file(MAKE_DIRECTORY "${PROJECT_BINARY_DIR}/generated/header_checks")
+  foreach(SCRY_HEADER IN LISTS SCRY_CORE_PUBLIC_HEADERS)
+    get_filename_component(SCRY_HEADER_NAME "${SCRY_HEADER}" NAME_WE)
+    string(REGEX REPLACE "^include/" "" SCRY_HEADER_INCLUDE "${SCRY_HEADER}")
+    set(
+      SCRY_HEADER_CHECK_SOURCE
+      "${PROJECT_BINARY_DIR}/generated/header_checks/${SCRY_HEADER_NAME}.cpp"
+    )
+    file(
+      GENERATE
+      OUTPUT "${SCRY_HEADER_CHECK_SOURCE}"
+      CONTENT "#include <${SCRY_HEADER_INCLUDE}>\n"
+    )
+    add_library(
+      "scry_header_${SCRY_HEADER_NAME}"
+      OBJECT
+      "${SCRY_HEADER_CHECK_SOURCE}"
+    )
+    target_link_libraries(
+      "scry_header_${SCRY_HEADER_NAME}"
+      PRIVATE scry::scry scry_project_options
+    )
+  endforeach()
 endif()
 
 add_executable(scry_public_api_contract public_api_contract.cpp)
@@ -136,7 +116,9 @@ if(SCRY_BUILD_IMGUI_SHOWCASE)
   add_subdirectory(showcase)
 endif()
 
-if(SCRY_ENABLE_REFLECTION)
+# The reflected surface is the public API; it cannot compile under Clang, so
+# the fuzz/tidy tooling build skips it.
+if(NOT SCRY_CLANG_TOOLING)
   file(
     GLOB
     SCRY_REFLECTION_TEST_SOURCES
@@ -152,15 +134,11 @@ if(SCRY_ENABLE_REFLECTION)
       scry_reflection_tests
       PRIVATE
         Catch2::Catch2WithMain
-        scry::reflection
+        scry::scry
         scry_project_options
     )
     target_include_directories(scry_reflection_tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
-    catch_discover_tests(
-      scry_reflection_tests
-      TEST_PREFIX "reflection."
-      PROPERTIES LABELS reflection
-    )
+    catch_discover_tests(scry_reflection_tests TEST_PREFIX "reflection.")
   endif()
 
   function(
@@ -169,12 +147,8 @@ if(SCRY_ENABLE_REFLECTION)
     SOURCE_NAME
     EXPECTED_SUBSTRING
   )
-    set(
-      SCRY_COMPILE_FAIL_TEST_NAME
-      "reflection.compile-fail.${TEST_NAME}"
-    )
     add_test(
-      NAME "${SCRY_COMPILE_FAIL_TEST_NAME}"
+      NAME "reflection.compile-fail.${TEST_NAME}"
       COMMAND
         "${CMAKE_COMMAND}"
         "-DCXX_COMPILER=${CMAKE_CXX_COMPILER}"
@@ -183,10 +157,6 @@ if(SCRY_ENABLE_REFLECTION)
         "-DEXPECTED_SUBSTRING=${EXPECTED_SUBSTRING}"
         "-DOUTPUT_DIRECTORY=${PROJECT_BINARY_DIR}/reflection-compile-fail"
         -P "${PROJECT_SOURCE_DIR}/cmake/ExpectCompileFailure.cmake"
-    )
-    set_tests_properties(
-      "${SCRY_COMPILE_FAIL_TEST_NAME}"
-      PROPERTIES LABELS reflection
     )
   endfunction()
 

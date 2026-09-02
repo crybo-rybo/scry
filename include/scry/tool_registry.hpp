@@ -24,7 +24,7 @@ struct ToolDefinition {
 /// Move-only type-erased explicit tool handler.
 ///
 /// The input is a validated JSON object. A successful return must contain valid JSON;
-/// typed C++ handlers can instead use the optional scry::reflection component.
+/// typed C++ handlers can instead use scry::reflection.
 using ToolHandler = UniqueFunction<Result<Json>(Json)>;
 
 /// Harness-owned, additive registry of model-callable tools.

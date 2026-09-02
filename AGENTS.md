@@ -2,9 +2,16 @@
 
 ## Project context
 
-Scry is a C++ LLM harness for applications that own their main loop. The
-stable surface is C++23; C++26 reflection is an explicitly isolated,
-experimental capability.
+Scry is a C++ LLM harness for applications that own their main loop. The public
+API is C++26 and **requires GCC 16 or newer**: P2996 reflection is a core
+feature, not an option, so there is no Clang consumer build. The implementation
+under `src/` stays portable C++23 with no reflection syntax so clang-tidy and
+libFuzzer can still compile it; `-DSCRY_CLANG_TOOLING=ON` selects exactly that
+build and is not a supported consumer build.
+
+Every preset pins `CMAKE_CXX_COMPILER` to `g++-16` through the hidden `gcc`
+preset; override it on the command line when the local GCC 16 is spelled
+differently.
 
 Read the requirement tables in `docs/requirements.md` and the relevant sections
 of the load-bearing design documents before changing behavior. Those state what
@@ -43,16 +50,16 @@ Run the complete local preflight before every PR:
 ./scripts/preflight.sh
 ```
 
-This adds the Doxygen site, the GCC 14 core leg, the profiling smoke,
-clang-tidy, the ASan/UBSan and TSan suites, the fuzz corpus replay, and the
-GCC 16 reflection leg. It runs every leg, continues after failures, reports a
-leg whose toolchain the host lacks as a skip rather than a failure, and names
-every skipped leg again in the closing summary; hosted CI remains authoritative
-for those. `just ci` is an optional equivalent. On macOS,
-`brew install gcc@14 llvm@18` makes the GCC 14 and clang-tidy legs runnable
-locally — CI pins clang-tidy 18, so the keg-only `llvm@18` is probed before the
-unversioned `llvm` formula. Long fuzz runs, deep static analysis, and the
-showcase gate run in the scheduled weekly workflow
+This adds the Doxygen site, the profiling smoke, clang-tidy, the ASan/UBSan and
+TSan suites, and the fuzz corpus replay. It runs every leg, continues after
+failures, reports a leg whose toolchain the host lacks as a skip rather than a
+failure, and names every skipped leg again in the closing summary; hosted CI
+remains authoritative for those. Each sanitizer leg probes its own flag with
+`g++-16` first, because GCC ships no thread-sanitizer runtime on Apple Silicon.
+`just ci` is an optional equivalent. On macOS, `brew install llvm@18` makes the
+clang-tidy leg runnable locally — CI pins clang-tidy 18, so the keg-only
+`llvm@18` is probed before the unversioned `llvm` formula. Long fuzz runs, deep
+static analysis, and the showcase gate run in the scheduled weekly workflow
 (`docs/development/quality-gates.md` §6); `just showcase` runs the showcase gate
 locally.
 
@@ -66,8 +73,9 @@ ctest --test-dir build/dev --output-on-failure
 
 ## Engineering guardrails
 
-- Preserve the reflection-OFF C++23 build and keep reflection-only code behind
-  `scry::reflection` and its build flags.
+- Keep `src/**` free of reflection syntax so the `SCRY_CLANG_TOOLING` build
+  (clang-tidy, libFuzzer) keeps compiling; reflection lives in the public
+  headers.
 - Keep public headers self-contained and free of private implementation or
   third-party dependency leakage.
 - Test behavior at sanctioned seams. Prefer deterministic fakes; do not use

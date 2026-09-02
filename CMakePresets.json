@@ -17,71 +17,48 @@
       }
     },
     {
+      "name": "gcc",
+      "hidden": true,
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_CXX_COMPILER": "g++-16",
+        "CMAKE_C_COMPILER": "gcc-16"
+      }
+    },
+    {
       "name": "dev",
       "displayName": "Developer build",
-      "inherits": "base",
+      "inherits": "gcc",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug"
       }
     },
     {
-      "name": "dev-logging",
-      "displayName": "Developer build with file diagnostics",
-      "inherits": "dev",
-      "cacheVariables": {
-        "SCRY_ENABLE_LOGGING": true
-      }
-    },
-    {
       "name": "ci",
       "displayName": "CI release-like build",
-      "inherits": "base",
+      "inherits": "gcc",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo"
       }
     },
     {
-      "name": "profile",
-      "displayName": "Opt-in performance profiling build",
-      "inherits": "base",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
-        "SCRY_BUILD_BENCHMARKS": true,
-        "SCRY_BUILD_EXAMPLES": false,
-        "SCRY_BUILD_TESTS": false,
-        "SCRY_ENABLE_FORMAT_CHECK": false
-      }
-    },
-    {
       "name": "asan",
       "displayName": "Address and undefined behavior sanitizers",
-      "inherits": "base",
+      "inherits": "gcc",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
         "SCRY_ENABLE_FORMAT_CHECK": false,
-        "SCRY_ENABLE_LOGGING": true,
         "SCRY_SANITIZER": "address-undefined"
       }
     },
     {
       "name": "tsan",
       "displayName": "Thread sanitizer",
-      "inherits": "base",
+      "inherits": "gcc",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
         "SCRY_ENABLE_FORMAT_CHECK": false,
         "SCRY_SANITIZER": "thread"
-      }
-    },
-    {
-      "name": "reflection-gcc16",
-      "displayName": "GCC 16 supported reflection component",
-      "inherits": "base",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug",
-        "CMAKE_CXX_COMPILER": "g++-16",
-        "SCRY_ENABLE_FORMAT_CHECK": false,
-        "SCRY_ENABLE_REFLECTION": true
       }
     },
     {
@@ -91,31 +68,10 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
         "SCRY_BUILD_FUZZERS": true,
+        "SCRY_CLANG_TOOLING": true,
         "SCRY_ENABLE_FORMAT_CHECK": false,
         "SCRY_FUZZ_RUNS": "1000",
         "SCRY_SANITIZER": "address-undefined"
-      }
-    },
-    {
-      "name": "nightly-local-model",
-      "displayName": "Nightly public-API local-model smoke",
-      "inherits": "base",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
-        "SCRY_BUILD_EXAMPLES": false,
-        "SCRY_BUILD_LOCAL_MODEL_SMOKE": true,
-        "SCRY_BUILD_TESTS": false,
-        "SCRY_ENABLE_FORMAT_CHECK": false
-      }
-    },
-    {
-      "name": "showcase",
-      "displayName": "Opt-in Dear ImGui and grid-NPC showcase",
-      "inherits": "base",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug",
-        "SCRY_BUILD_IMGUI_SHOWCASE": true,
-        "SCRY_ENABLE_FORMAT_CHECK": false
       }
     }
   ]

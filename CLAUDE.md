@@ -6,7 +6,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What Scry is
 
-A C++23 static library (`scry::scry`) that runs the full LLM agentic tool loop (HTTP, SSE streaming, tool dispatch, retries, transactional history) behind a poll-friendly async API for apps that own their main loop (games, GUI tools). Two provider dialects: Anthropic Messages and a strict OpenAI-compatible Chat Completions subset (also drives Ollama/vLLM/llama.cpp). An optional, experimental C++26 P2996 reflection component (`scry::reflection`, GCC 16+ only) derives tool schemas from plain structs. Pre-1.0, no API/ABI stability promised.
+A static library (`scry::scry`) that runs the full LLM agentic tool loop (HTTP, SSE streaming, tool dispatch, retries, transactional history) behind a poll-friendly async API for apps that own their main loop (games, GUI tools). Two provider dialects: Anthropic Messages and a strict OpenAI-compatible Chat Completions subset (also drives Ollama/vLLM/llama.cpp). Pre-1.0, no API/ABI stability promised.
+
+**Compiler requirement: GCC 16 or newer.** The public API is C++26 and uses P2996 reflection (`scry::reflection`) to derive tool schemas from plain structs; that is a core feature, not an option, so there is no Clang consumer build. The implementation under `src/` is deliberately kept to portable C++23 with no reflection syntax — `^^`, `[: :]`, and `std::meta` appear only in `include/scry/detail/reflection_codec.hpp`, `reflection_meta.hpp`, and `reflection_schema.hpp` — so clang-tidy and libFuzzer can still compile it. `-DSCRY_CLANG_TOOLING=ON` selects exactly that build (Clang-family compiler, C++23, no `-freflection`, no examples, tests only for the fuzz targets). It is not a supported consumer build.
+
+Every preset pins `"CMAKE_CXX_COMPILER": "g++-16"` through the hidden `gcc` preset. Override it on the command line when the local GCC 16 is spelled differently: `cmake --preset dev -DCMAKE_CXX_COMPILER=/opt/homebrew/bin/g++-16`.
 
 ## Sources of truth
 
@@ -31,7 +35,7 @@ cmake --build build/dev                              # or: just build
 ctest --test-dir build/dev --output-on-failure       # or: just test
 ```
 
-Run a single test or suite. Catch2 tests are registered with ctest under a per-suite prefix (`runtime.`, `machine.`, `protocol.`, `provider.`, `transport.`, `integration.`, `reflection.`, `showcase.`); `public-api-contract` is a plain executable test.
+Run a single test or suite. Catch2 tests are registered with ctest under a per-suite prefix (`runtime.`, `machine.`, `protocol.`, `provider.`, `transport.`, `integration.`, `reflection.`); `public-api-contract` is a plain executable test.
 
 ```sh
 ctest --test-dir build/dev -R 'runtime\.'                          # one suite
@@ -51,18 +55,20 @@ Gates:
 
 ```sh
 ./scripts/ci-local.sh     # just ci-fast: diff check, lizard complexity, unlinked-TODO check, format-check,
-                          # ci preset build+ctest, install to build/stage, reflection-leak audit,
-                          # downstream find_package(scry) consumer build. The quick inner loop.
+                          # ci preset build+ctest, install to build/stage, and a downstream
+                          # find_package(scry) consumer that exercises both registration paths.
 ./scripts/preflight.sh    # just ci: the full ring, and what to run before every PR. Adds the Doxygen site,
-                          # the GCC 14 core leg, profiling smoke, clang-tidy 18, ASan/UBSan, TSan (x3 repeat),
-                          # the fuzz corpus replay, and the GCC 16 reflection leg. Legs whose toolchain the host
-                          # lacks are skipped, not failed, and named again in the closing summary; hosted CI is
-                          # authoritative for those. On macOS, `brew install gcc@14 llvm@18` turns the GCC 14 and
-                          # clang-tidy legs on locally (CI pins clang-tidy 18, so llvm@18 is probed before llvm).
-just tidy | just asan | just tsan | just reflection | just docs | just showcase   # individual legs
+                          # profiling smoke, clang-tidy 18, ASan/UBSan, TSan (x3 repeat), and the fuzz corpus
+                          # replay. Legs whose toolchain the host lacks are skipped, not failed, and named again
+                          # in the closing summary; hosted CI is authoritative for those. Each sanitizer leg
+                          # probes its own flag with g++-16 first: GCC ships no thread-sanitizer runtime on
+                          # Apple Silicon, so TSan skips locally while ASan still runs. On macOS,
+                          # `brew install llvm@18` turns the clang-tidy leg on locally (CI pins clang-tidy 18,
+                          # so llvm@18 is probed before llvm).
+just tidy | just asan | just tsan | just docs | just showcase   # individual legs
 ```
 
-Other presets: `dev-logging` (compiles `SCRY_ENABLE_LOGGING`, writes only to `$SCRY_LOG_FILE`), `profile` (Google Benchmark, see `docs/development/performance-profiling.md` and `just profile*`), `fuzz`, `showcase` (Dear ImGui + NPC examples), `nightly-local-model`.
+Presets: `dev` (Debug), `ci` (RelWithDebInfo), `asan`, `tsan` — all GCC 16 — and `fuzz` (Clang, `SCRY_CLANG_TOOLING`). `dev-logging`, `profile`, `reflection-gcc16`, `showcase`, and `nightly-local-model` are gone; so are the options `SCRY_ENABLE_REFLECTION`, `SCRY_ENABLE_LOGGING`, `SCRY_USE_LIBCXX`, `SCRY_BUILD_BENCHMARKS`, `SCRY_BUILD_IMGUI_SHOWCASE`, and `SCRY_BUILD_LOCAL_MODEL_SMOKE`.
 
 ## Architecture map
 
@@ -82,14 +88,14 @@ Read `docs/architecture/overview.md` for the rationale; this is the file-level o
 
 **Tool registry** (`src/runtime/tool_registry.cpp`): type-erased records (name, description, canonical schema string, `UniqueFunction` handler). Additive-only; `send()` snapshots immutable records per turn. The reflection layer (`include/scry/reflection.hpp`, `include/scry/detail/reflection_*.hpp`, `src/reflection/json_bridge.cpp`) is a consteval code generator that lowers onto this same registry via `scry::reflection::add`.
 
-**Public header boundary.** `include/scry/*.hpp` (listed in `SCRY_CORE_PUBLIC_HEADERS` in `CMakeLists.txt`) must each compile standalone and contain no third-party types; `cmake/CheckPublicHeaders.cmake` and per-header object targets enforce this, and `ci-local.sh` fails if any reflection artifact leaks into a core-only install. Callable boundaries use `scry::UniqueFunction`, not `std::move_only_function` (macOS libc++ gap).
+**Public header boundary.** `include/scry/*.hpp` and `include/scry/detail/reflection_*.hpp` (all listed in `SCRY_CORE_PUBLIC_HEADERS` in `CMakeLists.txt`) must each compile standalone and contain no third-party types; `cmake/CheckPublicHeaders.cmake` and per-header object targets enforce this, and `ci-local.sh` builds and runs a downstream `find_package(scry)` consumer that exercises both registration paths. Callable boundaries use `scry::UniqueFunction`, not `std::move_only_function` (macOS libc++ gap).
 
 **Test seams.** `src/runtime/test_access.hpp` (`HarnessTestAccess::create`) builds a `Harness` with an injected provider and transport. Shared fixtures are in `tests/support/` and `tests/runtime/runtime_test_support.hpp`. Unit tests use deterministic fakes only: no real sleeps, wall-clock time, or network. Integration tests use the in-process loopback server.
 
 ## Engineering guardrails
 
-- Keep the reflection-OFF C++23 build green; reflection-only code stays behind `scry::reflection` and `SCRY_ENABLE_REFLECTION`.
-- Warnings are errors (`-Wall -Wextra -Wconversion -Wshadow`) on GCC 14, Clang 18/libc++, and AppleClang. A warning on one compiler still fails.
+- Keep `src/**` free of reflection syntax so the `SCRY_CLANG_TOOLING` build (clang-tidy, libFuzzer) keeps compiling; reflection lives in the public headers.
+- Warnings are errors (`-Wall -Wextra -Wconversion -Wshadow`) on GCC 16 and on Clang 18 under `SCRY_CLANG_TOOLING`. A warning on one compiler still fails.
 - Complexity limits are gated: lizard cyclomatic fail at 15, 6 args; clang-tidy cognitive complexity fail at 25. `// TODO` comments must link an issue or URL.
 - Scry-originated failures are values (`std::expected` / `Result<T>`), never exceptions across the public boundary or thread boundary. Tool-handler exceptions become tool-error results; user callback exceptions propagate synchronously out of `update()`.
 - Bug fixes add a regression test first; public API changes add a compiling example under `examples/`; new dependencies are pinned by commit hash and justified in the same change.

@@ -4,14 +4,6 @@ if(SCRY_BUILD_EXAMPLES)
     scry_canonical_example
     PRIVATE scry::scry scry_project_options
   )
-
-  if(SCRY_ENABLE_REFLECTION)
-    add_executable(scry_reflection_example reflection_tools.cpp)
-    target_link_libraries(
-      scry_reflection_example
-      PRIVATE scry::reflection scry_project_options
-    )
-  endif()
 endif()
 
 if(NOT SCRY_BUILD_IMGUI_SHOWCASE)

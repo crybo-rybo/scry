@@ -1,17 +1,13 @@
 #pragma once
 
-#if !defined(SCRY_ENABLE_REFLECTION)
-#error "Include <scry/reflection.hpp> through the scry::reflection CMake target"
-#endif
-
 #if !defined(__cpp_impl_reflection)
-#error "Scry reflection requires a compiler implementing P2996"
+#error "Scry requires a compiler implementing P2996 (GCC 16 or newer)"
 #endif
 
 #include <scry/detail/reflection_registration.hpp>
 #include <utility>
 
-/// Optional experimental C++26 typed-tool API built on P2996 reflection.
+/// Core C++26 typed-tool API built on P2996 reflection.
 namespace scry::reflection {
 
 /// Encodes a supported reflected value as Scry's canonical JSON.
