@@ -32,10 +32,20 @@ and a binding requirement disagree.
 - [v0.2.0](releases/v0.2.0.md)
 - [v0.1.1](releases/v0.1.1.md)
 
-## API reference
+## Generated reference site
 
-The generated reference covers Scry's exported C++23 API and its optional C++26 reflection
-component. Private implementation headers and namespaces are deliberately excluded.
+The generated site has two curated entry points:
+
+- **API Reference** covers Scry's exported C++23 API and its optional C++26 reflection
+  component. This is the consumer-facing contract.
+- **Source Documentation** maps the implementation for contributors: private header contracts,
+  ownership and thread-affinity notes, subsystem starting points, include relationships, and full
+  browsable source.
+
+The code index is intentionally bounded to maintained C++ files under `include/` and `src/`.
+Tests, test support outside `src/`, benchmarks, examples, and build tooling are not Doxygen input.
+Header-declared private and internal entities are referenceable; translation-unit-local helpers
+remain visible in the source browser without being promoted into standalone reference pages.
 
 The current `main` reference is published at
 [crybo-rybo.github.io/scry](https://crybo-rybo.github.io/scry/).
@@ -53,5 +63,7 @@ are build-only documentation tools and do not enter Scry's compiled, installed, 
 dependency surface. Hosted CI retains every generated site as an artifact and deploys successful
 non-pull-request `main` builds to GitHub Pages.
 
-Documentation warnings are errors. Public declarations, parameters, return values, enum values,
-and cross-references must stay complete enough for a clean generation pass.
+Doxygen diagnostics remain visible in CI, but comment coverage and quality are review obligations
+rather than a separate generation gate. Comments on implementation details should explain
+invariants, ownership, bounds, thread affinity, and error behavior instead of merely translating
+the C++ spelling into prose.

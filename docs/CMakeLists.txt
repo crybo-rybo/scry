@@ -17,19 +17,35 @@ set(
 )
 
 # Ubuntu 24.04, the documentation CI host, provides Doxygen 1.9.8. Keeping
-# that version as the floor makes local and hosted warning behavior agree.
+# that version as the floor preserves compatibility with the hosted build.
 find_package(Doxygen 1.9.8 REQUIRED COMPONENTS doxygen dot)
 
-file(GLOB SCRY_DOCUMENTED_HEADERS CONFIGURE_DEPENDS "${SCRY_ROOT_DIR}/include/scry/*.hpp")
-list(
-  APPEND SCRY_DOCUMENTED_HEADERS
-  "${SCRY_ROOT_DIR}/include/scry/detail/reflection_meta.hpp"
-  "${SCRY_ROOT_DIR}/include/scry/detail/reflection_registration.hpp"
-  "${SCRY_ROOT_DIR}/include/scry/detail/reflection_schema.hpp"
+# Keep the documented code surface explicit: installed/public headers live under
+# include/, while contributor-facing implementation documentation lives under
+# src/. Tests, benchmarks, examples, and build tooling are intentionally outside
+# Doxygen's code input even when they contain C++.
+file(
+  GLOB_RECURSE SCRY_DOCUMENTED_PUBLIC_HEADERS
+  CONFIGURE_DEPENDS
+  LIST_DIRECTORIES false
+  "${SCRY_ROOT_DIR}/include/*.hpp"
 )
-list(TRANSFORM SCRY_DOCUMENTED_HEADERS PREPEND "\"")
-list(TRANSFORM SCRY_DOCUMENTED_HEADERS APPEND "\"")
-list(JOIN SCRY_DOCUMENTED_HEADERS " " SCRY_DOXYGEN_INPUT)
+file(
+  GLOB_RECURSE SCRY_DOCUMENTED_IMPLEMENTATION_FILES
+  CONFIGURE_DEPENDS
+  LIST_DIRECTORIES false
+  "${SCRY_ROOT_DIR}/src/*.hpp"
+  "${SCRY_ROOT_DIR}/src/*.cpp"
+)
+set(
+  SCRY_DOCUMENTED_CODE
+  ${SCRY_DOCUMENTED_PUBLIC_HEADERS}
+  ${SCRY_DOCUMENTED_IMPLEMENTATION_FILES}
+)
+list(SORT SCRY_DOCUMENTED_CODE)
+list(TRANSFORM SCRY_DOCUMENTED_CODE PREPEND "\"")
+list(TRANSFORM SCRY_DOCUMENTED_CODE APPEND "\"")
+list(JOIN SCRY_DOCUMENTED_CODE " " SCRY_DOXYGEN_INPUT)
 
 configure_file(Doxyfile.in Doxyfile @ONLY)
 
@@ -39,6 +55,6 @@ add_custom_target(
   COMMAND "${DOXYGEN_EXECUTABLE}" "${CMAKE_CURRENT_BINARY_DIR}/Doxyfile"
   BYPRODUCTS "${CMAKE_CURRENT_BINARY_DIR}/html/index.html"
   WORKING_DIRECTORY "${SCRY_ROOT_DIR}"
-  COMMENT "Building Scry API documentation"
+  COMMENT "Building Scry API and source documentation"
   VERBATIM
 )

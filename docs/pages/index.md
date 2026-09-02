@@ -1,77 +1,57 @@
-# Scry C++ API {#mainpage}
+# Scry documentation {#mainpage}
 
-Scry is a C++23 LLM harness for applications that own their main loop. It keeps network I/O,
-streaming, retries, and the agentic tool loop behind a small pump-driven API while leaving the
-host in control of its threads, state, and lifecycle.
+Scry is a C++ LLM harness for applications that own their main loop. Its documentation is split
+into two deliberately different views: the contract an application can depend on, and the
+implementation a contributor needs to understand.
 
-The stable surface has five core concepts:
+@htmlonly
+<nav class="scry-doc-paths" aria-label="Documentation views">
+  <a class="scry-doc-card scry-doc-card-api" href="api_reference.html">
+    <span class="scry-doc-card-kicker">Build with Scry</span>
+    <span class="scry-doc-card-title">API Reference</span>
+    <span class="scry-doc-card-copy">Stable C++23 concepts, lifetime rules, errors, callbacks,
+      and the optional experimental C++26 reflection surface.</span>
+    <span class="scry-doc-card-link">Explore the public contract <span aria-hidden="true">&rarr;</span></span>
+  </a>
+  <a class="scry-doc-card scry-doc-card-source" href="source_documentation.html">
+    <span class="scry-doc-card-kicker">Contribute to Scry</span>
+    <span class="scry-doc-card-title">Source Documentation</span>
+    <span class="scry-doc-card-copy">Internal types, ownership boundaries, runtime flow,
+      provider adapters, protocols, and browsable implementation sources.</span>
+    <span class="scry-doc-card-link">Understand the implementation <span aria-hidden="true">&rarr;</span></span>
+  </a>
+</nav>
+@endhtmlonly
 
-- `scry::Config` selects the provider and defines operational bounds.
-- `scry::Conversation` owns transactionally committed history.
-- `scry::ToolRegistry` holds explicit-schema tools snapshotted for each accepted turn.
-- `scry::Turn` is a move-only handle to one asynchronous exchange: `id()` and `cancel()`.
-- `scry::Harness` owns the configured runtime, worker, tools, and callback pump.
+## Choose the layer you need
 
-## Minimal main-loop integration
+The @ref api_reference "API Reference" is the right starting point when embedding Scry in an
+application. It is curated from the maintained headers under `include/` and distinguishes the
+stable C++23 contract from the experimental reflection component.
 
-```cpp
-#include <scry/scry.hpp>
+The @ref source_documentation "Source Documentation" is for maintainers, reviewers, and curious
+readers. It connects the architecture to the declarations and implementation under `src/`, with
+full source browsing and relationship diagrams.
 
-auto harness = scry::Harness::create(scry::Config{
-    .base_url = "http://127.0.0.1:11434/v1",
-    .model = "qwen3:8b",
-    .dialect = scry::ProviderDialect::openai_compatible,
-});
+## The project in one minute
 
-auto conversation = scry::Conversation::create();
+1. An application configures a @ref scry::Harness and submits a turn without surrendering its
+   main loop.
+2. A worker actor performs provider and transport work while the application keeps running.
+3. @ref scry::Harness::update "Harness::update()" pumps events and tool handlers on the calling
+   thread.
+4. A successful terminal event commits conversation history atomically; failure and cancellation
+   commit nothing.
 
-auto turn = harness->send(*conversation, "Give me one useful observation.",
-    scry::TurnCallbacks{
-        .on_text_delta = [](std::string_view text) { render_streamed_text(text); },
-        .on_finished = [](scry::Result<scry::Completion> outcome) {
-          if (outcome) { render_final_answer(outcome->text); }
-          else { render_error(outcome.error()); }
-        },
-    });
+@htmlonly
+<div class="scry-note scry-note-contract">
+  <strong>Contract compass.</strong> Generated source documentation explains the current code; it
+  does not redefine product behavior. The RFC-2119 rows in <code>docs/requirements.md</code> are
+  normative, followed by <code>docs/design/</code> and <code>docs/architecture/</code> for rationale
+  and boundaries.
+</div>
+@endhtmlonly
 
-while (application_is_running()) {
-  harness->update();
-  run_application_frame();
-}
-```
-
-Callbacks are supplied when the turn is created, so no event can arrive before its handler
-exists. Every asynchronous callback, and every tool handler, runs inside
-`scry::Harness::update()` on the thread that calls it. `scry::Harness::send()` never waits for
-network I/O. The explicitly named `scry::Harness::send_and_wait()` convenience is the sole
-blocking exception.
-
-## Tool registration
-
-The stable C++23 substrate accepts a `scry::ToolDefinition` and a move-only
-`scry::ToolHandler`. The handler receives canonical JSON and returns a `scry::Result<scry::Json>`.
-Registration is additive, duplicate names are rejected, and accepted turns retain immutable
-snapshots.
-
-The optional, experimental `scry::reflection` package component uses C++26 P2996 reflection to
-generate schemas and strictly marshal typed arguments and results. It lowers into the same
-registry rather than creating a second dispatch path. Core-only consumers remain ordinary C++23
-programs and receive no reflection headers or compiler flags.
-
-## Lifetime and error model
-
-Failures before a turn is accepted are returned as `scry::Result`; afterwards, every outcome uses
-the single terminal channel `scry::TurnCallbacks::on_finished`. When that optional callback is
-non-empty, it receives exactly one result by value: the completion on success or the `scry::Error`
-on failure — including cancellation, as `scry::ErrorCategory::cancelled`. Terminal processing
-still occurs when the callback is empty. Successful completion commits the full conversation
-exchange atomically; error and cancellation commit nothing.
-
-Dropping `scry::Turn` detaches without cancellation or blocking. `scry::Turn::cancel()` is an
-explicit cooperative request. The streamed `std::string_view` and `const scry::ToolCall&` observer
-arguments are borrowed only for the callback invocation and must be copied if retained;
-`on_finished` receives its result by value.
-
-For complete working code, see `examples/main_loop.cpp` in the source repository. Architectural
-rationale and binding behavioral requirements remain in `docs/design/`,
-`docs/architecture/`, and `docs/requirements.md`.
+Scry's stable library surface targets C++23. C++26 reflection is isolated behind
+`scry::reflection` and separate build flags so core-only consumers do not inherit experimental
+headers, compiler flags, or dependencies.

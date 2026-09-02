@@ -121,12 +121,14 @@ Recommended reading order: product design → software architecture → developm
 and quality, then requirements as the binding summary. The first three explain
 *why*; the register states *what holds*.
 
-### API reference
+### Generated reference site
 
-The generated API reference is published at
+The generated documentation is published at
 [crybo-rybo.github.io/scry](https://crybo-rybo.github.io/scry/).
+Its landing page separates the consumer-facing API Reference from contributor-facing
+Source Documentation for the maintained C++ code under `include/` and `src/`.
 
-Build the same warning-clean reference locally with Doxygen 1.9.8 or newer and
+Build the same site locally with Doxygen 1.9.8 or newer and
 Graphviz:
 
 ```sh
@@ -135,7 +137,7 @@ Graphviz:
 
 The styled HTML site is written to `build/docs/html/index.html`. Hosted CI runs
 the same command for pull requests and every push to `main`, then retains the
-site as the `scry-api-docs` artifact. Successful non-pull-request runs on
+site as the `scry-reference-docs` artifact. Successful non-pull-request runs on
 `main` also deploy the site to GitHub Pages. These documentation tools are
 build-only and never enter Scry's installed or exported package surface.
 

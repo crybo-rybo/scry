@@ -2,8 +2,11 @@
 
 Companion to the [design overview](../design/overview.md). The design
 documentation says *what* the pieces are; this section says *how* each piece is
-built and why. Deliberately no class listings or method signatures; the public
-headers are the API source of truth.
+built and why. Deliberately no class listings or method signatures: the
+generated API Reference curates the consumer contract, and the generated Source
+Documentation owns implementation listings and navigable source. Public headers
+remain the API source of truth; generated internal documentation explains the
+current implementation without creating a compatibility promise.
 
 ---
 

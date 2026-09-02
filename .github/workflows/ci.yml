@@ -1,6 +1,6 @@
 # Per-commit CI ring; see docs/development/quality-gates.md section 6.
 #
-# Live gates: the warning-clean Doxygen site plus format (pinned
+# Live gates: the generated Doxygen API and source site plus format (pinned
 # clang-format-18), main-only GitHub Pages publication, core build matrix with
 # warnings-as-errors plus complexity,
 # contract tests, and the install/package-consumer audit via ci-local.sh,
@@ -29,7 +29,7 @@ concurrency:
 
 jobs:
   documentation:
-    name: Doxygen API site + clang-format (pinned 18)
+    name: Doxygen reference site + clang-format (pinned 18)
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -40,12 +40,12 @@ jobs:
           sudo apt-get install -y doxygen graphviz ninja-build clang-format-18
           doxygen --version
           dot -V
-      - name: Build warning-clean API documentation
+      - name: Build API and source documentation
         run: ./scripts/ci-docs.sh
       - name: Retain generated website
         uses: actions/upload-artifact@v7.0.1
         with:
-          name: scry-api-docs
+          name: scry-reference-docs
           path: build/docs/html
           if-no-files-found: error
           retention-days: 14
@@ -60,7 +60,7 @@ jobs:
           path: build/docs/html
 
   deploy-documentation:
-    name: Deploy Doxygen API site
+    name: Deploy Doxygen reference site
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     needs: documentation
     runs-on: ubuntu-24.04

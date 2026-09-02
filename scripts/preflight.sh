@@ -98,7 +98,7 @@ run_profile_smoke() {
 }
 
 cd "${root_dir}"
-run_gate "Doxygen API site" ./scripts/ci-docs.sh
+run_gate "Doxygen reference site" ./scripts/ci-docs.sh
 run_gate "core" ./scripts/ci-local.sh
 run_gate "profiling semantic + paired smoke" run_profile_smoke
 run_gate "clang-tidy" run_tidy
