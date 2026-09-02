@@ -205,6 +205,18 @@ elseif(NOT SCRY_SANITIZER STREQUAL "none")
   message(FATAL_ERROR "Unsupported SCRY_SANITIZER: ${SCRY_SANITIZER}")
 endif()
 
+# libFuzzer can only steer through code carrying SanitizerCoverage, and targets
+# like scry_conversation_fuzz link the whole library, so without this every
+# mutation past the fuzz entry point would be blind. The "-no-link" spelling adds
+# the instrumentation without libFuzzer's main, which ordinary test executables
+# must not link; the fuzz targets add plain -fsanitize=fuzzer themselves.
+if(SCRY_BUILD_FUZZERS AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  target_compile_options(
+    scry_project_options
+    INTERFACE -fsanitize=fuzzer-no-link
+  )
+endif()
+
 if(SCRY_ENABLE_CLANG_TIDY)
   find_program(SCRY_CLANG_TIDY_EXECUTABLE NAMES clang-tidy REQUIRED)
   set_property(
