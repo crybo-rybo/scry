@@ -1,4 +1,4 @@
-# Per-commit CI ring; see docs/development/quality-gates.md section 6.
+# Per-commit CI ring; see docs/contributing.md.
 #
 # Live gates: the warning-clean Doxygen site plus format (pinned
 # clang-format-18), core build matrix with warnings-as-errors plus complexity,

@@ -99,8 +99,7 @@ struct StatusResult {
 
 [[nodiscard]] scry::Status register_tools(scry::ToolRegistry& tools, Application& app) {
   // This tool is read-only. Side-effecting tools need an app-owned idempotency
-  // key and reconciliation policy; see docs/design/tools-and-providers.md
-  // section 8.
+  // key and reconciliation policy; see docs/architecture.md section 5.
   if (auto reflected = scry::reflection::add<StatusArguments>(
           tools,
           {

@@ -288,7 +288,7 @@ template <typename Handler, typename Args> consteval bool tool_handler_impl() {
 
 /// Values supported by reflected schema generation and strict marshalling.
 ///
-/// Supported shapes are the closed matrix in SCRY-TOOL-010: booleans, bounded
+/// Supported shapes are a deliberately closed matrix: booleans, bounded
 /// non-character integers, finite floats, strings, scoped enums, one optional layer,
 /// vectors except `vector<bool>`, fixed arrays, and recursively supported plain
 /// aggregates.
