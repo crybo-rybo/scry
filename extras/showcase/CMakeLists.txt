@@ -8,7 +8,7 @@
 # ./scripts/ci-showcase.sh does exactly that and audits that no showcase artifact
 # reaches the installed package.
 
-cmake_minimum_required(VERSION 3.25)
+cmake_minimum_required(VERSION 3.28)
 
 project(scry_showcase LANGUAGES CXX)
 

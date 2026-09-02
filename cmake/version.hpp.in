@@ -4,13 +4,13 @@
 
 /// @brief Scry release major version.
 ///
-/// These macros are the single source of the release number. CMake refuses to configure
-/// when they disagree with the project version.
-#define SCRY_VERSION_MAJOR 0
+/// These macros are generated from the CMake project version, which is the single
+/// source of the release number; do not edit the generated header.
+#define SCRY_VERSION_MAJOR @PROJECT_VERSION_MAJOR@
 /// @brief Scry release minor version.
-#define SCRY_VERSION_MINOR 2
+#define SCRY_VERSION_MINOR @PROJECT_VERSION_MINOR@
 /// @brief Scry release patch version.
-#define SCRY_VERSION_PATCH 0
+#define SCRY_VERSION_PATCH @PROJECT_VERSION_PATCH@
 
 /// @brief Integer release version for consumer preprocessor gates.
 ///

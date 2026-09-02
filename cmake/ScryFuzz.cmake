@@ -26,7 +26,7 @@ function(scry_add_fuzzer target corpus)
   )
   target_include_directories(
     "${target}"
-    SYSTEM PRIVATE "${glaze_SOURCE_DIR}/include"
+    SYSTEM PRIVATE "${SCRY_GLAZE_INCLUDE_DIR}"
   )
   target_compile_options("${target}" PRIVATE -fsanitize=fuzzer)
   target_link_options("${target}" PRIVATE -fsanitize=fuzzer)

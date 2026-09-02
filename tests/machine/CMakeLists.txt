@@ -11,7 +11,7 @@ add_executable(
 )
 target_include_directories(
   scry_turn_machine_tests
-  SYSTEM PRIVATE "${glaze_SOURCE_DIR}/include"
+  SYSTEM PRIVATE "${SCRY_GLAZE_INCLUDE_DIR}"
 )
 target_compile_features(scry_turn_machine_tests PRIVATE cxx_std_23)
 target_include_directories(

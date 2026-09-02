@@ -5,6 +5,7 @@
 #include <scry/harness.hpp>
 #include <scry/reflection.hpp>
 #include <scry/scry.hpp>
+#include <scry/version.hpp>
 #include <string_view>
 #include <utility>
 
@@ -23,6 +24,10 @@ struct PackageArguments {
 
 int main() {
   using namespace std::literals;
+
+  // <scry/version.hpp> is generated into the build tree and installed from
+  // there; reading it here makes a missing generated header a compile error.
+  static_assert(scry::version_major == 0);
 
   static_assert(
       scry::reflection::input_schema_v<PackageArguments> ==

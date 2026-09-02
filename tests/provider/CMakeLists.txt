@@ -47,7 +47,7 @@ target_include_directories(
 )
 target_include_directories(
   scry_provider_tests
-  SYSTEM PRIVATE "${glaze_SOURCE_DIR}/include"
+  SYSTEM PRIVATE "${SCRY_GLAZE_INCLUDE_DIR}"
 )
 target_compile_definitions(
   scry_provider_tests

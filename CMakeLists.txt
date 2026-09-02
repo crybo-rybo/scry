@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.25)
+cmake_minimum_required(VERSION 3.28)
 
 project(
   scry
@@ -7,26 +7,21 @@ project(
   LANGUAGES CXX
 )
 
-# The public version header is the other place the release number lives;
-# refuse to configure when the two disagree so they can never drift.
-file(READ "${PROJECT_SOURCE_DIR}/include/scry/version.hpp" SCRY_VERSION_HEADER)
-foreach(SCRY_VERSION_PART MAJOR MINOR PATCH)
-  if(NOT SCRY_VERSION_HEADER MATCHES "#define SCRY_VERSION_${SCRY_VERSION_PART} ([0-9]+)")
-    message(FATAL_ERROR "include/scry/version.hpp is missing SCRY_VERSION_${SCRY_VERSION_PART}")
-  endif()
-  set("SCRY_HEADER_VERSION_${SCRY_VERSION_PART}" "${CMAKE_MATCH_1}")
-endforeach()
+# The CMake project version above is the only place the release number lives;
+# the public <scry/version.hpp> is generated from it so the two cannot drift.
 set(
-  SCRY_HEADER_VERSION
-  "${SCRY_HEADER_VERSION_MAJOR}.${SCRY_HEADER_VERSION_MINOR}.${SCRY_HEADER_VERSION_PATCH}"
+  SCRY_GENERATED_INCLUDE_DIR
+  "${PROJECT_BINARY_DIR}/generated/include"
 )
-if(NOT SCRY_HEADER_VERSION STREQUAL PROJECT_VERSION)
-  message(
-    FATAL_ERROR
-    "include/scry/version.hpp reports ${SCRY_HEADER_VERSION} but the project "
-    "version is ${PROJECT_VERSION}; bump both together"
-  )
-endif()
+set(
+  SCRY_GENERATED_VERSION_HEADER
+  "${SCRY_GENERATED_INCLUDE_DIR}/scry/version.hpp"
+)
+configure_file(
+  cmake/version.hpp.in
+  "${SCRY_GENERATED_VERSION_HEADER}"
+  @ONLY
+)
 
 list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
 include(CMakePackageConfigHelpers)
@@ -196,14 +191,33 @@ endif()
 find_package(CURL 7.84 REQUIRED)
 find_package(Threads REQUIRED)
 
+# FIND_PACKAGE_ARGS lets a packaged Glaze (vcpkg, Conan, Homebrew) satisfy the
+# dependency; the pinned fetch is the fallback when find_package(glaze) fails.
 FetchContent_Declare(
   glaze
   GIT_REPOSITORY https://github.com/stephenberry/glaze.git
   GIT_TAG 8b60d82c66311c145c4d03be3b556b555a9cb111
   SYSTEM
   EXCLUDE_FROM_ALL
+  FIND_PACKAGE_ARGS
 )
 FetchContent_MakeAvailable(glaze)
+
+# Scry consumes Glaze privately through raw include directories so no
+# glaze::glaze link dependency is ever exported. Where those headers live
+# depends on which of the two paths above provided them.
+if(glaze_SOURCE_DIR)
+  set(SCRY_GLAZE_INCLUDE_DIR "${glaze_SOURCE_DIR}/include")
+else()
+  get_target_property(
+    SCRY_GLAZE_INCLUDE_DIR
+    glaze::glaze
+    INTERFACE_INCLUDE_DIRECTORIES
+  )
+endif()
+if(NOT SCRY_GLAZE_INCLUDE_DIR)
+  message(FATAL_ERROR "Could not determine the Glaze include directory")
+endif()
 
 add_library(
   scry
@@ -227,7 +241,12 @@ add_library(
     src/runtime/worker.cpp
 )
 add_library(scry::scry ALIAS scry)
-set_target_properties(scry PROPERTIES EXPORT_NAME scry)
+set_target_properties(
+  scry
+  PROPERTIES
+    EXPORT_NAME scry
+    POSITION_INDEPENDENT_CODE ON
+)
 if(SCRY_CLANG_TOOLING)
   target_compile_features(scry PUBLIC cxx_std_23)
 else()
@@ -245,11 +264,12 @@ target_include_directories(
   scry
   PUBLIC
     "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>"
+    "$<BUILD_INTERFACE:${SCRY_GENERATED_INCLUDE_DIR}>"
     "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
   PRIVATE
     "${PROJECT_SOURCE_DIR}/src"
 )
-target_include_directories(scry SYSTEM PRIVATE "${glaze_SOURCE_DIR}/include")
+target_include_directories(scry SYSTEM PRIVATE "${SCRY_GLAZE_INCLUDE_DIR}")
 
 add_library(scry_project_options INTERFACE)
 target_compile_options(
@@ -360,7 +380,6 @@ set(
   include/scry/turn.hpp
   include/scry/turn_id.hpp
   include/scry/unique_function.hpp
-  include/scry/version.hpp
 )
 target_sources(
   scry
@@ -369,6 +388,10 @@ target_sources(
     TYPE HEADERS
     BASE_DIRS "${PROJECT_SOURCE_DIR}/include"
     FILES ${SCRY_CORE_PUBLIC_HEADERS}
+    FILE_SET scry_generated_headers
+    TYPE HEADERS
+    BASE_DIRS "${SCRY_GENERATED_INCLUDE_DIR}"
+    FILES "${SCRY_GENERATED_VERSION_HEADER}"
 )
 
 if(NOT SCRY_CLANG_TOOLING)
@@ -377,6 +400,7 @@ if(NOT SCRY_CLANG_TOOLING)
     COMMAND
       "${CMAKE_COMMAND}"
       "-DSCRY_PUBLIC_INCLUDE_DIR=${PROJECT_SOURCE_DIR}/include"
+      "-DSCRY_GENERATED_INCLUDE_DIR=${SCRY_GENERATED_INCLUDE_DIR}"
       -P "${PROJECT_SOURCE_DIR}/cmake/CheckPublicHeaders.cmake"
     COMMENT "Auditing the public-header boundary"
     VERBATIM
@@ -445,6 +469,8 @@ install(
   TARGETS scry
   EXPORT scryTargets
   FILE_SET scry_core_headers
+    DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
+  FILE_SET scry_generated_headers
     DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
 )
 install(

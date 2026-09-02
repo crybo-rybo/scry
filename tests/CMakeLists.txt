@@ -39,10 +39,18 @@ include(Catch)
 
 # Every public header must compile on its own, so each one becomes a lone
 # translation unit that includes nothing else.
+# The generated <scry/version.hpp> lives in the build tree, so the loop derives
+# the include spelling from the last "include/" in each path rather than
+# assuming a source-relative one.
 file(MAKE_DIRECTORY "${PROJECT_BINARY_DIR}/generated/header_checks")
-foreach(SCRY_HEADER IN LISTS SCRY_CORE_PUBLIC_HEADERS)
+foreach(
+  SCRY_HEADER
+  IN
+  LISTS SCRY_CORE_PUBLIC_HEADERS
+  ITEMS "${SCRY_GENERATED_VERSION_HEADER}"
+)
   get_filename_component(SCRY_HEADER_NAME "${SCRY_HEADER}" NAME_WE)
-  string(REGEX REPLACE "^include/" "" SCRY_HEADER_INCLUDE "${SCRY_HEADER}")
+  string(REGEX REPLACE "^.*include/" "" SCRY_HEADER_INCLUDE "${SCRY_HEADER}")
   set(
     SCRY_HEADER_CHECK_SOURCE
     "${PROJECT_BINARY_DIR}/generated/header_checks/${SCRY_HEADER_NAME}.cpp"
@@ -100,7 +108,7 @@ add_executable(
 target_include_directories(scry_runtime_tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
 target_include_directories(
   scry_runtime_tests
-  SYSTEM PRIVATE "${glaze_SOURCE_DIR}/include"
+  SYSTEM PRIVATE "${SCRY_GLAZE_INCLUDE_DIR}"
 )
 target_link_libraries(
   scry_runtime_tests

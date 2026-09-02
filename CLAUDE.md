@@ -99,7 +99,7 @@ Read `docs/architecture/overview.md` for the rationale; this is the file-level o
 - Scry-originated failures are values (`std::expected` / `Result<T>`), never exceptions across the public boundary or thread boundary. Tool-handler exceptions become tool-error results; user callback exceptions propagate synchronously out of `update()`.
 - Bug fixes add a regression test first; public API changes add a compiling example under `examples/`; new dependencies are pinned by commit hash and justified in the same change.
 - Deliberate shortcuts go in the evolution register (`docs/architecture/quality-and-evolution.md`).
-- `include/scry/version.hpp` and the `project()` version in `CMakeLists.txt` must be bumped together; configure fails otherwise.
+- The `project()` version in `CMakeLists.txt` is the only place the release number lives; `<scry/version.hpp>` is generated from it by `cmake/version.hpp.in` and is not tracked.
 - Never edit or commit anything under `build/`.
 
 ## PR conventions
