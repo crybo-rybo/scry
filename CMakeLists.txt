@@ -45,7 +45,21 @@ option(
 clang-tidy and libFuzzer. Not a supported consumer build."
   OFF
 )
+option(
+  SCRY_CLANG_TOOLING_LIBCXX
+  "Use libc++ for the Clang tooling build; needed where the host's libstdc++ \
+lacks std::expected for the tooling compiler"
+  OFF
+)
 option(SCRY_BUILD_FUZZERS "Build short protocol fuzz targets" OFF)
+
+if(SCRY_CLANG_TOOLING_LIBCXX AND NOT SCRY_CLANG_TOOLING)
+  message(
+    FATAL_ERROR
+    "SCRY_CLANG_TOOLING_LIBCXX selects the standard library for the "
+    "SCRY_CLANG_TOOLING build; enable SCRY_CLANG_TOOLING or leave it OFF"
+  )
+endif()
 
 set(
   SCRY_SANITIZER
@@ -87,6 +101,11 @@ if(SCRY_CLANG_TOOLING)
   include(CheckCXXSourceCompiles)
   set(SCRY_SAVED_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS}")
   set(CMAKE_REQUIRED_FLAGS "-std=c++23")
+  if(SCRY_CLANG_TOOLING_LIBCXX)
+    # The probe must see the same standard library the build will use, or the
+    # -fexperimental-library decision below is made against the wrong one.
+    string(APPEND CMAKE_REQUIRED_FLAGS " -stdlib=libc++")
+  endif()
   check_cxx_source_compiles(
     [=[
       #include <stop_token>
@@ -238,6 +257,17 @@ target_compile_options(
   INTERFACE
     "$<$<COMPILE_LANG_AND_ID:CXX,AppleClang,Clang,GNU>:-Wall;-Wextra;-Wconversion;-Wshadow>"
 )
+
+# A tooling compiler older than the host's libstdc++ cannot parse its headers —
+# clang 18 against Ubuntu 24.04's <expected>, for one — so the tooling build can
+# select libc++ instead. No consumer build is affected: SCRY_CLANG_TOOLING is
+# not one.
+if(SCRY_CLANG_TOOLING_LIBCXX)
+  target_compile_options(scry PUBLIC -stdlib=libc++)
+  target_link_options(scry PUBLIC -stdlib=libc++)
+  target_compile_options(scry_project_options INTERFACE -stdlib=libc++)
+  target_link_options(scry_project_options INTERFACE -stdlib=libc++)
+endif()
 
 if(SCRY_CLANG_TOOLING AND NOT SCRY_TOOLING_HAS_STOP_TOKEN)
   target_compile_options(scry PUBLIC -fexperimental-library)

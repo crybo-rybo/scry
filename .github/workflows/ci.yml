@@ -111,7 +111,8 @@ jobs:
       - run: >
           sudo apt-get update &&
           sudo apt-get install -y
-          clang-18 clang-tidy-18 libcurl4-openssl-dev ninja-build
+          clang-18 clang-tidy-18 libc++-18-dev libc++abi-18-dev
+          libcurl4-openssl-dev ninja-build
       - name: Configure
         # SCRY_CLANG_TOOLING builds only the portable C++23 implementation,
         # which is the whole Clang-analyzable surface; the ci preset pins
@@ -121,6 +122,7 @@ jobs:
           -B build/tidy
           -DCMAKE_CXX_COMPILER=clang++-18
           -DSCRY_CLANG_TOOLING=ON
+          -DSCRY_CLANG_TOOLING_LIBCXX=ON
           -DSCRY_ENABLE_CLANG_TIDY=ON
           -DSCRY_ENABLE_FORMAT_CHECK=OFF
       - name: Analyze
