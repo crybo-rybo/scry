@@ -58,10 +58,21 @@ struct RetryPolicy {
 
 /// Time bounds for Scry-owned network and shutdown operations.
 struct TransportTimeouts {
-  /// Maximum time allowed to establish a connection.
+  /// Maximum time allowed to establish a connection, including name resolution.
   std::chrono::milliseconds connect{10'000};
-  /// Maximum time allowed for one HTTP transfer.
-  std::chrono::milliseconds transfer{120'000};
+  /// Maximum time the response may stay silent. The transfer fails when no bytes
+  /// arrive for this long, including while waiting for the first byte. Curl applies
+  /// this in whole seconds; sub-second values round up to one second. Curl compares
+  /// a rolling average rather than a strict gap, so a stall is reported some seconds
+  /// after this bound rather than exactly at it.
+  ///
+  /// Local servers can spend minutes processing a long prompt before the first
+  /// token; raise this bound for that deployment rather than disabling it.
+  std::chrono::milliseconds idle{120'000};
+  /// Optional maximum time for one whole HTTP transfer. Unset means the transfer is
+  /// bounded only by `idle`, `connect`, and the configured byte limits, which is the
+  /// right default for streaming responses of unknown length.
+  std::optional<std::chrono::milliseconds> transfer{};
   /// Maximum time allowed for Scry-owned shutdown work.
   std::chrono::milliseconds shutdown{2'000};
 };

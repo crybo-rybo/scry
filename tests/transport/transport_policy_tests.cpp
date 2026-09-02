@@ -64,6 +64,23 @@ TEST_CASE("transport request validation rejects incomplete requests") {
   CHECK(result.error().category == ErrorCategory::invalid_config);
 
   request = valid_request();
+  request.timeouts.idle = 0ms;
+  result = validate_request(request, body_sink);
+  REQUIRE_FALSE(result);
+  CHECK(result.error().category == ErrorCategory::invalid_config);
+
+  // An unset total transfer bound is the default and stays accepted; a set one
+  // must still be positive.
+  request = valid_request();
+  request.timeouts.transfer = {};
+  CHECK(validate_request(request, body_sink));
+
+  request.timeouts.transfer = 0ms;
+  result = validate_request(request, body_sink);
+  REQUIRE_FALSE(result);
+  CHECK(result.error().category == ErrorCategory::invalid_config);
+
+  request = valid_request();
   request.timeouts.transfer = -1ms;
   result = validate_request(request, body_sink);
   REQUIRE_FALSE(result);
@@ -136,31 +153,72 @@ TEST_CASE("HTTP status policy maps retryability and preserves correlation") {
   CHECK(unauthorized.category == ErrorCategory::authentication);
   CHECK_FALSE(unauthorized.retryable);
   CHECK(unauthorized.provider_request_id == "request-1");
+  CHECK(unauthorized.http_status == 401);
   CHECK(http_error(403, "").category == ErrorCategory::authentication);
+  CHECK(http_error(403, "").http_status == 403);
 
   const auto rate_limit = http_error(429, "");
   CHECK(rate_limit.category == ErrorCategory::rate_limit);
   CHECK(rate_limit.retryable);
+  CHECK(rate_limit.http_status == 429);
 
   const auto server_error = http_error(599, "");
   CHECK(server_error.category == ErrorCategory::network);
   CHECK(server_error.retryable);
+  CHECK(server_error.http_status == 599);
 
   const auto redirect = http_error(301, "");
   CHECK(redirect.category == ErrorCategory::protocol);
   CHECK_FALSE(redirect.retryable);
+  CHECK(redirect.http_status == 301);
 
   // Only the 5xx range is treated as a retryable server failure.
   CHECK(http_error(499, "").category == ErrorCategory::protocol);
   CHECK(http_error(500, "").category == ErrorCategory::network);
   CHECK(http_error(600, "").category == ErrorCategory::protocol);
+  CHECK(http_error(499, "").http_status == 499);
+  CHECK(http_error(500, "").http_status == 500);
+  CHECK(http_error(600, "").http_status == 600);
+}
+
+TEST_CASE("HTTP error detail extracts only a sanitized provider token") {
+  using scry::detail::transport_policy::http_error_detail;
+
+  CHECK(http_error_detail(
+            R"({"type":"error","error":{"type":"not_found_error","message":"secret"}})",
+            "anthropic") == "anthropic:not_found_error");
+  CHECK(
+      http_error_detail(
+          R"({"error":{"message":"secret","type":"invalid_request_error","code":"model_not_found"}})",
+          "openai") == "openai:invalid_request_error");
+  CHECK(http_error_detail(R"({"error":{"message":"secret","code":"model_not_found"}})",
+                          "openai") == "openai:model_not_found");
+
+  // The body never reaches the detail: anything that is not a clean token in an
+  // error object collapses to empty rather than to a placeholder.
+  CHECK(http_error_detail("not json at all", "anthropic").empty());
+  // Glaze accepts a document truncated after a complete token, so a body cut
+  // there still yields its (still sanitized) token; a value cut mid-token is
+  // rejected outright.
+  CHECK(http_error_detail(R"({"error":{"type":"not_found_error")", "anthropic") ==
+        "anthropic:not_found_error");
+  CHECK(http_error_detail(R"({"error":{"type":"not_fou)", "anthropic").empty());
+  CHECK(http_error_detail(R"({"error":{"type":"not found"}})", "anthropic").empty());
+  CHECK(http_error_detail(R"({"error":{"type":"not-found-error"}})", "anthropic")
+            .empty());
+  CHECK(http_error_detail(R"({"error":{"type":"not_found_error"}})", "").empty());
+  CHECK(http_error_detail(R"({"error":"not_found_error"})", "anthropic").empty());
+  CHECK(http_error_detail(R"({"type":"not_found_error"})", "anthropic").empty());
+  CHECK(http_error_detail("", "anthropic").empty());
 }
 
 TEST_CASE("response policy parses status, headers, and bounded body bytes") {
   using scry::detail::transport_policy::ResponseState;
 
   ResponseState response{.limit = 512};
+  CHECK(response.status_code == 0);
   REQUIRE(response.accept_header("HTTP/1.1 200 OK\r\n"));
+  CHECK(response.status_code == 200);
   REQUIRE(response.accept_header(" Request-Id : request-42 \r\n"));
   REQUIRE(response.accept_header("Content-Length: 4\r\n"));
   REQUIRE(response.accept_header("\r\n"));
@@ -172,8 +230,10 @@ TEST_CASE("response policy parses status, headers, and bounded body bytes") {
   ResponseState redirect{.limit = 128};
   REQUIRE(redirect.accept_header("HTTP/1.1 302 Found\r\n"));
   CHECK_FALSE(redirect.deliver_body);
+  CHECK(redirect.status_code == 302);
   REQUIRE(redirect.accept_header("HTTP/1.1 204 No Content\r\n"));
   CHECK(redirect.deliver_body);
+  CHECK(redirect.status_code == 204);
 }
 
 TEST_CASE("response policy rejects malformed and oversized metadata") {
@@ -334,6 +394,8 @@ TEST_CASE("curl error classification maps transfer codes onto error categories")
            "invalid server response", false},
       Case{CURLE_URL_MALFORMAT, ErrorCategory::protocol, "invalid server response",
            false},
+      Case{CURLE_OPERATION_TIMEDOUT, ErrorCategory::network, "transfer timed out",
+           true},
       Case{CURLE_COULDNT_CONNECT, ErrorCategory::network, "network transfer failed",
            true},
       Case{CURLE_OK, ErrorCategory::network, "network transfer failed", true},

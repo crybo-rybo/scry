@@ -21,6 +21,10 @@ struct TransportRequest {
   std::string url{};
   std::vector<HttpHeader> headers{};
   std::string body{};
+  // Namespace the provider adapter uses for Error::provider_detail tokens
+  // ("anthropic", "openai"). The transport prefixes a sanitized error-body
+  // token with it; empty means no body-derived detail is produced.
+  std::string provider_namespace{};
   bool tls_verify_peer{true};
   TransportTimeouts timeouts{};
   ResourceLimits limits{};

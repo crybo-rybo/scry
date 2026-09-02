@@ -165,7 +165,7 @@ TEST_CASE("pump budget is a soft deadline between callbacks") {
   CHECK(pump.update({}).callbacks_delivered == 1);
 }
 
-TEST_CASE("pump budget bounds event ingestion and terminal commits") {
+TEST_CASE("pump budget bounds ingestion and delivery after one guaranteed unit") {
   PumpFixture fixture;
   auto now = std::chrono::steady_clock::time_point{};
   scry::detail::PumpState pump{
@@ -204,20 +204,71 @@ TEST_CASE("pump budget bounds event ingestion and terminal commits") {
   REQUIRE(
       fixture.events->push(completion_event(second->id(), {.text = "second"}), 1024));
 
+  // The clock advances 1 ms per sample. The first pop is unconditional, so it
+  // costs no sample; the deadline is then checked before the second pop (at
+  // 1 ms, still inside the 2 ms budget) and both events are ingested and
+  // committed. The first delivery is likewise unconditional; the check before
+  // the second (at 2 ms) stops the call.
   const auto bounded = pump.update({.time_budget = 2ms});
-  CHECK(bounded.callbacks_delivered == 0);
-  CHECK(bounded.events_remaining == 2);
+  CHECK(bounded.callbacks_delivered == 1);
+  CHECK(bounded.events_remaining == 1);
   CHECK(bounded.budget_exhausted);
-  CHECK(fixture.conversation->messages->size() == 2);
-  CHECK_FALSE(first_completed);
+  CHECK(fixture.conversation->messages->size() == 4);
+  CHECK(first_completed);
   CHECK_FALSE(second_completed);
 
   const auto drained = pump.update({});
-  CHECK(drained.callbacks_delivered == 2);
+  CHECK(drained.callbacks_delivered == 1);
   CHECK(drained.events_remaining == 0);
-  CHECK(first_completed);
   CHECK(second_completed);
   CHECK(fixture.conversation->messages->size() == 4);
+}
+
+TEST_CASE("an already-expired positive budget still makes one unit of progress per "
+          "call") {
+  PumpFixture fixture;
+  auto now = std::chrono::steady_clock::time_point{};
+  scry::detail::PumpState pump{
+      fixture.events,
+      [&now] {
+        const auto sampled = now;
+        now += std::chrono::hours{1};
+        return sampled;
+      },
+  };
+  std::size_t completed = 0;
+  constexpr std::array turn_values{21U, 22U, 23U};
+  for (const auto value : turn_values) {
+    const auto route = fixture.route(
+        value,
+        {
+            .callbacks =
+                scry::TurnCallbacks{
+                    .on_finished =
+                        [&completed](scry::Result<scry::Completion>) { ++completed; },
+                },
+        });
+    pump.add_route(route);
+    REQUIRE(
+        fixture.events->push(completion_event(route->id(), {.text = "done"}), 1024));
+  }
+
+  // The budget expires on the very first clock sample, yet each call still
+  // ingests one event and delivers one callback.
+  const auto first = pump.update({.time_budget = 1us});
+  CHECK(first.callbacks_delivered == 1);
+  CHECK(first.events_remaining == 2);
+  CHECK(first.budget_exhausted);
+
+  const auto second = pump.update({.time_budget = 1us});
+  CHECK(second.callbacks_delivered == 1);
+  CHECK(second.events_remaining == 1);
+  CHECK(second.budget_exhausted);
+
+  const auto third = pump.update({.time_budget = 1us});
+  CHECK(third.callbacks_delivered == 1);
+  CHECK(third.events_remaining == 0);
+  CHECK(completed == 3);
 }
 
 TEST_CASE("detaching retains the callbacks supplied at send") {

@@ -63,7 +63,9 @@ data: [DONE]
   };
   config.retry.max_attempts = 1;
   config.timeouts.connect = 500ms;
-  config.timeouts.transfer = 2s;
+  // No total bound: held transfers are ended by cancellation or destruction.
+  config.timeouts.idle = 2s;
+  config.timeouts.transfer = std::nullopt;
   config.timeouts.shutdown = 25ms;
   return config;
 }
@@ -210,6 +212,71 @@ TEST_CASE("non-success HTTP status cannot publish an SSE-shaped body") {
   CHECK(error->provider_request_id == "req-redirect");
   CHECK(streamed.empty());
   CHECK_FALSE(completed);
+  CHECK(conversation->empty());
+}
+
+TEST_CASE("HTTP rejection surfaces status and sanitized provider detail through the "
+          "public API") {
+  constexpr auto anthropic_error_body =
+      std::string_view{R"({"type":"error","error":{"type":"not_found_error",)"
+                       R"("message":"private-provider-message"}})"};
+  scry::test::LoopbackServer server{
+      response("404 Not Found",
+               "Content-Type: application/json\r\nrequest-id: req-missing-model\r\n",
+               anthropic_error_body)};
+  auto harness = scry::Harness::create(config_for(server));
+  REQUIRE(harness);
+  auto conversation = scry::Conversation::create();
+  REQUIRE(conversation);
+  std::optional<scry::Error> error;
+  bool completed = false;
+  auto turn = harness->send(
+      *conversation, "Ask a model that does not exist",
+      {
+          .on_finished =
+              [&completed, &error](scry::Result<scry::Completion> finished) {
+                if (finished) {
+                  completed = true;
+                } else {
+                  error = std::move(finished.error());
+                }
+              },
+      });
+  REQUIRE(turn);
+
+  REQUIRE(pump_until(*harness, [&] { return error.has_value() || completed; }));
+  REQUIRE(error);
+  CHECK(error->category == scry::ErrorCategory::protocol);
+  CHECK(error->http_status == 404);
+  CHECK(error->provider_detail == "anthropic:not_found_error");
+  CHECK(error->provider_request_id == "req-missing-model");
+  CHECK(error->message.find("private-provider-message") == std::string::npos);
+  CHECK_FALSE(completed);
+  CHECK(conversation->empty());
+}
+
+TEST_CASE("OpenAI HTTP rejection surfaces its own dialect namespace") {
+  constexpr auto openai_error_body =
+      std::string_view{R"({"error":{"message":"private-provider-message",)"
+                       R"("type":"invalid_request_error","code":"model_not_found"}})"};
+  scry::test::LoopbackServer server{
+      response("404 Not Found",
+               "Content-Type: application/json\r\nx-request-id: req-openai-missing\r\n",
+               openai_error_body)};
+  auto harness = scry::Harness::create(openai_config_for(server));
+  REQUIRE(harness);
+  auto conversation = scry::Conversation::create();
+  REQUIRE(conversation);
+
+  const auto completion = harness->send_and_wait(*conversation, "Ask for a bad model");
+
+  REQUIRE_FALSE(completion);
+  CHECK(completion.error().category == scry::ErrorCategory::protocol);
+  CHECK(completion.error().http_status == 404);
+  CHECK(completion.error().provider_detail == "openai:invalid_request_error");
+  CHECK(completion.error().provider_request_id == "req-openai-missing");
+  CHECK(completion.error().message.find("private-provider-message") ==
+        std::string::npos);
   CHECK(conversation->empty());
 }
 

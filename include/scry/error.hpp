@@ -44,11 +44,16 @@ enum class ErrorCategory : std::uint8_t {
 struct Error {
   // Keep the scalar header together: Error is carried by value through expected
   // and event queues, so separating these fields adds padding to every instance.
+  // http_status occupies padding that already existed between retryable and
+  // attempt, so adding it does not grow the struct.
   /// Stable programmatic category.
   ErrorCategory category{ErrorCategory::invalid_state};
   /// Whether retrying may succeed. Scry retries automatically only before semantic
   /// output.
   bool retryable{false};
+  /// HTTP status of the provider response that produced this error, or zero when
+  /// the failure did not come from an HTTP response.
+  std::uint16_t http_status{};
   /// One-based request attempt number, or zero when no request was attempted.
   std::uint32_t attempt{};
   /// Human-readable Scry diagnostic.

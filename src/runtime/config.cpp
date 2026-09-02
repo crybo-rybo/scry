@@ -141,9 +141,10 @@ namespace {
 
 [[nodiscard]] Status validate_runtime_bounds(const Config& config) {
   constexpr std::size_t minimum_event_bytes = 1024;
-  if (config.timeouts.connect.count() <= 0 || config.timeouts.transfer.count() <= 0 ||
-      config.timeouts.shutdown.count() <= 0) {
-    return invalid("transport timeouts must be greater than 0");
+  if (config.timeouts.connect.count() <= 0 || config.timeouts.idle.count() <= 0 ||
+      config.timeouts.shutdown.count() <= 0 ||
+      (config.timeouts.transfer && config.timeouts.transfer->count() <= 0)) {
+    return invalid("transport timeouts must be greater than 0 (transfer may be unset)");
   }
   if (!positive_limits(config.limits)) {
     return invalid("resource limits must be greater than 0");

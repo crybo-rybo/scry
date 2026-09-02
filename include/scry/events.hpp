@@ -70,9 +70,13 @@ struct Completion {
 
 /// Limits one Harness::update() pump invocation.
 struct UpdateOptions {
-  /// Optional soft deadline checked between callbacks.
+  /// Optional soft deadline checked between events and between callbacks.
   ///
   /// One callback or tool handler is never preempted and may overrun this budget.
+  /// Every call makes one unit of progress before the budget is consulted: one
+  /// queued event is ingested, and one callback is delivered when a deliverable
+  /// one exists and max_callbacks permits. A small or already-expired budget
+  /// therefore slows the pump rather than starving it.
   std::optional<std::chrono::microseconds> time_budget{};
   /// Maximum callbacks delivered by this pump invocation.
   std::size_t max_callbacks{std::numeric_limits<std::size_t>::max()};
