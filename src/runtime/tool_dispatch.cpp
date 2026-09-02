@@ -1,7 +1,6 @@
 #include "runtime/tool_dispatch.hpp"
 
 #include "core/json_codec.hpp"
-#include "core/log.hpp"
 
 #include <algorithm>
 #include <string>
@@ -83,24 +82,13 @@ successful_result(const ToolCallBlock& call, const Json& value,
 dispatch_tool_handler(ToolHandler& handler, const ToolCallBlock& call,
                       const std::size_t max_result_bytes) {
   if (!handler) {
-    SCRY_LOG("{} Tool handler unavailable", call.name);
     return error_result(call, "tool handler is unavailable", max_result_bytes);
   }
-  SCRY_LOG("{} Tool Called", call.name);
   auto invoked = invoke_handler(handler, call);
   if (!invoked) {
-    SCRY_LOG("{} Tool handler failed", call.name);
     return error_result(call, "tool handler returned an error", max_result_bytes);
   }
-  auto result = successful_result(call, *invoked, max_result_bytes);
-  if (!result) {
-    SCRY_LOG("{} Tool failed ({})", call.name,
-             error_category_name(result.error().category));
-    return result;
-  }
-  SCRY_LOG("{} Tool {}", call.name,
-           result->is_error ? "returned an error result" : "completed");
-  return result;
+  return successful_result(call, *invoked, max_result_bytes);
 }
 
 } // namespace
@@ -110,7 +98,6 @@ Result<ToolResultBlock> dispatch_tool(const ToolSnapshot& snapshot,
                                       const std::size_t max_result_bytes) {
   const auto registration = find_tool_registration(snapshot, call.name);
   if (!registration) {
-    SCRY_LOG("Unknown Tool requested: {}", call.name);
     return error_result(call, "model requested an unknown tool", max_result_bytes);
   }
   if (!registration->handler) {

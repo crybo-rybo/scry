@@ -1,6 +1,5 @@
 #include "runtime/worker.hpp"
 
-#include "core/log.hpp"
 #include "core/retry.hpp"
 #include "protocol/sse.hpp"
 
@@ -79,8 +78,6 @@ void redact_sensitive_fields(Error& error, const std::string_view secret) {
   if (error.attempt == 0) {
     error.attempt = attempt;
   }
-  SCRY_LOG("Turn {} attempt {} failed ({})", turn_id.value, attempt,
-           error_category_name(error.category));
   return machine.apply(AttemptFailed{
       .error = std::move(error),
       .observed_at = observed_at,
@@ -174,7 +171,6 @@ void WorkerActor::accept_command(WorkerCommand command) {
 
 void WorkerActor::process_turn(SendTurnCommand&& command,
                                const std::stop_token& stopped) {
-  SCRY_LOG("Worker accepted Turn {}", command.turn_id.value);
   TurnMachine machine{
       command.turn_id,
       std::move(command.request),
@@ -266,8 +262,6 @@ TransitionResult
 WorkerActor::perform_attempt(TurnMachine& machine, const IssueModelRequest& issue,
                              const std::shared_ptr<std::atomic<bool>>& cancelled,
                              const std::stop_token& stopped) {
-  SCRY_LOG("Model request issued (Turn {}, attempt {})", issue.turn_id.value,
-           issue.attempt);
   auto request = provider_->make_request(config_, *issue.request);
   if (!request) {
     return failed_attempt(machine, std::move(request.error()), issue.turn_id,
@@ -357,8 +351,6 @@ TransitionResult
 WorkerActor::wait_for_retry(TurnMachine& machine, const ScheduleRetryWake& wake,
                             const std::shared_ptr<std::atomic<bool>>& cancelled,
                             const std::stop_token& stopped) {
-  SCRY_LOG("Turn {} waiting to retry after failed attempt {}", wake.turn_id.value,
-           wake.failed_attempt);
   while (!stopped.stop_requested()) {
     if (cancelled->load(std::memory_order_acquire)) {
       return machine.apply(CancelTurn{});
@@ -465,13 +457,8 @@ WorkerActor::publish_provider_event(TurnMachine& machine, ProviderEvent event,
     return {};
   }
   // The provider seam preserves an ignored event's name for debug inspection.
-  // Scry has no public logging surface, so the worker consumes this marker;
-  // the SCRY_ENABLE_LOGGING build records the name before dropping it.
+  // Scry has no public logging surface, so the worker consumes the marker.
   assert(std::holds_alternative<ProviderIgnoredEvent>(event));
-  if (std::holds_alternative<ProviderIgnoredEvent>(event)) {
-    SCRY_LOG("Ignored provider stream event: {}",
-             std::get<ProviderIgnoredEvent>(event).name);
-  }
   return {};
 }
 
@@ -538,20 +525,15 @@ Status WorkerActor::publish_command(MachineCommand command) {
                        "turn events exceed the configured queue limit",
                        completion->turn_id, completion->attempt_count));
     }
-    SCRY_LOG("Turn {} completed (attempts: {})", completion->turn_id.value,
-             completion->attempt_count);
     return {};
   }
   if (auto* error = std::get_if<PublishError>(&command)) {
     const auto turn_id = error->error.turn_id.value_or(TurnId{});
-    SCRY_LOG("Turn {} failed ({})", turn_id.value,
-             error_category_name(error->error.category));
     publish_terminal_event(
         ErrorEvent{.turn_id = turn_id, .error = std::move(error->error)});
     return {};
   }
   if (const auto* cancelled = std::get_if<PublishCancelled>(&command)) {
-    SCRY_LOG("Turn {} cancelled", cancelled->turn_id.value);
     publish_terminal_event(CancelledEvent{.turn_id = cancelled->turn_id});
   }
   return {};

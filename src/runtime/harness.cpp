@@ -1,4 +1,3 @@
-#include "core/log.hpp"
 #include "core/provider.hpp"
 #include "runtime/config.hpp"
 #include "runtime/conversation_impl.hpp"
@@ -105,9 +104,7 @@ public:
                                     std::move(transport), std::move(commands),
                                     std::move(events),    std::move(environment)};
           actor.run(stopped);
-        }) {
-    SCRY_LOG("Harness created (model: {})", config_.model);
-  }
+        }) {}
 
   ~Impl() {
     worker_.request_stop();
@@ -167,7 +164,6 @@ public:
                                 std::move(tools.schemas));
 
     conversation->busy = true;
-    SCRY_LOG("Turn {} started", turn_id.value);
     pump_.add_route(route);
     commands_->push(detail::SendTurnCommand{
         .turn_id = turn_id,

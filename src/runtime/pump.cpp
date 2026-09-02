@@ -1,6 +1,5 @@
 #include "runtime/pump.hpp"
 
-#include "core/log.hpp"
 #include "runtime/tool_dispatch.hpp"
 
 #include <algorithm>
@@ -136,8 +135,6 @@ void TurnRoute::dispatch(const ToolCallEvent& event) {
   }
   remaining_exchange_bytes_ =
       std::min(remaining_exchange_bytes_, event.remaining_exchange_bytes);
-  SCRY_LOG("Dispatching {} Tool on the app thread (Turn {})", event.call.name,
-           turn_id_.value);
   auto result = dispatch_tool(route_tools(tools_), event.call, max_tool_result_bytes_);
   if (result) {
     const auto result_bytes = content_payload_bytes(*result);

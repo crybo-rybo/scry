@@ -93,15 +93,6 @@ canonical Scry-owned `Json` without registering a tool.
 `Config`, `Conversation`, `ToolRegistry`, `Turn`, `Harness` — with a complete
 annotated integration.
 
-## Diagnostics
-
-Internal diagnostics are opt-in at build time: configure with
-`-DSCRY_ENABLE_LOGGING=ON` (preset `dev-logging`) to compile the internal
-lifecycle logging, then set the `SCRY_LOG_FILE` environment variable to the
-nonempty destination path. With that variable unset or empty, logging stays
-disabled and no default file is written. Prompt and tool content and
-credentials never reach the log.
-
 ## Documentation
 
 | Document | Contents |
