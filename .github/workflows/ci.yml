@@ -119,7 +119,6 @@ jobs:
         run: >
           cmake --preset ci
           -B build/tidy
-          -DCMAKE_C_COMPILER=clang-18
           -DCMAKE_CXX_COMPILER=clang++-18
           -DSCRY_CLANG_TOOLING=ON
           -DSCRY_ENABLE_CLANG_TIDY=ON

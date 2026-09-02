@@ -66,7 +66,6 @@ run_tidy() {
     --preset ci \
     --fresh \
     -B build/tidy \
-    -DCMAKE_C_COMPILER=clang \
     -DCMAKE_CXX_COMPILER=clang++ \
     -DSCRY_CLANG_TOOLING=ON \
     -DSCRY_ENABLE_CLANG_TIDY=ON \

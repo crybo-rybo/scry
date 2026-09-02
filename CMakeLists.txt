@@ -71,12 +71,12 @@ if(SCRY_CLANG_TOOLING)
       "compiler; ${CMAKE_CXX_COMPILER_ID} was selected"
     )
   endif()
-  # The reflected public API cannot compile under Clang, so nothing that
-  # includes it is built here.
+  # <scry/scry.hpp> pulls in the reflected public API, which no Clang can
+  # compile, so this mode builds the library and nothing that includes the
+  # umbrella. The example is always out; tests/ is entered only to register the
+  # fuzz targets, which reach the implementation through private headers.
   set(SCRY_BUILD_EXAMPLES OFF)
   if(NOT SCRY_BUILD_FUZZERS)
-    # The fuzz targets live under tests/ and are the one thing this mode builds
-    # besides the library itself.
     set(SCRY_BUILD_TESTS OFF)
   endif()
 

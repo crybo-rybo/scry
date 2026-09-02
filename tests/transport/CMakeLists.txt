@@ -1,3 +1,23 @@
+if(SCRY_BUILD_FUZZERS)
+  scry_require_fuzzer_compiler()
+  set(SCRY_FUZZ_TEST_PREFIX "transport.")
+  scry_add_fuzzer(
+    scry_response_policy_fuzz
+    response_policy
+    SOURCES
+      response_policy_fuzz.cpp
+      "${PROJECT_SOURCE_DIR}/src/core/error.cpp"
+      "${PROJECT_SOURCE_DIR}/src/core/json_codec.cpp"
+      "${PROJECT_SOURCE_DIR}/src/transport/transport_policy.cpp"
+  )
+endif()
+
+# SCRY_CLANG_TOOLING contributes only the fuzz targets from this directory; the
+# Catch2 suite below reaches the C++26 public API and cannot compile under Clang.
+if(SCRY_CLANG_TOOLING)
+  return()
+endif()
+
 add_executable(
   scry_transport_tests
   curl_transport_tests.cpp
@@ -23,17 +43,3 @@ catch_discover_tests(
   TEST_PREFIX "transport."
   PROPERTIES TIMEOUT 15
 )
-
-if(SCRY_BUILD_FUZZERS)
-  scry_require_fuzzer_compiler()
-  set(SCRY_FUZZ_TEST_PREFIX "transport.")
-  scry_add_fuzzer(
-    scry_response_policy_fuzz
-    response_policy
-    SOURCES
-      response_policy_fuzz.cpp
-      "${PROJECT_SOURCE_DIR}/src/core/error.cpp"
-      "${PROJECT_SOURCE_DIR}/src/core/json_codec.cpp"
-      "${PROJECT_SOURCE_DIR}/src/transport/transport_policy.cpp"
-  )
-endif()
