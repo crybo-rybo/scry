@@ -28,7 +28,7 @@ jobs:
       CC: gcc-16
       CXX: g++-16
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install the GCC 16 environment
         uses: ./.github/actions/gcc16-env
       - name: Initialize CodeQL
@@ -66,7 +66,7 @@ jobs:
       CXX: clang++-21
       SCRY_NIGHTLY_FUZZ_SECONDS: "1200"
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install pinned fuzz toolchain
         run: |
           wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
@@ -96,7 +96,7 @@ jobs:
       CC: gcc-16
       CXX: g++-16
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install the GCC 16 environment
         uses: ./.github/actions/gcc16-env
       - name: Build, test, render a headless frame, and audit packaging
@@ -121,7 +121,7 @@ jobs:
       SCRY_LOCAL_MODEL_HEALTH_TIMEOUT_SECONDS: "60"
       SCRY_LOCAL_MODEL_TIMEOUT_SECONDS: "180"
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install the GCC 16 environment
         uses: ./.github/actions/gcc16-env
       - name: Install extraction dependencies
