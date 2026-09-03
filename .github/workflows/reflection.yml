@@ -13,9 +13,8 @@ name: Reflection
 on:
   pull_request:
     paths:
-      - "include/scry/reflection.hpp"
-      - "include/scry/detail/reflection*.hpp"
-      - "src/reflection/**"
+      - "include/scry/**"
+      - "src/**"
       - "tests/reflection/**"
       - "tests/package_consumer_reflection/**"
       - "tests/package_consumer/**"

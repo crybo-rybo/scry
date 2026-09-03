@@ -192,6 +192,10 @@ endfunction()
 
 if(SCRY_SANITIZER STREQUAL "address-undefined")
   scry_enable_sanitizer("-fsanitize=address,undefined")
+  target_compile_options(
+    scry_project_options
+    INTERFACE -fno-sanitize-recover=undefined
+  )
 elseif(SCRY_SANITIZER STREQUAL "thread")
   scry_enable_sanitizer("-fsanitize=thread")
 elseif(NOT SCRY_SANITIZER STREQUAL "none")

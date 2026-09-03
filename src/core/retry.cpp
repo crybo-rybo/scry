@@ -43,6 +43,20 @@ bool is_retryable(const ErrorCategory category) noexcept {
   return category == ErrorCategory::rate_limit || category == ErrorCategory::network;
 }
 
+double retry_jitter_sample(const std::uint64_t seed, const TurnId turn_id,
+                           const std::uint32_t failed_attempt) noexcept {
+  auto value =
+      seed ^ turn_id.value ^
+      (static_cast<std::uint64_t>(failed_attempt) * std::uint64_t{0x9E3779B97F4A7C15});
+  value += std::uint64_t{0x9E3779B97F4A7C15};
+  value = (value ^ (value >> 30U)) * std::uint64_t{0xBF58476D1CE4E5B9};
+  value = (value ^ (value >> 27U)) * std::uint64_t{0x94D049BB133111EB};
+  value ^= value >> 31U;
+  constexpr double maximum_unit_value = 9007199254740991.0;
+  const auto unit = static_cast<double>(value >> 11U) / maximum_unit_value;
+  return (unit * 2.0) - 1.0;
+}
+
 std::chrono::milliseconds
 retry_delay(const RetryPolicy& policy, const std::uint32_t failed_attempt,
             const std::optional<std::chrono::milliseconds> retry_after,

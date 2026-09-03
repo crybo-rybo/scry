@@ -25,6 +25,23 @@ TEST_CASE("retry classifier accepts only transient categories") {
   CHECK_FALSE(is_retryable(ErrorCategory::cancelled));
 }
 
+TEST_CASE("retry jitter is deterministic per Harness seed and decorrelated") {
+  using scry::TurnId;
+  using scry::detail::retry_jitter_sample;
+
+  constexpr std::uint64_t first_seed = 0x0123456789ABCDEF;
+  constexpr std::uint64_t second_seed = 0xFEDCBA9876543210;
+  constexpr TurnId first_turn{.value = 7};
+
+  const auto sample = retry_jitter_sample(first_seed, first_turn, 2);
+  CHECK(sample >= -1.0);
+  CHECK(sample <= 1.0);
+  CHECK(retry_jitter_sample(first_seed, first_turn, 2) == sample);
+  CHECK(retry_jitter_sample(second_seed, first_turn, 2) != sample);
+  CHECK(retry_jitter_sample(first_seed, TurnId{.value = 8}, 2) != sample);
+  CHECK(retry_jitter_sample(first_seed, first_turn, 3) != sample);
+}
+
 TEST_CASE("retry delay is exponential, jittered, and capped") {
   const scry::RetryPolicy policy{
       .initial_backoff = 250ms,

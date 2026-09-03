@@ -91,7 +91,8 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
         "SCRY_BUILD_FUZZERS": true,
-        "SCRY_ENABLE_FORMAT_CHECK": false
+        "SCRY_ENABLE_FORMAT_CHECK": false,
+        "SCRY_SANITIZER": "address-undefined"
       }
     },
     {

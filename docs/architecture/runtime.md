@@ -147,5 +147,8 @@ Why this is the hill to defend:
 
 Retry policy (backoff + jitter) is machine state driven by *time events*
 injected by the driver — the machine never sleeps, it requests "wake me at
-T." Attempt and elapsed caps reset for each model request, while completion
-reports aggregate attempts and usage across the whole tool loop.
+T." The driver derives deterministic samples from an independently generated
+per-Harness seed, turn ID, and attempt; the internal test seam can inject the
+seed without introducing mutable process-global state. Attempt and elapsed caps
+reset for each model request, while completion reports aggregate attempts and
+usage across the whole tool loop.
