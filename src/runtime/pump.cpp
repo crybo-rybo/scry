@@ -1,9 +1,9 @@
 #include "runtime/pump.hpp"
 
-#include "core/log.hpp"
 #include "runtime/tool_dispatch.hpp"
 
 #include <algorithm>
+#include <optional>
 #include <type_traits>
 #include <utility>
 
@@ -25,6 +25,35 @@ template <typename> inline constexpr bool unhandled_worker_event = false;
   static const ToolSnapshot empty{};
   return tools ? *tools : empty;
 }
+
+// Marks a route as invoking for the length of one callback and performs the
+// clear a disconnect made from inside that callback had to defer. It is RAII
+// rather than a statement after the visit because a throwing host callback
+// leaves through update() with the Harness still required to be valid, so the
+// clear has to happen on the exception path too.
+class InvocationGuard final {
+public:
+  InvocationGuard(bool& invoking, const bool& disconnected,
+                  TurnCallbacks& callbacks) noexcept
+      : invoking_(invoking), disconnected_(disconnected), callbacks_(callbacks) {
+    invoking_ = true;
+  }
+  InvocationGuard(const InvocationGuard&) = delete;
+  InvocationGuard(InvocationGuard&&) = delete;
+  InvocationGuard& operator=(const InvocationGuard&) = delete;
+  InvocationGuard& operator=(InvocationGuard&&) = delete;
+  ~InvocationGuard() {
+    invoking_ = false;
+    if (disconnected_) {
+      callbacks_ = TurnCallbacks{};
+    }
+  }
+
+private:
+  bool& invoking_;
+  const bool& disconnected_;
+  TurnCallbacks& callbacks_;
+};
 
 } // namespace
 
@@ -59,11 +88,38 @@ bool TurnRoute::cancel() noexcept {
   return changed;
 }
 
+// Clearing the callbacks is the whole operation: has_callback then reports
+// false for text and terminal events, so the pump releases them instead of
+// delivering them, while tool dispatch — which belongs to the registry, not to
+// the callbacks — keeps running and history still commits.
+//
+// A host may disconnect from inside a callback it is currently running, and the
+// callbacks own that closure, so clearing them there would free the frame's own
+// captures. Such a disconnect only records the intent; InvocationGuard performs
+// the clear once the invocation unwinds, which still stops delivery at the very
+// next event.
+bool TurnRoute::disconnect() noexcept {
+  if (disconnected_ || finished()) {
+    return false;
+  }
+  disconnected_ = true;
+  if (!invoking_) {
+    callbacks_ = TurnCallbacks{};
+  }
+  return true;
+}
+
 void TurnRoute::detach() noexcept { attached_ = false; }
 
 bool TurnRoute::attached() const noexcept { return attached_; }
 
 bool TurnRoute::terminal() const noexcept { return terminal_; }
+
+// A turn is finished once its terminal outcome reached the host, or once it
+// would have when no on_finished was supplied.
+bool TurnRoute::finished() const noexcept {
+  return terminal_ && (!callbacks_.on_finished || terminal_delivered_);
+}
 
 void TurnRoute::mark_terminal() noexcept { terminal_ = true; }
 
@@ -90,6 +146,7 @@ bool TurnRoute::has_callback(const WorkerEvent& event) const noexcept {
 }
 
 void TurnRoute::invoke(const WorkerEvent& event) {
+  const InvocationGuard guard{invoking_, disconnected_, callbacks_};
   std::visit(
       [this](const auto& value) {
         using Event = std::decay_t<decltype(value)>;
@@ -100,6 +157,7 @@ void TurnRoute::invoke(const WorkerEvent& event) {
         } else if constexpr (std::is_same_v<Event, CompletionEvent>) {
           // commit_completion captured the text before moving the exchange
           // into the Conversation.
+          terminal_delivered_ = true;
           callbacks_.on_finished(Completion{
               .turn_id = value.turn_id,
               .text = value.text,
@@ -109,8 +167,10 @@ void TurnRoute::invoke(const WorkerEvent& event) {
               .provider_request_id = value.provider_request_id,
           });
         } else if constexpr (std::is_same_v<Event, ErrorEvent>) {
+          terminal_delivered_ = true;
           callbacks_.on_finished(std::unexpected(value.error));
         } else if constexpr (std::is_same_v<Event, CancelledEvent>) {
+          terminal_delivered_ = true;
           callbacks_.on_finished(std::unexpected(cancellation_error(value.turn_id)));
         } else {
           static_assert(unhandled_worker_event<Event>,
@@ -126,8 +186,6 @@ void TurnRoute::dispatch(const ToolCallEvent& event) {
   }
   remaining_exchange_bytes_ =
       std::min(remaining_exchange_bytes_, event.remaining_exchange_bytes);
-  SCRY_LOG("Dispatching {} Tool on the app thread (Turn {})", event.call.name,
-           turn_id_.value);
   auto result = dispatch_tool(route_tools(tools_), event.call, max_tool_result_bytes_);
   if (result) {
     const auto result_bytes = content_payload_bytes(*result);
@@ -146,24 +204,32 @@ void TurnRoute::dispatch(const ToolCallEvent& event) {
   if (cancelled_->load(std::memory_order_acquire)) {
     return;
   }
-  const auto result_ready = result.has_value();
+  // The observer sees the same result block the model receives, so it is copied
+  // out before the command queue takes ownership. A framework failure leaves the
+  // result empty and fails the turn instead, and the observer does not fire.
+  auto observed = result.has_value() && callbacks_.on_tool_call
+                      ? std::optional<ToolResultBlock>{*result}
+                      : std::nullopt;
   if (const auto commands = commands_.lock()) {
     commands->push(ToolResultCommand{
         .turn_id = turn_id_,
         .result = std::move(result),
     });
   }
-  if (result_ready && callbacks_.on_tool_call) {
-    notify_tool_observer(event.call);
+  if (observed) {
+    notify_tool_observer(event.call, *observed);
   }
 }
 
-void TurnRoute::notify_tool_observer(const ToolCallBlock& call) {
+void TurnRoute::notify_tool_observer(const ToolCallBlock& call,
+                                     const ToolResultBlock& result) {
   callbacks_.on_tool_call(ToolCall{
       .turn_id = turn_id_,
       .id = call.id,
       .name = call.name,
       .arguments = call.arguments,
+      .result = result.result,
+      .is_error = result.is_error,
   });
 }
 

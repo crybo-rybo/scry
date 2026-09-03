@@ -5,8 +5,9 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <vector>
 
-/// Stable C++23 API for the Scry runtime.
+/// Public C++26 API for the Scry runtime.
 namespace scry {
 
 /// Selects the wire protocol used by a Harness.
@@ -97,6 +98,14 @@ struct ResourceLimits {
   std::size_t max_conversation_bytes{std::size_t{16} * 1024 * 1024};
 };
 
+/// One HTTP request header appended verbatim to every provider request.
+struct HttpHeader {
+  /// Header name. Must be a non-empty RFC 7230 token.
+  std::string name{};
+  /// Header value. Must contain no control characters other than tab.
+  std::string value{};
+};
+
 /// Complete configuration used to create a Harness.
 ///
 /// This is a designated-initializer-friendly value type. Changing dialects or pointing
@@ -127,6 +136,23 @@ struct Config {
   /// Disabling verification is intended only for explicitly trusted development
   /// endpoints.
   bool tls_verify_peer{true};
+  /// Path to a PEM CA bundle used to verify the provider's certificate, for private
+  /// or corporate CAs.
+  ///
+  /// Empty uses libcurl's default trust store. Supplying a bundle is the supported
+  /// way to reach an internally signed endpoint; it does not require disabling
+  /// tls_verify_peer.
+  std::string ca_bundle_path{};
+  /// Proxy URL passed to libcurl, for example "http://proxy.internal:3128".
+  ///
+  /// Empty leaves libcurl's default behavior, which honors the http_proxy family of
+  /// environment variables.
+  std::string proxy{};
+  /// Headers appended verbatim to every request after the dialect's own headers.
+  ///
+  /// Names that collide with a Scry-managed header are rejected by
+  /// Harness::create() and Harness::validate().
+  std::vector<HttpHeader> extra_headers{};
 };
 
 } // namespace scry

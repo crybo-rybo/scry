@@ -14,6 +14,14 @@ TurnId Turn::id() const noexcept {
   return impl_ == nullptr ? TurnId{} : impl_->turn_id;
 }
 
+bool Turn::finished() const noexcept {
+  if (impl_ == nullptr) {
+    return true;
+  }
+  const auto route = impl_->route.lock();
+  return route == nullptr || route->finished();
+}
+
 bool Turn::cancel() noexcept {
   if (impl_ == nullptr || impl_->cancelled == nullptr) {
     return false;
@@ -22,6 +30,18 @@ bool Turn::cancel() noexcept {
     return route->cancel();
   }
   return !impl_->cancelled->exchange(true, std::memory_order_relaxed);
+}
+
+bool Turn::disconnect() noexcept {
+  if (impl_ == nullptr) {
+    return false;
+  }
+  // Unlike cancellation there is no flag outliving the route: with the Harness
+  // gone there are no callbacks left to clear.
+  if (const auto route = impl_->route.lock()) {
+    return route->disconnect();
+  }
+  return false;
 }
 
 } // namespace scry

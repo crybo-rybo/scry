@@ -4,7 +4,9 @@
 #include <memory>
 #include <scry/error.hpp>
 #include <scry/json.hpp>
+#include <scry/message.hpp>
 #include <string>
+#include <vector>
 
 namespace scry {
 
@@ -60,6 +62,27 @@ public:
   /// Returns the number of committed messages, excluding the system prompt.
   /// @return Committed message count.
   [[nodiscard]] std::size_t message_count() const noexcept;
+
+  /// Returns the committed message history, oldest first, excluding the system
+  /// prompt.
+  ///
+  /// The reference is borrowed: it stays valid until the next Harness::update() that
+  /// commits a turn into this Conversation, or until this handle is moved or
+  /// destroyed. Copy the messages to retain them. A moved-from handle returns an
+  /// empty history.
+  /// @return Committed messages in commit order.
+  [[nodiscard]] const std::vector<Message>& messages() const noexcept;
+
+  /// Returns the system prompt supplied at creation or restored by from_json().
+  /// @return The system prompt, empty when none was supplied.
+  [[nodiscard]] const std::string& system_prompt() const noexcept;
+
+  /// Reports whether a turn is queued or in flight on this Conversation.
+  ///
+  /// This is exactly the condition under which Harness::send() reports
+  /// ErrorCategory::busy. A moved-from handle is never busy.
+  /// @return true while a turn owns this Conversation.
+  [[nodiscard]] bool busy() const noexcept;
 
   /// Serializes the last committed boundary as a canonical, versioned JSON document.
   ///

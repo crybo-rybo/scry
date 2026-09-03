@@ -35,6 +35,8 @@ TEST_CASE("pump queues a tool result before notifying the ToolCall observer") {
       })};
   std::size_t queued_when_observed = 0;
   std::string observed_id;
+  scry::Json observed_result{};
+  bool observed_is_error = true;
   const auto route =
       fixture.route(302, {
                              .tools = frozen_tools(tools),
@@ -45,6 +47,8 @@ TEST_CASE("pump queues a tool result before notifying the ToolCall observer") {
                                            queued_when_observed =
                                                fixture.commands->size();
                                            observed_id = call.id;
+                                           observed_result = call.result;
+                                           observed_is_error = call.is_error;
                                          },
                                  },
                          });
@@ -56,12 +60,50 @@ TEST_CASE("pump queues a tool result before notifying the ToolCall observer") {
 
   CHECK(queued_when_observed == 1);
   CHECK(observed_id == "call-1");
+  CHECK(observed_result.text == R"({"ok":true})");
+  CHECK_FALSE(observed_is_error);
   auto command = fixture.commands->try_pop();
   REQUIRE(command);
   const auto* result = std::get_if<scry::detail::ToolResultCommand>(&*command);
   REQUIRE(result);
   REQUIRE(result->result);
   CHECK(result->result->result.text == R"({"ok":true})");
+}
+
+TEST_CASE("an unknown tool reaches the observer as an error result") {
+  PumpFixture fixture;
+  const scry::detail::ToolSnapshot tools{};
+  scry::Json observed_result{};
+  bool observed_is_error = false;
+  std::size_t observer_calls = 0;
+  const auto route =
+      fixture.route(303, {
+                             .tools = frozen_tools(tools),
+                             .callbacks =
+                                 scry::TurnCallbacks{
+                                     .on_tool_call =
+                                         [&](const scry::ToolCall& call) {
+                                           ++observer_calls;
+                                           observed_result = call.result;
+                                           observed_is_error = call.is_error;
+                                         },
+                                 },
+                         });
+  scry::detail::PumpState pump{fixture.events};
+  pump.add_route(route);
+  REQUIRE(fixture.events->push(tool_event(route->id(), "absent_tool"), 1024));
+
+  CHECK(pump.update({}).callbacks_delivered == 1);
+
+  CHECK(observer_calls == 1);
+  CHECK(observed_is_error);
+  CHECK(observed_result.text == R"({"error":"model requested an unknown tool"})");
+  auto command = fixture.commands->try_pop();
+  REQUIRE(command);
+  const auto* result = std::get_if<scry::detail::ToolResultCommand>(&*command);
+  REQUIRE(result);
+  REQUIRE(result->result);
+  CHECK(result->result->is_error);
 }
 
 TEST_CASE("cancellation during a handler suppresses its result and later calls") {

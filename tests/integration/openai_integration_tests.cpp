@@ -42,25 +42,8 @@ data: [DONE]
 
 )";
 
-constexpr std::string_view anthropic_final_stream = R"(event: message_start
-data: {"type":"message_start","message":{"id":"msg-final","type":"message","role":"assistant","content":[],"stop_reason":null,"usage":{"input_tokens":2,"output_tokens":0}}}
-
-event: content_block_start
-data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
-
-event: content_block_delta
-data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"anthropic"}}
-
-event: content_block_stop
-data: {"type":"content_block_stop","index":0}
-
-event: message_delta
-data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}
-
-event: message_stop
-data: {"type":"message_stop"}
-
-)";
+const std::string anthropic_final_stream =
+    anthropic_text_stream("anthropic", "msg-final", {}, 2, 1);
 
 [[nodiscard]] scry::Config openai_config() {
   auto config = scry::Config{
@@ -166,17 +149,18 @@ TEST_CASE("OpenAI-compatible config drives a fragmented transactional tool round
   CHECK(completion->provider_request_id == "openai-final-request");
   CHECK(conversation->message_count() == 4);
 
-  REQUIRE(requests->requests().size() == 2);
-  for (const auto& request : requests->requests()) {
+  const auto recorded = requests->requests();
+  REQUIRE(recorded.size() == 2);
+  for (const auto& request : recorded) {
     CHECK(request.url == "http://127.0.0.1:1/v1/chat/completions");
     CHECK(request.body.find("anthropic") == std::string::npos);
     CHECK(request.body.find(R"("model":"local-model")") != std::string::npos);
   }
-  const auto& initial = requests->requests().front();
+  const auto& initial = recorded.front();
   CHECK(initial.body.find(R"("role":"system")") != std::string::npos);
   CHECK(initial.body.find(R"("type":"function")") != std::string::npos);
   CHECK(initial.body.find(R"("include_usage":true)") != std::string::npos);
-  const auto& resend = requests->requests().back().body;
+  const auto& resend = recorded.back().body;
   CHECK(resend.find(R"("role":"tool")") != std::string::npos);
   CHECK(resend.find(R"("tool_call_id":"call-a")") != std::string::npos);
   CHECK(resend.find(R"({\"forecast\":\"sunny\"})") != std::string::npos);
@@ -236,12 +220,12 @@ TEST_CASE("concurrent Harnesses keep Anthropic and OpenAI dialect state isolated
   REQUIRE(openai_completion);
   CHECK(anthropic_completion->text == "anthropic");
   CHECK(openai_completion->text == "sunny");
-  REQUIRE(anthropic_requests->requests().size() == 1);
-  REQUIRE(openai_requests->requests().size() == 1);
-  CHECK(anthropic_requests->requests().front().url.ends_with("/v1/messages"));
-  CHECK(openai_requests->requests().front().url.ends_with("/v1/chat/completions"));
-  CHECK(anthropic_requests->requests().front().body.find("stream_options") ==
-        std::string::npos);
-  CHECK(openai_requests->requests().front().body.find("stream_options") !=
-        std::string::npos);
+  const auto anthropic_recorded = anthropic_requests->requests();
+  const auto openai_recorded = openai_requests->requests();
+  REQUIRE(anthropic_recorded.size() == 1);
+  REQUIRE(openai_recorded.size() == 1);
+  CHECK(anthropic_recorded.front().url.ends_with("/v1/messages"));
+  CHECK(openai_recorded.front().url.ends_with("/v1/chat/completions"));
+  CHECK(anthropic_recorded.front().body.find("stream_options") == std::string::npos);
+  CHECK(openai_recorded.front().body.find("stream_options") != std::string::npos);
 }

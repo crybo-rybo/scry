@@ -88,11 +88,11 @@ mkdir -p "${artifact_dir}"
 wait_for_health
 
 cd "${root_dir}"
-cmake --preset nightly-local-model
-cmake --build build/nightly-local-model --target scry_local_model_smoke
+cmake --preset ci -DSCRY_ENABLE_FORMAT_CHECK=OFF
+cmake --build build/ci --target scry_local_model_smoke
 
 echo "Running public-API local-model smoke against ${model}." |
   tee -a "${log_file}"
 run_with_timeout "${turn_timeout}" \
-  build/nightly-local-model/scry_local_model_smoke \
+  build/ci/tests/nightly/scry_local_model_smoke \
   2>&1 | tee -a "${log_file}"

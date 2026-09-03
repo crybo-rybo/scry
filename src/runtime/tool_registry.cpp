@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -106,5 +107,26 @@ std::size_t ToolRegistry::size() const noexcept {
 }
 
 bool ToolRegistry::empty() const noexcept { return size() == 0; }
+
+bool ToolRegistry::contains(const std::string_view name) const noexcept {
+  if (impl_ == nullptr) {
+    return false;
+  }
+  return std::ranges::any_of(impl_->state.entries, [name](const auto& entry) {
+    return entry->definition.name == name;
+  });
+}
+
+std::vector<std::string> ToolRegistry::names() const {
+  std::vector<std::string> registered{};
+  if (impl_ == nullptr) {
+    return registered;
+  }
+  registered.reserve(impl_->state.entries.size());
+  for (const auto& entry : impl_->state.entries) {
+    registered.push_back(entry->definition.name);
+  }
+  return registered;
+}
 
 } // namespace scry

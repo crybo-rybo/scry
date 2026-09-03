@@ -1,0 +1,8 @@
+# Third-party actions are pinned to commit SHAs, which no human will notice
+# going stale; Dependabot opens the bump pull requests instead.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

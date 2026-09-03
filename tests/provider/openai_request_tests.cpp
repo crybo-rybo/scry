@@ -1,5 +1,6 @@
 #include "core/json_codec.hpp"
 #include "core/model.hpp"
+#include "fixture_support.hpp"
 #include "provider/openai.hpp"
 
 #include <array>
@@ -123,14 +124,31 @@ TEST_CASE("OpenAI request is semantically equivalent to the common contract") {
   CHECK(header(*encoded, "content-type") == "application/json");
   CHECK(header(*encoded, "accept") == "text/event-stream");
   CHECK(header(*encoded, "authorization") == "Bearer sanitized-key");
-  CHECK(
-      canonical(encoded->body) ==
-      canonical(
-          R"({"model":"chat-model","messages":[{"role":"system","content":"Be concise"},{"role":"user","content":"Hello"},{"role":"assistant","content":"Working","tool_calls":[{"id":"call-weather","type":"function","function":{"name":"weather","arguments":"{\"city\":\"Paris\"}"}}]},{"role":"tool","tool_call_id":"call-weather","content":"{\"temperature\":21}"},{"role":"tool","tool_call_id":"call-other","content":"{\"error\":\"closed\"}"}],"temperature":1.5,"max_tokens":64,"stream":true,"top_p":0.0,"stream_options":{"include_usage":true},"tools":[{"type":"function","function":{"name":"weather","description":"Get weather","parameters":{"type":"object","required":["city"]}}}]})"));
+  CHECK(canonical(encoded->body) ==
+        canonical(scry::test_fixtures::openai_fixture("request.json")));
   CHECK(encoded->body.find("is_error") == std::string::npos);
   CHECK(encoded->body.find("parallel_tool_calls") == std::string::npos);
   CHECK(encoded->body.find("reasoning_effort") == std::string::npos);
   CHECK(encoded->body.find("\"strict\"") == std::string::npos);
+}
+
+TEST_CASE("OpenAI request carries the configured network options") {
+  const auto adapter = make_provider_adapter(ProviderDialect::openai_compatible);
+  REQUIRE(adapter);
+
+  auto networked = config();
+  networked.extra_headers = {HttpHeader{.name = "x-scry-example", .value = "1"}};
+  networked.ca_bundle_path = "/tmp/ca.pem";
+  networked.proxy = "http://proxy.internal:3128";
+
+  const auto encoded = adapter->make_request(networked, request());
+  REQUIRE(encoded.has_value());
+  CHECK(encoded->ca_bundle_path == "/tmp/ca.pem");
+  CHECK(encoded->proxy == "http://proxy.internal:3128");
+  REQUIRE(encoded->headers.size() == 4);
+  CHECK(encoded->headers.back().name == "x-scry-example");
+  CHECK(encoded->headers.back().value == "1");
+  CHECK(header(*encoded, "authorization") == "Bearer sanitized-key");
 }
 
 TEST_CASE("OpenAI request omits max_tokens when the sampling value is unset") {

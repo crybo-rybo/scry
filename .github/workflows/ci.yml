@@ -1,15 +1,17 @@
-# Per-commit CI ring; see docs/development/quality-gates.md section 6.
+# Per-commit CI ring; see docs/contributing.md.
 #
 # Live gates: the warning-clean Doxygen site plus format (pinned
 # clang-format-18), core build matrix with warnings-as-errors plus complexity,
 # contract tests, and the install/package-consumer audit via ci-local.sh,
-# ASan/UBSan/TSan, and clang-tidy. The GCC 16 reflection leg gates
-# reflection-affecting pull requests from reflection.yml (path-aware) and runs
-# unconditionally in the weekly ring; fuzzing, the showcase, and the
-# local-model smoke live in nightly.yml.
+# ASan/UBSan/TSan, and clang-tidy. Fuzzing, the showcase, and the local-model
+# smoke live in nightly.yml.
 #
-# Toolchains are pinned deliberately: compiler drift on
-# experimental legs is a first-class risk.
+# Every leg runs a script under scripts/ that preflight runs too, so a hosted
+# leg and its local equivalent cannot drift. Scry's public API is C++26
+# reflection, so every core leg is GCC 16 from ppa:ubuntu-toolchain-r/test
+# (the gcc16-env composite action) or Homebrew. Toolchains are pinned
+# deliberately: compiler drift on an experimental compiler is a first-class
+# risk, and third-party actions are pinned to commit SHAs.
 name: CI
 
 on:
@@ -32,7 +34,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: Install documentation and format toolchain
         run: |
           sudo apt-get update
@@ -42,7 +44,7 @@ jobs:
       - name: Build warning-clean API documentation
         run: ./scripts/ci-docs.sh
       - name: Retain generated website
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: scry-api-docs
           path: build/docs/html
@@ -50,7 +52,7 @@ jobs:
           retention-days: 14
       - name: Check formatting
         run: git ls-files '*.cpp' '*.hpp' |
-          grep -E '^(examples|benchmarks|include|src|tests)/' |
+          grep -E '^(examples|extras|include|src|tests)/' |
           xargs clang-format-18 --dry-run --Werror
 
   core:
@@ -59,48 +61,43 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: Linux GCC 14
+          - name: Linux GCC 16
             os: ubuntu-24.04
-            cc: gcc-14
-            cxx: g++-14
-            libcxx: false
-            packages: g++-14 libcurl4-openssl-dev
-          - name: Linux Clang 18
-            os: ubuntu-24.04
-            cc: clang-18
-            cxx: clang++-18
-            libcxx: true
-            packages: clang-18 libc++-dev libc++abi-dev libcurl4-openssl-dev
-          - name: macOS AppleClang
+          - name: macOS GCC 16
             os: macos-15
-            cc: clang
-            cxx: clang++
-            libcxx: false
-            packages: ""
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     env:
-      CC: ${{ matrix.cc }}
-      CXX: ${{ matrix.cxx }}
+      CC: gcc-16
+      CXX: g++-16
       # The documentation job owns the formatting gate with a pinned
       # clang-format; core legs skip it so unpinned tool versions can't skew.
       SCRY_FORMAT_CHECK: "0"
     steps:
-      - uses: actions/checkout@v7.0.0
-      - name: Install Linux build tools
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Install the Linux GCC 16 environment
         if: runner.os == 'Linux'
-        run: >
-          sudo apt-get update &&
-          sudo apt-get install -y ninja-build ${{ matrix.packages }}
-      - name: Install macOS build tools
+        uses: ./.github/actions/gcc16-env
+      - name: Install macOS GCC 16 toolchain
         if: runner.os == 'macOS'
-        run: brew install ninja
+        run: |
+          brew install ninja
+          brew info gcc
+          if ! command -v g++-16 >/dev/null 2>&1; then
+            brew install gcc || true
+          fi
+          if ! command -v g++-16 >/dev/null 2>&1; then
+            brew install gcc@16 || true
+          fi
+          if ! command -v g++-16 >/dev/null 2>&1; then
+            echo "Homebrew did not provide g++-16 on this runner" >&2
+            exit 1
+          fi
+          g++-16 --version
       - name: Install complexity checker
         run: python3 -m pip install --user --break-system-packages lizard==1.22.1
       - name: Run local-equivalent CI
-        run: >
-          ./scripts/ci-local.sh
-          -DSCRY_USE_LIBCXX=${{ matrix.libcxx }}
+        run: ./scripts/ci-local.sh
 
   static-analysis:
     name: clang-tidy
@@ -110,21 +107,18 @@ jobs:
       CC: clang-18
       CXX: clang++-18
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - run: >
           sudo apt-get update &&
           sudo apt-get install -y
-          clang-18 clang-tidy-18 libc++-dev libc++abi-dev
+          clang-18 clang-tidy-18 libc++-18-dev libc++abi-18-dev
           libcurl4-openssl-dev ninja-build
-      - name: Configure
-        run: >
-          cmake --preset ci
-          -B build/tidy
-          -DSCRY_ENABLE_CLANG_TIDY=ON
-          -DSCRY_ENABLE_FORMAT_CHECK=OFF
-          -DSCRY_USE_LIBCXX=ON
       - name: Analyze
-        run: cmake --build build/tidy
+        # Ubuntu 24.04 ships a libstdc++ whose <expected> clang 18 cannot
+        # parse, so this leg analyzes against libc++.
+        env:
+          SCRY_TIDY_LIBCXX: "1"
+        run: ./scripts/ci-tidy.sh
 
   sanitizers:
     name: ${{ matrix.name }}
@@ -133,45 +127,43 @@ jobs:
       matrix:
         include:
           - name: ASan + UBSan
-            preset: asan
-            cc: gcc-14
-            cxx: g++-14
-            packages: g++-14 libcurl4-openssl-dev ninja-build
-            use_libcxx: false
-            # The only leg that compiles the logging build; it has rotted
-            # before (aeabd8f) when nothing in CI exercised it.
-            extra_cmake_flags: -DSCRY_ENABLE_LOGGING=ON
-            ctest_flags: ""
+            leg: asan
           - name: TSan
-            preset: tsan
-            cc: clang-18
-            cxx: clang++-18
-            packages: clang-18 libc++-dev libc++abi-dev libcurl4-openssl-dev ninja-build
-            use_libcxx: true
-            extra_cmake_flags: ""
-            # TSan is where nondeterminism shows up; the repeat runs live here
-            # (QA-008) instead of on every leg.
-            ctest_flags: --repeat until-fail:3
+            leg: tsan
+          # Every fuzz target builds and replays its checked-in seed corpus
+          # per pull request (QA-015), so the targets cannot rot between the
+          # long scheduled runs. Toolchain pins match nightly.yml's long-fuzz
+          # job because libFuzzer needs the matching clang runtime.
+          - name: Fuzz corpus replay (ASan + UBSan)
+            leg: fuzz
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    env:
-      CC: ${{ matrix.cc }}
-      CXX: ${{ matrix.cxx }}
     steps:
-      - uses: actions/checkout@v7.0.0
-      - name: Install sanitizer toolchain
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Install the GCC 16 environment
+        if: matrix.leg != 'fuzz'
+        uses: ./.github/actions/gcc16-env
+      - name: Install the pinned fuzz toolchain
+        # Only the fuzz replay leg needs clang-21 and its libFuzzer runtime;
+        # the same pin as nightly.yml's long-fuzz job. g++-14 is there for the
+        # libstdc++ headers clang-21 compiles against.
+        if: matrix.leg == 'fuzz'
         run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
+            | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
+          echo "deb https://apt.llvm.org/noble/ llvm-toolchain-noble-21 main" \
+            | sudo tee /etc/apt/sources.list.d/llvm-21.list
           sudo apt-get update
-          sudo apt-get install -y ${{ matrix.packages }}
-      - name: Lower ASLR entropy for sanitizers
-        # High-entropy ASLR (vm.mmap_rnd_bits=32) breaks ASan/TSan
-        # shadow-memory mapping on Ubuntu 24.04 runners.
-        run: sudo sysctl vm.mmap_rnd_bits=28
-      - run: |
-          # GCC keeps alloc/dealloc mismatch detection live for ASan; Ubuntu's
-          # libc++ packaging otherwise triggers LP #2000322 on std exceptions.
-          cmake --preset ${{ matrix.preset }} \
-            -DSCRY_USE_LIBCXX=${{ matrix.use_libcxx }} ${{ matrix.extra_cmake_flags }}
-          cmake --build build/${{ matrix.preset }}
-          ctest --test-dir build/${{ matrix.preset }} --output-on-failure \
-            ${{ matrix.ctest_flags }}
+          sudo apt-get install -y \
+            clang-21 g++-14 libclang-rt-21-dev libcurl4-openssl-dev \
+            libfuzzer-21-dev ninja-build
+          sudo sysctl vm.mmap_rnd_bits=28
+      - name: Run the sanitizer leg
+        if: matrix.leg != 'fuzz'
+        run: ./scripts/ci-sanitizer.sh "${{ matrix.leg }}"
+      - name: Replay the fuzz corpus
+        if: matrix.leg == 'fuzz'
+        env:
+          CC: clang-21
+          CXX: clang++-21
+        run: ./scripts/ci-fuzz-replay.sh

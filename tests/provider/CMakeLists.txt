@@ -1,3 +1,36 @@
+if(SCRY_BUILD_FUZZERS)
+  scry_require_fuzzer_compiler()
+  set(SCRY_FUZZ_TEST_PREFIX "provider.")
+  set(
+    scry_provider_fuzz_sources
+    "${PROJECT_SOURCE_DIR}/src/core/error.cpp"
+    "${PROJECT_SOURCE_DIR}/src/core/json_codec.cpp"
+    "${PROJECT_SOURCE_DIR}/src/provider/anthropic_content.cpp"
+    "${PROJECT_SOURCE_DIR}/src/provider/anthropic_request.cpp"
+    "${PROJECT_SOURCE_DIR}/src/provider/anthropic_stream.cpp"
+    "${PROJECT_SOURCE_DIR}/src/provider/openai_content.cpp"
+    "${PROJECT_SOURCE_DIR}/src/provider/openai_request.cpp"
+    "${PROJECT_SOURCE_DIR}/src/provider/openai_stream.cpp"
+    "${PROJECT_SOURCE_DIR}/src/provider/provider.cpp"
+  )
+  scry_add_fuzzer(
+    scry_anthropic_fuzz
+    anthropic
+    SOURCES anthropic_fuzz.cpp ${scry_provider_fuzz_sources}
+  )
+  scry_add_fuzzer(
+    scry_openai_fuzz
+    openai
+    SOURCES openai_fuzz.cpp ${scry_provider_fuzz_sources}
+  )
+endif()
+
+# SCRY_CLANG_TOOLING contributes only the fuzz targets from this directory; the
+# Catch2 suite below reaches the C++26 public API and cannot compile under Clang.
+if(SCRY_CLANG_TOOLING)
+  return()
+endif()
+
 add_executable(
   scry_provider_tests
   anthropic_edge_tests.cpp
@@ -14,72 +47,16 @@ target_include_directories(
 )
 target_include_directories(
   scry_provider_tests
-  SYSTEM PRIVATE "${glaze_SOURCE_DIR}/include"
+  SYSTEM PRIVATE "${SCRY_GLAZE_INCLUDE_DIR}"
 )
 target_compile_definitions(
   scry_provider_tests
   PRIVATE
     "SCRY_ANTHROPIC_FIXTURE_DIR=\"${PROJECT_SOURCE_DIR}/tests/fixtures/anthropic\""
+    "SCRY_OPENAI_FIXTURE_DIR=\"${PROJECT_SOURCE_DIR}/tests/fixtures/openai\""
 )
 target_link_libraries(
   scry_provider_tests
   PRIVATE Catch2::Catch2WithMain scry::scry scry_project_options
 )
 catch_discover_tests(scry_provider_tests TEST_PREFIX "provider.")
-
-if(SCRY_BUILD_FUZZERS)
-  if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-    message(FATAL_ERROR "SCRY_BUILD_FUZZERS requires a Clang-family compiler")
-  endif()
-  set(
-    scry_provider_fuzz_sources
-    "${PROJECT_SOURCE_DIR}/src/core/error.cpp"
-    "${PROJECT_SOURCE_DIR}/src/core/json_codec.cpp"
-    "${PROJECT_SOURCE_DIR}/src/provider/anthropic_content.cpp"
-    "${PROJECT_SOURCE_DIR}/src/provider/anthropic_request.cpp"
-    "${PROJECT_SOURCE_DIR}/src/provider/anthropic_stream.cpp"
-    "${PROJECT_SOURCE_DIR}/src/provider/openai_content.cpp"
-    "${PROJECT_SOURCE_DIR}/src/provider/openai_request.cpp"
-    "${PROJECT_SOURCE_DIR}/src/provider/openai_stream.cpp"
-    "${PROJECT_SOURCE_DIR}/src/provider/provider.cpp"
-  )
-
-  function(scry_add_provider_fuzzer target source corpus)
-    add_executable("${target}" "${source}" ${scry_provider_fuzz_sources})
-    target_compile_features("${target}" PRIVATE cxx_std_23)
-    target_include_directories(
-      "${target}"
-      PRIVATE "${PROJECT_SOURCE_DIR}/include" "${PROJECT_SOURCE_DIR}/src"
-    )
-    target_include_directories(
-      "${target}"
-      SYSTEM PRIVATE "${glaze_SOURCE_DIR}/include"
-    )
-    target_compile_options("${target}" PRIVATE -fsanitize=fuzzer)
-    target_link_options("${target}" PRIVATE -fsanitize=fuzzer)
-    target_link_libraries("${target}" PRIVATE scry_project_options)
-    file(MAKE_DIRECTORY "${PROJECT_BINARY_DIR}/fuzz-corpus/${corpus}")
-    add_test(
-      NAME "provider.${corpus}-fuzz"
-      COMMAND
-        "${target}"
-        -runs=1000
-        -timeout=5
-        -max_total_time=30
-        "${PROJECT_BINARY_DIR}/fuzz-corpus/${corpus}"
-        "${PROJECT_SOURCE_DIR}/tests/fuzz/corpus/${corpus}"
-    )
-    set_tests_properties("provider.${corpus}-fuzz" PROPERTIES TIMEOUT 45)
-  endfunction()
-
-  scry_add_provider_fuzzer(
-    scry_anthropic_fuzz
-    anthropic_fuzz.cpp
-    anthropic
-  )
-  scry_add_provider_fuzzer(
-    scry_openai_fuzz
-    openai_fuzz.cpp
-    openai
-  )
-endif()

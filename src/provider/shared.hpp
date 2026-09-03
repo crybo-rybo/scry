@@ -10,11 +10,22 @@
 #include <algorithm>
 #include <cctype>
 #include <cstddef>
+#include <scry/config.hpp>
 #include <string>
 #include <string_view>
 #include <variant>
+#include <vector>
 
 namespace scry::detail {
+
+// Appends the host's verbatim extra headers after the dialect's own headers.
+// Validation has already rejected any name that collides with a Scry-managed
+// header, so ordering here is presentation only.
+inline void append_extra_headers(std::vector<HttpHeader>& headers,
+                                 const Config& config) {
+  headers.insert(headers.end(), config.extra_headers.begin(),
+                 config.extra_headers.end());
+}
 
 // Provider error identifiers reach Error::provider_detail, so only a bounded
 // alphanumeric token survives; anything else collapses to a fixed placeholder.

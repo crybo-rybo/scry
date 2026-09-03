@@ -1,0 +1,22 @@
+# Composite action for the GCC 16 environment every Linux job that compiles
+# Scry shares. Toolchain and runner changes are made here, not in the
+# workflows. The caller must check out the repository first.
+name: GCC 16 environment
+description: >-
+  Install GCC 16, Ninja, and libcurl from the Ubuntu toolchain PPA and lower
+  ASLR entropy.
+
+runs:
+  using: composite
+  steps:
+    - name: Install GCC 16, Ninja, and libcurl
+      shell: bash
+      run: |
+        sudo add-apt-repository --yes ppa:ubuntu-toolchain-r/test
+        sudo apt-get update
+        sudo apt-get install -y g++-16 libcurl4-openssl-dev ninja-build
+    - name: Lower ASLR entropy for sanitizers
+      # High-entropy ASLR (vm.mmap_rnd_bits=32) breaks ASan/TSan shadow-memory
+      # mapping on Ubuntu 24.04 runners.
+      shell: bash
+      run: sudo sysctl vm.mmap_rnd_bits=28

@@ -9,11 +9,27 @@
 #include <string_view>
 #include <type_traits>
 #include <utility>
+#include <variant>
+#include <vector>
 
 static_assert(std::is_aggregate_v<scry::Config>);
+static_assert(std::is_aggregate_v<scry::HttpHeader>);
 static_assert(std::is_enum_v<scry::ReasoningMode>);
 static_assert(std::is_aggregate_v<scry::Error>);
 static_assert(std::is_aggregate_v<scry::Json>);
+static_assert(std::is_enum_v<scry::JsonKind>);
+static_assert(std::is_default_constructible_v<scry::JsonView>);
+static_assert(std::is_copy_constructible_v<scry::JsonView>);
+static_assert(std::is_enum_v<scry::Role>);
+static_assert(std::is_aggregate_v<scry::Message>);
+static_assert(std::is_aggregate_v<scry::TextBlock>);
+static_assert(std::is_aggregate_v<scry::ToolCallBlock>);
+static_assert(std::is_aggregate_v<scry::ToolResultBlock>);
+static_assert(
+    std::same_as<scry::ContentBlock, std::variant<scry::TextBlock, scry::ToolCallBlock,
+                                                  scry::ToolResultBlock>>);
+static_assert(
+    std::same_as<decltype(scry::Message::content), std::vector<scry::ContentBlock>>);
 static_assert(std::is_aggregate_v<scry::ToolDefinition>);
 static_assert(std::is_aggregate_v<scry::UpdateOptions>);
 static_assert(std::is_aggregate_v<scry::TurnCallbacks>);
@@ -29,6 +45,8 @@ static_assert(std::same_as<decltype(scry::Usage::input_tokens), std::uint64_t>);
 static_assert(std::same_as<decltype(scry::Usage::output_tokens), std::uint64_t>);
 static_assert(std::same_as<decltype(scry::ToolCall::turn_id), scry::TurnId>);
 static_assert(std::same_as<decltype(scry::ToolCall::arguments), scry::Json>);
+static_assert(std::same_as<decltype(scry::ToolCall::result), scry::Json>);
+static_assert(std::same_as<decltype(scry::ToolCall::is_error), bool>);
 static_assert(std::same_as<decltype(scry::Completion::turn_id), scry::TurnId>);
 static_assert(
     std::same_as<decltype(scry::Completion::finish_reason), scry::FinishReason>);
@@ -98,8 +116,32 @@ static_assert(requires(const scry::Turn& turn) {
 static_assert(requires(scry::Turn& turn) {
   { turn.cancel() } -> std::same_as<bool>;
 });
+static_assert(requires(scry::Turn& turn) {
+  { turn.disconnect() } -> std::same_as<bool>;
+});
 static_assert(!registers_completion<scry::Turn>);
 static_assert(!registers_text_delta<scry::Turn>);
+static_assert(requires(const scry::Turn& turn) {
+  { turn.finished() } -> std::same_as<bool>;
+});
+
+// Thin queries over state the runtime already holds.
+static_assert(requires(scry::Harness& harness) {
+  { harness.cancel(scry::TurnId{}) } -> std::same_as<bool>;
+  { harness.disconnect(scry::TurnId{}) } -> std::same_as<bool>;
+});
+static_assert(requires(const scry::Config& config) {
+  { scry::Harness::validate(config) } -> std::same_as<scry::Status>;
+});
+static_assert(requires(const scry::ToolRegistry& registry) {
+  { registry.contains(std::string_view{}) } -> std::same_as<bool>;
+  { registry.names() } -> std::same_as<std::vector<std::string>>;
+});
+static_assert(requires(const scry::Conversation& conversation) {
+  { conversation.messages() } -> std::same_as<const std::vector<scry::Message>&>;
+  { conversation.system_prompt() } -> std::same_as<const std::string&>;
+  { conversation.busy() } -> std::same_as<bool>;
+});
 
 // send() takes the callbacks atomically, and they are optional.
 static_assert(requires(scry::Harness& harness, scry::Conversation& conversation) {
@@ -171,6 +213,25 @@ struct Probe {
   void member() const {}
 };
 
+bool json_view_reads_a_parsed_document() {
+  const auto document = scry::JsonView::parse(scry::Json{.text = R"({"ok":true})"});
+  if (!document || document->kind() != scry::JsonKind::object ||
+      document->size() != 1) {
+    return false;
+  }
+  if (document->key_at(0) != "ok") {
+    return false;
+  }
+  const auto member = document->find("ok");
+  if (!member || member->boolean() != true) {
+    return false;
+  }
+  if (scry::escape_json_string("a\"b\n") != "\"a\\\"b\\n\"") {
+    return false;
+  }
+  return !scry::JsonView::parse(scry::Json{.text = "{"}).has_value();
+}
+
 bool null_pointer_callables_are_empty() {
   const scry::UniqueFunction<void()> from_null_function{
       static_cast<void (*)()>(nullptr)};
@@ -234,6 +295,9 @@ int main() {
       !config.timeouts.transfer.has_value(),
       config.timeouts.shutdown == std::chrono::seconds{2},
       config.tls_verify_peer,
+      config.ca_bundle_path.empty(),
+      config.proxy.empty(),
+      config.extra_headers.empty(),
   });
   if (std::find(default_checks.begin(), default_checks.end(), false) !=
       default_checks.end()) {
@@ -262,10 +326,14 @@ int main() {
     return 1;
   }
 
+  if (!json_view_reads_a_parsed_document()) {
+    return 1;
+  }
+
   static_assert(scry::version_major == SCRY_VERSION_MAJOR);
   static_assert(scry::version_minor == SCRY_VERSION_MINOR);
   static_assert(scry::version_patch == SCRY_VERSION_PATCH);
   static_assert(SCRY_VERSION == scry::version_major * 10000 +
                                     scry::version_minor * 100 + scry::version_patch);
-  return scry::version == "0.2.0" ? 0 : 1;
+  return scry::version == "0.3.0" ? 0 : 1;
 }

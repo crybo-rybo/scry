@@ -15,6 +15,12 @@ namespace scry::detail {
 // always produce equal bytes no matter which layer parsed them.
 using JsonValue = glz::generic_sorted_u64;
 
+// Reads into an existing value rather than returning one, so a caller that
+// already owns storage for the document never moves or copies a JsonValue.
+[[nodiscard]] Status parse_json_into(JsonValue& destination, std::string_view input,
+                                     ErrorCategory category,
+                                     std::string_view failure_message);
+
 [[nodiscard]] Result<JsonValue> parse_json(std::string_view input,
                                            ErrorCategory category,
                                            std::string_view failure_message);

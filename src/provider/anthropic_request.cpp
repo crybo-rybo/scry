@@ -1,10 +1,12 @@
 #include "core/error.hpp"
 #include "core/json_codec.hpp"
 #include "provider/anthropic.hpp"
+#include "provider/shared.hpp"
 
 #include <string>
 #include <utility>
 #include <variant>
+#include <vector>
 
 namespace scry::detail {
 namespace {
@@ -200,18 +202,21 @@ AnthropicAdapter::make_request(const Config& config,
     return std::unexpected(std::move(encoded.error()));
   }
 
+  std::vector<HttpHeader> headers{
+      HttpHeader{.name = "content-type", .value = "application/json"},
+      HttpHeader{.name = "x-api-key", .value = config.api_key},
+      HttpHeader{.name = "anthropic-version", .value = "2023-06-01"},
+      HttpHeader{.name = "accept", .value = "text/event-stream"},
+  };
+  append_extra_headers(headers, config);
   return TransportRequest{
       .url = endpoint(config.base_url),
-      .headers =
-          {
-              HttpHeader{.name = "content-type", .value = "application/json"},
-              HttpHeader{.name = "x-api-key", .value = config.api_key},
-              HttpHeader{.name = "anthropic-version", .value = "2023-06-01"},
-              HttpHeader{.name = "accept", .value = "text/event-stream"},
-          },
+      .headers = std::move(headers),
       .body = std::move(*encoded),
       .provider_namespace = "anthropic",
       .tls_verify_peer = config.tls_verify_peer,
+      .ca_bundle_path = config.ca_bundle_path,
+      .proxy = config.proxy,
       .timeouts = config.timeouts,
       .limits = config.limits,
   };

@@ -280,7 +280,7 @@ Result<Type> decode(const JsonView& view, std::string path) {
 }
 
 template <ToolArguments Args> [[nodiscard]] Result<Args> decode_arguments(Json input) {
-  auto parsed = parse_json(std::move(input));
+  auto parsed = parse_json(input);
   if (!parsed) {
     return std::unexpected(std::move(parsed.error()));
   }

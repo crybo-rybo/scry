@@ -37,7 +37,9 @@ struct Usage {
 /// Informational view of a tool invocation accepted by the agentic loop.
 ///
 /// Callback arguments are borrowed for the duration of the callback. Copy any fields
-/// that must outlive it.
+/// that must outlive it. A call is reported once its result has been produced and
+/// handed to the model; a framework failure that fails the whole turn instead, such
+/// as ErrorCategory::resource_limit on the result, reports no ToolCall at all.
 struct ToolCall {
   /// Turn that owns this call.
   TurnId turn_id{};
@@ -47,6 +49,11 @@ struct ToolCall {
   std::string name{};
   /// Canonical JSON object passed to the tool handler.
   Json arguments{};
+  /// Canonical JSON result returned to the model for this call.
+  Json result{};
+  /// True when the result is a tool error: the handler returned an error, threw,
+  /// returned invalid JSON, or the model requested an unknown tool.
+  bool is_error{false};
 };
 
 /// Final successful result of an accepted turn.
@@ -107,11 +114,18 @@ using ToolCallCallback = UniqueFunction<void(const ToolCall&)>;
 ///
 /// Every member is optional; an empty member simply means no delivery of that kind.
 /// Callbacks are supplied to Harness::send() and are attached from the moment the turn
-/// is accepted, so no event can precede them.
+/// is accepted, so no event can precede them. They are detached only by
+/// Turn::disconnect() or Harness::disconnect(), which clears all of them at once and
+/// lets the turn run on undelivered.
 struct TurnCallbacks {
   /// Observes coalesced fragments of streamed assistant text.
   TextDeltaCallback on_text_delta{};
   /// Observes accepted tool calls after their results are applied.
+  ///
+  /// The ToolCall carries the canonical result sent to the model and its is_error
+  /// flag, including for a handler that failed. It does not fire when a framework
+  /// failure fails the turn instead of producing a result, for example when the
+  /// result exceeds a configured byte limit.
   ToolCallCallback on_tool_call{};
   /// When non-empty, invoked exactly once per accepted turn unless Harness destruction
   /// begins first.

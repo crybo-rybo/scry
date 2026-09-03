@@ -1,0 +1,58 @@
+# Tag-driven release ring. Pushing v<major>.<minor>.<patch> re-runs the core
+# gate against the tagged tree, builds the API site, and publishes the GitHub
+# release from the checked-in notes. The tag must name the version in
+# CMakeLists.txt, which is the only place the release number lives.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Publish the tagged release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Install the GCC 16 environment
+        uses: ./.github/actions/gcc16-env
+      - name: Check the tag against the project version
+        run: ./scripts/check-release-tag.sh "${TAG}"
+      - name: Install complexity checker
+        run: python3 -m pip install --user --break-system-packages lizard==1.22.1
+      - name: Build, test, install, and audit the package
+        # The documentation ring owns the formatting gate with a pinned
+        # clang-format; this leg runs everything else.
+        env:
+          SCRY_FORMAT_CHECK: "0"
+        run: ./scripts/ci-local.sh
+      - name: Install documentation toolchain
+        run: sudo apt-get install -y doxygen graphviz
+      - name: Build the API documentation
+        run: ./scripts/ci-docs.sh
+      - name: Package the API documentation
+        run: |
+          cd build/docs
+          zip -q -r "${GITHUB_WORKSPACE}/scry-api-docs-${TAG}.zip" html
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          notes="docs/releases/${TAG}.md"
+          if [[ ! -f "${notes}" ]]; then
+            echo "Missing release notes: ${notes}" >&2
+            exit 1
+          fi
+          gh release create "${TAG}" \
+            --title "Scry ${TAG}" \
+            --notes-file "${notes}" \
+            "scry-api-docs-${TAG}.zip"

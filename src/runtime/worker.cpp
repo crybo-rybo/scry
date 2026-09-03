@@ -1,6 +1,5 @@
 #include "runtime/worker.hpp"
 
-#include "core/log.hpp"
 #include "core/retry.hpp"
 #include "protocol/sse.hpp"
 
@@ -68,7 +67,8 @@ void redact_sensitive_fields(Error& error, const std::string_view secret) {
 [[nodiscard]] TransitionResult failed_attempt(TurnMachine& machine, Error error,
                                               const TurnId turn_id,
                                               const std::string_view secret,
-                                              const std::uint64_t retry_jitter_seed) {
+                                              const std::uint64_t retry_jitter_seed,
+                                              const MachineTimePoint observed_at) {
   redact_sensitive_fields(error, secret);
   const auto attempt = machine.attempt_count();
   const auto retry_after = error.retry_after;
@@ -78,11 +78,9 @@ void redact_sensitive_fields(Error& error, const std::string_view secret) {
   if (error.attempt == 0) {
     error.attempt = attempt;
   }
-  SCRY_LOG("Turn {} attempt {} failed ({})", turn_id.value, attempt,
-           error_category_name(error.category));
   return machine.apply(AttemptFailed{
       .error = std::move(error),
-      .observed_at = std::chrono::steady_clock::now(),
+      .observed_at = observed_at,
       .retry_after = retry_after,
       .jitter_sample = retry_jitter_sample(retry_jitter_seed, turn_id, attempt),
   });
@@ -99,10 +97,23 @@ WorkerActor::WorkerActor(Config config, std::unique_ptr<ProviderAdapter> provide
                          std::unique_ptr<Transport> transport,
                          std::shared_ptr<CommandQueue> commands,
                          std::shared_ptr<EventQueue> events,
-                         const std::uint64_t retry_jitter_seed)
+                         WorkerEnvironment environment)
     : config_(std::move(config)), provider_(std::move(provider)),
       transport_(std::move(transport)), commands_(std::move(commands)),
-      events_(std::move(events)), retry_jitter_seed_(retry_jitter_seed) {}
+      events_(std::move(events)), retry_jitter_seed_(environment.retry_jitter_seed),
+      time_(std::move(environment.time)) {
+  // An empty member means production: the real steady clock and the real
+  // deadline wait on the command queue.
+  if (!time_.now) {
+    time_.now = [] { return std::chrono::steady_clock::now(); };
+  }
+  if (!time_.wait_until) {
+    time_.wait_until = [](CommandQueue& queue, const std::stop_token& stopped,
+                          const MachineTimePoint deadline) {
+      return queue.wait_pop_until(stopped, deadline);
+    };
+  }
+}
 
 struct WorkerActor::AttemptState {
   explicit AttemptState(const AttemptLimits& limits)
@@ -160,7 +171,6 @@ void WorkerActor::accept_command(WorkerCommand command) {
 
 void WorkerActor::process_turn(SendTurnCommand&& command,
                                const std::stop_token& stopped) {
-  SCRY_LOG("Worker accepted Turn {}", command.turn_id.value);
   TurnMachine machine{
       command.turn_id,
       std::move(command.request),
@@ -175,10 +185,9 @@ void WorkerActor::process_turn(SendTurnCommand&& command,
   if (command.cancelled->load(std::memory_order_acquire)) {
     append_commands(machine_commands, machine.apply(CancelTurn{}));
   } else {
-    append_commands(machine_commands,
-                    machine.apply(BeginTurn{
-                        .observed_at = std::chrono::steady_clock::now(),
-                    }));
+    append_commands(machine_commands, machine.apply(BeginTurn{
+                                          .observed_at = time_.now(),
+                                      }));
   }
 
   while (!stopped.stop_requested()) {
@@ -244,7 +253,7 @@ bool WorkerActor::process_machine_command(
   } else {
     append_commands(pending_commands,
                     failed_attempt(machine, std::move(published.error()), turn.turn_id,
-                                   config_.api_key, retry_jitter_seed_));
+                                   config_.api_key, retry_jitter_seed_, time_.now()));
   }
   return true;
 }
@@ -253,12 +262,10 @@ TransitionResult
 WorkerActor::perform_attempt(TurnMachine& machine, const IssueModelRequest& issue,
                              const std::shared_ptr<std::atomic<bool>>& cancelled,
                              const std::stop_token& stopped) {
-  SCRY_LOG("Model request issued (Turn {}, attempt {})", issue.turn_id.value,
-           issue.attempt);
   auto request = provider_->make_request(config_, *issue.request);
   if (!request) {
     return failed_attempt(machine, std::move(request.error()), issue.turn_id,
-                          config_.api_key, retry_jitter_seed_);
+                          config_.api_key, retry_jitter_seed_, time_.now());
   }
 
   AttemptState state{AttemptLimits{
@@ -273,12 +280,12 @@ WorkerActor::perform_attempt(TurnMachine& machine, const IssueModelRequest& issu
   auto result = transport_->perform(*request, stopped, *cancelled, body_sink);
   if (!result) {
     return failed_attempt(machine, std::move(result.error()), issue.turn_id,
-                          config_.api_key, retry_jitter_seed_);
+                          config_.api_key, retry_jitter_seed_, time_.now());
   }
   auto response = finish_stream(machine, state);
   if (!response) {
     return failed_attempt(machine, std::move(response.error()), issue.turn_id,
-                          config_.api_key, retry_jitter_seed_);
+                          config_.api_key, retry_jitter_seed_, time_.now());
   }
   return complete_attempt(machine, std::move(*response), *result);
 }
@@ -344,13 +351,11 @@ TransitionResult
 WorkerActor::wait_for_retry(TurnMachine& machine, const ScheduleRetryWake& wake,
                             const std::shared_ptr<std::atomic<bool>>& cancelled,
                             const std::stop_token& stopped) {
-  SCRY_LOG("Turn {} waiting to retry after failed attempt {}", wake.turn_id.value,
-           wake.failed_attempt);
   while (!stopped.stop_requested()) {
     if (cancelled->load(std::memory_order_acquire)) {
       return machine.apply(CancelTurn{});
     }
-    auto command = commands_->wait_pop_until(stopped, wake.deadline);
+    auto command = time_.wait_until(*commands_, stopped, wake.deadline);
     if (!command) {
       break;
     }
@@ -360,7 +365,7 @@ WorkerActor::wait_for_retry(TurnMachine& machine, const ScheduleRetryWake& wake,
     return machine.apply(CancelTurn{});
   }
   return machine.apply(RetryWake{
-      .observed_at = std::chrono::steady_clock::now(),
+      .observed_at = time_.now(),
   });
 }
 
@@ -396,7 +401,7 @@ WorkerActor::handle_tool_wait_command(TurnMachine& machine, WorkerCommand comman
     }
     return machine.apply(ToolResultReady{
         .result = std::move(*result->result),
-        .observed_at = std::chrono::steady_clock::now(),
+        .observed_at = time_.now(),
     });
   }
   if (const auto* cancel = std::get_if<CancelTurnCommand>(&command);
@@ -452,13 +457,8 @@ WorkerActor::publish_provider_event(TurnMachine& machine, ProviderEvent event,
     return {};
   }
   // The provider seam preserves an ignored event's name for debug inspection.
-  // Scry has no public logging surface, so the worker consumes this marker;
-  // the SCRY_ENABLE_LOGGING build records the name before dropping it.
+  // Scry has no public logging surface, so the worker consumes the marker.
   assert(std::holds_alternative<ProviderIgnoredEvent>(event));
-  if (std::holds_alternative<ProviderIgnoredEvent>(event)) {
-    SCRY_LOG("Ignored provider stream event: {}",
-             std::get<ProviderIgnoredEvent>(event).name);
-  }
   return {};
 }
 
@@ -525,20 +525,15 @@ Status WorkerActor::publish_command(MachineCommand command) {
                        "turn events exceed the configured queue limit",
                        completion->turn_id, completion->attempt_count));
     }
-    SCRY_LOG("Turn {} completed (attempts: {})", completion->turn_id.value,
-             completion->attempt_count);
     return {};
   }
   if (auto* error = std::get_if<PublishError>(&command)) {
     const auto turn_id = error->error.turn_id.value_or(TurnId{});
-    SCRY_LOG("Turn {} failed ({})", turn_id.value,
-             error_category_name(error->error.category));
     publish_terminal_event(
         ErrorEvent{.turn_id = turn_id, .error = std::move(error->error)});
     return {};
   }
   if (const auto* cancelled = std::get_if<PublishCancelled>(&command)) {
-    SCRY_LOG("Turn {} cancelled", cancelled->turn_id.value);
     publish_terminal_event(CancelledEvent{.turn_id = cancelled->turn_id});
   }
   return {};

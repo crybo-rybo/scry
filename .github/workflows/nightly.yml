@@ -1,9 +1,7 @@
-# Scheduled/manual ring; see docs/development/quality-gates.md section 6:
-# CodeQL, the GCC 16 reflection leg, long protocol fuzzing, and the opt-in
-# showcase run weekly; the Ollama local-model smoke is workflow_dispatch-only
-# because it exercises a live model, not the deterministic protocol seams that
-# gate PRs. The reflection leg lives here rather than in ci.yml so an
-# experimental-compiler PPA pin cannot gate unrelated pull requests.
+# Scheduled/manual ring; see docs/contributing.md. CodeQL, long protocol
+# fuzzing, and the opt-in showcase run weekly; the Ollama
+# local-model smoke is workflow_dispatch-only because it exercises a live
+# model, not the deterministic protocol seams that gate PRs.
 name: Scheduled
 
 on:
@@ -27,17 +25,14 @@ jobs:
       contents: read
       security-events: write
     env:
-      CC: gcc-14
-      CXX: g++-14
+      CC: gcc-16
+      CXX: g++-16
     steps:
-      - uses: actions/checkout@v7.0.0
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            g++-14 libcurl4-openssl-dev ninja-build
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Install the GCC 16 environment
+        uses: ./.github/actions/gcc16-env
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v4
+        uses: github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
         with:
           languages: c-cpp
           build-mode: manual
@@ -49,19 +44,9 @@ jobs:
             -DSCRY_ENABLE_FORMAT_CHECK=OFF
           cmake --build build/codeql
       - name: Analyze
-        uses: github/codeql-action/analyze@v4
+        uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
         with:
           category: /language:c-cpp/nightly
-
-  reflection:
-    name: GCC 16 supported reflection component
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v7.0.0
-      - uses: ./.github/actions/reflection-env
-      - name: Build, test, install, and consume reflection component
-        run: ./scripts/ci-reflection.sh
 
   long-fuzz:
     name: Long fuzz (${{ matrix.target }})
@@ -74,12 +59,14 @@ jobs:
           - sse
           - anthropic
           - openai
+          - response_policy
+          - conversation
     env:
       CC: clang-21
       CXX: clang++-21
       SCRY_NIGHTLY_FUZZ_SECONDS: "1200"
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: Install pinned fuzz toolchain
         run: |
           wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
@@ -94,7 +81,7 @@ jobs:
         run: ./scripts/ci-nightly-fuzz.sh "${{ matrix.target }}"
       - name: Upload fuzz artifacts
         if: always()
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: nightly-fuzz-${{ matrix.target }}
           path: build/nightly-fuzz-artifacts/${{ matrix.target }}
@@ -106,15 +93,12 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
-      CC: gcc-14
-      CXX: g++-14
+      CC: gcc-16
+      CXX: g++-16
     steps:
-      - uses: actions/checkout@v7.0.0
-      - name: Install showcase toolchain
-        run: >
-          sudo apt-get update &&
-          sudo apt-get install -y
-          g++-14 libcurl4-openssl-dev ninja-build
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Install the GCC 16 environment
+        uses: ./.github/actions/gcc16-env
       - name: Build, test, render a headless frame, and audit packaging
         run: ./scripts/ci-showcase.sh
 
@@ -127,8 +111,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
-      CC: gcc-14
-      CXX: g++-14
+      CC: gcc-16
+      CXX: g++-16
       OLLAMA_HOST: 127.0.0.1:11434
       OLLAMA_NOHISTORY: "1"
       SCRY_LOCAL_MODEL_BASE_URL: http://127.0.0.1:11434/v1
@@ -137,12 +121,11 @@ jobs:
       SCRY_LOCAL_MODEL_HEALTH_TIMEOUT_SECONDS: "60"
       SCRY_LOCAL_MODEL_TIMEOUT_SECONDS: "180"
     steps:
-      - uses: actions/checkout@v7.0.0
-      - name: Install build and extraction dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            curl g++-14 libcurl4-openssl-dev ninja-build zstd
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Install the GCC 16 environment
+        uses: ./.github/actions/gcc16-env
+      - name: Install extraction dependencies
+        run: sudo apt-get install -y curl zstd
       - name: Download and verify Ollama v0.32.1
         env:
           OLLAMA_URL: >-
@@ -199,7 +182,7 @@ jobs:
           ./scripts/ci-local-model.sh
       - name: Upload local-model logs
         if: always()
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: nightly-local-model-logs
           path: build/nightly-local-model-artifacts

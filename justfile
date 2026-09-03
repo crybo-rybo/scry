@@ -9,21 +9,6 @@ build:
 test:
     ctest --test-dir build/dev --output-on-failure
 
-profile *args:
-    ./scripts/perf-run.sh --mode full {{ args }}
-
-profile-smoke *args:
-    ./scripts/perf-run.sh --mode smoke {{ args }}
-
-profile-dry *args:
-    ./scripts/perf-run.sh --mode dry {{ args }}
-
-profile-compare base head output="build/profile-comparison" *args:
-    python3 scripts/perf-compare.py compare --base "{{ base }}" --head "{{ head }}" --output-dir "{{ output }}" {{ args }}
-
-profile-pair base head output="build/profile-pair" *args:
-    ./scripts/perf-pair.sh --base-dir "{{ base }}" --head-dir "{{ head }}" --output "{{ output }}" {{ args }}
-
 format:
     cmake --build build/dev --target format
 
@@ -40,21 +25,16 @@ docs:
     ./scripts/ci-docs.sh
 
 tidy:
-    CC=clang CXX=clang++ cmake --preset ci --fresh -B build/tidy -DSCRY_ENABLE_CLANG_TIDY=ON -DSCRY_ENABLE_FORMAT_CHECK=OFF -DSCRY_USE_LIBCXX=ON
-    cmake --build build/tidy
+    ./scripts/ci-tidy.sh
 
 asan:
-    cmake --preset asan
-    cmake --build build/asan
-    ctest --test-dir build/asan --output-on-failure
+    ./scripts/ci-sanitizer.sh asan
 
 tsan:
-    cmake --preset tsan
-    cmake --build build/tsan
-    ctest --test-dir build/tsan --output-on-failure --repeat until-fail:3
+    ./scripts/ci-sanitizer.sh tsan
 
-reflection:
-    ./scripts/ci-reflection.sh
+fuzz:
+    ./scripts/ci-fuzz-replay.sh
 
 nightly-local-model:
     ./scripts/ci-local-model.sh

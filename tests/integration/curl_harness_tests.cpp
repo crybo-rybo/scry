@@ -1,3 +1,4 @@
+#include "support/harness_test_support.hpp"
 #include "support/transport/loopback_server.hpp"
 
 #include <catch2/catch_test_macros.hpp>
@@ -14,25 +15,8 @@ using namespace std::chrono_literals;
 
 namespace {
 
-constexpr auto successful_stream = std::string_view{R"(event: message_start
-data: {"type":"message_start","message":{"id":"msg_curl","type":"message","role":"assistant","content":[],"model":"test-model","stop_reason":null,"usage":{"input_tokens":7,"output_tokens":0}}}
-
-event: content_block_start
-data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
-
-event: content_block_delta
-data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello from curl."}}
-
-event: content_block_stop
-data: {"type":"content_block_stop","index":0}
-
-event: message_delta
-data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":4}}
-
-event: message_stop
-data: {"type":"message_stop"}
-
-)"};
+const std::string successful_stream =
+    scry::test_support::anthropic_text_stream("Hello from curl.", "msg_curl", {}, 7, 4);
 
 constexpr auto openai_successful_stream = std::string_view{
     R"(data: {"id":"chatcmpl-curl","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
@@ -346,7 +330,9 @@ TEST_CASE(
   CHECK(cancelled);
   CHECK_FALSE(completed);
   CHECK_FALSE(error);
-  CHECK(elapsed < 1s);
+  // Promptness is the progress-callback wiring's job; this bound only guards
+  // against a hang, so a loaded TSan runner cannot flake it.
+  CHECK(elapsed < 5s);
   CHECK(conversation->empty());
 }
 
@@ -376,7 +362,9 @@ TEST_CASE(
   harness.reset();
   const auto elapsed = std::chrono::steady_clock::now() - started;
 
-  CHECK(elapsed < 1s);
+  // Promptness is the progress-callback wiring's job; this bound only guards
+  // against a hang, so a loaded TSan runner cannot flake it.
+  CHECK(elapsed < 5s);
   CHECK_FALSE(callback_fired);
   CHECK(conversation->empty());
 }

@@ -5,12 +5,13 @@
 
 namespace scry {
 
-/// Move-only cancellation handle for one accepted agentic exchange.
+/// Move-only control handle for one accepted agentic exchange.
 ///
 /// Callbacks belong to the accepted exchange and are supplied to Harness::send(), so
-/// this handle only identifies and cancels. Dropping it detaches without cancelling or
-/// blocking: the turn continues, successful history still commits, and the
-/// TurnCallbacks supplied at send remain deliverable.
+/// this handle only identifies the turn, cancels its work, and disconnects its
+/// delivery. Dropping it detaches without cancelling or blocking: the turn continues,
+/// successful history still commits, and the TurnCallbacks supplied at send remain
+/// deliverable.
 class Turn final {
 public:
   /// Detaches from the turn without cancelling it.
@@ -33,6 +34,15 @@ public:
   /// @return Accepted-turn identifier.
   [[nodiscard]] TurnId id() const noexcept;
 
+  /// Reports whether this turn has reached its terminal outcome.
+  ///
+  /// True once the terminal Completion or Error has been delivered to
+  /// TurnCallbacks::on_finished, or once Harness::update() has processed the terminal
+  /// event when no on_finished was supplied. A moved-from handle and a handle whose
+  /// Harness is gone both report true, so a poll loop always terminates.
+  /// @return true when nothing more will be delivered for this turn.
+  [[nodiscard]] bool finished() const noexcept;
+
   /// Requests cooperative cancellation.
   ///
   /// When a non-empty TurnCallbacks::on_finished was supplied to Harness::send(), the
@@ -41,7 +51,27 @@ public:
   /// @return true only when this call issued the cancellation request; false if
   /// cancellation was already requested, the turn was terminal, or the handle is moved
   /// from.
+  /// @see disconnect()
   bool cancel() noexcept;
+
+  /// Clears every callback supplied to Harness::send() for this turn.
+  ///
+  /// The turn keeps running: it still issues requests, still dispatches registered tool
+  /// handlers, still commits history on success and rolls it back on failure or
+  /// cancellation, and still clears the Conversation's busy state. Nothing reaches the
+  /// host afterwards — no text deltas, no tool-call observations, and no on_finished —
+  /// and events already queued for the turn are released on the next Harness::update().
+  /// finished() therefore reports true as soon as the terminal event is processed,
+  /// since no delivery remains to wait for.
+  ///
+  /// This is the complement of cancel(): cancel() stops the work and still reports the
+  /// cancellation, disconnect() keeps the work and stops the reporting. A host that
+  /// wants neither calls both, in either order.
+  /// @return true only when this call cleared the callbacks of a turn that had not yet
+  /// delivered its terminal outcome; false on a second call, on a finished turn, on a
+  /// moved-from handle, and once the Harness is gone.
+  /// @see cancel()
+  bool disconnect() noexcept;
 
 private:
   class Impl;

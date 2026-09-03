@@ -6,6 +6,8 @@
 #include <scry/events.hpp>
 #include <scry/harness.hpp>
 #include <scry/json.hpp>
+#include <scry/message.hpp>
+#include <scry/reflection.hpp>
 #include <scry/tool_registry.hpp>
 #include <scry/turn.hpp>
 #include <scry/turn_id.hpp>

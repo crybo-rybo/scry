@@ -5,6 +5,7 @@ add_executable(
   harness_tests.cpp
   openai_integration_tests.cpp
   persistence_during_turn_tests.cpp
+  retry_timing_tests.cpp
   runtime_edge_tests.cpp
   tool_loop_tests.cpp
   "${PROJECT_SOURCE_DIR}/tests/support/transport/loopback_server.cpp"
