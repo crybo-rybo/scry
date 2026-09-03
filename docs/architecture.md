@@ -104,7 +104,7 @@ ui.render_history(conversation->messages());
 
 `scry::Json` is the Scry-owned serialized JSON boundary type, read through
 `scry::JsonView` and written by hand with `scry::escape_json_string()`, so a
-C++23 host needs no third-party parser to work the tool boundary.
+host needs no third-party parser to work the tool boundary.
 `Conversation::messages()` returns committed history as the public
 `scry::Message` family — the same family the adapters encode — so a chat UI
 renders state instead of mirroring it. `Harness::cancel(TurnId)` and
@@ -720,15 +720,33 @@ in full, this list does not repeat it.
   awaitables use the explicit-schema path.
 - The registry is additive-only: a duplicate tool name is rejected as a value,
   never silently replaced, and there is no removal or replacement API.
-- The supported reflected value family is closed, and other C++ shapes are not
-  inferred from Glaze support.
-- Generated schemas use Scry's closed provider-neutral JSON Schema 2020-12 subset,
-  minified, with sorted keys and declaration-ordered enums. This does not restrict
-  explicit schemas.
-- Reflected decoding is strict and recursive, and its failures become bounded
-  model-visible tool errors; configured payload-limit failures remain fatal
-  `resource_limit` errors. The canonical parsed value is authoritative, so
-  duplicate lexical keys are not separately observable at dispatch.
+- Reflected registration is concept-constrained. A root or nested object is a
+  complete, default-constructible, movable, non-union plain aggregate with no
+  bases and public named non-bit-field writable members — no reference, `const`,
+  or `volatile` member, and no aggregate reachable from its own members.
+  Unsupported roots, members, metadata, handlers, and returns fail at the call
+  site with a stable, legible Scry diagnostic.
+- The supported reflected value family is a closed matrix, and other C++ shapes
+  are not inferred from Glaze support: `bool`; non-character signed and unsigned
+  integral types; finite `float` and `double`; `std::string`; scoped enums with
+  unique underlying values, encoded by exact enumerator name; one layer of
+  `std::optional<T>`; `std::vector<T, Allocator>` except every
+  `vector<bool, Allocator>` specialization; `std::array<T, N>`; and recursively
+  supported plain aggregates. Integers carry exact C++ range bounds and fixed
+  arrays exact length bounds. Nested optionals and enum aliases are rejected
+  because their JSON decoding and encoding would be ambiguous.
+- Generated schemas use Scry's closed provider-neutral JSON Schema 2020-12
+  subset: closed inline objects and the keywords `additionalProperties`,
+  `anyOf`, `description`, `enum`, `items`, `maxItems`, `minItems`, `minimum`,
+  `maximum`, `properties`, `required`, and `type`; minified JSON; property keys
+  and `required` names sorted lexicographically; enumerators in declaration
+  order. They omit `$schema`, references and definitions, `title`, and
+  `default`. This does not restrict explicit schemas.
+- Reflected decoding is strict and recursive — `1.0` does not decode into an
+  integral member — and its failures become bounded model-visible tool errors;
+  configured payload-limit failures remain fatal `resource_limit` errors. The
+  canonical parsed value is authoritative, so duplicate lexical keys are not
+  separately observable at dispatch.
 - `scry::reflection::encode(const T&)` accepts every supported value without tool
   registration and returns canonical `Json` through the same encoder and error
   mapping used for reflected handler results. Its bytes carry no cross-version

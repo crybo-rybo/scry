@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-/// Stable C++23 API for the Scry runtime.
+/// Public C++26 API for the Scry runtime.
 namespace scry {
 
 /// Selects the wire protocol used by a Harness.
