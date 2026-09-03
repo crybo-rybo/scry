@@ -267,3 +267,14 @@ TEST_CASE("private JSON codec safely quotes model-visible error strings") {
   REQUIRE(parsed->contains("error"));
   CHECK((*parsed)["error"].get_string() == "bad \"quote\"\nline\t\\");
 }
+
+TEST_CASE("Conversation::from_json rejects a document truncated after a token") {
+  // A snapshot cut after a complete token is still a broken snapshot; Glaze read
+  // it as a whole document until the codec validated the trailing bytes.
+  const auto complete =
+      document(R"([{"role":"user","content":[{"type":"text","text":"hi"}]}])");
+  REQUIRE(scry::Conversation::from_json(scry::Json{.text = complete}));
+
+  require_invalid_document(complete.substr(0, complete.size() - 1));
+  require_invalid_document(R"({"messages":[],"system_prompt":"","version":1)");
+}

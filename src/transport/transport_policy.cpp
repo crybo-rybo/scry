@@ -26,6 +26,17 @@ namespace {
   });
 }
 
+// RFC 9110 field-value: printable ASCII, horizontal tab, and obs-text
+// (0x80-0xFF). Rejecting every other control byte matters beyond CR and LF
+// because the value reaches curl_slist_append as a C string, so an embedded NUL
+// would silently truncate the header rather than fail validation.
+[[nodiscard]] bool valid_header_value(const std::string_view value) noexcept {
+  return std::ranges::none_of(value, [](const char character) {
+    const auto byte = static_cast<unsigned char>(character);
+    return (byte < 0x20U && byte != '\t') || byte == 0x7FU;
+  });
+}
+
 [[nodiscard]] std::string_view trim(std::string_view value) noexcept {
   while (!value.empty() &&
          std::isspace(static_cast<unsigned char>(value.front())) != 0) {
@@ -216,8 +227,7 @@ Status validate_request(const TransportRequest& request,
 
 Status validate_headers(const std::vector<HttpHeader>& headers) {
   for (const auto& header : headers) {
-    if (!valid_header_name(header.name) ||
-        header.value.find_first_of("\r\n") != std::string::npos) {
+    if (!valid_header_name(header.name) || !valid_header_value(header.value)) {
       return std::unexpected(
           make_error(ErrorCategory::protocol, "invalid request header"));
     }

@@ -170,3 +170,30 @@ TEST_CASE("escape_json_string passes non-ASCII UTF-8 bytes through unescaped") {
 
   CHECK(scry::escape_json_string(value) == "\"" + value + "\"");
 }
+
+TEST_CASE("the public JSON view rejects truncated and trailing-garbage documents") {
+  // Glaze treats the end of a non-NUL-terminated buffer as an implicit
+  // terminator, so each of these parsed before the codec validated the whole
+  // document. A body that stops mid-value is a broken response, not a short one.
+  const std::string_view rejected[] = {
+      R"({"error":{"type":"not_found_error")", // truncated object
+      R"([1,2)",                               // truncated array
+      R"({"a")",                               // key with no value
+      R"({"a":1} x)",                          // trailing garbage
+      R"({"a":1}{"b":2})",                     // a second document
+      R"(123abc)",                             // a number followed by junk
+  };
+
+  for (const auto text : rejected) {
+    const auto document = JsonView::parse(scry::Json{.text = std::string{text}});
+    REQUIRE_FALSE(document);
+    CHECK(document.error().category == scry::ErrorCategory::invalid_argument);
+    CHECK(document.error().message == "JSON text is not valid");
+  }
+
+  // The complete forms of the same documents still parse.
+  CHECK(JsonView::parse(scry::Json{.text = R"({"error":{"type":"not_found_error"}})"}));
+  CHECK(JsonView::parse(scry::Json{.text = R"([1,2])"}));
+  CHECK(JsonView::parse(scry::Json{.text = R"({"a":1} )"}));
+  CHECK(JsonView::parse(scry::Json{.text = R"(123)"}));
+}

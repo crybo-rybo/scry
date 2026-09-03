@@ -102,7 +102,7 @@ struct ResourceLimits {
 struct HttpHeader {
   /// Header name. Must be a non-empty RFC 7230 token.
   std::string name{};
-  /// Header value. Must contain no carriage return or line feed.
+  /// Header value. Must contain no control characters other than tab.
   std::string value{};
 };
 

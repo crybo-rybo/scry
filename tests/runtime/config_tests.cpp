@@ -57,6 +57,23 @@ TEST_CASE("configuration validates proxy, CA bundle, and extra headers") {
       scry::HttpHeader{.name = "x-scry-example", .value = "1\r\nx-evil: 2"}};
   reject(injected_value, "extra header name or value is invalid");
 
+  // Every control byte but tab is rejected, not only CR and LF: curl takes the
+  // value as a C string, so an embedded NUL would otherwise be sent as a
+  // silently truncated header.
+  for (const char control : {'\0', '\x01', '\x7f'}) {
+    auto control_value = valid_config();
+    control_value.extra_headers = {scry::HttpHeader{
+        .name = "x-scry-example", .value = std::string{"before"} + control + "after"}};
+    CHECK(control_value.extra_headers.front().value.size() == 12);
+    reject(control_value, "extra header name or value is invalid");
+    REQUIRE_FALSE(scry::Harness::validate(control_value));
+  }
+
+  auto tabbed_value = valid_config();
+  tabbed_value.extra_headers = {
+      scry::HttpHeader{.name = "x-scry-example", .value = "before\tafter"}};
+  CHECK(scry::detail::validate_config(tabbed_value));
+
   auto collision = valid_config();
   collision.extra_headers = {
       scry::HttpHeader{.name = "Content-Type", .value = "text/plain"}};

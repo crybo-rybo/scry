@@ -781,9 +781,11 @@ in full, this list does not repeat it.
   bounds fail the attempt with a retryable `network` error.
 - A proxy URL and verbatim extra headers are plain `Config` fields validated at
   `create()` and `validate()`. Extra header names and values pass the same
-  header-injection validation as Scry's own, and a name colliding with a
-  Scry-managed header is rejected with `invalid_config`. The CA bundle path and
-  proxy must contain no NUL, CR, or LF, and the proxy no space or tab either.
+  header-injection validation as Scry's own — an RFC 9110 field-value carrying
+  no control byte other than tab, so an embedded NUL cannot silently truncate
+  the header curl sends — and a name colliding with a Scry-managed header is
+  rejected with `invalid_config`. The CA bundle path and proxy must contain no
+  NUL, CR, or LF, and the proxy no space or tab either.
 
 ### Errors
 

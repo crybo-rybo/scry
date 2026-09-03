@@ -1,6 +1,8 @@
 #include "runtime_test_support.hpp"
 
 #include <chrono>
+#include <cstddef>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -534,4 +536,123 @@ TEST_CASE("pump shutdown releases pending and queued event ownership") {
           .text = std::string(1024, 'x'),
       },
       1024));
+}
+
+TEST_CASE("disconnecting from inside on_text_delta does not destroy the running "
+          "callback") {
+  PumpFixture fixture;
+  scry::detail::PumpState pump{fixture.events};
+  std::shared_ptr<scry::detail::TurnRoute> route;
+  std::size_t observed_size = 0;
+  std::size_t delta_calls = 0;
+  bool disconnect_reported = false;
+  bool finished = false;
+  route = fixture.route(
+      223, {
+               .callbacks = scry::TurnCallbacks{
+                   .on_text_delta =
+                       [&route, &observed_size, &delta_calls, &disconnect_reported,
+                        captured = std::string(64, 'x')](std::string_view) {
+                         ++delta_calls;
+                         disconnect_reported = route->disconnect();
+                         // Reading a capture after the disconnect is the whole
+                         // regression: clearing the callbacks eagerly deleted the
+                         // closure this frame is running out of.
+                         observed_size = captured.size();
+                       },
+                   .on_finished =
+                       [&finished](scry::Result<scry::Completion>) { finished = true; },
+               },
+           });
+  pump.add_route(route);
+  REQUIRE(fixture.events->push(
+      scry::detail::TextDeltaEvent{.turn_id = route->id(), .text = "streamed"}, 1024));
+  REQUIRE(fixture.events->push_terminal(completion_event(route->id()), 1024));
+
+  static_cast<void>(pump.update({}));
+
+  CHECK(delta_calls == 1);
+  CHECK(disconnect_reported);
+  CHECK(observed_size == 64);
+  // The deferred clear still stops delivery at the very next event.
+  CHECK_FALSE(finished);
+  // The turn itself ran to completion: history committed and busy cleared.
+  REQUIRE(fixture.conversation->messages->size() == 2);
+  CHECK(std::get<scry::detail::TextBlock>(
+            fixture.conversation->messages->back().content.front())
+            .text == "done");
+  CHECK_FALSE(fixture.conversation->busy);
+}
+
+TEST_CASE("disconnecting from inside on_tool_call does not destroy the running "
+          "callback") {
+  PumpFixture fixture;
+  scry::detail::PumpState pump{fixture.events};
+  const scry::detail::ToolSnapshot tools{
+      registered_tool("forecast", [](scry::Json) -> scry::Result<scry::Json> {
+        return scry::Json{.text = R"({"ok":true})"};
+      })};
+  std::shared_ptr<scry::detail::TurnRoute> route;
+  std::size_t observed_size = 0;
+  std::size_t observer_calls = 0;
+  bool disconnect_reported = false;
+  route = fixture.route(
+      224,
+      {
+          .tools = frozen_tools(tools),
+          .callbacks =
+              scry::TurnCallbacks{
+                  .on_tool_call =
+                      [&route, &observed_size, &observer_calls, &disconnect_reported,
+                       captured = std::string(64, 'y')](const scry::ToolCall&) {
+                        ++observer_calls;
+                        disconnect_reported = route->disconnect();
+                        observed_size = captured.size();
+                      },
+              },
+      });
+  pump.add_route(route);
+  REQUIRE(fixture.events->push(tool_event(route->id()), 1024));
+
+  CHECK(pump.update({}).callbacks_delivered == 1);
+
+  CHECK(observer_calls == 1);
+  CHECK(disconnect_reported);
+  CHECK(observed_size == 64);
+  // Tool dispatch belongs to the registry, so the result still reached the queue.
+  REQUIRE(fixture.commands->try_pop());
+}
+
+TEST_CASE("disconnecting from inside on_finished reports false") {
+  PumpFixture fixture;
+  scry::detail::PumpState pump{fixture.events};
+  std::shared_ptr<scry::detail::TurnRoute> route;
+  std::size_t observed_size = 0;
+  bool disconnect_reported = true;
+  bool finished = false;
+  route =
+      fixture.route(225, {
+                             .callbacks =
+                                 scry::TurnCallbacks{
+                                     .on_finished =
+                                         [&route, &observed_size, &disconnect_reported,
+                                          &finished, captured = std::string(64, 'z')](
+                                             scry::Result<scry::Completion>) {
+                                           finished = true;
+                                           // The route is already finished here, so the
+                                           // disconnect is a no-op rather than a
+                                           // deferred clear.
+                                           disconnect_reported = route->disconnect();
+                                           observed_size = captured.size();
+                                         },
+                                 },
+                         });
+  pump.add_route(route);
+  REQUIRE(fixture.events->push_terminal(completion_event(route->id()), 1024));
+
+  CHECK(pump.update({}).callbacks_delivered == 1);
+
+  CHECK(finished);
+  CHECK_FALSE(disconnect_reported);
+  CHECK(observed_size == 64);
 }

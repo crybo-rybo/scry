@@ -26,6 +26,35 @@ template <typename> inline constexpr bool unhandled_worker_event = false;
   return tools ? *tools : empty;
 }
 
+// Marks a route as invoking for the length of one callback and performs the
+// clear a disconnect made from inside that callback had to defer. It is RAII
+// rather than a statement after the visit because a throwing host callback
+// leaves through update() with the Harness still required to be valid, so the
+// clear has to happen on the exception path too.
+class InvocationGuard final {
+public:
+  InvocationGuard(bool& invoking, const bool& disconnected,
+                  TurnCallbacks& callbacks) noexcept
+      : invoking_(invoking), disconnected_(disconnected), callbacks_(callbacks) {
+    invoking_ = true;
+  }
+  InvocationGuard(const InvocationGuard&) = delete;
+  InvocationGuard(InvocationGuard&&) = delete;
+  InvocationGuard& operator=(const InvocationGuard&) = delete;
+  InvocationGuard& operator=(InvocationGuard&&) = delete;
+  ~InvocationGuard() {
+    invoking_ = false;
+    if (disconnected_) {
+      callbacks_ = TurnCallbacks{};
+    }
+  }
+
+private:
+  bool& invoking_;
+  const bool& disconnected_;
+  TurnCallbacks& callbacks_;
+};
+
 } // namespace
 
 TurnRoute::TurnRoute(const TurnId turn_id, std::shared_ptr<std::atomic<bool>> cancelled,
@@ -63,12 +92,20 @@ bool TurnRoute::cancel() noexcept {
 // false for text and terminal events, so the pump releases them instead of
 // delivering them, while tool dispatch — which belongs to the registry, not to
 // the callbacks — keeps running and history still commits.
+//
+// A host may disconnect from inside a callback it is currently running, and the
+// callbacks own that closure, so clearing them there would free the frame's own
+// captures. Such a disconnect only records the intent; InvocationGuard performs
+// the clear once the invocation unwinds, which still stops delivery at the very
+// next event.
 bool TurnRoute::disconnect() noexcept {
   if (disconnected_ || finished()) {
     return false;
   }
   disconnected_ = true;
-  callbacks_ = TurnCallbacks{};
+  if (!invoking_) {
+    callbacks_ = TurnCallbacks{};
+  }
   return true;
 }
 
@@ -109,6 +146,7 @@ bool TurnRoute::has_callback(const WorkerEvent& event) const noexcept {
 }
 
 void TurnRoute::invoke(const WorkerEvent& event) {
+  const InvocationGuard guard{invoking_, disconnected_, callbacks_};
   std::visit(
       [this](const auto& value) {
         using Event = std::decay_t<decltype(value)>;

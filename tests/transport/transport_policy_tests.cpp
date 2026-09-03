@@ -112,6 +112,19 @@ TEST_CASE("transport header validation accepts RFC tokens and rejects injection"
   result = validate_headers({HttpHeader{.name = "x-safe", .value = "bad\r\n"}});
   REQUIRE_FALSE(result);
   CHECK(result.error().category == ErrorCategory::protocol);
+
+  // A value is an RFC 9110 field-value: every control byte but tab is rejected,
+  // because curl_slist_append takes a C string and an embedded NUL would send a
+  // silently truncated header instead of failing here.
+  for (const char control : {'\0', '\x01', '\x1f', '\x7f'}) {
+    result = validate_headers(
+        {HttpHeader{.name = "x-safe", .value = std::string{"a"} + control + "b"}});
+    REQUIRE_FALSE(result);
+    CHECK(result.error().category == ErrorCategory::protocol);
+  }
+  CHECK(validate_headers({HttpHeader{.name = "x-safe", .value = "a\tb"}}));
+  // obs-text stays legal, so a UTF-8 value still passes.
+  CHECK(validate_headers({HttpHeader{.name = "x-safe", .value = "caf\xc3\xa9"}}));
 }
 
 TEST_CASE("transport header policy recognizes provider correlation fields") {
@@ -197,11 +210,10 @@ TEST_CASE("HTTP error detail extracts only a sanitized provider token") {
   // The body never reaches the detail: anything that is not a clean token in an
   // error object collapses to empty rather than to a placeholder.
   CHECK(http_error_detail("not json at all", "anthropic").empty());
-  // Glaze accepts a document truncated after a complete token, so a body cut
-  // there still yields its (still sanitized) token; a value cut mid-token is
-  // rejected outright.
-  CHECK(http_error_detail(R"({"error":{"type":"not_found_error")", "anthropic") ==
-        "anthropic:not_found_error");
+  // A truncated error body is a broken response; empty detail is the safe
+  // default, whether the cut lands after a complete token or mid-token.
+  CHECK(
+      http_error_detail(R"({"error":{"type":"not_found_error")", "anthropic").empty());
   CHECK(http_error_detail(R"({"error":{"type":"not_fou)", "anthropic").empty());
   CHECK(http_error_detail(R"({"error":{"type":"not found"}})", "anthropic").empty());
   CHECK(http_error_detail(R"({"error":{"type":"not-found-error"}})", "anthropic")

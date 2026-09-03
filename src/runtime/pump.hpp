@@ -64,6 +64,7 @@ private:
   std::size_t max_conversation_bytes_{};
   bool attached_{true};
   bool disconnected_{false};
+  bool invoking_{false};
   bool terminal_{false};
   bool terminal_delivered_{false};
   bool tool_dispatch_failed_{false};
