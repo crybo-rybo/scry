@@ -104,7 +104,7 @@ numbered requirement:
   `UpdateStats::budget_exhausted`. Accepted turns snapshot immutable registry
   records, so later or reentrant changes affect subsequent turns rather than
   in-flight ones.
-- **Non-preemption.** The `update()` budget is a soft deadline checked *between* callbacks; an individual callback or tool handler is never preempted and may overrun the budget. The budget bounds Scry's scheduling, not user code.
+- **Non-preemption.** The `update()` budget is a soft deadline checked *between* callbacks; an individual callback or tool handler is never preempted and may overrun the budget. The budget bounds Scry's scheduling, not user code. It also never bounds it to nothing: one queued event is ingested and one deliverable callback delivered before the deadline is consulted, so no budget can leave a call with zero progress.
 - **Callback exceptions** propagate out of `update()` with the harness valid and
   the event counted delivered, as defined by the
   [library-wide principles](overview.md).

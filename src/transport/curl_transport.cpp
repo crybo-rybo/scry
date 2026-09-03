@@ -106,6 +106,9 @@ struct TransferContext {
   BodyChunkSink* body_sink{};
   transport_policy::ResponseState response{};
   std::optional<Error> callback_error{};
+  // Bounded prefix of a non-2xx body, retained only long enough to extract the
+  // provider's sanitized error token. Never delivered to the sink.
+  std::string error_body{};
   curl_error::AbortCause abort_cause{curl_error::AbortCause::none};
 };
 
@@ -138,6 +141,11 @@ std::size_t header_callback(char* data, const std::size_t size, const std::size_
     return status;
   }
   if (!context.response.deliver_body) {
+    constexpr std::size_t maximum_error_body_bytes = std::size_t{8} * 1024;
+    if (context.error_body.size() < maximum_error_body_bytes) {
+      context.error_body.append(
+          chunk.substr(0, maximum_error_body_bytes - context.error_body.size()));
+    }
     return {};
   }
   auto status = (*context.body_sink)(chunk);
@@ -204,6 +212,15 @@ timeout_milliseconds(const std::chrono::milliseconds value) noexcept {
       value.count(), static_cast<std::chrono::milliseconds::rep>(LONG_MAX)));
 }
 
+// Curl expresses the low-speed (idle) bound in whole seconds, so a sub-second
+// value rounds up rather than disabling the bound.
+[[nodiscard]] long
+idle_timeout_seconds(const std::chrono::milliseconds value) noexcept {
+  const auto seconds = std::chrono::ceil<std::chrono::seconds>(value).count();
+  return std::max(1L, static_cast<long>(std::min<std::chrono::seconds::rep>(
+                          seconds, static_cast<std::chrono::seconds::rep>(LONG_MAX))));
+}
+
 [[nodiscard]] int
 poll_timeout_milliseconds(const std::chrono::milliseconds value) noexcept {
   return static_cast<int>(std::min<std::chrono::milliseconds::rep>(
@@ -240,8 +257,8 @@ private:
 
 [[nodiscard]] Status configure_easy(CURL* easy, const TransportRequest& request,
                                     HeaderList& headers, TransferContext& context) {
-  return EasyOptions{easy}
-      .set(CURLOPT_URL, request.url.c_str())
+  EasyOptions options{easy};
+  options.set(CURLOPT_URL, request.url.c_str())
       .set(CURLOPT_POST, 1L)
       .set(CURLOPT_POSTFIELDS, request.body.data())
       .set(CURLOPT_POSTFIELDSIZE_LARGE, static_cast<curl_off_t>(request.body.size()))
@@ -257,10 +274,16 @@ private:
       .set(CURLOPT_XFERINFODATA, &context)
       .set(CURLOPT_NOPROGRESS, 0L)
       .set(CURLOPT_CONNECTTIMEOUT_MS, timeout_milliseconds(request.timeouts.connect))
-      .set(CURLOPT_TIMEOUT_MS, timeout_milliseconds(request.timeouts.transfer))
+      .set(CURLOPT_LOW_SPEED_LIMIT, 1L)
+      .set(CURLOPT_LOW_SPEED_TIME, idle_timeout_seconds(request.timeouts.idle))
       .set(CURLOPT_SSL_VERIFYPEER, request.tls_verify_peer ? 1L : 0L)
-      .set(CURLOPT_SSL_VERIFYHOST, request.tls_verify_peer ? 2L : 0L)
-      .status();
+      .set(CURLOPT_SSL_VERIFYHOST, request.tls_verify_peer ? 2L : 0L);
+  // Leaving CURLOPT_TIMEOUT_MS unset keeps curl's default of no total bound,
+  // which is what an unset transfer timeout means.
+  if (request.timeouts.transfer) {
+    options.set(CURLOPT_TIMEOUT_MS, timeout_milliseconds(*request.timeouts.transfer));
+  }
+  return options.status();
 }
 
 [[nodiscard]] Status validate_execution(const Status& startup_status,
@@ -327,12 +350,18 @@ drive_transfer(MultiTransfer& multi, TransferContext& context,
 }
 
 [[nodiscard]] Result<TransportResult> finish_transfer(CURL* easy, const CURLcode code,
-                                                      TransferContext& context) {
+                                                      TransferContext& context,
+                                                      const TransportRequest& request) {
   if (code != CURLE_OK && code != CURLE_HTTP_RETURNED_ERROR) {
     auto error = curl_error::classify(static_cast<int>(code), context.callback_error,
                                       context.abort_cause);
     if (error.provider_request_id.empty()) {
       error.provider_request_id = context.response.provider_request_id;
+    }
+    // An in-stream provider error arrives on a 2xx response, so carry the
+    // status it arrived on rather than reporting no HTTP response at all.
+    if (error.http_status == 0 && context.response.status_code != 0) {
+      error.http_status = static_cast<std::uint16_t>(context.response.status_code);
     }
     return std::unexpected(std::move(error));
   }
@@ -347,6 +376,8 @@ drive_transfer(MultiTransfer& multi, TransferContext& context,
     auto error =
         transport_policy::http_error(status, context.response.provider_request_id);
     error.retry_after = curl_error::retry_after(context.response.headers);
+    error.provider_detail = transport_policy::http_error_detail(
+        context.error_body, request.provider_namespace);
     return std::unexpected(std::move(error));
   }
   return TransportResult{
@@ -433,7 +464,7 @@ Result<TransportResult> CurlTransport::perform(const TransportRequest& request,
     code.error().provider_request_id = context.response.provider_request_id;
     return std::unexpected(std::move(code.error()));
   }
-  return finish_transfer(easy.get(), *code, context);
+  return finish_transfer(easy.get(), *code, context, request);
 }
 
 } // namespace scry::detail

@@ -1,6 +1,7 @@
 #include "transport/transport_policy.hpp"
 
 #include "core/error.hpp"
+#include "core/json_codec.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -72,6 +73,7 @@ namespace {
     return std::unexpected(std::move(status.error()));
   }
   response.deliver_body = *status >= 200 && *status < 300;
+  response.status_code = *status;
   response.headers.clear();
   response.provider_request_id.clear();
   return {};
@@ -109,6 +111,22 @@ namespace {
                                       "provider request identifier is too large"));
   }
   response.provider_request_id = value;
+  return {};
+}
+
+// Returns the provider's own error identifier: the string at error.type, or
+// error.code when type is absent or not a string.
+[[nodiscard]] std::string_view error_token(const JsonValue& document) noexcept {
+  const auto* error = json_field(document, "error");
+  if (error == nullptr || !error->is_object()) {
+    return {};
+  }
+  for (const auto name : {"type", "code"}) {
+    const auto* field = json_field(*error, name);
+    if (field != nullptr && field->is_string()) {
+      return field->get_string();
+    }
+  }
   return {};
 }
 
@@ -185,10 +203,13 @@ Status validate_request(const TransportRequest& request,
         make_error(ErrorCategory::invalid_state, "response sink is missing"));
   }
   if (request.timeouts.connect <= std::chrono::milliseconds::zero() ||
-      request.timeouts.transfer <= std::chrono::milliseconds::zero() ||
-      request.timeouts.shutdown <= std::chrono::milliseconds::zero()) {
-    return std::unexpected(make_error(ErrorCategory::invalid_config,
-                                      "transport timeouts must be positive"));
+      request.timeouts.idle <= std::chrono::milliseconds::zero() ||
+      request.timeouts.shutdown <= std::chrono::milliseconds::zero() ||
+      (request.timeouts.transfer &&
+       *request.timeouts.transfer <= std::chrono::milliseconds::zero())) {
+    return std::unexpected(make_error(
+        ErrorCategory::invalid_config,
+        "transport timeouts must be greater than 0 (transfer may be unset)"));
   }
   return {};
 }
@@ -216,7 +237,26 @@ Error http_error(const std::int32_t status, const std::string& request_id) {
     error = make_error(ErrorCategory::protocol, "provider rejected the request");
   }
   error.provider_request_id = request_id;
+  error.http_status = static_cast<std::uint16_t>(status);
   return error;
+}
+
+std::string http_error_detail(const std::string_view body,
+                              const std::string_view provider_namespace) {
+  if (provider_namespace.empty() || body.empty()) {
+    return {};
+  }
+  const auto document = parse_json(body, ErrorCategory::protocol,
+                                   "provider error body could not be decoded");
+  if (!document) {
+    return {};
+  }
+  const auto token = error_token(*document);
+  if (token.empty()) {
+    return {};
+  }
+  return sanitize_provider_detail(std::string{provider_namespace} + ":" +
+                                  std::string{token});
 }
 
 std::string sanitize_provider_detail(const std::string_view detail) {

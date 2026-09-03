@@ -7,6 +7,7 @@
 #include <atomic>
 #include <catch2/catch_test_macros.hpp>
 #include <chrono>
+#include <cstdint>
 #include <curl/curl.h>
 #include <optional>
 #include <scry/error.hpp>
@@ -39,6 +40,7 @@ using scry::detail::TransportRequest;
               {"x-api-key", "test-key-never-log"},
           },
       .body = R"({"prompt":"request-body-never-log"})",
+      .provider_namespace = "anthropic",
   };
 }
 
@@ -59,7 +61,8 @@ struct InterruptedTransfer {
   scry::test::LoopbackServer server{response("200 OK", "", "body"), true};
   CurlTransport transport;
   auto held_request = request(server.url());
-  held_request.timeouts.transfer = 2s;
+  // No total bound: cancellation and shutdown must work on their own.
+  held_request.timeouts.transfer = std::nullopt;
   held_request.timeouts.shutdown = 50ms;
   std::string body;
   auto sink = append_to(body);
@@ -249,12 +252,24 @@ TEST_CASE("curl transport maps HTTP failures without leaking request data") {
     std::string_view status;
     ErrorCategory category;
     bool retryable;
+    std::uint16_t http_status;
+    std::string_view response_body;
+    std::string_view provider_detail;
   };
+  constexpr std::string_view plain_body = "test-key-never-log request-body-never-log";
+  constexpr std::string_view error_body =
+      R"({"type":"error","error":{"type":"not_found_error",)"
+      R"("message":"test-key-never-log request-body-never-log"}})";
   constexpr std::array cases{
-      Case{"401 Unauthorized", ErrorCategory::authentication, false},
-      Case{"429 Too Many Requests", ErrorCategory::rate_limit, true},
-      Case{"503 Service Unavailable", ErrorCategory::network, true},
-      Case{"400 Bad Request", ErrorCategory::protocol, false},
+      Case{"401 Unauthorized", ErrorCategory::authentication, false, 401, plain_body,
+           ""},
+      Case{"429 Too Many Requests", ErrorCategory::rate_limit, true, 429, plain_body,
+           ""},
+      Case{"503 Service Unavailable", ErrorCategory::network, true, 503, plain_body,
+           ""},
+      Case{"400 Bad Request", ErrorCategory::protocol, false, 400, plain_body, ""},
+      Case{"404 Not Found", ErrorCategory::protocol, false, 404, error_body,
+           "anthropic:not_found_error"},
   };
 
   for (const auto& test_case : cases) {
@@ -263,7 +278,7 @@ TEST_CASE("curl transport maps HTTP failures without leaking request data") {
         test_case.category == ErrorCategory::rate_limit ? "Retry-After: 7\r\n" : "";
     scry::test::LoopbackServer server{response(
         test_case.status, "request-id: failed-request\r\n" + std::string{retry_after},
-        "test-key-never-log request-body-never-log")};
+        test_case.response_body)};
     CurlTransport transport;
     std::string body;
     auto sink = append_to(body);
@@ -276,6 +291,7 @@ TEST_CASE("curl transport maps HTTP failures without leaking request data") {
     REQUIRE_FALSE(result);
     CHECK(result.error().category == test_case.category);
     CHECK(result.error().retryable == test_case.retryable);
+    CHECK(result.error().http_status == test_case.http_status);
     CHECK(result.error().provider_request_id == "failed-request");
     if (test_case.category == ErrorCategory::rate_limit) {
       CHECK(result.error().retry_after == std::chrono::seconds{7});
@@ -285,8 +301,49 @@ TEST_CASE("curl transport maps HTTP failures without leaking request data") {
     CHECK(body.empty());
     CHECK(result.error().message.find("test-key-never-log") == std::string::npos);
     CHECK(result.error().message.find("request-body-never-log") == std::string::npos);
-    CHECK(result.error().provider_detail.empty());
+    CHECK(result.error().provider_detail.find("test-key-never-log") ==
+          std::string::npos);
+    CHECK(result.error().provider_detail.find("request-body-never-log") ==
+          std::string::npos);
+    CHECK(result.error().provider_detail == test_case.provider_detail);
   }
+}
+
+TEST_CASE("curl transport fails a silent response after the idle bound") {
+  using namespace std::chrono_literals;
+  scry::test::LoopbackServer server{response("200 OK", "", "body"), true};
+  CurlTransport transport;
+  auto silent_request = request(server.url());
+  silent_request.timeouts.connect = 1s;
+  silent_request.timeouts.idle = 1s;
+  silent_request.timeouts.transfer = std::nullopt;
+  silent_request.timeouts.shutdown = 50ms;
+  std::string body;
+  auto sink = append_to(body);
+  std::stop_source shutdown;
+  const std::atomic cancelled{false};
+  std::optional<scry::Result<scry::detail::TransportResult>> outcome;
+  std::jthread worker{[&] {
+    outcome = transport.perform(silent_request, shutdown.get_token(), cancelled, sink);
+  }};
+  server.wait_until_request();
+  const auto observed = std::chrono::steady_clock::now();
+  worker.join();
+  const auto elapsed = std::chrono::steady_clock::now() - observed;
+
+  REQUIRE(outcome);
+  REQUIRE_FALSE(*outcome);
+  CHECK(outcome->error().category == ErrorCategory::network);
+  CHECK(outcome->error().retryable);
+  CHECK(outcome->error().message == "transfer timed out");
+  CHECK(outcome->error().http_status == 0);
+  // The bound fires, but not at exactly `idle`: libcurl compares a rolling
+  // average speed, and the request body just uploaded keeps that average above
+  // the limit until the averaging window rolls past it. Measured on curl 8.7.1
+  // (and reproducible with the stock curl CLI on a POST): failure lands at
+  // roughly idle + 6 s, against idle + 0.05 s for a GET. The guarantee under
+  // test is that a permanently silent response fails instead of hanging.
+  CHECK(elapsed < 20s);
 }
 
 TEST_CASE("curl transport handles cancellation signals before network IO") {
@@ -386,6 +443,8 @@ TEST_CASE("curl transport preserves provider-neutral sanitized error detail") {
   CHECK(result.error().message == "response consumer rejected response data");
   CHECK(result.error().provider_detail == "anthropic:overloaded_error");
   CHECK(result.error().provider_request_id == "body-request");
+  // An in-stream provider failure carries the 200 status it arrived on.
+  CHECK(result.error().http_status == 200);
 }
 
 TEST_CASE("curl callbacks contain response consumer exceptions") {

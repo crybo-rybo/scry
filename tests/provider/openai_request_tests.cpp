@@ -117,6 +117,9 @@ TEST_CASE("OpenAI request is semantically equivalent to the common contract") {
   const auto encoded = adapter.make_request(config(), request());
   REQUIRE(encoded);
   CHECK(encoded->url == "https://api.openai.test/v1/chat/completions");
+  // The transport prefixes body-derived error tokens with this namespace, so it
+  // must match the one the stream decoder uses.
+  CHECK(encoded->provider_namespace == "openai");
   CHECK(header(*encoded, "content-type") == "application/json");
   CHECK(header(*encoded, "accept") == "text/event-stream");
   CHECK(header(*encoded, "authorization") == "Bearer sanitized-key");

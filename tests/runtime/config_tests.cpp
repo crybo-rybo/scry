@@ -206,7 +206,17 @@ TEST_CASE("configuration rejects zero timeouts, undersized limits, and zero tool
   CHECK_FALSE(scry::detail::validate_config(config));
 
   config = valid_config();
+  config.timeouts.idle = {};
+  CHECK_FALSE(scry::detail::validate_config(config));
+
+  // An unset total transfer bound is the default and stays accepted; a set one
+  // must still be positive.
+  config = valid_config();
   config.timeouts.transfer = {};
+  CHECK(scry::detail::validate_config(config));
+
+  config = valid_config();
+  config.timeouts.transfer = 0ms;
   CHECK_FALSE(scry::detail::validate_config(config));
 
   config = valid_config();

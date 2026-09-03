@@ -110,7 +110,9 @@ UpdateStats PumpState::update(const UpdateOptions options) {
   std::size_t delivered = 0;
   bool exhausted = ingest_events(deadline);
   while (delivered < options.max_callbacks && has_deliverable()) {
-    if (clock_() >= deadline) {
+    // The first deliverable callback is delivered without consulting the
+    // deadline, for the same reason the first event is ingested without one.
+    if (delivered > 0 && clock_() >= deadline) {
       exhausted = true;
       break;
     }
@@ -147,14 +149,19 @@ void PumpState::shutdown() noexcept {
 }
 
 bool PumpState::ingest_events(const std::chrono::steady_clock::time_point deadline) {
+  // Every call ingests at least one queued event: the deadline is consulted
+  // only before the second and later pops, so a small or already-expired
+  // budget can never starve the pump.
+  bool ingested = false;
   while (events_->size() != 0) {
-    if (clock_() >= deadline) {
+    if (ingested && clock_() >= deadline) {
       return true;
     }
     auto event = events_->try_pop();
     if (!event) {
       return false;
     }
+    ingested = true;
     accept_event(std::move(*event));
   }
   return false;

@@ -53,7 +53,7 @@ once and receives a `Result<Completion>` by value — the completion on success,
 or the `Error` on failure. Cancellation is not a separate event type: it arrives
 on that same channel as an `Error` with category `cancelled`.
 
-**Frame budget.** `update()` accepts an optional time budget; excess events roll to the next tick. The budget is a soft deadline checked between callbacks. Scry never preempts user code, so one slow callback or tool handler can overrun it.
+**Frame budget.** `update()` accepts an optional time budget; excess events roll to the next tick. The budget is a soft deadline checked between callbacks. Every call still makes one unit of progress — one queued event ingested and, where `max_callbacks` permits, one callback delivered — before the budget is consulted, so a tiny or already-expired budget slows the pump instead of starving it. Scry never preempts user code, so one slow callback or tool handler can overrun it.
 
 **Cancellation.** `Turn::cancel()` sets an atomic flag; the worker aborts the HTTP transfer at the next opportunity, and the turn terminates through `on_finished` with a `cancelled` error. Cancelling a still-queued turn removes it before any I/O is issued. `Turn` handles are safe to drop (detach semantics); dropping does not join, block, or cancel — the callbacks supplied at send still run.
 
@@ -108,12 +108,17 @@ lower. These defaults are conservative starting points and remain configurable:
 | Default maximum output tokens | 1024 |
 | Retry attempts / elapsed time | 3 / 30 s |
 | Retry initial / maximum backoff | 250 ms / 10 s |
-| Connect / transfer / shutdown timeout | 10 s / 120 s / 2 s |
+| Connect / idle / shutdown timeout | 10 s / 120 s / 2 s |
+| Total transfer timeout | unset |
 
-TLS peer verification defaults on. The runtime uses Curl with asynchronous DNS,
-applies Curl's connect timeout (which covers name resolution and connection)
-and total transfer timeout, and caps each multi-poll wait by the shutdown
+TLS peer verification defaults on. The runtime uses Curl with asynchronous DNS
+and applies Curl's connect timeout, which covers name resolution and
+connection. The idle timeout is the default liveness bound: it fails a response
+that stays silent for that long, including while waiting for the first byte, so
+a slow local model is limited by silence rather than by total duration. The
+total transfer timeout is optional and unset by default, for hosts that want a
+hard cap on one transfer. Each multi-poll wait is capped by the shutdown
 timeout. A runtime that cannot provide the required resolver/global
 capabilities is rejected. Deterministic tests cover held transfers, cancellation,
-and capability rejection; the timeout wiring is source-reviewed rather than
-tested against a flaky DNS black hole.
+and capability rejection; the idle bound is exercised against a held loopback
+response, while connect and total bounds remain source-reviewed.
