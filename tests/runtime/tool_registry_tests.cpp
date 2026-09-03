@@ -38,12 +38,12 @@ TEST_CASE("tool registration accepts only JSON object schemas and canonicalizes 
   auto status = scry::detail::add_tool_registration(state, definition("malformed", "{"),
                                                     handler());
   REQUIRE_FALSE(status);
-  CHECK(status.error().category == scry::ErrorCategory::invalid_state);
+  CHECK(status.error().category == scry::ErrorCategory::invalid_argument);
 
   status = scry::detail::add_tool_registration(
       state, definition("array", R"(["not","an","object"])"), handler());
   REQUIRE_FALSE(status);
-  CHECK(status.error().category == scry::ErrorCategory::invalid_state);
+  CHECK(status.error().category == scry::ErrorCategory::invalid_argument);
   CHECK(state.entries.empty());
 
   REQUIRE(scry::detail::add_tool_registration(state, definition(), handler()));
@@ -63,9 +63,36 @@ TEST_CASE("tool registration is additive and duplicate names do not replace reco
       state, definition("forecast", R"({"type":"object","properties":{}})"), handler());
 
   REQUIRE_FALSE(status);
-  CHECK(status.error().category == scry::ErrorCategory::invalid_state);
+  CHECK(status.error().category == scry::ErrorCategory::invalid_argument);
   REQUIRE(state.entries.size() == 1);
   CHECK(state.entries.front() == original);
+}
+
+TEST_CASE("tool registration argument failures report invalid_argument") {
+  scry::detail::ToolRegistryState state{};
+
+  auto empty_name =
+      scry::detail::add_tool_registration(state, definition(""), handler());
+  REQUIRE_FALSE(empty_name);
+  CHECK(empty_name.error().category == scry::ErrorCategory::invalid_argument);
+  CHECK(empty_name.error().message == "tool name must not be empty");
+
+  auto empty_handler =
+      scry::detail::add_tool_registration(state, definition(), scry::ToolHandler{});
+  REQUIRE_FALSE(empty_handler);
+  CHECK(empty_handler.error().category == scry::ErrorCategory::invalid_argument);
+  CHECK(empty_handler.error().message == "tool handler must not be empty");
+
+  REQUIRE(scry::detail::add_tool_registration(state, definition(), handler()));
+  auto duplicate = scry::detail::add_tool_registration(state, definition(), handler());
+  REQUIRE_FALSE(duplicate);
+  CHECK(duplicate.error().category == scry::ErrorCategory::invalid_argument);
+
+  // invalid_state stays reserved for lifecycle failures. ToolRegistry's only
+  // invalid_state path is an inactive handle, which the public surface cannot
+  // produce: the type is neither movable nor constructible outside Harness.
+  static_assert(!std::is_default_constructible_v<scry::ToolRegistry>);
+  static_assert(!std::is_move_constructible_v<scry::ToolRegistry>);
 }
 
 TEST_CASE("tool snapshots retain immutable registrations across later additions") {

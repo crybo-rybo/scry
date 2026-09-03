@@ -87,7 +87,9 @@ namespace {
     return invalid("top_p must be finite, greater than 0, and at most 1");
   }
   if (!sampling.max_tokens || *sampling.max_tokens == 0) {
-    return invalid("Anthropic max_tokens must be configured and greater than 0");
+    return invalid(
+        "Anthropic max_tokens must be set and greater than 0; the Messages API "
+        "requires it");
   }
   return {};
 }
@@ -101,8 +103,10 @@ namespace {
                          *sampling.top_p > 1.0)) {
     return invalid("OpenAI top_p must be finite and between 0 and 1");
   }
-  if (!sampling.max_tokens || *sampling.max_tokens == 0) {
-    return invalid("OpenAI max_tokens must be configured and greater than 0");
+  // An absent max_tokens is valid for this dialect: the field is omitted from the
+  // request and the server default applies.
+  if (sampling.max_tokens && *sampling.max_tokens == 0) {
+    return invalid("OpenAI max_tokens must be greater than 0 when set");
   }
   return {};
 }

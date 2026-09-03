@@ -202,7 +202,7 @@ scry::Status register_world_tools(scry::ToolRegistry& registry,
                                   ToolExecutionObserver observer) {
   if (!world) {
     return std::unexpected(scry::Error{
-        .category = scry::ErrorCategory::invalid_state,
+        .category = scry::ErrorCategory::invalid_argument,
         .message = "register_world_tools requires a world",
     });
   }

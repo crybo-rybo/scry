@@ -247,7 +247,9 @@ encode_tools(const std::vector<ToolSchema>& tools) {
   root["model"] = config.model;
   root["messages"].data = std::move(*messages);
   root["temperature"] = request.sampling.temperature;
-  root["max_tokens"] = request.sampling.max_tokens.value_or(0);
+  if (request.sampling.max_tokens) {
+    root["max_tokens"] = *request.sampling.max_tokens;
+  }
   root["stream"] = true;
   if (request.sampling.top_p) {
     root["top_p"] = *request.sampling.top_p;

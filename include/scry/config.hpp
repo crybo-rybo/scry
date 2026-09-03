@@ -34,6 +34,11 @@ struct SamplingConfig {
   /// Optional nucleus-sampling probability.
   std::optional<double> top_p{};
   /// Optional maximum number of output tokens requested from the provider.
+  ///
+  /// The Anthropic Messages API requires this field, so the Anthropic dialect
+  /// rejects an unset value. It is optional for the OpenAI-compatible dialect:
+  /// when unset the field is omitted from the request and the server default
+  /// applies. Zero is rejected by both dialects.
   std::optional<std::uint32_t> max_tokens{1024};
 };
 

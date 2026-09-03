@@ -26,14 +26,27 @@ public:
   UniqueFunction(std::nullptr_t) noexcept {}
 
   /// Takes ownership of an invocable object, including one with move-only captures.
+  ///
+  /// A null function pointer or null member pointer produces an empty wrapper. A
+  /// callable whose return type differs from `Return` is accepted when it is
+  /// implicitly convertible, and any return is discarded when `Return` is void.
   /// @tparam Callable Callable object type inferred from the argument.
   /// @param callable Object to own and invoke.
   template <typename Callable>
     requires(!std::same_as<std::remove_cvref_t<Callable>, UniqueFunction> &&
              std::is_invocable_r_v<Return, std::decay_t<Callable>&, Args...>)
-  UniqueFunction(Callable&& callable)
-      : object_(new std::decay_t<Callable>(std::forward<Callable>(callable))),
-        invoke_(&invoke<Callable>), destroy_(&destroy<Callable>) {}
+  UniqueFunction(Callable&& callable) {
+    using StoredCallable = std::decay_t<Callable>;
+    if constexpr (std::is_pointer_v<StoredCallable> ||
+                  std::is_member_pointer_v<StoredCallable>) {
+      if (callable == nullptr) {
+        return;
+      }
+    }
+    object_ = new StoredCallable(std::forward<Callable>(callable));
+    invoke_ = &invoke<Callable>;
+    destroy_ = &destroy<Callable>;
+  }
 
   /// Destroys the owned callable, if any.
   ~UniqueFunction() { reset(); }
@@ -94,8 +107,8 @@ public:
 private:
   template <typename Callable> static Return invoke(void* object, Args&&... args) {
     using StoredCallable = std::decay_t<Callable>;
-    return std::invoke(*static_cast<StoredCallable*>(object),
-                       std::forward<Args>(args)...);
+    return std::invoke_r<Return>(*static_cast<StoredCallable*>(object),
+                                 std::forward<Args>(args)...);
   }
 
   template <typename Callable> static void destroy(void* object) noexcept {

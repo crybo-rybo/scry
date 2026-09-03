@@ -6,6 +6,7 @@
 #include <memory>
 #include <scry/scry.hpp>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include <utility>
 
@@ -58,6 +59,16 @@ static_assert(std::is_move_constructible_v<scry::Harness>);
 static_assert(!std::is_copy_constructible_v<scry::Harness>);
 static_assert(std::is_move_constructible_v<scry::UniqueFunction<void()>>);
 static_assert(!std::is_copy_constructible_v<scry::UniqueFunction<void()>>);
+
+// A void-returning callback signature accepts a callable that returns something:
+// the result is discarded rather than rejected at compile time.
+using AppendingDelta = decltype([](std::string_view chunk) -> std::string& {
+  static std::string sink;
+  return sink.append(chunk);
+});
+static_assert(std::is_constructible_v<scry::TextDeltaCallback, AppendingDelta>);
+static_assert(std::is_constructible_v<scry::UniqueFunction<void(std::string_view)>,
+                                      AppendingDelta>);
 
 // Callbacks are move-only and every member is optional, so a default-constructed
 // TurnCallbacks is a valid "observe nothing" turn.
@@ -134,6 +145,66 @@ bool move_only_callback_works() {
   return false;
 }
 
+bool nonvoid_callable_in_void_signature_works() {
+  std::string buffer;
+  scry::UniqueFunction<void(std::string_view)> sink{
+      [&buffer](std::string_view chunk) -> std::string& {
+        return buffer.append(chunk);
+      }};
+  sink("hello ");
+  sink("world");
+  if (buffer != "hello world") {
+    return false;
+  }
+
+  std::string via_callbacks;
+  scry::TurnCallbacks callbacks{
+      .on_text_delta = [&via_callbacks](std::string_view chunk) -> std::string& {
+        return via_callbacks.append(chunk);
+      },
+  };
+  callbacks.on_text_delta("delta");
+  return via_callbacks == "delta";
+}
+
+struct Probe {
+  void member() const {}
+};
+
+bool null_pointer_callables_are_empty() {
+  const scry::UniqueFunction<void()> from_null_function{
+      static_cast<void (*)()>(nullptr)};
+  if (from_null_function) {
+    return false;
+  }
+
+  const scry::UniqueFunction<void(const Probe&)> from_null_member{
+      static_cast<void (Probe::*)() const>(nullptr)};
+  if (from_null_member) {
+    return false;
+  }
+
+  auto empty = scry::UniqueFunction<void()>{static_cast<void (*)()>(nullptr)};
+  bool threw = false;
+  try {
+    empty();
+  } catch (const std::bad_function_call&) {
+    threw = true;
+  }
+  if (!threw) {
+    return false;
+  }
+
+  scry::UniqueFunction<void(const Probe&)> live_member{&Probe::member};
+  if (!live_member) {
+    return false;
+  }
+  live_member(Probe{});
+
+  scry::UniqueFunction<int()> live_function{+[] { return 7; }};
+  return static_cast<bool>(live_function) && live_function() == 7;
+}
+
 } // namespace
 
 int main() {
@@ -179,6 +250,14 @@ int main() {
   }
 
   if (!move_only_callback_works()) {
+    return 1;
+  }
+
+  if (!nonvoid_callable_in_void_signature_works()) {
+    return 1;
+  }
+
+  if (!null_pointer_callables_are_empty()) {
     return 1;
   }
 

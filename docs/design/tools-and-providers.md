@@ -119,9 +119,11 @@ remain entirely inside the adapter, and every adapter receives a `Config` that
 `Harness::create` already validated. The OpenAI-compatible dialect deliberately
 targets a *common subset*, not parity: it normalizes an origin, a `/v1` base,
 or a full `/v1/chat/completions` endpoint without Azure inference; makes
-authentication optional so local servers need no key; keeps the portable
-request baseline free of provider extensions; and expands each neutral tool
-result into its own ordered `role: "tool"` message. One explicit opt-in exists:
+authentication optional so local servers need no key; allows `max_tokens` to be
+left unset, in which case the field is omitted from the request and the server
+default applies; keeps the portable request baseline free of provider
+extensions; and expands each neutral tool result into its own ordered
+`role: "tool"` message. One explicit opt-in exists:
 `ReasoningMode::disabled` sends `reasoning_effort: "none"` for endpoints that
 support it, while the default omits the field. PROV-003/010/011 state the
 binding form, including the strict streaming lifecycle:
@@ -152,5 +154,5 @@ reflection support remains deferred.
 ## 10. Errors, Retries, Streaming
 
 - **Retries:** exponential backoff with independently seeded per-Harness jitter for 429/5xx/transport errors, honoring `Retry-After`, under configurable attempt and elapsed-time caps. Retry eligibility is strict: a request is retried only if **no semantic output has been consumed** (failure before the first content event). After partial output the turn fails with a retryable-flagged error and the app decides — automatic mid-stream resumption is later hardening. Within one turn, retry machinery never dispatches the same tool-call ID twice. A failed or cancelled turn commits no tool rounds, so resubmitting the user message is **not** automatically safe for side-effecting tools; applications must supply their own idempotency keys or reconciliation policy.
-- **Errors:** immediate API rejection (`create`, `send`, tool registration) returns `std::expected<..., scry::Error>`. Once a turn is accepted, every asynchronous outcome uses one channel: when supplied, `on_finished(scry::Result<scry::Completion>)` carries the completion or the `scry::Error`. Categories include invalid configuration/state, busy, authentication, rate limit, network, protocol, resource limit, tool failure, maximum tool rounds, and cancellation. Tool-handler exceptions are caught and returned to the model as tool errors (the model can often recover), not thrown into the app. Exceptions thrown by app callbacks are different: they propagate synchronously out of `update()` after the event is counted delivered.
+- **Errors:** immediate API rejection (`create`, `send`, tool registration) returns `std::expected<..., scry::Error>`. Once a turn is accepted, every asynchronous outcome uses one channel: when supplied, `on_finished(scry::Result<scry::Completion>)` carries the completion or the `scry::Error`. Categories include invalid configuration, argument, or state, busy, authentication, rate limit, network, protocol, resource limit, tool failure, maximum tool rounds, and cancellation. Tool-handler exceptions are caught and returned to the model as tool errors (the model can often recover), not thrown into the app. Exceptions thrown by app callbacks are different: they propagate synchronously out of `update()` after the event is counted delivered.
 - **Streaming:** SSE parsed on the worker; text deltas batched per `update()` tick rather than per-token, so a fast stream doesn't flood the queue. The text-delta view and tool-call reference are borrowed for the invocation; apps copy data they retain. `on_finished` receives its result by value.

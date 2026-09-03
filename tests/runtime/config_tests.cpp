@@ -114,7 +114,11 @@ TEST_CASE("configuration validates sampling and retries") {
 
   config = valid_config();
   config.sampling.max_tokens.reset();
-  CHECK_FALSE(scry::detail::validate_config(config));
+  const auto unset_max_tokens = scry::detail::validate_config(config);
+  REQUIRE_FALSE(unset_max_tokens);
+  CHECK(unset_max_tokens.error().message ==
+        "Anthropic max_tokens must be set and greater than 0; the Messages API "
+        "requires it");
 
   config = valid_config();
   config.sampling.max_tokens = 0;
@@ -181,8 +185,10 @@ TEST_CASE("OpenAI-compatible sampling rejects every invalid numeric shape") {
   }
 
   config.sampling.top_p = 0.5;
+  // An unset max_tokens is valid for this dialect: the field is omitted and the
+  // server default applies. Zero is still rejected.
   config.sampling.max_tokens.reset();
-  CHECK_FALSE(scry::detail::validate_config(config));
+  CHECK(scry::detail::validate_config(config));
   config.sampling.max_tokens = 0;
   CHECK_FALSE(scry::detail::validate_config(config));
 }

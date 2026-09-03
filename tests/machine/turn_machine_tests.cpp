@@ -333,10 +333,11 @@ TEST_CASE("repeated semantic output remains in streaming") {
 TEST_CASE("non-retryable categories terminate without a wake") {
   using scry::ErrorCategory;
   const std::array categories{
-      ErrorCategory::invalid_config, ErrorCategory::invalid_state,
-      ErrorCategory::busy,           ErrorCategory::authentication,
-      ErrorCategory::protocol,       ErrorCategory::resource_limit,
-      ErrorCategory::tool,           ErrorCategory::max_tool_rounds,
+      ErrorCategory::invalid_config,   ErrorCategory::invalid_state,
+      ErrorCategory::invalid_argument, ErrorCategory::busy,
+      ErrorCategory::authentication,   ErrorCategory::protocol,
+      ErrorCategory::resource_limit,   ErrorCategory::tool,
+      ErrorCategory::max_tool_rounds,
   };
 
   for (const auto category : categories) {

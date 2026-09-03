@@ -28,6 +28,33 @@ void require_invalid_document(const std::string_view input) {
 
 } // namespace
 
+TEST_CASE("Conversation::create accepts every configuration") {
+  const std::vector<std::string> prompts{
+      "",
+      "Guide\ncarefully.\nAcross lines.",
+      "Répondez en français — with emoji \xF0\x9F\x8E\xB2 and \xE2\x9C\x93.",
+      std::string(1024UL * 1024UL, 'p'),
+  };
+
+  for (const auto& prompt : prompts) {
+    auto created = scry::Conversation::create({.system_prompt = prompt});
+    REQUIRE(created);
+    CHECK(created->empty());
+    CHECK(created->message_count() == 0);
+
+    const auto encoded = created->to_json();
+    REQUIRE(encoded);
+    auto restored = scry::Conversation::from_json(*encoded);
+    REQUIRE(restored);
+    CHECK(restored->empty());
+    CHECK(restored->message_count() == 0);
+
+    const auto round_tripped = restored->to_json();
+    REQUIRE(round_tripped);
+    CHECK(round_tripped->text == encoded->text);
+  }
+}
+
 TEST_CASE("Conversation persistence uses a canonical versioned document") {
   auto created = scry::Conversation::create();
   REQUIRE(created);

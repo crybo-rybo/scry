@@ -27,7 +27,7 @@ if (!harness) { /* invalid configuration, reported as a value */ }
 auto conversation = scry::Conversation::create({
     .system_prompt = "Answer briefly and use tools when useful.",
 });
-if (!conversation) { /* invalid conversation configuration */ }
+if (!conversation) { /* reserved: no ConversationConfig is rejected today */ }
 
 auto registered = harness->tools().add(
     scry::ToolDefinition{
@@ -51,7 +51,7 @@ auto turn = harness->send(*conversation, "Is the host application still running?
             else { ui.show_error(outcome.error()); }  // includes cancellation
         },
     });
-if (!turn) { /* busy, invalid state, or admission/resource limit */ }
+if (!turn) { /* busy, invalid argument or state, or admission/resource limit */ }
 
 // somewhere in the existing main loop:
 while (app.running()) {
