@@ -53,16 +53,30 @@ run_tidy() {
       fi
     done
   fi
+  # A missing toolchain is a host capability, not a failing gate, so these
+  # probes return 77 like the sanitizer and fuzz ones do.
   if ! PATH="${tidy_path}" command -v clang-tidy >/dev/null 2>&1; then
-    echo "clang-tidy is unavailable" >&2
-    return 1
+    echo "clang-tidy is unavailable; the hosted clang-tidy leg is authoritative" >&2
+    return 77
   fi
   if ! PATH="${tidy_path}" command -v clang >/dev/null 2>&1 ||
     ! PATH="${tidy_path}" command -v clang++ >/dev/null 2>&1; then
-    echo "Clang is unavailable; the clang-tidy leg requires its matching compiler" >&2
-    return 1
+    echo "Clang is unavailable; the clang-tidy leg requires its matching \
+compiler and the hosted leg is authoritative" >&2
+    return 77
   fi
   PATH="${tidy_path}" ./scripts/ci-tidy.sh
+}
+
+# Doxygen renders the API site through dot, and neither ships with the compiler
+# toolchain, so a host without them reports unavailable rather than failing.
+run_docs() {
+  if ! command -v doxygen >/dev/null 2>&1 || ! command -v dot >/dev/null 2>&1; then
+    echo "doxygen or dot is unavailable; the hosted documentation leg is \
+authoritative" >&2
+    return 77
+  fi
+  ./scripts/ci-docs.sh
 }
 
 # GCC ships no sanitizer runtime for some host/sanitizer combinations — on Apple
@@ -123,7 +137,7 @@ run_fuzz_replay() {
 }
 
 cd "${root_dir}"
-run_gate "Doxygen API site" ./scripts/ci-docs.sh
+run_gate "Doxygen API site" run_docs
 run_gate "core" ./scripts/ci-local.sh
 run_gate "clang-tidy" run_tidy
 run_gate "ASan + UBSan" run_sanitizer_leg asan -fsanitize=address,undefined

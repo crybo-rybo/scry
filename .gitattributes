@@ -1,0 +1,2 @@
+# CRLF seed corpora are byte-exact protocol fixtures, not text to normalize.
+tests/fuzz/corpus/**/*.http -text -whitespace
