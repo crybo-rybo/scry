@@ -202,7 +202,7 @@ find_package(Threads REQUIRED)
 FetchContent_Declare(
   glaze
   GIT_REPOSITORY https://github.com/stephenberry/glaze.git
-  GIT_TAG 8b60d82c66311c145c4d03be3b556b555a9cb111
+  GIT_TAG dce5e0f7ec572725ec369a0bc59a00eeb2270a9a
   SYSTEM
   EXCLUDE_FROM_ALL
   FIND_PACKAGE_ARGS

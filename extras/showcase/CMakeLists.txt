@@ -32,11 +32,11 @@ set(SCRY_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(SCRY_WARNINGS_AS_ERRORS ON CACHE BOOL "" FORCE)
 add_subdirectory("${SCRY_REPOSITORY_ROOT}" scry)
 
-# Dear ImGui v1.92.8 is MIT-licensed and intentionally build-only.
+# Dear ImGui v1.92.9b is MIT-licensed and intentionally build-only.
 FetchContent_Declare(
   imgui
   GIT_REPOSITORY https://github.com/ocornut/imgui.git
-  GIT_TAG 8936b58fe26e8c3da834b8f60b06511d537b4c63
+  GIT_TAG f1cc2ae15e53a861a874c3034aae6798fde194ab
   SYSTEM
 )
 FetchContent_MakeAvailable(imgui)
@@ -44,7 +44,7 @@ FetchContent_MakeAvailable(imgui)
 FetchContent_Declare(
   Catch2
   GIT_REPOSITORY https://github.com/catchorg/Catch2.git
-  GIT_TAG dfc2dff8d70d083c60c1c6986030e5389a867a93
+  GIT_TAG 317ac1ed4c0bb6e6b91eafc817e05c488feffcb3
   SYSTEM
   EXCLUDE_FROM_ALL
 )
