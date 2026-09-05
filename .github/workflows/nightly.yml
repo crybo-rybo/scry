@@ -126,12 +126,12 @@ jobs:
         uses: ./.github/actions/gcc16-env
       - name: Install extraction dependencies
         run: sudo apt-get install -y curl zstd
-      - name: Download and verify Ollama v0.32.1
+      - name: Download and verify Ollama v0.33.2
         env:
           OLLAMA_URL: >-
-            https://github.com/ollama/ollama/releases/download/v0.32.1/ollama-linux-amd64.tar.zst
+            https://github.com/ollama/ollama/releases/download/v0.33.2/ollama-linux-amd64.tar.zst
           OLLAMA_SHA256: >-
-            83b1f22841eb7f6c4900c6797f960ebaa09466874442ea5b8ae3da6980d3914c
+            9785247dea264d9072f09f6c9c0eb4b8e666892826a3d8388eba3e8fb9ed1db9
         run: |
           mkdir -p build/ollama build/nightly-local-model-artifacts
           curl --fail --location --retry 3 --max-time 900 \

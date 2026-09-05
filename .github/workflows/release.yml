@@ -28,7 +28,7 @@ jobs:
       - name: Check the tag against the project version
         run: ./scripts/check-release-tag.sh "${TAG}"
       - name: Install complexity checker
-        run: python3 -m pip install --user --break-system-packages lizard==1.22.1
+        run: python3 -m pip install --user --break-system-packages lizard==1.24.0
       - name: Build, test, install, and audit the package
         # The documentation ring owns the formatting gate with a pinned
         # clang-format; this leg runs everything else.

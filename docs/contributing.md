@@ -23,7 +23,7 @@ brew install gcc llvm@18 ninja doxygen graphviz
 Both platforms also need the complexity checker, which CI pins:
 
 ```sh
-python3 -m pip install --user --break-system-packages lizard==1.22.1
+python3 -m pip install --user --break-system-packages lizard==1.24.0
 ```
 
 `llvm@18` is optional but turns the clang-tidy leg on locally; CI pins

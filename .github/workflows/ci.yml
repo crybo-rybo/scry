@@ -95,7 +95,7 @@ jobs:
           fi
           g++-16 --version
       - name: Install complexity checker
-        run: python3 -m pip install --user --break-system-packages lizard==1.22.1
+        run: python3 -m pip install --user --break-system-packages lizard==1.24.0
       - name: Run local-equivalent CI
         run: ./scripts/ci-local.sh
 

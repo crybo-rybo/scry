@@ -26,7 +26,7 @@ endif()
 FetchContent_Declare(
   Catch2
   GIT_REPOSITORY https://github.com/catchorg/Catch2.git
-  GIT_TAG dfc2dff8d70d083c60c1c6986030e5389a867a93
+  GIT_TAG 317ac1ed4c0bb6e6b91eafc817e05c488feffcb3
   SYSTEM
   EXCLUDE_FROM_ALL
 )

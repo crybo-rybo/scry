@@ -12,7 +12,7 @@ readonly build_dir="${root_dir}/build/showcase"
 readonly stage_build_dir="${root_dir}/build/showcase-root"
 readonly stage_dir="${root_dir}/build/showcase-stage"
 readonly consumer_dir="${root_dir}/build/showcase-package-consumer"
-readonly imgui_commit="8936b58fe26e8c3da834b8f60b06511d537b4c63"
+readonly imgui_commit="f1cc2ae15e53a861a874c3034aae6798fde194ab"
 readonly cxx_compiler="${CXX:-g++-16}"
 
 cd "${root_dir}"
