@@ -5,7 +5,7 @@
 # Usage: ci-sanitizer.sh {asan|tsan}
 #
 # TSan is where nondeterminism surfaces, so the repeat runs live on that leg
-# (QA-008) rather than on every one.
+# rather than on every one.
 
 set -euo pipefail
 

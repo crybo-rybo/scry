@@ -2,7 +2,7 @@
 
 # The per-commit fuzz corpus replay, run identically by preflight and by hosted
 # CI. SCRY_FUZZ_RUNS=0 makes libFuzzer execute the seed corpus once and exit,
-# which is a deterministic replay rather than a search (QA-015). The long
+# which is a deterministic replay rather than a search. The long
 # searching runs live in scripts/ci-nightly-fuzz.sh.
 #
 # The fuzz preset sets SCRY_CLANG_TOOLING, so the compiler must be a

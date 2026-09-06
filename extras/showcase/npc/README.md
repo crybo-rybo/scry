@@ -5,8 +5,15 @@ on a deterministic 5 by 5 grid. The host owns the `scry::Harness`, the world,
 and the `Harness::update()` loop. All five tools run on the application thread:
 `look`, `move_north`, `move_south`, `move_east`, and `move_west`.
 
-Configure a local or hosted OpenAI-compatible endpoint, then run the
-`scry_npc_showcase` target:
+Build the standalone showcase from the repository root:
+
+```sh
+cmake -S extras/showcase -B build/showcase -G Ninja \
+  -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=g++-16
+cmake --build build/showcase --target scry_npc_showcase
+```
+
+Configure a local or hosted OpenAI-compatible endpoint, then run the executable:
 
 ```sh
 export SCRY_LOCAL_MODEL_BASE_URL=http://127.0.0.1:11434/v1
@@ -18,9 +25,10 @@ export SCRY_LOCAL_MODEL_MODEL=qwen3:8b
 Pass command-line arguments to replace the default movement request.
 
 The example disables model reasoning through Scry's OpenAI-compatible request
-configuration. With the default prompt it prints each completed tool call
-(`look`, `move_north`, then `move_east`), the model's final answer, and the final
-world state. A truncated response, empty final answer, or response that executes
+configuration. The default prompt asks for `look`, `move_north`, and
+`move_east`; the model chooses which calls to issue. The example prints the
+calls it observes, streamed text (or the final answer if no text was streamed),
+and the final world state. A truncated response, empty final answer, or response that executes
 no NPC tool exits nonzero instead of presenting a no-op as success. The selected
 server must support `reasoning_effort: "none"`; leave `ReasoningMode` at its
 default in applications whose endpoint does not support that optional field.

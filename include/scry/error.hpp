@@ -9,7 +9,7 @@
 
 namespace scry {
 
-/// Stable categories for all Scry-originated failures.
+/// Programmatic categories for Scry-originated failures.
 enum class ErrorCategory : std::uint8_t {
   /// Configuration or serialized state failed validation.
   invalid_config,
@@ -44,9 +44,7 @@ enum class ErrorCategory : std::uint8_t {
 struct Error {
   // Keep the scalar header together: Error is carried by value through expected
   // and event queues, so separating these fields adds padding to every instance.
-  // http_status occupies padding that already existed between retryable and
-  // attempt, so adding it does not grow the struct.
-  /// Stable programmatic category.
+  /// Programmatic category.
   ErrorCategory category{ErrorCategory::invalid_state};
   /// Whether retrying may succeed. Scry retries automatically only before semantic
   /// output.

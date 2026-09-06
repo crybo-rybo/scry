@@ -45,9 +45,9 @@ public:
 
   /// Requests cooperative cancellation.
   ///
-  /// When a non-empty TurnCallbacks::on_finished was supplied to Harness::send(), the
-  /// turn still terminates through it with an Error whose category is
-  /// ErrorCategory::cancelled, unless Harness destruction begins first.
+  /// Cancellation leaves callbacks attached. When it takes effect, the terminal
+  /// outcome is an Error whose category is ErrorCategory::cancelled. An outcome
+  /// already produced by the worker is not reversed.
   /// @return true only when this call issued the cancellation request; false if
   /// cancellation was already requested, the turn was terminal, or the handle is moved
   /// from.

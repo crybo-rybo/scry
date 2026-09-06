@@ -3,11 +3,11 @@
 # Live gates: the warning-clean Doxygen site plus format (pinned
 # clang-format-18), core build matrix with warnings-as-errors plus complexity,
 # contract tests, and the install/package-consumer audit via ci-local.sh,
-# ASan/UBSan/TSan, and clang-tidy. Fuzzing, the showcase, and the local-model
-# smoke live in nightly.yml.
+# ASan/UBSan/TSan, clang-tidy, and fuzz corpus replay. Long fuzz runs, the
+# showcase, and the local-model smoke live in nightly.yml.
 #
-# Every leg runs a script under scripts/ that preflight runs too, so a hosted
-# leg and its local equivalent cannot drift. Scry's public API is C++26
+# The main build and analysis gates share scripts with preflight; the hosted
+# documentation job also runs the pinned clang-format check. Scry's public API is C++26
 # reflection, so every core leg is GCC 16 from ppa:ubuntu-toolchain-r/test
 # (the gcc16-env composite action) or Homebrew. Toolchains are pinned
 # deliberately: compiler drift on an experimental compiler is a first-class
@@ -131,7 +131,7 @@ jobs:
           - name: TSan
             leg: tsan
           # Every fuzz target builds and replays its checked-in seed corpus
-          # per pull request (QA-015), so the targets cannot rot between the
+          # per pull request, so the targets cannot rot between the
           # long scheduled runs. Toolchain pins match nightly.yml's long-fuzz
           # job because libFuzzer needs the matching clang runtime.
           - name: Fuzz corpus replay (ASan + UBSan)

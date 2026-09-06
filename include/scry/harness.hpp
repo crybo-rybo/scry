@@ -22,11 +22,13 @@ class HarnessTestAccess;
 /// A Harness never owns the host's main loop. Asynchronous work progresses on its
 /// worker while the host periodically calls update() to deliver application-facing
 /// activity.
+/// Use the Harness and its associated handles from one host thread; concurrent
+/// application access is not internally synchronized.
 class Harness final {
 public:
   /// Validates configuration and starts a Harness-owned worker.
   /// @param config Provider, retry, timeout, and resource configuration.
-  /// @return A Harness, or ErrorCategory::invalid_config when validation fails.
+  /// @return A Harness, or a configuration, libcurl startup, or worker-start error.
   [[nodiscard]] static Result<Harness> create(Config config);
 
   /// Runs exactly the configuration checks create() runs, without initializing
@@ -74,7 +76,8 @@ public:
   /// Callbacks are attached infallibly and atomically as the turn is accepted, so no
   /// event can precede them and there is no later registration or replay step. When
   /// TurnCallbacks::on_finished is non-empty, an accepted turn invokes it exactly once
-  /// unless this Harness is destroyed first; see ~Harness().
+  /// while the host keeps pumping, unless callbacks are disconnected or this Harness
+  /// is destroyed first; see ~Harness().
   /// @param conversation Conversation that receives the exchange on successful
   /// completion.
   /// @param user_message User text appended transactionally if the turn succeeds.
@@ -87,8 +90,9 @@ public:
   ///
   /// This is Turn::cancel() addressed by id, for hosts that retain TurnId values
   /// rather than Turn handles. The contract is identical: a non-empty
-  /// TurnCallbacks::on_finished still terminates the turn with an Error whose category
-  /// is ErrorCategory::cancelled, unless Harness destruction begins first.
+  /// TurnCallbacks::on_finished remains attached. When cancellation takes effect,
+  /// the outcome is an Error whose category is ErrorCategory::cancelled. An outcome
+  /// already produced by the worker is not reversed.
   /// @param turn_id Identifier returned by Turn::id().
   /// @return true only when this call issued the cancellation request; false when
   /// cancellation was already requested, the turn was terminal, no such turn is known
@@ -111,14 +115,11 @@ public:
 
   /// Runs one turn synchronously on top of send() and update().
   ///
-  /// This is the only public operation that waits for network I/O. It is intended for
-  /// command line programs and tests rather than host-owned main loops. Three
-  /// consequences follow from it being a pump loop rather than a private wait:
+  /// This waits for the requested turn's network work. It is intended for command line
+  /// programs and tests rather than host-owned main loops:
   /// - It pumps update() until this turn terminates, so callbacks and app-thread tool
   ///   handlers belonging to every other accepted turn run inside the call.
-  /// - The waited turn cannot be cancelled by the caller, because no Turn handle is
-  ///   exposed. It ends only through completion, a terminal error, or Harness
-  ///   destruction.
+  /// - No Turn handle is exposed for controlling the waited turn.
   /// - Calling it from inside a callback is rejected with ErrorCategory::invalid_state.
   /// @param conversation Conversation that receives the exchange on success.
   /// @param user_message User text sent to the configured model.

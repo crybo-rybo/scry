@@ -38,7 +38,8 @@ struct Usage {
 ///
 /// Callback arguments are borrowed for the duration of the callback. Copy any fields
 /// that must outlive it. A call is reported once its result has been produced and
-/// handed to the model; a framework failure that fails the whole turn instead, such
+/// posted to the worker for resend; this does not confirm server receipt. A framework
+/// failure that fails the whole turn instead, such
 /// as ErrorCategory::resource_limit on the result, reports no ToolCall at all.
 struct ToolCall {
   /// Turn that owns this call.
@@ -85,13 +86,15 @@ struct UpdateOptions {
   /// one exists and max_callbacks permits. A small or already-expired budget
   /// therefore slows the pump rather than starving it.
   std::optional<std::chrono::microseconds> time_budget{};
-  /// Maximum callbacks delivered by this pump invocation.
+  /// Maximum delivery units in this pump invocation. A tool dispatch, including its
+  /// optional on_tool_call observer, counts as one unit. Zero prevents callbacks and
+  /// tools but still allows terminal processing and history commits.
   std::size_t max_callbacks{std::numeric_limits<std::size_t>::max()};
 };
 
 /// Summary returned from Harness::update().
 struct UpdateStats {
-  /// Number of callbacks delivered during this invocation.
+  /// Number of delivery units, including tool dispatches, during this invocation.
   std::size_t callbacks_delivered{};
   /// Number of events still queued after this invocation.
   std::size_t events_remaining{};
@@ -107,7 +110,7 @@ struct UpdateStats {
 /// The string view is borrowed only for the callback invocation.
 using TextDeltaCallback = UniqueFunction<void(std::string_view)>;
 
-/// Callback observing an accepted tool call after its result is applied.
+/// Callback observing a tool call after its result is posted to the worker.
 using ToolCallCallback = UniqueFunction<void(const ToolCall&)>;
 
 /// Callbacks delivered on the Harness::update() thread for one turn.
@@ -120,15 +123,15 @@ using ToolCallCallback = UniqueFunction<void(const ToolCall&)>;
 struct TurnCallbacks {
   /// Observes coalesced fragments of streamed assistant text.
   TextDeltaCallback on_text_delta{};
-  /// Observes accepted tool calls after their results are applied.
+  /// Observes tool calls after their results are posted to the worker.
   ///
   /// The ToolCall carries the canonical result sent to the model and its is_error
   /// flag, including for a handler that failed. It does not fire when a framework
   /// failure fails the turn instead of producing a result, for example when the
   /// result exceeds a configured byte limit.
   ToolCallCallback on_tool_call{};
-  /// When non-empty, invoked exactly once per accepted turn unless Harness destruction
-  /// begins first.
+  /// When non-empty, invoked once per accepted turn while the host keeps pumping,
+  /// unless disconnected or discarded by Harness destruction.
   ///
   /// Delivery happens on the Harness::update() thread and carries the Completion on
   /// success, the terminal Error on failure, and on cancellation an Error whose
