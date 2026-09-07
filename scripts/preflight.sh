@@ -142,7 +142,7 @@ run_gate "core" ./scripts/ci-local.sh
 run_gate "clang-tidy" run_tidy
 run_gate "ASan + UBSan" run_sanitizer_leg asan -fsanitize=address,undefined
 # TSan is where nondeterminism surfaces; ci-sanitizer.sh puts the repeat runs
-# on that leg (QA-008).
+# on that leg.
 run_gate "TSan" run_sanitizer_leg tsan -fsanitize=thread
 run_gate "fuzz corpus replay" run_fuzz_replay
 

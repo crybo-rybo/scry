@@ -176,7 +176,7 @@ jobs:
 
           # The pulled model tag is not digest-pinned: an upstream repush
           # should not break the nightly, and the deterministic fake-transport
-          # suites — not this smoke — gate protocol correctness (ADR 0011).
+          # suites — not this smoke — gate protocol correctness.
           timeout 900 ollama pull "${SCRY_LOCAL_MODEL_MODEL}" \
             2>&1 | tee build/nightly-local-model-artifacts/ollama-pull.log
           ./scripts/ci-local-model.sh

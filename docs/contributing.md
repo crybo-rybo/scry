@@ -1,23 +1,27 @@
 # Contributing to Scry
 
-Everything here is mechanical where it can be. If a rule cannot be checked by a
-script, it is a habit, and it is named as one.
+Build commands, checks, and contribution requirements for the current tree.
 
 ## Toolchain
 
-Scry needs GCC 16 (for `-freflection`), CMake 3.28, Ninja, and libcurl.
+Scry needs GCC 16 or newer (with reflection support), CMake 3.28 or newer,
+Ninja, and libcurl 7.84 or newer with development headers. Development presets
+also require clang-format; CI uses version 18.
 
 **Linux:**
 
 ```sh
 sudo add-apt-repository --yes ppa:ubuntu-toolchain-r/test
-sudo apt-get update && sudo apt-get install -y g++-16 libcurl4-openssl-dev ninja-build
+sudo apt-get update
+sudo apt-get install -y g++-16 libcurl4-openssl-dev ninja-build \
+  cmake clang-format-18 doxygen graphviz
 ```
 
 **macOS:**
 
 ```sh
-brew install gcc llvm@18 ninja doxygen graphviz
+brew install gcc cmake llvm@18 ninja doxygen graphviz
+export PATH="$(brew --prefix llvm@18)/bin:$PATH"
 ```
 
 Both platforms also need the complexity checker, which CI pins:
@@ -26,8 +30,16 @@ Both platforms also need the complexity checker, which CI pins:
 python3 -m pip install --user --break-system-packages lizard==1.24.0
 ```
 
-`llvm@18` is optional but turns the clang-tidy leg on locally; CI pins
-clang-tidy 18, so the keg-only formula is probed before the unversioned `llvm`.
+Ensure `g++-16 --version` succeeds. When the compiler has another path, pass it
+with `-DCMAKE_CXX_COMPILER=...`. Linux installations with only the versioned
+formatter can configure with
+`-DSCRY_CLANG_FORMAT_EXECUTABLE=clang-format-18`. Doxygen and Graphviz are needed
+for the documentation gate; Doxygen 1.9.8 is the minimum.
+
+The optional clang-tidy gate needs Clang and clang-tidy. CI uses version 18;
+preflight probes Homebrew's keg-only `llvm@18` before `llvm` when clang-tidy is
+absent from `PATH`. Fuzzing needs a Clang installation with libFuzzer; the hosted
+fuzz legs use Clang 21.
 
 ## Presets
 
@@ -39,12 +51,42 @@ Build directories live under `build/<preset>`, Ninja, with
 | `dev` | Debug. The everyday edit-build-test loop. |
 | `ci` | RelWithDebInfo. What `ci-local.sh` builds, installs, and audits. |
 | `asan` | Debug plus ASan and non-recovering UBSan. |
-| `tsan` | Debug plus TSan; the actor model's "no shared mutable state" claim is exactly what erodes silently, and TSan is its enforcement. |
+| `tsan` | Debug plus TSan for race detection. |
 | `fuzz` | Clang with `SCRY_CLANG_TOOLING`, libFuzzer, ASan and UBSan. |
 
 Every GCC preset pins `CMAKE_CXX_COMPILER` to `g++-16` through a hidden `gcc`
 preset. Override it when your GCC 16 is spelled differently:
 `cmake --preset dev -DCMAKE_CXX_COMPILER=/opt/homebrew/bin/g++-16`.
+The `fuzz` preset does not select its compiler:
+
+```sh
+cmake --preset fuzz -DCMAKE_CXX_COMPILER=clang++-21
+cmake --build build/fuzz
+ctest --test-dir build/fuzz --output-on-failure
+```
+
+Use a compatible local Clang path in place of `clang++-21` as needed. When
+changing a compiler in an existing build directory, add `--fresh` to the
+configure command so CMake reapplies the preset without stale cache settings.
+
+## Build options
+
+| Option | Default | Purpose |
+|---|---|---|
+| `SCRY_BUILD_TESTS` | On at top level | Build tests and standalone header checks |
+| `SCRY_BUILD_EXAMPLES` | On at top level | Compile `examples/main_loop.cpp` |
+| `SCRY_WARNINGS_AS_ERRORS` | On at top level | Treat project warnings as errors |
+| `SCRY_ENABLE_FORMAT_CHECK` | Off; on in `dev` and `ci` | Create `format` and `format-check` targets |
+| `SCRY_ENABLE_CLANG_TIDY` | Off | Analyze library sources while compiling |
+| `SCRY_CLANG_TOOLING` | Off | Build the C++23 implementation with Clang for tooling |
+| `SCRY_CLANG_TOOLING_LIBCXX` | Off | Select libc++ in Clang tooling mode |
+| `SCRY_BUILD_FUZZERS` | Off | Build libFuzzer targets with Clang |
+| `SCRY_SANITIZER` | `none` | Select `none`, `address-undefined`, or `thread` |
+
+Tests, examples, and warnings-as-errors default to off when Scry is embedded.
+Clang tooling mode disables examples and ordinary tests; enable fuzzers to
+build its test targets. The consumer build always includes reflection in
+`scry::scry`.
 
 ## The loop
 
@@ -73,9 +115,10 @@ cmake --build build/dev --target format-check   # just format-check
 
 ## Gates
 
-Every CI leg is one script under `scripts/`, and both the workflows and
-`preflight.sh` call that same script, so a local gate and its hosted twin cannot
-drift.
+The core, documentation, clang-tidy, sanitizer, fuzz, showcase, and local-model
+checks have scripts under `scripts/`. Workflows supply their toolchains and
+invoke those scripts. The pinned format check, CodeQL, and release publication
+also have workflow-specific steps.
 
 **Per commit** (`.github/workflows/ci.yml`):
 
@@ -91,7 +134,7 @@ drift.
 each of the five targets (`./scripts/ci-nightly-fuzz.sh <target>`); and the
 showcase gate (`./scripts/ci-showcase.sh`). The end-to-end smoke against a real
 local model (`./scripts/ci-local-model.sh`) is `workflow_dispatch` only — it
-exercises a live model, not the deterministic protocol seams, so it never gates.
+exercises a live model, so it does not gate pull requests.
 
 **On a tag** (`release.yml`): `check-release-tag.sh`, the core gate, the API
 site, and the GitHub release built from the checked-in notes.
@@ -102,10 +145,11 @@ Run the whole per-commit ring locally before every pull request:
 ./scripts/preflight.sh    # just ci
 ```
 
-It runs every leg, continues after failures, and reports a leg whose toolchain
-this host cannot provide as `SKIP` rather than `FAIL`, naming every skipped leg
-again in the closing summary — so the hosted-only gates for a change are explicit
-rather than inferred from scrollback. Each sanitizer leg probes its own flag with
+It runs documentation, core, clang-tidy, sanitizers, and fuzz replay, and
+continues after failures. Missing documentation, tidy, sanitizer, or fuzz
+capabilities are reported as `SKIP` and listed in the closing summary. The core
+gate is always attempted: a missing compiler, formatter, or complexity checker
+fails that gate. Each sanitizer leg probes its own flag with
 `g++-16` first, because GCC ships no thread-sanitizer runtime on Apple Silicon,
 so TSan skips there while ASan still runs. `./scripts/ci-local.sh` (`just
 ci-fast`) is the faster inner loop: diff check, complexity, unlinked TODOs,
@@ -138,20 +182,20 @@ SCRY_NIGHTLY_FUZZ_SECONDS=1200 ./scripts/ci-nightly-fuzz.sh sse
   testable to the millisecond. A flaky test is fixed or deleted the day it flakes.
 - **Every bug becomes a test before it becomes a fix**, usually a machine-level
   event replay, committed with the fix permanently.
-- **The machine suite is the bulk.** The sans-I/O loop is the most complex logic
-  in the system and the cheapest to test exhaustively; the component, golden,
-  integration, and showcase layers are thin above it.
+- **Choose the relevant seam.** Machine tests cover transitions, adapters cover
+  wire mapping, runtime tests cover the pump and handles, and reflection tests
+  cover schemas and codecs. Transport and integration tests also use local
+  loopback HTTP/TLS servers; the optional local-model smoke uses a live model.
 
 ## Mechanical limits
 
-- Warnings are errors (`-Wall -Wextra -Wconversion -Wshadow`) on GCC 16 and on
-  Clang under `SCRY_CLANG_TOOLING`. A warning on one compiler still fails.
-- lizard: cyclomatic complexity fails at 15, argument count fails at 6, across
-  `include src examples tests extras`.
-- clang-tidy: cognitive complexity fails at 25, with a curated checked-in check
-  list. It is attached to the library target, which is the whole Clang-analyzable
-  surface — the `SCRY_CLANG_TOOLING` build compiles only the library and the fuzz
-  targets, since the umbrella header includes reflection.
+- Top-level builds enable `-Wall -Wextra -Wconversion -Wshadow` and treat
+  warnings as errors on GCC and Clang. `SCRY_WARNINGS_AS_ERRORS` controls this.
+- lizard: cyclomatic complexity must not exceed 15 and argument count must not
+  exceed 6, for C++ in `include src examples tests extras`.
+- clang-tidy: cognitive complexity must not exceed 25, with a checked-in check
+  list. The tidy script uses `SCRY_CLANG_TOOLING` and analyzes the library
+  target; it does not analyze reflection, examples, or ordinary tests.
 - `// TODO` must link an issue or a URL. CI rejects any unlinked TODO outright.
 
 ## Definition of done
@@ -166,15 +210,15 @@ SCRY_NIGHTLY_FUZZ_SECONDS=1200 ./scripts/ci-nightly-fuzz.sh sse
 
 Trunk-based: short-lived branches, squash merge, conventional-commit messages,
 `main` always green and always releasable. The pull-request template carries the
-same three checkboxes as the definition of done.
+preflight, test coverage, and documentation checkboxes.
 
 ## Releases
 
-1. Bump `project(VERSION ...)` in `CMakeLists.txt`. That is the only place the
-   release number lives; `<scry/version.hpp>` is generated from it.
-2. Update the `find_package` version in `README.md` and
-   `tests/package_consumer/CMakeLists.txt`, and the version string in
-   `tests/public_api_contract.cpp`.
+1. Bump `project(VERSION ...)` in `CMakeLists.txt`. That is the version source of
+   truth; `<scry/version.hpp>` is generated from it.
+2. Update both the `find_package` version and FetchContent `GIT_TAG` in
+   `README.md`, the package version in `tests/package_consumer/CMakeLists.txt`,
+   and the version assertions in `tests/public_api_contract.cpp`.
 3. Write `docs/releases/vX.Y.Z.md`.
 4. Check the tag first: `./scripts/check-release-tag.sh vX.Y.Z`.
 5. Push the tag. The release workflow re-runs the core gate against the tagged

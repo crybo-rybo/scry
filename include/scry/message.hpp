@@ -26,7 +26,7 @@ struct TextBlock {
 struct ToolCallBlock {
   /// Provider-assigned call identifier, unique within the turn.
   std::string id{};
-  /// Registered tool name the model asked for.
+  /// Tool name requested by the model.
   std::string name{};
   /// Canonical JSON object passed to the tool handler.
   Json arguments{};

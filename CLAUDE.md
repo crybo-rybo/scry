@@ -24,8 +24,9 @@ cmake --build build/dev --target format         # format-check to verify only
 ./scripts/preflight.sh                          # the full local ring before a PR
 ```
 
-Every preset pins `g++-16`; override with `-DCMAKE_CXX_COMPILER=...` when the
-local GCC 16 is spelled differently.
+The `dev`, `ci`, `asan`, and `tsan` presets select `g++-16`; override with
+`-DCMAKE_CXX_COMPILER=...` when needed. The `fuzz` preset requires an explicitly
+selected Clang compiler with a libFuzzer runtime.
 
 ## Directory map
 
@@ -42,13 +43,14 @@ local GCC 16 is spelled differently.
 
 - Keep `src/**` free of reflection syntax so the `SCRY_CLANG_TOOLING` build
   (clang-tidy, libFuzzer) keeps compiling.
-- Warnings are errors. lizard fails at cyclomatic 15 and 6 arguments; clang-tidy
-  at cognitive complexity 25. `// TODO` must link an issue.
-- Scry-originated failures are values (`std::expected` / `Result<T>`), never
-  exceptions across the public or thread boundary.
+- Top-level builds treat warnings as errors. lizard allows at most cyclomatic
+  complexity 15 and 6 arguments; clang-tidy allows cognitive complexity 25. `// TODO` must link an issue.
+- Scry-originated semantic failures are values (`std::expected` / `Result<T>`).
+  Allocation failure is outside that contract. Observer exceptions propagate from
+  `update()`; tool-handler exceptions become tool-error results.
 - Bug fixes land with a regression test first, public API changes with a
   compiling example, behavior changes with a `docs/architecture.md` update.
-- `project()` in `CMakeLists.txt` is the only place the release number lives;
+- `project(VERSION ...)` in `CMakeLists.txt` is the version source of truth;
   `<scry/version.hpp>` is generated from it and is not tracked.
 - Never edit or commit anything under `build/`.
 

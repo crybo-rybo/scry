@@ -25,14 +25,16 @@ class Conversation final {
 public:
   /// Creates an empty conversation.
   ///
-  /// Every ConversationConfig is currently accepted; the factory returns Result so a
-  /// future constraint can be reported as ErrorCategory::invalid_config without a
-  /// source break (API-010).
+  /// Every ConversationConfig is accepted. Harness admission applies the configured
+  /// Conversation payload limit when send() is called.
   /// @param config Initial conversation configuration.
-  /// @return A conversation. No configuration is rejected today.
+  /// @return A conversation with the supplied system prompt and empty history.
   [[nodiscard]] static Result<Conversation> create(ConversationConfig config = {});
 
   /// Restores committed history from a canonical document produced by to_json().
+  ///
+  /// This operation has no Harness resource configuration and does not impose its
+  /// byte limits. The host controls input size before parsing.
   /// @param json Versioned Scry conversation document.
   /// @return The restored conversation, or ErrorCategory::invalid_config if the
   /// document is malformed, unsupported, or exceeds structural constraints.

@@ -74,7 +74,8 @@ struct TransportTimeouts {
   /// bounded only by `idle`, `connect`, and the configured byte limits, which is the
   /// right default for streaming responses of unknown length.
   std::optional<std::chrono::milliseconds> transfer{};
-  /// Maximum time allowed for Scry-owned shutdown work.
+  /// Maximum duration of one curl poll wait before checking shutdown again.
+  /// This is not a hard deadline for the Harness destructor's worker join.
   std::chrono::milliseconds shutdown{2'000};
 };
 
@@ -94,7 +95,10 @@ struct ResourceLimits {
   std::size_t max_tool_result_bytes{std::size_t{4} * 1024 * 1024};
   /// Maximum queued callback payload bytes retained for one turn.
   std::size_t max_queued_event_bytes_per_turn{std::size_t{2} * 1024 * 1024};
-  /// Maximum serialized bytes in a committed Conversation.
+  /// Maximum Conversation payload bytes, including the system prompt, text, tool
+  /// identifiers and names, and serialized arguments/results. JSON envelope syntax
+  /// and allocator overhead are excluded. The limit covers committed history plus
+  /// the pending exchange and is checked by the Harness, not by from_json().
   std::size_t max_conversation_bytes{std::size_t{16} * 1024 * 1024};
 };
 

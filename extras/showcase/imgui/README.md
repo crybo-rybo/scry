@@ -22,8 +22,9 @@ while (application_running()) {
 ```
 
 The harness and conversation must outlive the panel. Destroying the panel requests
-cancellation of an active turn but never waits for it. Callback captures use weak
-shared state, so queued callbacks become harmless after panel destruction.
+cancellation of an active turn and disconnects its callbacks without waiting.
+Callbacks retain shared panel state; disconnection stops further delivery and
+releases those captures.
 
 The showcase is a standalone CMake project outside Scry's root build; configure
 `extras/showcase` directly, or run `./scripts/ci-showcase.sh` (`just showcase`). It
