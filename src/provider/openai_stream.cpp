@@ -30,12 +30,13 @@ struct StreamEventView {
   if (!parsed) {
     return std::unexpected(std::move(parsed.error()));
   }
-  if (!*parsed ||
-      **parsed > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
+  const auto index = *parsed;
+  if (!index ||
+      *index > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
     return std::unexpected(make_error(
         ErrorCategory::protocol, "OpenAI streamed tool call requires a usable index"));
   }
-  return static_cast<std::size_t>(**parsed);
+  return static_cast<std::size_t>(*index);
 }
 
 [[nodiscard]] bool has_metadata(const OpenAiToolDecodeState& tool,
@@ -69,12 +70,13 @@ struct StreamEventView {
   if (!parsed) {
     return std::unexpected(std::move(parsed.error()));
   }
-  if (!*parsed) {
+  const auto value = *parsed;
+  if (!value) {
     return {};
   }
   return assign_metadata(
       destination, metadata,
-      MetadataFragment{.value = **parsed, .field = field, .presence = presence});
+      MetadataFragment{.value = *value, .field = field, .presence = presence});
 }
 
 [[nodiscard]] Status apply_tool_type(const JsonValue& owner,
@@ -83,10 +85,11 @@ struct StreamEventView {
   if (!parsed) {
     return std::unexpected(std::move(parsed.error()));
   }
-  if (!*parsed) {
+  const auto parsed_type = *parsed;
+  if (!parsed_type) {
     return {};
   }
-  const auto type = **parsed;
+  const auto type = *parsed_type;
   if (type.empty()) {
     return std::unexpected(make_error(ErrorCategory::protocol,
                                       "OpenAI streamed tool type must not be empty"));
@@ -132,10 +135,11 @@ struct StreamEventView {
   if (!arguments) {
     return std::unexpected(std::move(arguments.error()));
   }
-  if (!*arguments) {
+  const auto fragment = *arguments;
+  if (!fragment) {
     return {};
   }
-  return append_arguments(tool, **arguments, limit);
+  return append_arguments(tool, *fragment, limit);
 }
 
 [[nodiscard]] OpenAiToolDecodeState& indexed_tool(OpenAiProviderDecodeState& decode,
@@ -272,7 +276,8 @@ apply_text_delta(const JsonValue& delta, ProviderDecodeState& state,
   if (!role) {
     return std::unexpected(std::move(role.error()));
   }
-  if (*role && **role != "assistant") {
+  const auto name = *role;
+  if (name && *name != "assistant") {
     return std::unexpected(make_error(
         ErrorCategory::protocol, "OpenAI streamed response role must be assistant"));
   }

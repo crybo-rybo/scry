@@ -73,17 +73,29 @@ string_error_token(const JsonValue& error, const std::string_view field) {
   }
   const auto type = string_error_token(*error, "type");
   const auto code = string_error_token(*error, "code");
-  for (const auto* token : {&type, &code}) {
-    if (!token->has_value()) {
-      continue;
+  const auto categorized =
+      [](const std::string& token) -> std::optional<ErrorDescriptor> {
+    const auto category = error_category(token);
+    if (category == ErrorCategory::protocol) {
+      return std::nullopt;
     }
-    if (const auto category = error_category(**token);
-        category != ErrorCategory::protocol) {
-      return ErrorDescriptor{.token = **token, .category = category};
+    return ErrorDescriptor{.token = token, .category = category};
+  };
+  if (type) {
+    if (auto recognized = categorized(*type)) {
+      return *recognized;
     }
   }
-  if (type || code) {
-    return protocol_descriptor(type ? *type : *code);
+  if (code) {
+    if (auto recognized = categorized(*code)) {
+      return *recognized;
+    }
+  }
+  if (type) {
+    return protocol_descriptor(*type);
+  }
+  if (code) {
+    return protocol_descriptor(*code);
   }
   const auto* numeric_code = json_field(*error, "code");
   if (numeric_code != nullptr && numeric_code->is_uint64()) {
