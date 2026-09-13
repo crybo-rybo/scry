@@ -623,6 +623,40 @@ TEST_CASE("disconnecting from inside on_tool_call does not destroy the running "
   REQUIRE(fixture.commands->try_pop());
 }
 
+TEST_CASE("disconnecting from inside a tool handler suppresses that call's observer") {
+  PumpFixture fixture;
+  scry::detail::PumpState pump{fixture.events};
+  std::shared_ptr<scry::detail::TurnRoute> route;
+  std::size_t observer_calls = 0;
+  bool disconnect_reported = false;
+  const scry::detail::ToolSnapshot tools{registered_tool(
+      "forecast",
+      [&route, &disconnect_reported](scry::Json) -> scry::Result<scry::Json> {
+        disconnect_reported = route->disconnect();
+        return scry::Json{.text = R"({"ok":true})"};
+      })};
+  route = fixture.route(
+      226, {
+               .tools = frozen_tools(tools),
+               .callbacks =
+                   scry::TurnCallbacks{
+                       .on_tool_call = [&observer_calls](
+                                           const scry::ToolCall&) { ++observer_calls; },
+                   },
+           });
+  pump.add_route(route);
+  REQUIRE(fixture.events->push(tool_event(route->id()), 1024));
+
+  static_cast<void>(pump.update({}));
+
+  CHECK(disconnect_reported);
+  // The handler ran inside this dispatch, so the deferred clear had not happened
+  // yet when the observer was selected; the disconnect still has to suppress it.
+  CHECK(observer_calls == 0);
+  // Tool dispatch belongs to the registry, so the result still reached the queue.
+  REQUIRE(fixture.commands->try_pop());
+}
+
 TEST_CASE("disconnecting from inside on_finished reports false") {
   PumpFixture fixture;
   scry::detail::PumpState pump{fixture.events};

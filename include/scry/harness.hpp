@@ -121,6 +121,9 @@ public:
   ///   handlers belonging to every other accepted turn run inside the call.
   /// - No Turn handle is exposed for controlling the waited turn.
   /// - Calling it from inside a callback is rejected with ErrorCategory::invalid_state.
+  /// - An exception thrown by another turn's callback propagates out of this call and
+  ///   disconnects the waited turn; that turn keeps running and still commits its
+  ///   history.
   /// @param conversation Conversation that receives the exchange on success.
   /// @param user_message User text sent to the configured model.
   /// @return The successful completion or terminal error.

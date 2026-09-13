@@ -528,3 +528,26 @@ TEST_CASE("worker exceptions are contained and reported through the turn") {
   CHECK(completion.error().message == "worker could not process the accepted turn");
   CHECK(conversation->empty());
 }
+
+TEST_CASE("send_and_wait disconnects its turn when another turn's callback throws") {
+  auto fixture = make_harness_fixture(
+      test_config(), {scripted_exchange(anthropic_text_stream("first")),
+                      scripted_exchange(anthropic_text_stream("second"))});
+  // The throwing turn is accepted first, so its delta is delivered inside the
+  // wait below and unwinds send_and_wait before its own turn terminates.
+  auto first = unwrap(fixture.harness.send(
+      fixture.conversation, "first",
+      {
+          .on_text_delta =
+              [](std::string_view) { throw std::runtime_error("host callback"); },
+      }));
+  auto second = unwrap(scry::Conversation::create());
+
+  REQUIRE_THROWS_AS(fixture.harness.send_and_wait(second, "second"),
+                    std::runtime_error);
+
+  // The abandoned turn keeps running and commits, but nothing reaches the stack
+  // frame that send_and_wait left behind.
+  REQUIRE(pump_until(fixture.harness, [&second] { return !second.busy(); }));
+  CHECK(second.message_count() == 2);
+}

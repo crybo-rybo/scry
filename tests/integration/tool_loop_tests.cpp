@@ -309,3 +309,42 @@ TEST_CASE("Harness destruction stops a worker awaiting an app-thread tool result
   CHECK(callbacks == 0);
   CHECK(conversation.empty());
 }
+
+TEST_CASE("a tool handler that disconnects suppresses its own observer") {
+  auto fixture = make_harness_fixture(
+      test_config(),
+      {scripted_exchange(
+           anthropic_tool_stream(
+               {{.id = "call-1", .name = "disconnect_me", .arguments = "{}"}}),
+           "tool-request"),
+       scripted_exchange(anthropic_text_stream("done"), "final-request")});
+  auto& harness = fixture.harness;
+  auto& conversation = fixture.conversation;
+
+  std::optional<scry::Turn> turn;
+  bool disconnect_reported = false;
+  std::size_t observer_calls = 0;
+  REQUIRE(harness.tools().add(
+      scry::ToolDefinition{
+          .name = "disconnect_me",
+          .description = "Disconnects the turn from inside its own handler",
+          .input_schema = {.text = R"({"type":"object"})"},
+      },
+      [&turn, &disconnect_reported](scry::Json) -> scry::Result<scry::Json> {
+        disconnect_reported = turn->disconnect();
+        return scry::Json{.text = R"({"handled":true})"};
+      }));
+
+  turn = unwrap(
+      harness.send(conversation, "Disconnect from the handler",
+                   {
+                       .on_tool_call = [&observer_calls](
+                                           const scry::ToolCall&) { ++observer_calls; },
+                   }));
+  REQUIRE(pump_until(harness, [&turn] { return turn->finished(); }));
+
+  CHECK(disconnect_reported);
+  CHECK(observer_calls == 0);
+  // Disconnecting stops delivery only; the tool loop still ran to completion.
+  CHECK(conversation.message_count() == 4);
+}
