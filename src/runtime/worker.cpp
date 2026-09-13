@@ -32,13 +32,22 @@ constexpr std::size_t terminal_event_reserve = 512;
 }
 
 [[nodiscard]] WorkerEvent bound_terminal_event(WorkerEvent event) {
-  auto* error = std::get_if<ErrorEvent>(&event);
-  if (error == nullptr || event_payload_bytes(event) <= terminal_event_reserve) {
+  if (event_payload_bytes(event) <= terminal_event_reserve) {
     return event;
   }
-  error->error.message = "turn failed; diagnostic exceeded the event buffer";
-  error->error.provider_detail.clear();
-  error->error.provider_request_id.clear();
+  if (auto* error = std::get_if<ErrorEvent>(&event)) {
+    error->error.message = "turn failed; diagnostic exceeded the event buffer";
+    error->error.provider_detail.clear();
+    error->error.provider_request_id.clear();
+    return event;
+  }
+  if (auto* completion = std::get_if<CompletionEvent>(&event)) {
+    // A completion is charged only its correlation id, because the exchange is
+    // already reserved against the Conversation budget. Transport policy caps a
+    // real identifier well under the reserve, so dropping one that still
+    // overruns it keeps the completion itself deliverable.
+    completion->provider_request_id.clear();
+  }
   return event;
 }
 
@@ -178,14 +187,12 @@ void WorkerActor::process_turn(SendTurnCommand&& command,
     }
     auto next = std::move(machine_commands.front());
     machine_commands.pop_front();
-    if (!process_machine_command(machine, std::move(next), command, stopped,
-                                 machine_commands)) {
-      return;
-    }
+    process_machine_command(machine, std::move(next), command, stopped,
+                            machine_commands);
   }
 }
 
-bool WorkerActor::process_machine_command(
+void WorkerActor::process_machine_command(
     TurnMachine& machine, MachineCommand command, const SendTurnCommand& turn,
     const std::stop_token& stopped, std::deque<MachineCommand>& pending_commands) {
   if (const auto* issue = std::get_if<IssueModelRequest>(&command)) {
@@ -195,12 +202,12 @@ bool WorkerActor::process_machine_command(
       append_commands(pending_commands,
                       perform_attempt(machine, *issue, turn.cancelled, stopped));
     }
-    return true;
+    return;
   }
   if (const auto* wake = std::get_if<ScheduleRetryWake>(&command)) {
     append_commands(pending_commands,
                     wait_for_retry(machine, *wake, turn.cancelled, stopped));
-    return true;
+    return;
   }
   if (auto* tool = std::get_if<PublishToolCall>(&command)) {
     auto published = publish_tool_batch(std::move(*tool), pending_commands);
@@ -210,34 +217,12 @@ bool WorkerActor::process_machine_command(
                                             .error = std::move(published.error()),
                                         }));
     }
-    return true;
+    return;
   }
-  auto published = publish_command(std::move(command));
-  if (published) {
-    return true;
-  }
-  // The event queue is full. What that means depends on where the turn is: a
-  // terminal turn has nothing left to report but the overflow itself, a turn
-  // waiting on a tool fails that tool round, and any other turn treats the
-  // overflow as a failed attempt, which may still retry.
-  if (machine.phase() == MachinePhase::terminal) {
-    auto error = worker_error(ErrorCategory::resource_limit,
-                              "turn events exceed the configured queue limit",
-                              turn.turn_id, machine.attempt_count());
-    publish_terminal_event(
-        ErrorEvent{.turn_id = turn.turn_id, .error = std::move(error)});
-    return false;
-  }
-  if (machine.phase() == MachinePhase::awaiting_tool) {
-    append_commands(pending_commands, machine.apply(ToolExecutionFailed{
-                                          .error = std::move(published.error()),
-                                      }));
-  } else {
-    append_commands(
-        pending_commands,
-        failed_attempt(machine, std::move(published.error()), turn.turn_id));
-  }
-  return true;
+  // Text deltas are the only other publication, and the machine emits them
+  // while the provider stream is consumed, so everything reaching here ends the
+  // turn and goes out through the queue's terminal reserve.
+  publish_terminal_command(std::move(command));
 }
 
 TransitionResult WorkerActor::failed_attempt(TurnMachine& machine, Error error,
@@ -438,7 +423,13 @@ WorkerActor::publish_provider_event(TurnMachine& machine, ProviderEvent event,
   if (auto* text = std::get_if<ProviderTextDelta>(&event)) {
     auto transition = machine.apply(ModelTextDelta{.text = std::move(text->text)});
     for (auto& command : transition.commands) {
-      auto status = publish_command(std::move(command));
+      auto* delta = std::get_if<PublishTextDelta>(&command);
+      // A text delta transition publishes text and nothing else.
+      assert(delta != nullptr);
+      if (delta == nullptr) {
+        continue;
+      }
+      auto status = publish_text_delta(std::move(*delta));
       if (!status) {
         return status;
       }
@@ -491,50 +482,45 @@ Status WorkerActor::publish_tool_batch(PublishToolCall first,
   return {};
 }
 
-Status WorkerActor::publish_command(MachineCommand command) {
+Status WorkerActor::publish_text_delta(PublishTextDelta delta) {
   const auto payload_limit =
       config_.limits.max_queued_event_bytes_per_turn - terminal_event_reserve;
-  if (auto* delta = std::get_if<PublishTextDelta>(&command)) {
-    // The rejection path below reads only the scalar correlation fields, so
-    // handing the text to the queue costs nothing on failure.
-    if (!events_->push(
-            TextDeltaEvent{.turn_id = delta->turn_id, .text = std::move(delta->text)},
-            payload_limit)) {
-      return std::unexpected(
-          worker_error(ErrorCategory::resource_limit,
-                       "turn events exceed the configured queue limit", delta->turn_id,
-                       delta->attempt));
-    }
-    return {};
+  // The rejection path below reads only the scalar correlation fields, so
+  // handing the text to the queue costs nothing on failure.
+  if (!events_->push(
+          TextDeltaEvent{.turn_id = delta.turn_id, .text = std::move(delta.text)},
+          payload_limit)) {
+    return std::unexpected(worker_error(ErrorCategory::resource_limit,
+                                        "turn events exceed the configured queue limit",
+                                        delta.turn_id, delta.attempt));
   }
+  return {};
+}
+
+// Terminal publications always fit: the queue keeps a per-turn reserve that no
+// streamed payload may consume, and bound_terminal_event trims whatever the
+// worker hands it to that reserve.
+void WorkerActor::publish_terminal_command(MachineCommand command) {
   if (auto* completion = std::get_if<CommitCompletion>(&command)) {
-    if (!events_->push(
-            CompletionEvent{
-                .turn_id = completion->turn_id,
-                .exchange = std::move(completion->exchange),
-                .finish_reason = completion->finish_reason,
-                .usage = completion->usage,
-                .attempt_count = completion->attempt_count,
-                .provider_request_id = std::move(completion->provider_request_id),
-            },
-            payload_limit)) {
-      return std::unexpected(
-          worker_error(ErrorCategory::resource_limit,
-                       "turn events exceed the configured queue limit",
-                       completion->turn_id, completion->attempt_count));
-    }
-    return {};
+    publish_terminal_event(CompletionEvent{
+        .turn_id = completion->turn_id,
+        .exchange = std::move(completion->exchange),
+        .finish_reason = completion->finish_reason,
+        .usage = completion->usage,
+        .attempt_count = completion->attempt_count,
+        .provider_request_id = std::move(completion->provider_request_id),
+    });
+    return;
   }
   if (auto* error = std::get_if<PublishError>(&command)) {
     const auto turn_id = error->error.turn_id.value_or(TurnId{});
     publish_terminal_event(
         ErrorEvent{.turn_id = turn_id, .error = std::move(error->error)});
-    return {};
+    return;
   }
   if (const auto* cancelled = std::get_if<PublishCancelled>(&command)) {
     publish_terminal_event(CancelledEvent{.turn_id = cancelled->turn_id});
   }
-  return {};
 }
 
 void WorkerActor::publish_terminal_event(WorkerEvent event) {

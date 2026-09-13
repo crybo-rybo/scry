@@ -52,10 +52,10 @@ private:
 
   void accept_command(WorkerCommand command);
   void process_turn(SendTurnCommand&& command, const std::stop_token& stopped);
-  [[nodiscard]] bool
-  process_machine_command(TurnMachine& machine, MachineCommand command,
-                          const SendTurnCommand& turn, const std::stop_token& stopped,
-                          std::deque<MachineCommand>& pending_commands);
+  void process_machine_command(TurnMachine& machine, MachineCommand command,
+                               const SendTurnCommand& turn,
+                               const std::stop_token& stopped,
+                               std::deque<MachineCommand>& pending_commands);
   // Records a failed attempt on the machine: redacts the API key out of the
   // error, fills in the turn and attempt numbers, and draws this attempt's
   // retry jitter.
@@ -95,7 +95,8 @@ private:
                          std::optional<ModelResponse>& completed_response);
   [[nodiscard]] Status publish_tool_batch(PublishToolCall first,
                                           std::deque<MachineCommand>& pending_commands);
-  [[nodiscard]] Status publish_command(MachineCommand command);
+  [[nodiscard]] Status publish_text_delta(PublishTextDelta delta);
+  void publish_terminal_command(MachineCommand command);
   void publish_terminal_event(WorkerEvent event);
   void publish_unhandled_failure(TurnId turn_id) noexcept;
 
