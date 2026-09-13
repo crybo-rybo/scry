@@ -174,6 +174,38 @@ anthropic_tool_stream(const std::initializer_list<ToolUseBlock> blocks,
   return stream;
 }
 
+// The canonical OpenAI-compatible text completion: a role chunk, one content
+// delta, a finish chunk, a usage chunk, then the terminating sentinel. An empty
+// `text` still emits the content delta, because a compatible server streaming
+// nothing is itself a case under test.
+[[nodiscard]] inline std::string openai_text_stream(
+    const std::string_view text, const std::string_view completion_id = "chatcmpl-test",
+    const std::uint32_t prompt_tokens = 4, const std::uint32_t completion_tokens = 2) {
+  const auto prefix = R"(data: {"id":")" + std::string{completion_id} +
+                      R"(","object":"chat.completion.chunk","choices":)";
+  auto stream = prefix;
+  stream += R"([{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]})";
+  stream += "\n\n";
+  stream += prefix;
+  stream += R"([{"index":0,"delta":{"content":")";
+  stream += quoted_json(text);
+  stream += R"("},"finish_reason":null}]})";
+  stream += "\n\n";
+  stream += prefix;
+  stream += R"([{"index":0,"delta":{},"finish_reason":"stop"}]})";
+  stream += "\n\n";
+  stream += prefix;
+  stream += R"([],"usage":{"prompt_tokens":)";
+  stream += std::to_string(prompt_tokens);
+  stream += R"(,"completion_tokens":)";
+  stream += std::to_string(completion_tokens);
+  stream += R"(,"total_tokens":)";
+  stream += std::to_string(prompt_tokens + completion_tokens);
+  stream += R"(}})";
+  stream += "\n\ndata: [DONE]\n\n";
+  return stream;
+}
+
 [[nodiscard]] inline scry::ToolHandler static_handler(std::string result) {
   return [result = std::move(result)](scry::Json) -> scry::Result<scry::Json> {
     return scry::Json{.text = result};
