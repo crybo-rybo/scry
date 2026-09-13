@@ -152,6 +152,16 @@ or removal operation. Each accepted turn retains the registrations visible at
 `send()`. Immutable registration and schema snapshots are reused until another
 tool is added; handlers stay on the host thread.
 
+`ToolRegistry::to_json()` exports a version-1 JSON manifest with a `tools` array
+in registration order. Every entry contains the registered `name`, `description`,
+and `input_schema` object, including reflected parameter annotations. This is
+the provider-neutral tool contract; provider adapters apply their own wire
+envelopes. The export includes both registration paths, invokes no handlers, and
+makes no provider request. It reads the current registry rather than an active
+turn's frozen snapshot, and returns owned text that later registrations do not
+change. The host owns writing that text to a file or running the export as a
+build step; only tools registered on that execution path are included.
+
 ### Reflected tools
 
 `scry::reflection::add<Args>()` registers a typed callable at runtime using a

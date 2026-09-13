@@ -2,6 +2,7 @@
 #include "runtime/tool_registry_impl.hpp"
 
 #include <algorithm>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -127,6 +128,38 @@ std::vector<std::string> ToolRegistry::names() const {
     registered.push_back(entry->definition.name);
   }
   return registered;
+}
+
+Result<Json> ToolRegistry::to_json() const {
+  if (impl_ == nullptr) {
+    return std::unexpected(Error{
+        .category = ErrorCategory::invalid_state,
+        .message = "ToolRegistry is not active",
+    });
+  }
+
+  detail::JsonValue::array_t tools{};
+  tools.reserve(impl_->state.entries.size());
+  for (const auto& entry : impl_->state.entries) {
+    const auto& definition = entry->definition;
+    auto schema =
+        detail::parse_json(definition.input_schema.text, ErrorCategory::invalid_state,
+                           "Registered tool schema could not be encoded");
+    if (!schema) {
+      return std::unexpected(std::move(schema.error()));
+    }
+    detail::JsonValue tool{};
+    tool["name"] = definition.name;
+    tool["description"] = definition.description;
+    tool["input_schema"] = std::move(*schema);
+    tools.push_back(std::move(tool));
+  }
+
+  detail::JsonValue root{};
+  root["tools"].data = std::move(tools);
+  root["version"] = std::uint64_t{1};
+  return detail::write_json(root, ErrorCategory::invalid_state,
+                            "Tool manifest could not be encoded");
 }
 
 } // namespace scry

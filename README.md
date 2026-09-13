@@ -115,6 +115,34 @@ int main() {
 }
 ```
 
+## Export the registered tool contract
+
+After registering tools, call `harness.tools().to_json()` to obtain a JSON
+manifest of the tool contracts currently available to future turns. It includes
+both reflected and explicit-schema tools, with their names, descriptions, and
+complete input schemas (including supplied parameter descriptions).
+
+```cpp
+const auto manifest = harness.tools().to_json();
+if (!manifest) { std::cerr << manifest.error().message << '\n'; return 1; }
+std::cout << manifest->text << '\n';
+```
+
+The document has the shape `{"tools":[{"name":"...","description":"...",
+"input_schema":{...}}],"version":1}`. Tools appear in registration order;
+schemas are JSON objects, not JSON-encoded strings. Export does not call tool
+handlers or send an LLM request. It captures registrations at the time of the
+call, so run the same registration path and configuration used by your app.
+
+The canonical example supports writing an artifact without a running model:
+
+```sh
+./build/dev/examples/scry_canonical_example --tool-manifest > tools.json
+```
+
+A consumer can use the same pattern in its own executable and run it from a
+build or CI step to generate the artifact.
+
 ## How it works
 
 - **A worker actor plus a pump on your thread.** One worker thread per `Harness`
