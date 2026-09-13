@@ -118,10 +118,7 @@ template <typename Float>
 
 template <typename Enum>
   requires is_supported_enum_v<Enum>
-// GCC 16 attributes compiler-generated template dispatch to this definition.
-[[nodiscard]] Result<Enum>
-decode_enum(const JsonView& view, // GCOVR_EXCL_LINE: no source decision
-            const std::string& path) {
+[[nodiscard]] Result<Enum> decode_enum(const JsonView& view, const std::string& path) {
   if (view.kind() != JsonKind::string) {
     return std::unexpected(codec_error(path, "must be an enumerator name"));
   }
@@ -334,6 +331,26 @@ template <typename Enum>
   return {};
 }
 
+template <typename Element, typename Sequence>
+[[nodiscard]] Status append_sequence(std::string& output, const Sequence& value,
+                                     const std::string& path) {
+  output.push_back('[');
+  bool first = true;
+  for (std::size_t index = 0; index < value.size(); ++index) {
+    if (!first) {
+      output.push_back(',');
+    }
+    auto status =
+        append_encoded<Element>(output, value[index], element_path(path, index));
+    if (!status) {
+      return status;
+    }
+    first = false;
+  }
+  output.push_back(']');
+  return {};
+}
+
 template <typename Type>
   requires SupportedValue<Type> && std::is_aggregate_v<Type>
 [[nodiscard]] Status append_aggregate(std::string& output, const Type& value,
@@ -383,24 +400,12 @@ Status append_encoded(std::string& output, const Type& value, const std::string&
     }
     using Element = typename optional_traits<Type>::value_type;
     return append_encoded<Element>(output, *value, path);
-  } else if constexpr (vector_traits<Type>::recognized ||
-                       array_traits<Type>::recognized) {
-    output.push_back('[');
-    bool first = true;
-    for (std::size_t index = 0; index < value.size(); ++index) {
-      if (!first) {
-        output.push_back(',');
-      }
-      using Element = typename Type::value_type;
-      auto status =
-          append_encoded<Element>(output, value[index], element_path(path, index));
-      if (!status) {
-        return status;
-      }
-      first = false;
-    }
-    output.push_back(']');
-    return {};
+  } else if constexpr (vector_traits<Type>::recognized) {
+    return append_sequence<typename vector_traits<Type>::value_type>(output, value,
+                                                                     path);
+  } else if constexpr (array_traits<Type>::recognized) {
+    return append_sequence<typename array_traits<Type>::value_type>(output, value,
+                                                                    path);
   } else {
     return append_aggregate(output, value, path);
   }
