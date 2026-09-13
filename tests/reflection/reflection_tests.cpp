@@ -41,6 +41,14 @@ struct NestedResult {
   std::string label{};
 };
 
+struct CopyOnlyResult {
+  static inline int destructions = 0;
+  std::vector<int> values;
+
+  // Suppress the implicit move constructor while retaining aggregate support.
+  ~CopyOnlyResult() { ++destructions; }
+};
+
 struct AllTypesArguments {
   std::array<std::int32_t, 2> fixed{};
   bool flag{};
@@ -429,6 +437,19 @@ TEST_CASE("public encoding matches reflected tool dispatch output") {
       direct->text ==
       R"({"fixed":[1,2],"flag":true,"nested":{"label":"same"},"ratio":1E20,"unit":"fahrenheit","values":[3,4]})");
   CHECK(direct->text == through_dispatch->result.text);
+}
+
+TEST_CASE("reflected erased handlers encode copy-only results without extra copies") {
+  CopyOnlyResult::destructions = 0;
+  auto handler = scry::reflection::detail::make_tool_handler<PresenceArguments>(
+      [](PresenceArguments) { return CopyOnlyResult{.values = {1, 2, 3}}; });
+
+  const auto result =
+      handler(scry::Json{.text = R"({"nullable":null,"required":"ok"})"});
+
+  REQUIRE(result);
+  CHECK(result->text == R"({"values":[1,2,3]})");
+  CHECK(CopyOnlyResult::destructions == 1);
 }
 
 TEST_CASE("reflected erased handlers retain move-only captures and typed errors") {

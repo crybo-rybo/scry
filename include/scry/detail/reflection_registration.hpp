@@ -32,8 +32,8 @@ template <typename Return>
 template <ToolArguments Args, typename Handler>
   requires ToolHandlerFor<Handler, Args>
 [[nodiscard]] Result<Json> invoke_and_encode(Handler& handler, Args args) {
-  auto result = std::invoke(handler, std::move(args));
-  return encode_handler_result(std::move(result));
+  // Direct initialization avoids copying results without a move constructor.
+  return encode_handler_result(std::invoke(handler, std::move(args)));
 }
 
 template <ToolArguments Args, typename Handler>

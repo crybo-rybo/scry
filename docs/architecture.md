@@ -224,8 +224,10 @@ keys before dispatch, so handlers do not see the original lexical duplicates.
 
 Handlers are invoked with moved arguments and return a supported value or
 `Result` of one. Raw `Json`, `void`, `Status`, references, futures, and awaitables
-are not reflected result types. `reflection::encode(value)` uses the same value
-encoder without requiring registration.
+are not reflected result types. The returned object is encoded without an
+additional copy or move, including aggregates whose user-declared destructor
+suppresses an implicit move constructor. `reflection::encode(value)` uses the
+same value encoder without requiring registration.
 
 ### Explicit-schema tools
 
