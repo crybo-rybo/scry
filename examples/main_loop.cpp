@@ -4,6 +4,7 @@
 #include <scry/reflection.hpp>
 #include <scry/scry.hpp>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <type_traits>
 #include <utility>
@@ -120,6 +121,21 @@ struct StatusResult {
       echo_handler());
 }
 
+[[nodiscard]] int print_tool_manifest(const scry::ToolRegistry& tools) {
+  const auto manifest = tools.to_json();
+  if (!manifest) {
+    std::cerr << manifest.error().message << '\n';
+    return 1;
+  }
+  std::cout << manifest->text << '\n';
+  std::cout.flush();
+  if (!std::cout) {
+    std::cerr << "Failed to write tool manifest to stdout\n";
+    return 1;
+  }
+  return 0;
+}
+
 void print_block(const scry::ContentBlock& block) {
   std::visit(
       [](const auto& value) {
@@ -169,7 +185,13 @@ void print_history(const scry::Conversation& conversation) {
 
 } // namespace
 
-int main() {
+int main(int argc, char* argv[]) {
+  const bool export_tools = argc == 2 && std::string_view{argv[1]} == "--tool-manifest";
+  if (argc != 1 && !export_tools) {
+    std::cerr << "Usage: " << (argc > 0 ? argv[0] : "scry_canonical_example")
+              << " [--tool-manifest]\n";
+    return 1;
+  }
   // Declared before the harness on purpose: the tool handlers and turn callbacks
   // capture it by reference, and the harness must be destroyed first so those
   // captures cannot dangle during shutdown.
@@ -201,6 +223,10 @@ int main() {
   if (const auto registered = register_tools(harness.tools(), app); !registered) {
     std::cerr << registered.error().message << '\n';
     return 1;
+  }
+
+  if (export_tools) {
+    return print_tool_manifest(harness.tools());
   }
 
   auto conversation_result = scry::Conversation::create({

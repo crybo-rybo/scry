@@ -2,6 +2,7 @@
 #include "runtime/tool_registry_impl.hpp"
 
 #include <algorithm>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -78,6 +79,18 @@ FrozenToolSnapshot snapshot_tools(ToolRegistryState& state) {
 } // namespace scry::detail
 
 namespace scry {
+namespace {
+
+constexpr std::uint64_t tool_manifest_version = 1;
+
+[[nodiscard]] Error inactive_registry() {
+  return Error{
+      .category = ErrorCategory::invalid_state,
+      .message = "ToolRegistry is not active",
+  };
+}
+
+} // namespace
 
 Status ToolRegistry::Impl::add(ToolDefinition definition, ToolHandler handler) {
   return detail::add_tool_registration(state, std::move(definition),
@@ -93,10 +106,7 @@ ToolRegistry& ToolRegistry::operator=(ToolRegistry&&) noexcept = default;
 
 Status ToolRegistry::add(ToolDefinition definition, ToolHandler handler) {
   if (impl_ == nullptr) {
-    return std::unexpected(Error{
-        .category = ErrorCategory::invalid_state,
-        .message = "ToolRegistry is not active",
-    });
+    return std::unexpected(inactive_registry());
   }
   return impl_->add(std::move(definition), std::move(handler));
 }
@@ -126,6 +136,38 @@ std::vector<std::string> ToolRegistry::names() const {
     registered.push_back(entry->definition.name);
   }
   return registered;
+}
+
+Result<Json> ToolRegistry::to_json() const {
+  if (impl_ == nullptr) {
+    return std::unexpected(inactive_registry());
+  }
+
+  detail::JsonValue::array_t tools{};
+  tools.reserve(impl_->state.entries.size());
+  for (const auto& entry : impl_->state.entries) {
+    const auto& definition = entry->definition;
+    detail::JsonValue tool{};
+    tool["name"] = definition.name;
+    tool["description"] = definition.description;
+    // Registration already canonicalized the schema. Preserve a diagnostic if
+    // that invariant is broken instead of exporting a null or partial schema.
+    if (auto status =
+            detail::parse_json_into(tool["input_schema"], definition.input_schema.text,
+                                    ErrorCategory::invalid_state,
+                                    "Registered schema for tool '" + definition.name +
+                                        "' could not be encoded");
+        !status) {
+      return std::unexpected(std::move(status.error()));
+    }
+    tools.push_back(std::move(tool));
+  }
+
+  detail::JsonValue root{};
+  root["tools"].data = std::move(tools);
+  root["version"] = tool_manifest_version;
+  return detail::write_json(root, ErrorCategory::invalid_state,
+                            "Tool manifest could not be encoded");
 }
 
 } // namespace scry

@@ -105,7 +105,9 @@ add_executable(
   runtime/tool_pump_tests.cpp
   runtime/tool_registry_tests.cpp
 )
-target_include_directories(scry_runtime_tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
+target_include_directories(
+  scry_runtime_tests PRIVATE "${PROJECT_SOURCE_DIR}/src" "${PROJECT_SOURCE_DIR}/tests"
+)
 target_include_directories(
   scry_runtime_tests
   SYSTEM PRIVATE "${SCRY_GLAZE_INCLUDE_DIR}"
@@ -159,7 +161,9 @@ if(SCRY_REFLECTION_TEST_SOURCES)
       scry::scry
       scry_project_options
   )
-  target_include_directories(scry_reflection_tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
+  target_include_directories(
+    scry_reflection_tests PRIVATE "${PROJECT_SOURCE_DIR}/src" "${PROJECT_SOURCE_DIR}/tests"
+  )
   catch_discover_tests(scry_reflection_tests TEST_PREFIX "reflection.")
 endif()
 

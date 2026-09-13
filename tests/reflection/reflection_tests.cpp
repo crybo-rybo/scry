@@ -1,4 +1,5 @@
 #include "runtime/tool_dispatch.hpp"
+#include "support/harness_test_support.hpp"
 
 #include <array>
 #include <catch2/catch_test_macros.hpp>
@@ -39,6 +40,14 @@ struct PresenceArguments {
 
 struct NestedResult {
   std::string label{};
+};
+
+struct CopyOnlyResult {
+  static inline int destructions = 0;
+  std::vector<int> values;
+
+  // Suppress the implicit move constructor while retaining aggregate support.
+  ~CopyOnlyResult() { ++destructions; }
 };
 
 struct AllTypesArguments {
@@ -95,14 +104,6 @@ struct RawJsonHandler {
 struct VoidHandler {
   void operator()(PresenceArguments) const {}
 };
-
-[[nodiscard]] scry::Config test_config() {
-  return {
-      .base_url = "http://127.0.0.1:1",
-      .api_key = "sanitized-test-key",
-      .model = "test-model",
-  };
-}
 
 template <scry::reflection::SupportedValue Type>
 [[nodiscard]] scry::Result<Type> decode_value(const std::string_view text) {
@@ -431,6 +432,67 @@ TEST_CASE("public encoding matches reflected tool dispatch output") {
   CHECK(direct->text == through_dispatch->result.text);
 }
 
+TEST_CASE("reflected erased handlers encode copy-only results without extra copies") {
+  CopyOnlyResult::destructions = 0;
+  auto handler = scry::reflection::detail::make_tool_handler<PresenceArguments>(
+      [](PresenceArguments) { return CopyOnlyResult{.values = {1, 2, 3}}; });
+
+  const auto result =
+      handler(scry::Json{.text = R"({"nullable":null,"required":"ok"})"});
+
+  REQUIRE(result);
+  CHECK(result->text == R"({"values":[1,2,3]})");
+  CHECK(CopyOnlyResult::destructions == 1);
+}
+
+TEST_CASE(
+    "reflected erased handlers encode expected copy-only results without copies") {
+  CopyOnlyResult::destructions = 0;
+  auto handler = scry::reflection::detail::make_tool_handler<PresenceArguments>(
+      [](PresenceArguments) -> scry::Result<CopyOnlyResult> {
+        return scry::Result<CopyOnlyResult>{std::in_place, std::vector<int>{1, 2, 3}};
+      });
+
+  const auto result =
+      handler(scry::Json{.text = R"({"nullable":null,"required":"ok"})"});
+
+  REQUIRE(result);
+  CHECK(result->text == R"({"values":[1,2,3]})");
+  CHECK(CopyOnlyResult::destructions == 1);
+}
+
+TEST_CASE("encoding named reflected results does not copy their values") {
+  CopyOnlyResult::destructions = 0;
+  SECTION("bare result") {
+    const CopyOnlyResult value{.values = {1, 2, 3}};
+    const auto encoded = scry::reflection::detail::encode_handler_result(value);
+    REQUIRE(encoded);
+    CHECK(encoded->text == R"({"values":[1,2,3]})");
+    CHECK(CopyOnlyResult::destructions == 0);
+  }
+  SECTION("expected result passed as an rvalue") {
+    scry::Result<CopyOnlyResult> value{std::in_place, std::vector<int>{1, 2, 3}};
+    const auto encoded =
+        scry::reflection::detail::encode_handler_result(std::move(value));
+    REQUIRE(encoded);
+    CHECK(encoded->text == R"({"values":[1,2,3]})");
+    CHECK(CopyOnlyResult::destructions == 0);
+  }
+  CHECK(CopyOnlyResult::destructions == 1);
+}
+
+TEST_CASE("encoding a named reflected error preserves the caller's error") {
+  scry::Result<CopyOnlyResult> value = std::unexpected(scry::Error{
+      .category = scry::ErrorCategory::tool,
+      .message = "application rejected arguments",
+  });
+  const auto encoded = scry::reflection::detail::encode_handler_result(value);
+  REQUIRE_FALSE(encoded);
+  CHECK(encoded.error().category == scry::ErrorCategory::tool);
+  CHECK(encoded.error().message == "application rejected arguments");
+  CHECK(value.error().message == "application rejected arguments");
+}
+
 TEST_CASE("reflected erased handlers retain move-only captures and typed errors") {
   auto handler = scry::reflection::detail::make_tool_handler<PresenceArguments>(
       [owned = std::make_unique<std::string>("handled")](
@@ -458,7 +520,7 @@ TEST_CASE("reflected erased handlers retain move-only captures and typed errors"
 }
 
 TEST_CASE("reflected registration lowers into the additive registry") {
-  auto created = scry::Harness::create(test_config());
+  auto created = scry::Harness::create(scry::test_support::test_config());
   REQUIRE(created);
   auto harness = std::move(*created);
 
@@ -491,4 +553,25 @@ TEST_CASE("reflected registration lowers into the additive registry") {
       DirectHandler{});
   REQUIRE(status);
   CHECK(harness.tools().size() == 2);
+}
+
+TEST_CASE("tool manifests include reflected and explicit contracts together") {
+  auto harness = scry::Harness::create(scry::test_support::test_config());
+  REQUIRE(harness);
+  REQUIRE(scry::reflection::add<PresenceArguments>(
+      harness->tools(), {.name = "presence", .description = "Reflected arguments"},
+      DirectHandler{}));
+  REQUIRE(harness->tools().add(
+      {.name = "explicit",
+       .description = "Explicit arguments",
+       .input_schema = {.text = R"({"type":"object"})"}},
+      [](scry::Json input) -> scry::Result<scry::Json> { return input; }));
+
+  const auto manifest = harness->tools().to_json();
+  REQUIRE(manifest);
+  CHECK(
+      manifest->text ==
+      std::string{R"({"tools":[{"description":"Reflected arguments","input_schema":)"} +
+          std::string{scry::reflection::input_schema_v<PresenceArguments>} +
+          R"(,"name":"presence"},{"description":"Explicit arguments","input_schema":{"type":"object"},"name":"explicit"}],"version":1})");
 }
