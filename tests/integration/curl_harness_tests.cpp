@@ -8,15 +8,17 @@
 #include <scry/scry.hpp>
 #include <string>
 #include <string_view>
-#include <thread>
 #include <utility>
 
 using namespace std::chrono_literals;
+using namespace scry::test_support;
 
 namespace {
 
+using scry::test::http_response;
+
 const std::string successful_stream =
-    scry::test_support::anthropic_text_stream("Hello from curl.", "msg_curl", {}, 7, 4);
+    anthropic_text_stream("Hello from curl.", "msg_curl", {}, 7, 4);
 
 constexpr auto openai_successful_stream = std::string_view{
     R"(data: {"id":"chatcmpl-curl","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
@@ -30,14 +32,6 @@ data: {"id":"chatcmpl-curl","object":"chat.completion.chunk","choices":[],"usage
 data: [DONE]
 
 )"};
-
-[[nodiscard]] std::string response(const std::string_view status,
-                                   const std::string_view headers,
-                                   const std::string_view body) {
-  return "HTTP/1.1 " + std::string{status} + "\r\n" + std::string{headers} +
-         "Content-Length: " + std::to_string(body.size()) +
-         "\r\nConnection: close\r\n\r\n" + std::string{body};
-}
 
 [[nodiscard]] scry::Config config_for(const scry::test::LoopbackServer& server) {
   scry::Config config{
@@ -68,25 +62,10 @@ data: [DONE]
   return value;
 }
 
-template <typename Predicate>
-[[nodiscard]] bool pump_until(scry::Harness& harness, Predicate&& predicate,
-                              const std::chrono::milliseconds timeout = 2s) {
-  const auto deadline = std::chrono::steady_clock::now() + timeout;
-  while (std::chrono::steady_clock::now() < deadline) {
-    static_cast<void>(harness.update());
-    if (std::forward<Predicate>(predicate)()) {
-      return true;
-    }
-    std::this_thread::yield();
-  }
-  static_cast<void>(harness.update());
-  return std::forward<Predicate>(predicate)();
-}
-
 } // namespace
 
 TEST_CASE("public Harness completes an Anthropic SSE turn through Curl") {
-  scry::test::LoopbackServer server{response(
+  scry::test::LoopbackServer server{http_response(
       "200 OK", "Content-Type: text/event-stream\r\nrequest-id: req-curl-public\r\n",
       successful_stream)};
   auto harness = scry::Harness::create(config_for(server));
@@ -123,7 +102,7 @@ TEST_CASE("public Harness completes an Anthropic SSE turn through Curl") {
 }
 
 TEST_CASE("public Harness completes an OpenAI-compatible SSE turn through Curl") {
-  scry::test::LoopbackServer server{response(
+  scry::test::LoopbackServer server{http_response(
       "200 OK", "Content-Type: text/event-stream\r\nx-request-id: req-openai-curl\r\n",
       openai_successful_stream)};
   auto harness = scry::Harness::create(openai_config_for(server));
@@ -163,10 +142,10 @@ TEST_CASE("public Harness completes an OpenAI-compatible SSE turn through Curl")
 
 TEST_CASE("non-success HTTP status cannot publish an SSE-shaped body") {
   scry::test::LoopbackServer server{
-      response("302 Found",
-               "Content-Type: text/event-stream\r\nLocation: /redirected\r\n"
-               "request-id: req-redirect\r\n",
-               successful_stream)};
+      http_response("302 Found",
+                    "Content-Type: text/event-stream\r\nLocation: /redirected\r\n"
+                    "request-id: req-redirect\r\n",
+                    successful_stream)};
   auto harness = scry::Harness::create(config_for(server));
   REQUIRE(harness);
   auto conversation = scry::Conversation::create();
@@ -190,7 +169,8 @@ TEST_CASE("non-success HTTP status cannot publish an SSE-shaped body") {
       });
   REQUIRE(turn);
 
-  REQUIRE(pump_until(*harness, [&] { return error.has_value() || completed; }));
+  REQUIRE(
+      pump_until_deadline(*harness, [&] { return error.has_value() || completed; }));
   REQUIRE(error);
   CHECK(error->category == scry::ErrorCategory::protocol);
   CHECK(error->provider_request_id == "req-redirect");
@@ -204,10 +184,10 @@ TEST_CASE("HTTP rejection surfaces status and sanitized provider detail through 
   constexpr auto anthropic_error_body =
       std::string_view{R"({"type":"error","error":{"type":"not_found_error",)"
                        R"("message":"private-provider-message"}})"};
-  scry::test::LoopbackServer server{
-      response("404 Not Found",
-               "Content-Type: application/json\r\nrequest-id: req-missing-model\r\n",
-               anthropic_error_body)};
+  scry::test::LoopbackServer server{http_response(
+      "404 Not Found",
+      "Content-Type: application/json\r\nrequest-id: req-missing-model\r\n",
+      anthropic_error_body)};
   auto harness = scry::Harness::create(config_for(server));
   REQUIRE(harness);
   auto conversation = scry::Conversation::create();
@@ -228,7 +208,8 @@ TEST_CASE("HTTP rejection surfaces status and sanitized provider detail through 
       });
   REQUIRE(turn);
 
-  REQUIRE(pump_until(*harness, [&] { return error.has_value() || completed; }));
+  REQUIRE(
+      pump_until_deadline(*harness, [&] { return error.has_value() || completed; }));
   REQUIRE(error);
   CHECK(error->category == scry::ErrorCategory::protocol);
   CHECK(error->http_status == 404);
@@ -243,10 +224,10 @@ TEST_CASE("OpenAI HTTP rejection surfaces its own dialect namespace") {
   constexpr auto openai_error_body =
       std::string_view{R"({"error":{"message":"private-provider-message",)"
                        R"("type":"invalid_request_error","code":"model_not_found"}})"};
-  scry::test::LoopbackServer server{
-      response("404 Not Found",
-               "Content-Type: application/json\r\nx-request-id: req-openai-missing\r\n",
-               openai_error_body)};
+  scry::test::LoopbackServer server{http_response(
+      "404 Not Found",
+      "Content-Type: application/json\r\nx-request-id: req-openai-missing\r\n",
+      openai_error_body)};
   auto harness = scry::Harness::create(openai_config_for(server));
   REQUIRE(harness);
   auto conversation = scry::Conversation::create();
@@ -270,7 +251,7 @@ TEST_CASE("production SSE errors preserve safe provider correlation") {
       "data: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\","
       "\"message\":\"private-provider-message\"},\"request_id\":\"req-body\"}\n\n"};
   scry::test::LoopbackServer server{
-      response("200 OK", "Content-Type: text/event-stream\r\n", error_stream)};
+      http_response("200 OK", "Content-Type: text/event-stream\r\n", error_stream)};
   auto harness = scry::Harness::create(config_for(server));
   REQUIRE(harness);
   auto conversation = scry::Conversation::create();
@@ -294,7 +275,7 @@ TEST_CASE("production SSE errors preserve safe provider correlation") {
 TEST_CASE(
     "active Curl transfer cancellation reaches the public terminal channel promptly") {
   scry::test::LoopbackServer server{
-      response("200 OK", "Content-Type: text/event-stream\r\n", successful_stream),
+      http_response("200 OK", "Content-Type: text/event-stream\r\n", successful_stream),
       true};
   auto harness = scry::Harness::create(config_for(server));
   REQUIRE(harness);
@@ -323,8 +304,8 @@ TEST_CASE(
 
   const auto started = std::chrono::steady_clock::now();
   REQUIRE(turn->cancel());
-  REQUIRE(pump_until(*harness,
-                     [&] { return cancelled || completed || error.has_value(); }));
+  REQUIRE(pump_until_deadline(
+      *harness, [&] { return cancelled || completed || error.has_value(); }));
   const auto elapsed = std::chrono::steady_clock::now() - started;
 
   CHECK(cancelled);
@@ -339,7 +320,7 @@ TEST_CASE(
 TEST_CASE(
     "Harness destruction aborts and joins a held Curl transfer within its bound") {
   scry::test::LoopbackServer server{
-      response("200 OK", "Content-Type: text/event-stream\r\n", successful_stream),
+      http_response("200 OK", "Content-Type: text/event-stream\r\n", successful_stream),
       true};
   auto created = scry::Harness::create(config_for(server));
   REQUIRE(created);

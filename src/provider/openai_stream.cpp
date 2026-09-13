@@ -30,16 +30,13 @@ struct StreamEventView {
   if (!parsed) {
     return std::unexpected(std::move(parsed.error()));
   }
-  if (!parsed->has_value()) {
+  const auto index = *parsed;
+  if (!index ||
+      *index > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
     return std::unexpected(make_error(
         ErrorCategory::protocol, "OpenAI streamed tool call requires a usable index"));
   }
-  const auto index = parsed->value_or(0);
-  if (index > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
-    return std::unexpected(make_error(
-        ErrorCategory::protocol, "OpenAI streamed tool call requires a usable index"));
-  }
-  return static_cast<std::size_t>(index);
+  return static_cast<std::size_t>(*index);
 }
 
 [[nodiscard]] bool has_metadata(const OpenAiToolDecodeState& tool,
@@ -73,13 +70,13 @@ struct StreamEventView {
   if (!parsed) {
     return std::unexpected(std::move(parsed.error()));
   }
-  if (!parsed->has_value()) {
+  const auto value = *parsed;
+  if (!value) {
     return {};
   }
-  return assign_metadata(destination, metadata,
-                         MetadataFragment{.value = parsed->value_or(std::string_view{}),
-                                          .field = field,
-                                          .presence = presence});
+  return assign_metadata(
+      destination, metadata,
+      MetadataFragment{.value = *value, .field = field, .presence = presence});
 }
 
 [[nodiscard]] Status apply_tool_type(const JsonValue& owner,
@@ -88,10 +85,11 @@ struct StreamEventView {
   if (!parsed) {
     return std::unexpected(std::move(parsed.error()));
   }
-  if (!parsed->has_value()) {
+  const auto parsed_type = *parsed;
+  if (!parsed_type) {
     return {};
   }
-  const auto type = parsed->value_or(std::string_view{});
+  const auto type = *parsed_type;
   if (type.empty()) {
     return std::unexpected(make_error(ErrorCategory::protocol,
                                       "OpenAI streamed tool type must not be empty"));
@@ -137,10 +135,11 @@ struct StreamEventView {
   if (!arguments) {
     return std::unexpected(std::move(arguments.error()));
   }
-  if (!arguments->has_value()) {
+  const auto fragment = *arguments;
+  if (!fragment) {
     return {};
   }
-  return append_arguments(tool, arguments->value_or(std::string_view{}), limit);
+  return append_arguments(tool, *fragment, limit);
 }
 
 [[nodiscard]] OpenAiToolDecodeState& indexed_tool(OpenAiProviderDecodeState& decode,
@@ -277,7 +276,8 @@ apply_text_delta(const JsonValue& delta, ProviderDecodeState& state,
   if (!role) {
     return std::unexpected(std::move(role.error()));
   }
-  if (role->has_value() && role->value_or(std::string_view{}) != "assistant") {
+  const auto name = *role;
+  if (name && *name != "assistant") {
     return std::unexpected(make_error(
         ErrorCategory::protocol, "OpenAI streamed response role must be assistant"));
   }
@@ -508,7 +508,7 @@ decode_stream_event(const StreamEventView event, ProviderDecodeState& state,
 
 } // namespace
 
-// The adjacent string views are fixed by the ProviderAdapter seam.
+// The two adjacent string views are the shape ProviderAdapter declares.
 // NOLINTBEGIN(bugprone-easily-swappable-parameters)
 Result<std::vector<ProviderEvent>>
 OpenAiAdapter::parse_stream_event(const std::string_view event_name,

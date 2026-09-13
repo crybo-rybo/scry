@@ -12,6 +12,12 @@
 namespace scry::detail {
 namespace {
 
+[[nodiscard]] std::vector<ProviderEvent> ignored_event(const std::string_view name) {
+  return std::vector<ProviderEvent>{ProviderIgnoredEvent{
+      .name = std::string{name},
+  }};
+}
+
 [[nodiscard]] bool known_event(const std::string_view name) noexcept {
   return name == "message_start" || name == "content_block_start" ||
          name == "content_block_delta" || name == "content_block_stop" ||
@@ -19,32 +25,18 @@ namespace {
          name == "ping";
 }
 
-[[nodiscard]] Result<std::string_view> event_type(const std::string_view event_name,
-                                                  const JsonValue& root) {
-  auto type = required_json_string(root, "type");
-  if (!type) {
-    return std::unexpected(std::move(type.error()));
-  }
-  if (event_name != "message" && event_name != *type) {
-    return std::unexpected(
-        make_error(ErrorCategory::protocol,
-                   "Anthropic SSE event name and payload type do not match"));
-  }
-  return *type;
-}
-
 [[nodiscard]] Result<std::size_t> content_index(const JsonValue& root) {
-  auto index = optional_json_uint(root, "index");
-  if (!index) {
-    return std::unexpected(std::move(index.error()));
+  auto parsed = optional_json_uint(root, "index");
+  if (!parsed) {
+    return std::unexpected(std::move(parsed.error()));
   }
-  const auto parsed_index = *index;
-  if (!parsed_index || *parsed_index > static_cast<std::uint64_t>(
-                                           std::numeric_limits<std::size_t>::max())) {
+  const auto index = *parsed;
+  if (!index ||
+      *index > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
     return std::unexpected(make_error(
         ErrorCategory::protocol, "Anthropic content event has no usable block index"));
   }
-  return static_cast<std::size_t>(*parsed_index);
+  return static_cast<std::size_t>(*index);
 }
 
 [[nodiscard]] std::string request_identifier(const JsonValue& root) {
@@ -52,11 +44,8 @@ namespace {
   if (!parsed) {
     return {};
   }
-  const auto value = *parsed;
-  if (value) {
-    return std::string{*value};
-  }
-  return {};
+  const auto id = *parsed;
+  return id ? std::string{*id} : std::string{};
 }
 
 [[nodiscard]] Result<std::vector<ProviderEvent>>
@@ -337,19 +326,21 @@ handle_message_stop(ProviderDecodeState& state,
   };
 }
 
-[[nodiscard]] Error stream_error(const JsonValue& root) {
-  auto type = std::string{"unknown_error"};
-  if (const auto* value = json_field(root, "error");
-      value != nullptr && value->is_object()) {
-    auto parsed = optional_json_string(*value, "type");
-    if (parsed) {
-      const auto error_type = *parsed;
-      if (error_type) {
-        type = sanitize_error_token(*error_type);
-      }
-    }
+[[nodiscard]] std::string stream_error_type(const JsonValue& root) {
+  const auto* value = json_field(root, "error");
+  if (value == nullptr || !value->is_object()) {
+    return "unknown_error";
   }
+  const auto parsed = optional_json_string(*value, "type");
+  if (!parsed) {
+    return "unknown_error";
+  }
+  const auto type = *parsed;
+  return type ? sanitize_error_token(*type) : "unknown_error";
+}
 
+[[nodiscard]] Error stream_error(const JsonValue& root) {
+  const auto type = stream_error_type(root);
   ErrorCategory category = ErrorCategory::protocol;
   bool retryable = false;
   if (type == "authentication_error" || type == "permission_error") {
@@ -391,14 +382,12 @@ dispatch_event(const std::string_view type, const JsonValue& root,
   if (type == "error") {
     return std::unexpected(stream_error(root));
   }
-  return std::vector<ProviderEvent>{ProviderIgnoredEvent{
-      .name = std::string{type},
-  }};
+  return ignored_event(type);
 }
 
 } // namespace
 
-// The adjacent string views are fixed by the ProviderAdapter seam.
+// The two adjacent string views are the shape ProviderAdapter declares.
 // NOLINTBEGIN(bugprone-easily-swappable-parameters)
 Result<std::vector<ProviderEvent>>
 AnthropicAdapter::parse_stream_event(const std::string_view event_name,
@@ -415,10 +404,12 @@ AnthropicAdapter::parse_stream_event(const std::string_view event_name,
   if (!decode) {
     return std::unexpected(std::move(decode.error()));
   }
-  if (event_name != "message" && !known_event(event_name)) {
-    return std::vector<ProviderEvent>{ProviderIgnoredEvent{
-        .name = std::string{event_name},
-    }};
+  // An SSE event that carries a name names the Anthropic event and its payload's
+  // "type" must agree; an unnamed event arrives as "message" and is typed by that
+  // payload instead. Either way an unrecognized name is ignored, not rejected.
+  const auto typed_by_payload = event_name == "message";
+  if (!typed_by_payload && !known_event(event_name)) {
+    return ignored_event(event_name);
   }
 
   auto root =
@@ -426,14 +417,18 @@ AnthropicAdapter::parse_stream_event(const std::string_view event_name,
   if (!root) {
     return std::unexpected(std::move(root.error()));
   }
-  auto type = event_type(event_name, *root);
+  auto type = required_json_string(*root, "type");
   if (!type) {
     return std::unexpected(std::move(type.error()));
   }
-  if (!known_event(*type)) {
-    return std::vector<ProviderEvent>{ProviderIgnoredEvent{
-        .name = std::string{*type},
-    }};
+  if (typed_by_payload) {
+    if (!known_event(*type)) {
+      return ignored_event(*type);
+    }
+  } else if (event_name != *type) {
+    return std::unexpected(
+        make_error(ErrorCategory::protocol,
+                   "Anthropic SSE event name and payload type do not match"));
   }
   return dispatch_event(*type, *root, state, **decode);
 }

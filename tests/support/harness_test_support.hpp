@@ -5,8 +5,10 @@
 #include "support/transport/fake_transport.hpp"
 
 #include <catch2/catch_test_macros.hpp>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <initializer_list>
 #include <memory>
 #include <scry/scry.hpp>
 #include <string>
@@ -53,9 +55,8 @@ scripted_exchange(const std::string_view stream,
 }
 
 // The canonical five-event Anthropic text completion, built once instead of
-// retyped in every suite that needs a plain successful turn. Streams carrying
-// tool blocks, oversized deltas, or errors stay next to the tests that assert on
-// their specific shape.
+// retyped in every suite that needs a plain successful turn. Streams whose exact
+// bytes or malformed shape are the thing under test stay next to their tests.
 [[nodiscard]] inline std::string anthropic_text_stream(
     const std::string_view text, const std::string_view message_id = "msg_test",
     const std::string_view request_id = {}, const std::uint32_t input_tokens = 2,
@@ -94,10 +95,96 @@ scripted_exchange(const std::string_view stream,
   return stream;
 }
 
+// One tool_use block of an Anthropic stream. `arguments` is the tool input as
+// plain JSON; the builder escapes it into the partial_json delta, and an empty
+// value emits no delta at all.
+struct ToolUseBlock {
+  std::string_view id{};
+  std::string_view name{};
+  std::string_view arguments{};
+};
+
+[[nodiscard]] inline std::string quoted_json(const std::string_view text) {
+  auto escaped = std::string{};
+  for (const auto character : text) {
+    if (character == '"' || character == '\\') {
+      escaped.push_back('\\');
+    }
+    escaped.push_back(character);
+  }
+  return escaped;
+}
+
+[[nodiscard]] inline std::string tool_block_events(const std::size_t index,
+                                                   const ToolUseBlock& block) {
+  const auto position = std::to_string(index);
+  auto events = std::string{"event: content_block_start\ndata: "};
+  events += R"({"type":"content_block_start","index":)" + position;
+  events += R"(,"content_block":{"type":"tool_use","id":")";
+  events += block.id;
+  events += R"(","name":")";
+  events += block.name;
+  events += R"(","input":{}}})";
+  events += "\n\n";
+  if (!block.arguments.empty()) {
+    events += "event: content_block_delta\ndata: ";
+    events += R"({"type":"content_block_delta","index":)" + position;
+    events += R"(,"delta":{"type":"input_json_delta","partial_json":")";
+    events += quoted_json(block.arguments);
+    events += R"("}})";
+    events += "\n\n";
+  }
+  events += "event: content_block_stop\ndata: ";
+  events += R"({"type":"content_block_stop","index":)" + position + "}";
+  events += "\n\n";
+  return events;
+}
+
+// An Anthropic stream whose content is one or more tool_use blocks. The stop
+// reason is a parameter because a stream that announces tool calls and then
+// ends the turn is itself a case under test. Reported output_tokens is the
+// block count.
+[[nodiscard]] inline std::string
+anthropic_tool_stream(const std::initializer_list<ToolUseBlock> blocks,
+                      const std::string_view message_id = "msg_tools",
+                      const std::string_view stop_reason = "tool_use",
+                      const std::uint32_t input_tokens = 3) {
+  auto stream = std::string{"event: message_start\ndata: "};
+  stream += R"({"type":"message_start","message":{"id":")";
+  stream += message_id;
+  stream += R"(","type":"message","role":"assistant","content":[],)";
+  stream += R"("model":"test-model","stop_reason":null,"usage":{"input_tokens":)";
+  stream += std::to_string(input_tokens);
+  stream += R"(,"output_tokens":0}}})";
+  stream += "\n\n";
+  auto index = std::size_t{0};
+  for (const auto& block : blocks) {
+    stream += tool_block_events(index, block);
+    ++index;
+  }
+  stream += "event: message_delta\ndata: ";
+  stream += R"({"type":"message_delta","delta":{"stop_reason":")";
+  stream += stop_reason;
+  stream += R"("},"usage":{"output_tokens":)";
+  stream += std::to_string(blocks.size());
+  stream += R"(}})";
+  stream += "\n\nevent: message_stop\ndata: ";
+  stream += R"({"type":"message_stop"})";
+  stream += "\n\n";
+  return stream;
+}
+
 [[nodiscard]] inline scry::ToolHandler static_handler(std::string result) {
   return [result = std::move(result)](scry::Json) -> scry::Result<scry::Json> {
     return scry::Json{.text = result};
   };
+}
+
+// Yields the value, failing the test when the result carries an error. Catch2's
+// REQUIRE aborts the calling TEST_CASE from here just as it would inline.
+template <typename Value> [[nodiscard]] Value unwrap(scry::Result<Value> result) {
+  REQUIRE(result);
+  return std::move(*result);
 }
 
 template <typename Predicate>
@@ -105,7 +192,7 @@ template <typename Predicate>
   constexpr std::size_t maximum_pumps = 100'000;
   for (std::size_t pump = 0; pump < maximum_pumps; ++pump) {
     static_cast<void>(harness.update());
-    if (std::forward<Predicate>(predicate)()) {
+    if (predicate()) {
       return true;
     }
     std::this_thread::yield();
@@ -120,12 +207,32 @@ template <typename Predicate>
   constexpr std::size_t maximum_pumps = 100'000;
   for (std::size_t pump = 0; pump < maximum_pumps; ++pump) {
     static_cast<void>(harness.update({.max_callbacks = 1}));
-    if (std::forward<Predicate>(predicate)()) {
+    if (predicate()) {
       return true;
     }
     std::this_thread::yield();
   }
   return false;
+}
+
+// Wall-clock variant for suites driving a live endpoint, where progress depends
+// on the network rather than on a bounded number of updates. The final update
+// and check after the deadline keep a transfer that landed right on the
+// deadline from being reported as a timeout.
+template <typename Predicate>
+[[nodiscard]] bool
+pump_until_deadline(scry::Harness& harness, Predicate&& predicate,
+                    const std::chrono::milliseconds timeout = std::chrono::seconds{2}) {
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (std::chrono::steady_clock::now() < deadline) {
+    static_cast<void>(harness.update());
+    if (predicate()) {
+      return true;
+    }
+    std::this_thread::yield();
+  }
+  static_cast<void>(harness.update());
+  return predicate();
 }
 
 // A Harness over a scripted FakeTransport plus the Conversation to drive it.
@@ -145,15 +252,11 @@ struct HarnessFixture {
   for (auto& exchange : exchanges) {
     fake->enqueue(std::move(exchange));
   }
-  auto harness = scry::detail::HarnessTestAccess::create(
-      std::move(config), provider(dialect), std::move(fake));
-  REQUIRE(harness);
-  auto conversation = scry::Conversation::create();
-  REQUIRE(conversation);
   return HarnessFixture{
       .transport = observer,
-      .harness = std::move(*harness),
-      .conversation = std::move(*conversation),
+      .harness = unwrap(scry::detail::HarnessTestAccess::create(
+          std::move(config), provider(dialect), std::move(fake))),
+      .conversation = unwrap(scry::Conversation::create()),
   };
 }
 

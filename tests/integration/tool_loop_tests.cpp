@@ -5,14 +5,12 @@
 using namespace scry::test_support;
 
 TEST_CASE("two-tool turn snapshots tools, resends results, and commits atomically") {
-  auto fake = std::make_unique<scry::test::FakeTransport>();
-  auto* requests = fake.get();
-  fake->enqueue(scripted_exchange(two_tool_stream, "tool-request"));
-  fake->enqueue(scripted_exchange(final_stream, "final-request"));
-  auto harness_result = scry::detail::HarnessTestAccess::create(
-      test_config(), provider(), std::move(fake));
-  REQUIRE(harness_result);
-  auto harness = std::move(*harness_result);
+  auto fixture = make_harness_fixture(
+      test_config(), {scripted_exchange(two_tool_stream, "tool-request"),
+                      scripted_exchange(final_stream, "final-request")});
+  auto* requests = fixture.transport;
+  auto& harness = fixture.harness;
+  auto& conversation = fixture.conversation;
 
   std::vector<std::string> timeline;
   std::vector<std::thread::id> callback_threads;
@@ -40,9 +38,6 @@ TEST_CASE("two-tool turn snapshots tools, resends results, and commits atomicall
                                 return scry::Json{.text = R"({"handled":"second"})"};
                               }));
 
-  auto conversation_result = scry::Conversation::create();
-  REQUIRE(conversation_result);
-  auto conversation = std::move(*conversation_result);
   std::optional<scry::Completion> completion;
   auto turn_result =
       harness.send(conversation, "Run both tools",
@@ -141,13 +136,11 @@ TEST_CASE("two-tool turn snapshots tools, resends results, and commits atomicall
 }
 
 TEST_CASE("a failing tool handler reaches the observer as an error result") {
-  auto fake = std::make_unique<scry::test::FakeTransport>();
-  fake->enqueue(scripted_exchange(two_tool_stream, "tool-request"));
-  fake->enqueue(scripted_exchange(final_stream, "final-request"));
-  auto harness_result = scry::detail::HarnessTestAccess::create(
-      test_config(), provider(), std::move(fake));
-  REQUIRE(harness_result);
-  auto harness = std::move(*harness_result);
+  auto fixture = make_harness_fixture(
+      test_config(), {scripted_exchange(two_tool_stream, "tool-request"),
+                      scripted_exchange(final_stream, "final-request")});
+  auto& harness = fixture.harness;
+  auto& conversation = fixture.conversation;
 
   REQUIRE(harness.tools().add(ordinal_tool_definition("first_tool"),
                               [](scry::Json) -> scry::Result<scry::Json> {
@@ -159,9 +152,6 @@ TEST_CASE("a failing tool handler reaches the observer as an error result") {
   REQUIRE(harness.tools().add(ordinal_tool_definition("second_tool"),
                               static_handler(R"({"handled":"second"})")));
 
-  auto conversation_result = scry::Conversation::create();
-  REQUIRE(conversation_result);
-  auto conversation = std::move(*conversation_result);
   std::vector<scry::ToolCall> observed;
   bool finished = false;
   auto turn_result =
@@ -201,10 +191,8 @@ TEST_CASE("a queued turn waits for the active turn's app-thread tool round") {
   fake->enqueue(scripted_exchange(two_tool_stream, "tool-request"));
   fake->enqueue(scripted_exchange(final_stream, "first-final-request"));
   fake->enqueue(scripted_exchange(final_stream, "second-final-request"));
-  auto harness_result = scry::detail::HarnessTestAccess::create(
-      test_config(), provider(), std::move(fake));
-  REQUIRE(harness_result);
-  auto harness = std::move(*harness_result);
+  auto harness = unwrap(scry::detail::HarnessTestAccess::create(
+      test_config(), provider(), std::move(fake)));
   REQUIRE(harness.tools().add(ordinal_tool_definition("first_tool"),
                               static_handler(R"({"queue":1})")));
   REQUIRE(harness.tools().add(ordinal_tool_definition("second_tool"),
@@ -250,16 +238,14 @@ TEST_CASE("a queued turn waits for the active turn's app-thread tool round") {
 TEST_CASE("tool call batches fail atomically at the event queue boundary") {
   const std::string first_name(250, 'a');
   const std::string second_name(250, 'b');
-  auto fake = std::make_unique<scry::test::FakeTransport>();
-  auto* requests = fake.get();
-  fake->enqueue(scripted_exchange(large_tool_batch_stream(first_name, second_name),
-                                  "tool-request"));
   auto config = test_config();
   config.limits.max_queued_event_bytes_per_turn = 1024;
-  auto harness_result =
-      scry::detail::HarnessTestAccess::create(config, provider(), std::move(fake));
-  REQUIRE(harness_result);
-  auto harness = std::move(*harness_result);
+  auto fixture = make_harness_fixture(
+      config, {scripted_exchange(large_tool_batch_stream(first_name, second_name),
+                                 "tool-request")});
+  auto* requests = fixture.transport;
+  auto& harness = fixture.harness;
+  auto& conversation = fixture.conversation;
   std::size_t handler_calls = 0;
   const auto handler = [&handler_calls](scry::Json) -> scry::Result<scry::Json> {
     ++handler_calls;
@@ -267,10 +253,8 @@ TEST_CASE("tool call batches fail atomically at the event queue boundary") {
   };
   REQUIRE(harness.tools().add(ordinal_tool_definition(first_name), handler));
   REQUIRE(harness.tools().add(ordinal_tool_definition(second_name), handler));
-  auto conversation = scry::Conversation::create();
-  REQUIRE(conversation);
   std::optional<scry::Error> failure;
-  auto turn = harness.send(*conversation, "run an oversized batch",
+  auto turn = harness.send(conversation, "run an oversized batch",
                            {
                                .on_finished =
                                    [&failure](scry::Result<scry::Completion> finished) {
@@ -285,17 +269,15 @@ TEST_CASE("tool call batches fail atomically at the event queue boundary") {
 
   CHECK(failure->category == scry::ErrorCategory::resource_limit);
   CHECK(handler_calls == 0);
-  CHECK(conversation->empty());
+  CHECK(conversation.empty());
   CHECK(requests->requests().size() == 1);
 }
 
 TEST_CASE("Harness destruction stops a worker awaiting an app-thread tool result") {
-  auto fake = std::make_unique<scry::test::FakeTransport>();
-  fake->enqueue(scripted_exchange(two_tool_stream, "tool-request"));
-  auto harness_result = scry::detail::HarnessTestAccess::create(
-      test_config(), provider(), std::move(fake));
-  REQUIRE(harness_result);
-  auto harness = std::move(*harness_result);
+  auto fixture = make_harness_fixture(
+      test_config(), {scripted_exchange(two_tool_stream, "tool-request")});
+  auto& harness = fixture.harness;
+  auto& conversation = fixture.conversation;
   std::size_t handler_calls = 0;
   const auto handler = [&handler_calls](scry::Json) -> scry::Result<scry::Json> {
     ++handler_calls;
@@ -303,11 +285,9 @@ TEST_CASE("Harness destruction stops a worker awaiting an app-thread tool result
   };
   REQUIRE(harness.tools().add(ordinal_tool_definition("first_tool"), handler));
   REQUIRE(harness.tools().add(ordinal_tool_definition("second_tool"), handler));
-  auto conversation = scry::Conversation::create();
-  REQUIRE(conversation);
   std::size_t callbacks = 0;
   auto turn = harness.send(
-      *conversation, "destroy during app-thread tool wait",
+      conversation, "destroy during app-thread tool wait",
       {
           .on_tool_call = [&callbacks](const scry::ToolCall&) { ++callbacks; },
           .on_finished = [&callbacks](scry::Result<scry::Completion>) { ++callbacks; },
@@ -327,5 +307,5 @@ TEST_CASE("Harness destruction stops a worker awaiting an app-thread tool result
 
   CHECK(handler_calls == 0);
   CHECK(callbacks == 0);
-  CHECK(conversation->empty());
+  CHECK(conversation.empty());
 }

@@ -43,10 +43,9 @@ struct ToolCallEvent {
   std::size_t remaining_exchange_bytes{std::numeric_limits<std::size_t>::max()};
 };
 
-// The pump commits `exchange` into the Conversation by moving it, then keeps
-// only `text` for the completion callback. `text` is the assistant text already
-// counted inside `exchange`, so it is deliberately absent from the queue byte
-// accounting in event_payload_bytes.
+// The pump moves `exchange` into the Conversation and keeps `text`, a copy of
+// the final assistant text, for the completion callback. Because that text is
+// already counted inside `exchange`, event_payload_bytes ignores it.
 struct CompletionEvent {
   TurnId turn_id{};
   std::vector<Message> exchange{};

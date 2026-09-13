@@ -14,10 +14,11 @@ struct CurlRuntimeCapabilities {
 [[nodiscard]] Status
 validate_curl_runtime_capabilities(CurlRuntimeCapabilities capabilities);
 
-// Owns libcurl's process-wide state from the first call until static teardown.
-// The first result (including failure) is cached; capability failure after a
-// successful initialization is cleaned up immediately. Successful startup is
-// paired with exactly one cleanup from the function-static owner's destructor.
+// Initializes libcurl's process-wide state on the first call and reports the
+// result. A function-static owner serializes that one attempt and caches its
+// result, including a failure; its destructor pairs a successful startup with
+// exactly one cleanup at static teardown. Capability failure after a successful
+// initialization is cleaned up immediately.
 [[nodiscard]] Status curl_global_status();
 
 } // namespace scry::detail
