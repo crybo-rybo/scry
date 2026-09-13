@@ -26,24 +26,26 @@ namespace {
 }
 
 [[nodiscard]] Result<std::size_t> content_index(const JsonValue& root) {
-  auto index = optional_json_uint(root, "index");
-  if (!index) {
-    return std::unexpected(std::move(index.error()));
+  auto parsed = optional_json_uint(root, "index");
+  if (!parsed) {
+    return std::unexpected(std::move(parsed.error()));
   }
-  if (!*index ||
-      **index > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
+  const auto index = *parsed;
+  if (!index ||
+      *index > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
     return std::unexpected(make_error(
         ErrorCategory::protocol, "Anthropic content event has no usable block index"));
   }
-  return static_cast<std::size_t>(**index);
+  return static_cast<std::size_t>(*index);
 }
 
 [[nodiscard]] std::string request_identifier(const JsonValue& root) {
   const auto parsed = optional_json_string(root, "request_id");
-  if (!parsed || !*parsed) {
+  if (!parsed) {
     return {};
   }
-  return std::string{**parsed};
+  const auto id = *parsed;
+  return id ? std::string{*id} : std::string{};
 }
 
 [[nodiscard]] Result<std::vector<ProviderEvent>>
@@ -330,10 +332,11 @@ handle_message_stop(ProviderDecodeState& state,
     return "unknown_error";
   }
   const auto parsed = optional_json_string(*value, "type");
-  if (!parsed || !*parsed) {
+  if (!parsed) {
     return "unknown_error";
   }
-  return sanitize_error_token(**parsed);
+  const auto type = *parsed;
+  return type ? sanitize_error_token(*type) : "unknown_error";
 }
 
 [[nodiscard]] Error stream_error(const JsonValue& root) {
