@@ -46,13 +46,18 @@ namespace {
   }
 }
 
+[[nodiscard]] Error oversized_result() {
+  return dispatch_error(ErrorCategory::resource_limit,
+                        "tool result exceeds the configured byte limit");
+}
+
 [[nodiscard]] Result<ToolResultBlock>
 successful_result(const ToolCallBlock& call, const Json& value,
                   const std::size_t max_result_bytes) {
+  // Canonicalising parses and re-serialises, so rejecting an already-oversized
+  // payload here keeps an unbounded handler return from being parsed at all.
   if (value.text.size() > max_result_bytes) {
-    return std::unexpected(
-        dispatch_error(ErrorCategory::resource_limit,
-                       "tool result exceeds the configured byte limit"));
+    return std::unexpected(oversized_result());
   }
   auto canonical = canonicalize_json(value, ErrorCategory::tool,
                                      "tool handler returned invalid JSON");
@@ -60,9 +65,7 @@ successful_result(const ToolCallBlock& call, const Json& value,
     return error_result(call, canonical.error().message, max_result_bytes);
   }
   if (canonical->text.size() > max_result_bytes) {
-    return std::unexpected(
-        dispatch_error(ErrorCategory::resource_limit,
-                       "tool result exceeds the configured byte limit"));
+    return std::unexpected(oversized_result());
   }
   return ToolResultBlock{
       .tool_call_id = call.id,
@@ -81,9 +84,6 @@ successful_result(const ToolCallBlock& call, const Json& value,
 [[nodiscard]] Result<ToolResultBlock>
 dispatch_tool_handler(ToolHandler& handler, const ToolCallBlock& call,
                       const std::size_t max_result_bytes) {
-  if (!handler) {
-    return error_result(call, "tool handler is unavailable", max_result_bytes);
-  }
   auto invoked = invoke_handler(handler, call);
   if (!invoked) {
     return error_result(call, "tool handler returned an error", max_result_bytes);
@@ -100,7 +100,10 @@ Result<ToolResultBlock> dispatch_tool(const ToolSnapshot& snapshot,
   if (!registration) {
     return error_result(call, "model requested an unknown tool", max_result_bytes);
   }
-  if (!registration->handler) {
+  // Registration rejects an empty handler, so this only catches a snapshot
+  // assembled by hand. The call below dereferences the pointer and then invokes
+  // the function, so both have to be live.
+  if (!registration->handler || !*registration->handler) {
     return error_result(call, "tool handler is unavailable", max_result_bytes);
   }
   return dispatch_tool_handler(*registration->handler, call, max_result_bytes);

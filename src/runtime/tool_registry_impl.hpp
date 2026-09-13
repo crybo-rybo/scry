@@ -18,7 +18,7 @@ class ToolRegistry::Impl final {
 public:
   [[nodiscard]] Status add(ToolDefinition definition, ToolHandler handler);
 
-  [[nodiscard]] detail::ToolSnapshots snapshot() {
+  [[nodiscard]] detail::FrozenToolSnapshot snapshot() {
     return detail::snapshot_tools(state);
   }
 
