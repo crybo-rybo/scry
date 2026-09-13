@@ -68,9 +68,13 @@ static_assert(bool{set_turn});
 
 static_assert(std::is_move_constructible_v<scry::Conversation>);
 static_assert(!std::is_copy_constructible_v<scry::Conversation>);
-static_assert(!std::is_move_constructible_v<scry::ToolRegistry>);
-static_assert(!std::is_move_assignable_v<scry::ToolRegistry>);
+// A registry is a standalone value a host builds before any Harness exists, and
+// hands to Harness::create() by move. Copying it would duplicate handlers.
+static_assert(std::is_default_constructible_v<scry::ToolRegistry>);
+static_assert(std::is_move_constructible_v<scry::ToolRegistry>);
+static_assert(std::is_move_assignable_v<scry::ToolRegistry>);
 static_assert(!std::is_copy_constructible_v<scry::ToolRegistry>);
+static_assert(!std::is_copy_assignable_v<scry::ToolRegistry>);
 static_assert(std::is_move_constructible_v<scry::Turn>);
 static_assert(!std::is_copy_constructible_v<scry::Turn>);
 static_assert(std::is_move_constructible_v<scry::Harness>);
@@ -132,6 +136,22 @@ static_assert(requires(scry::Harness& harness) {
 });
 static_assert(requires(const scry::Config& config) {
   { scry::Harness::validate(config) } -> std::same_as<scry::Status>;
+});
+
+// create() adopts a registry, and the parameter is defaulted so the one-argument
+// spelling keeps working.
+static_assert(requires(scry::Config config) {
+  {
+    scry::Harness::create(std::move(config))
+  } -> std::same_as<scry::Result<scry::Harness>>;
+});
+static_assert(requires(scry::Config config, scry::ToolRegistry tools) {
+  {
+    scry::Harness::create(std::move(config), std::move(tools))
+  } -> std::same_as<scry::Result<scry::Harness>>;
+});
+static_assert(requires(scry::Harness& harness) {
+  { harness.tools() } -> std::same_as<scry::ToolRegistry&>;
 });
 static_assert(requires(const scry::ToolRegistry& registry) {
   { registry.contains(std::string_view{}) } -> std::same_as<bool>;

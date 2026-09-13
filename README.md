@@ -66,6 +66,7 @@ target_link_libraries(app PRIVATE scry::scry)
 #include <scry/scry.hpp>
 #include <string>
 #include <thread>
+#include <utility>
 
 // The schema, the strict argument decode, and the result encode are generated
 // from these aggregates. The member annotation describes the parameter.
@@ -80,16 +81,9 @@ struct StatusResult {
 };
 
 int main() {
-  // Assumes `ollama serve` is running and `ollama pull qwen3:8b` has completed.
-  auto harness = scry::Harness::create({
-      .base_url = "http://127.0.0.1:11434/v1",
-      .model = "qwen3:8b",
-      .dialect = scry::ProviderDialect::openai_compatible,
-  });
-  if (!harness) { std::cerr << harness.error().message << '\n'; return 1; }
-
+  scry::ToolRegistry tools;
   const auto registered = scry::reflection::add<StatusArguments>(
-      harness->tools(),
+      tools,
       {.name = "get_application_status",
        .description = "Report whether the host application's main loop is running"},
       [](StatusArguments arguments) {
@@ -97,6 +91,14 @@ int main() {
                             .state = arguments.verbose ? "main loop running" : ""};
       });
   if (!registered) { std::cerr << registered.error().message << '\n'; return 1; }
+
+  // Assumes `ollama serve` is running and `ollama pull qwen3:8b` has completed.
+  auto harness = scry::Harness::create(
+      {.base_url = "http://127.0.0.1:11434/v1",
+       .model = "qwen3:8b",
+       .dialect = scry::ProviderDialect::openai_compatible},
+      std::move(tools));
+  if (!harness) { std::cerr << harness.error().message << '\n'; return 1; }
 
   auto conversation = scry::Conversation::create();
   auto turn = harness->send(
@@ -117,16 +119,24 @@ int main() {
 
 ## Export the registered tool contract
 
-After registering tools, call `harness.tools().to_json()` to obtain a JSON
-manifest of the tool contracts currently available to future turns. It includes
-both reflected and explicit-schema tools, with their names, descriptions, and
-complete input schemas (including supplied parameter descriptions).
+Call `ToolRegistry::to_json()` to obtain a JSON manifest of the tool contracts
+currently available to future turns. It includes both reflected and
+explicit-schema tools, with their names, descriptions, and complete input
+schemas (including supplied parameter descriptions). A registry is a standalone
+value, so this needs no `Harness`, no provider configuration, and no network
+stack:
 
 ```cpp
-const auto manifest = harness.tools().to_json();
+scry::ToolRegistry tools;
+if (const auto registered = register_tools(tools); !registered) { /* ... */ }
+
+const auto manifest = tools.to_json();
 if (!manifest) { std::cerr << manifest.error().message << '\n'; return 1; }
 std::cout << manifest->text << '\n';
 ```
+
+`harness.tools().to_json()` exports the same document once a `Harness` has
+adopted the registry.
 
 The document has the shape `{"tools":[{"description":"...",
 "input_schema":{...},"name":"..."}],"version":1}`. Object keys are emitted in
@@ -142,10 +152,9 @@ The canonical example supports writing an artifact without a running model:
 ```
 
 A consumer can use the same pattern in its own executable and run it from a
-build or CI step to generate the artifact. The registry is owned by a `Harness`,
-so this path still requires successful `Harness::create()`: libcurl 7.84 or
-newer with thread-safe global initialization and permission to start a worker
-thread. Export itself performs no network I/O.
+build or CI step to generate the artifact. That step builds only the registry,
+so it needs neither a provider endpoint nor libcurl, and performs no network
+I/O.
 
 ## How it works
 

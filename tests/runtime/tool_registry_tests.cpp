@@ -9,9 +9,13 @@
 #include <scry/tool_registry.hpp>
 #include <string>
 #include <type_traits>
+#include <utility>
+#include <vector>
 
-static_assert(!std::is_move_constructible_v<scry::ToolRegistry>);
-static_assert(!std::is_move_assignable_v<scry::ToolRegistry>);
+static_assert(std::is_default_constructible_v<scry::ToolRegistry>);
+static_assert(std::is_move_constructible_v<scry::ToolRegistry>);
+static_assert(std::is_move_assignable_v<scry::ToolRegistry>);
+static_assert(!std::is_copy_constructible_v<scry::ToolRegistry>);
 
 namespace {
 
@@ -165,10 +169,9 @@ TEST_CASE("tool registration argument failures report invalid_argument") {
   CHECK(duplicate.error().category == scry::ErrorCategory::invalid_argument);
 
   // invalid_state stays reserved for lifecycle failures. ToolRegistry's only
-  // invalid_state path is an inactive handle, which the public surface cannot
-  // produce: the type is neither movable nor constructible outside Harness.
-  static_assert(!std::is_default_constructible_v<scry::ToolRegistry>);
-  static_assert(!std::is_move_constructible_v<scry::ToolRegistry>);
+  // invalid_state path is an inactive handle, which a host reaches by moving a
+  // registry away - covered by the moved-from case below.
+  static_assert(std::is_move_constructible_v<scry::ToolRegistry>);
 }
 
 TEST_CASE("tool snapshots retain immutable registrations across later additions") {
@@ -219,4 +222,89 @@ TEST_CASE("registry snapshots rebuild only when registration changed") {
   CHECK(rebuilt.schemas->size() == 2);
   CHECK(first.entries->size() == 1);
   CHECK(rebuilt.schemas->back().name == "current_time");
+}
+
+TEST_CASE("a standalone registry exports its manifest without a Harness") {
+  // No Config, no libcurl, no worker: a registry is a plain value, so a build or
+  // CI step can emit the tool contract from a program that never talks to a
+  // provider.
+  scry::ToolRegistry tools;
+  CHECK(tools.empty());
+  REQUIRE(tools.add(definition(), handler()));
+  REQUIRE(tools.add(definition("another", R"({"type":"object"})"), handler()));
+  CHECK(tools.size() == 2);
+  CHECK(tools.contains("another"));
+  CHECK(tools.names() == std::vector<std::string>{"forecast", "another"});
+
+  const auto manifest = tools.to_json();
+  REQUIRE(manifest);
+  CHECK(
+      manifest->text ==
+      R"({"tools":[{"description":"Get a forecast","input_schema":{"properties":{"city":{"description":"Place","type":"string"}},"required":["city"],"type":"object"},"name":"forecast"},{"description":"Get a forecast","input_schema":{"type":"object"},"name":"another"}],"version":1})");
+}
+
+TEST_CASE("a Harness adopts a registry built before it and runs its handlers") {
+  using namespace scry::test_support;
+
+  auto calls = std::make_shared<int>(0);
+  scry::ToolRegistry tools;
+  REQUIRE(tools.add(definition(), handler(calls)));
+
+  auto fake = std::make_unique<scry::test::FakeTransport>();
+  fake->enqueue(scripted_exchange(
+      anthropic_tool_stream({ToolUseBlock{
+          .id = "call-a", .name = "forecast", .arguments = R"({"city":"Detroit"})"}}),
+      "tool-request"));
+  fake->enqueue(scripted_exchange(anthropic_text_stream("done"), "final-request"));
+  auto harness = unwrap(scry::detail::HarnessTestAccess::create(
+      test_config(), provider(), std::move(fake), 0, {}, std::move(tools)));
+
+  CHECK(harness.tools().names() == std::vector<std::string>{"forecast"});
+  // Registration stays open through tools() after create().
+  REQUIRE(
+      harness.tools().add(definition("another", R"({"type":"object"})"), handler()));
+  CHECK(harness.tools().size() == 2);
+
+  auto conversation = unwrap(scry::Conversation::create());
+  bool finished = false;
+  auto turn = harness.send(conversation, "what is the forecast?",
+                           {
+                               .on_finished =
+                                   [&finished](scry::Result<scry::Completion> outcome) {
+                                     finished = outcome.has_value();
+                                   },
+                           });
+  REQUIRE(turn);
+  REQUIRE(pump_until(harness, [&finished] { return finished; }));
+  CHECK(*calls == 1);
+}
+
+TEST_CASE("a moved-from registry is inactive and reports invalid_state") {
+  scry::ToolRegistry tools;
+  REQUIRE(tools.add(definition(), handler()));
+
+  const scry::ToolRegistry adopted{std::move(tools)};
+  CHECK(adopted.size() == 1);
+  CHECK(adopted.contains("forecast"));
+
+  // NOLINTBEGIN(bugprone-use-after-move): the moved-from state is under test.
+  CHECK(tools.size() == 0);
+  CHECK(tools.empty());
+  CHECK_FALSE(tools.contains("forecast"));
+  CHECK(tools.names().empty());
+
+  const auto added =
+      tools.add(definition("another", R"({"type":"object"})"), handler());
+  REQUIRE_FALSE(added);
+  CHECK(added.error().category == scry::ErrorCategory::invalid_state);
+
+  const auto manifest = tools.to_json();
+  REQUIRE_FALSE(manifest);
+  CHECK(manifest.error().category == scry::ErrorCategory::invalid_state);
+
+  // Move-assigning a fresh registry makes the variable usable again.
+  tools = scry::ToolRegistry{};
+  // NOLINTEND(bugprone-use-after-move)
+  REQUIRE(tools.add(definition(), handler()));
+  CHECK(tools.size() == 1);
 }

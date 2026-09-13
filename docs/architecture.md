@@ -15,7 +15,7 @@ instructions.
 |---|---|
 | `Config` | Provider endpoint, credentials, model, sampling, retries, timeouts, and resource limits |
 | `Conversation` | System prompt and committed message history |
-| `ToolRegistry` | Tool definitions and handlers, owned by a Harness |
+| `ToolRegistry` | Standalone additive registry of tool definitions and handlers; a Harness takes ownership at `create()` |
 | `Turn` | Handle to an accepted exchange: identity, completion query, cancellation, and callback disconnection |
 | `Harness` | Configured runtime, worker thread, registry, and callback pump |
 
@@ -38,9 +38,11 @@ interfaces are internal.
 ## Threading and lifetime
 
 Use a Harness, its registry, its Turns, and their Conversations from one host
-thread. The public handles do not synchronize concurrent application access.
-All callbacks and tool handlers run inside `update()` on its calling thread;
-they can access host state owned by that thread directly.
+thread. The public handles do not synchronize concurrent application access. A
+registry that no Harness owns yet is a plain move-only value on the thread that
+built it; `Harness::create()` adopts it and leaves the source inactive. All
+callbacks and tool handlers run inside `update()` on its calling thread; they
+can access host state owned by that thread directly.
 
 One worker per Harness owns the network transfers, provider decoding, and turn
 machine. It processes accepted turns in FIFO order, with one active turn at a
@@ -147,10 +149,12 @@ and `usage` accumulates usage from completed model responses.
 
 ## Tools and JSON
 
-A registry is additive: duplicate names are rejected and there is no replacement
-or removal operation. Each accepted turn retains the registrations visible at
-`send()`. Immutable registration and schema snapshots are reused until another
-tool is added; handlers stay on the host thread.
+A registry is a standalone value: a host builds one, `Harness::create(config,
+std::move(tools))` adopts it, and `Harness::tools()` keeps it open for later
+registrations. A registry is additive: duplicate names are rejected and there is
+no replacement or removal operation. Each accepted turn retains the
+registrations visible at `send()`. Immutable registration and schema snapshots
+are reused until another tool is added; handlers stay on the host thread.
 
 `ToolRegistry::to_json()` exports a version-1 JSON manifest with a `tools` array
 in registration order. Every entry contains the registered `name`, `description`,
@@ -160,9 +164,9 @@ envelopes. The export includes both registration paths, invokes no handlers, and
 makes no provider request. It reads the current registry rather than an active
 turn's frozen snapshot, and returns owned text that later registrations do not
 change. The host owns writing that text to a file or running the export as a
-build step; only tools registered on that execution path are included. Registry
-access still requires successful Harness creation, including libcurl global
-initialization and worker-thread startup. The manifest version is independent
+build step; only tools registered on that execution path are included. Export
+needs no Harness: a registry built on its own exports the same document without
+provider configuration, libcurl, or a worker. The manifest version is independent
 of the library version: incompatible changes to its structure or field meanings
 increment it; additive fields keep the version, and consumers should ignore
 unknown fields.
@@ -182,7 +186,7 @@ struct ForecastArgs {
 struct Forecast { std::string summary; double temperature_c; };
 
 auto status = scry::reflection::add<ForecastArgs>(
-    harness->tools(),
+    tools,
     {.name = "forecast", .description = "Return the forecast for one city"},
     [](ForecastArgs args) -> scry::Result<Forecast> {
       return lookup_forecast(std::move(args));

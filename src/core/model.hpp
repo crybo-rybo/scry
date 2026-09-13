@@ -8,6 +8,7 @@
 #include <scry/events.hpp>
 #include <scry/json.hpp>
 #include <scry/message.hpp>
+#include <scry/tool_registry.hpp>
 #include <string>
 #include <variant>
 #include <vector>
@@ -24,17 +25,13 @@ using ToolResultBlock = ::scry::ToolResultBlock;
 using ContentBlock = ::scry::ContentBlock;
 using Message = ::scry::Message;
 
-struct ToolSchema {
-  std::string name{};
-  std::string description{};
-  Json input_schema{};
-};
-
 // Immutable collections shared across threads and turns. One shared pointer
 // covers the whole vector rather than each element, so handing a snapshot to
 // another turn costs a refcount bump instead of copying every message.
 using HistorySnapshot = std::shared_ptr<const std::vector<Message>>;
-using SchemaSnapshot = std::shared_ptr<const std::vector<ToolSchema>>;
+// Tools reach a provider adapter as exactly what the host registered, so the
+// public ToolDefinition is the wire-facing schema type as well.
+using SchemaSnapshot = std::shared_ptr<const std::vector<ToolDefinition>>;
 
 struct ModelRequest {
   std::string system_prompt{};

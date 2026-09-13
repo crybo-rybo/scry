@@ -195,7 +195,7 @@ encode_assistant_message(const Message& message) {
   return encoded;
 }
 
-[[nodiscard]] Result<JsonValue> encode_tool(const ToolSchema& tool) {
+[[nodiscard]] Result<JsonValue> encode_tool(const ToolDefinition& tool) {
   if (tool.name.empty()) {
     return std::unexpected(invalid_request("OpenAI tools require a nonempty name"));
   }
@@ -214,7 +214,7 @@ encode_assistant_message(const Message& message) {
 }
 
 [[nodiscard]] Result<JsonValue::array_t>
-encode_tools(const std::vector<ToolSchema>& tools) {
+encode_tools(const std::vector<ToolDefinition>& tools) {
   JsonValue::array_t encoded{};
   encoded.reserve(tools.size());
   for (const auto& tool : tools) {

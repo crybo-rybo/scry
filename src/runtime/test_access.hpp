@@ -8,6 +8,7 @@
 #include <memory>
 #include <scry/config.hpp>
 #include <scry/harness.hpp>
+#include <scry/tool_registry.hpp>
 
 namespace scry::detail {
 
@@ -15,12 +16,12 @@ class HarnessTestAccess final {
 public:
   /// Builds a Harness over injected components. `time` replaces the worker's
   /// steady clock and retry wait; the public Harness::create always passes the
-  /// default, which is the real clock.
-  [[nodiscard]] static Result<Harness> create(Config config,
-                                              std::unique_ptr<ProviderAdapter> provider,
-                                              std::unique_ptr<Transport> transport,
-                                              std::uint64_t retry_jitter_seed = 0,
-                                              WorkerTimeSource time = {});
+  /// default, which is the real clock. `tools` is adopted exactly as
+  /// Harness::create adopts it.
+  [[nodiscard]] static Result<Harness>
+  create(Config config, std::unique_ptr<ProviderAdapter> provider,
+         std::unique_ptr<Transport> transport, std::uint64_t retry_jitter_seed = 0,
+         WorkerTimeSource time = {}, ToolRegistry tools = {});
 };
 
 } // namespace scry::detail

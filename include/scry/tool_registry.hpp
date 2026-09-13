@@ -11,6 +11,10 @@
 
 namespace scry {
 
+namespace detail {
+class ToolRegistryAccess;
+} // namespace detail
+
 /// Provider-visible definition of an explicitly registered tool.
 struct ToolDefinition {
   /// Unique tool name exposed to the model.
@@ -28,26 +32,50 @@ struct ToolDefinition {
 /// contain valid JSON. Typed C++ handlers can instead use scry::reflection.
 using ToolHandler = UniqueFunction<Result<Json>(Json)>;
 
-/// Harness-owned, additive registry of model-callable tools.
+/// Additive registry of model-callable tools.
+///
+/// A registry is a standalone value: build one and export its manifest without a
+/// Harness, provider configuration, or network stack. Harness::create() takes
+/// ownership of a registry and exposes it through Harness::tools(), where
+/// registration continues to work after creation. A moved-from registry is
+/// inactive and every operation on it reports emptiness or
+/// ErrorCategory::invalid_state.
 ///
 /// Registrations are snapshotted when a turn is accepted. Adding a tool therefore
 /// affects only later turns. Duplicate names are rejected and registrations cannot be
-/// replaced or removed.
+/// replaced or removed. Use one registry from one host thread.
 class ToolRegistry final {
 public:
-  /// Destroys the registry after its owning Harness has stopped using it.
+  /// Creates an empty, active registry that any host thread can populate.
+  ToolRegistry();
+
+  /// Destroys the registry and its registrations.
   ~ToolRegistry();
+
+  /// Moves ownership of the registrations, leaving the source inactive.
+  ToolRegistry(ToolRegistry&&) noexcept;
+
+  /// Replaces this registry with another moved registry.
+  /// @return This registry.
+  ToolRegistry& operator=(ToolRegistry&&) noexcept;
+
+  /// Registries are not copyable.
+  ToolRegistry(const ToolRegistry&) = delete;
+
+  /// Registries are not copy-assignable.
+  ToolRegistry& operator=(const ToolRegistry&) = delete;
 
   /// Registers an explicit-schema tool.
   ///
   /// The handler executes synchronously inside Harness::update() on its calling thread.
   /// @param definition Valid provider-visible name, description, and object schema.
   /// @param handler Move-only callable that receives canonical argument JSON.
-  /// @return Success, or an immediate validation/duplicate-name error.
+  /// @return Success, an immediate validation/duplicate-name error, or
+  /// ErrorCategory::invalid_state for an inactive registry.
   [[nodiscard]] Status add(ToolDefinition definition, ToolHandler handler);
 
   /// Returns the number of registrations currently available to future turns.
-  /// @return Registration count.
+  /// @return Registration count, or 0 for an inactive registry.
   [[nodiscard]] std::size_t size() const noexcept;
 
   /// Reports whether no tools are registered.
@@ -69,11 +97,10 @@ public:
   /// The version-1 document contains a tools array in registration order. Each
   /// entry contains name, description, and input_schema (a JSON object). Both
   /// explicit and reflected registrations are included. Export does not invoke
-  /// handlers or contact a provider; the caller owns writing the returned text.
-  /// Later registrations appear only in subsequent exports, independently of any
+  /// handlers or contact a provider, and needs no Harness: a registry built on
+  /// its own exports the same manifest a Harness-owned one would. Later
+  /// registrations appear only in subsequent exports, independently of any
   /// in-flight turn's frozen tool set. Object keys are emitted in lexical order.
-  /// The registry requires a successfully created Harness, including libcurl
-  /// 7.84 or newer with thread-safe global initialization and a worker thread.
   /// @return Canonical JSON, or ErrorCategory::invalid_state if the registry is
   /// inactive or its manifest cannot be encoded.
   [[nodiscard]] Result<Json> to_json() const;
@@ -81,16 +108,9 @@ public:
 private:
   class Impl;
 
-  ToolRegistry(ToolRegistry&&) noexcept;
-  ToolRegistry& operator=(ToolRegistry&&) noexcept;
-  ToolRegistry(const ToolRegistry&) = delete;
-  ToolRegistry& operator=(const ToolRegistry&) = delete;
-
-  explicit ToolRegistry(std::unique_ptr<Impl> impl) noexcept;
-
   std::unique_ptr<Impl> impl_;
 
-  friend class Harness;
+  friend class detail::ToolRegistryAccess;
 };
 
 } // namespace scry
