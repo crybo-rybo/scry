@@ -136,6 +136,7 @@ static_assert(requires(const scry::Config& config) {
 static_assert(requires(const scry::ToolRegistry& registry) {
   { registry.contains(std::string_view{}) } -> std::same_as<bool>;
   { registry.names() } -> std::same_as<std::vector<std::string>>;
+  { registry.to_json() } -> std::same_as<scry::Result<scry::Json>>;
 });
 static_assert(requires(const scry::Conversation& conversation) {
   { conversation.messages() } -> std::same_as<const std::vector<scry::Message>&>;

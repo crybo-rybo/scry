@@ -492,3 +492,24 @@ TEST_CASE("reflected registration lowers into the additive registry") {
   REQUIRE(status);
   CHECK(harness.tools().size() == 2);
 }
+
+TEST_CASE("tool manifests include reflected and explicit contracts together") {
+  auto harness = scry::Harness::create(test_config());
+  REQUIRE(harness);
+  REQUIRE(scry::reflection::add<PresenceArguments>(
+      harness->tools(), {.name = "presence", .description = "Reflected arguments"},
+      DirectHandler{}));
+  REQUIRE(harness->tools().add(
+      {.name = "explicit",
+       .description = "Explicit arguments",
+       .input_schema = {.text = R"({"type":"object"})"}},
+      [](scry::Json input) -> scry::Result<scry::Json> { return input; }));
+
+  const auto manifest = harness->tools().to_json();
+  REQUIRE(manifest);
+  CHECK(
+      manifest->text ==
+      std::string{R"({"tools":[{"description":"Reflected arguments","input_schema":)"} +
+          std::string{scry::reflection::input_schema_v<PresenceArguments>} +
+          R"(,"name":"presence"},{"description":"Explicit arguments","input_schema":{"type":"object"},"name":"explicit"}],"version":1})");
+}

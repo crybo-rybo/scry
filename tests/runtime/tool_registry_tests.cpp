@@ -1,7 +1,10 @@
 #include "runtime/tool_registry_impl.hpp"
 
 #include <catch2/catch_test_macros.hpp>
+#include <cstdint>
+#include <limits>
 #include <memory>
+#include <scry/harness.hpp>
 #include <scry/tool_registry.hpp>
 #include <string>
 #include <type_traits>
@@ -31,6 +34,86 @@ handler(const std::shared_ptr<int>& calls = std::make_shared<int>(0)) {
 }
 
 } // namespace
+
+TEST_CASE("tool manifests export the current registry without invoking handlers") {
+  auto harness = scry::Harness::create({
+      .base_url = "http://127.0.0.1:1",
+      .model = "test-model",
+      .dialect = scry::ProviderDialect::openai_compatible,
+  });
+  REQUIRE(harness);
+  const auto empty = harness->tools().to_json();
+  REQUIRE(empty);
+  CHECK(empty->text == R"({"tools":[],"version":1})");
+
+  auto calls = std::make_shared<int>(0);
+  REQUIRE(harness->tools().add(definition(), handler(calls)));
+  const auto first = harness->tools().to_json();
+  REQUIRE(first);
+  CHECK(
+      first->text ==
+      R"({"tools":[{"description":"Get a forecast","input_schema":{"properties":{"city":{"description":"Place","type":"string"}},"required":["city"],"type":"object"},"name":"forecast"}],"version":1})");
+  const auto repeated = harness->tools().to_json();
+  REQUIRE(repeated);
+  CHECK(repeated->text == first->text);
+
+  REQUIRE_FALSE(harness->tools().add(definition(), handler(calls)));
+  REQUIRE_FALSE(harness->tools().add(definition("invalid", "{"), handler(calls)));
+  REQUIRE(harness->tools().add(definition("another", R"({"type":"object"})"),
+                               handler(calls)));
+  const auto later = harness->tools().to_json();
+  REQUIRE(later);
+  const auto parsed = scry::JsonView::parse(*later);
+  REQUIRE(parsed);
+  const auto tools = parsed->find("tools");
+  REQUIRE(tools);
+  REQUIRE(tools->size() == 2);
+  CHECK(tools->at(0)->find("name")->string() == "forecast");
+  CHECK(tools->at(1)->find("name")->string() == "another");
+  CHECK(first->text.find("another") == std::string::npos);
+  CHECK(empty->text == R"({"tools":[],"version":1})");
+  CHECK(*calls == 0);
+}
+
+TEST_CASE("tool manifests preserve escaped metadata and nested schema values") {
+  auto harness = scry::Harness::create({
+      .base_url = "http://127.0.0.1:1",
+      .model = "test-model",
+      .dialect = scry::ProviderDialect::openai_compatible,
+  });
+  REQUIRE(harness);
+  const std::string name = "quoted\"tool\\name";
+  const std::string description = "First line\nSecond\tline — café";
+  REQUIRE(harness->tools().add(
+      {
+          .name = name,
+          .description = description,
+          .input_schema =
+              {.text =
+                   R"({"type":"object","properties":{"items":{"type":"array","items":{"enum":["a","b"]}},"limit":{"default":18446744073709551615}},"additionalProperties":false})"},
+      },
+      handler()));
+  const auto manifest = harness->tools().to_json();
+  REQUIRE(manifest);
+  const auto parsed = scry::JsonView::parse(*manifest);
+  REQUIRE(parsed);
+  const auto tools = parsed->find("tools");
+  REQUIRE(tools);
+  REQUIRE(tools->size() == 1);
+  const auto tool = tools->at(0);
+  REQUIRE(tool);
+  CHECK(tool->find("name")->string() == name);
+  CHECK(tool->find("description")->string() == description);
+  const auto schema = tool->find("input_schema");
+  REQUIRE(schema);
+  CHECK(schema->kind() == scry::JsonKind::object);
+  CHECK(schema->find("additionalProperties")->boolean() == false);
+  const auto properties = schema->find("properties");
+  REQUIRE(properties);
+  CHECK(properties->find("items")->find("items")->find("enum")->size() == 2);
+  CHECK(properties->find("limit")->find("default")->unsigned_integer() ==
+        std::numeric_limits<std::uint64_t>::max());
+}
 
 TEST_CASE("tool registration accepts only JSON object schemas and canonicalizes them") {
   scry::detail::ToolRegistryState state{};

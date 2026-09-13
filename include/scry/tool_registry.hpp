@@ -64,6 +64,18 @@ public:
   /// @return The names, or an empty vector for an inactive registry.
   [[nodiscard]] std::vector<std::string> names() const;
 
+  /// Exports the currently registered LLM tool contracts as a JSON manifest.
+  ///
+  /// The version-1 document contains a tools array in registration order. Each
+  /// entry contains name, description, and input_schema (a JSON object). Both
+  /// explicit and reflected registrations are included. Export does not invoke
+  /// handlers or contact a provider; the caller owns writing the returned text.
+  /// Later registrations appear only in subsequent exports, independently of any
+  /// in-flight turn's frozen tool set.
+  /// @return Canonical JSON, or ErrorCategory::invalid_state if the registry is
+  /// inactive or its manifest cannot be encoded.
+  [[nodiscard]] Result<Json> to_json() const;
+
 private:
   class Impl;
 

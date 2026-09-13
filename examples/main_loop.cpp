@@ -4,6 +4,7 @@
 #include <scry/reflection.hpp>
 #include <scry/scry.hpp>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <type_traits>
 #include <utility>
@@ -129,6 +130,17 @@ struct StatusResult {
       echo_handler());
 }
 
+[[nodiscard]] int print_tool_manifest(const scry::ToolRegistry& tools) {
+  const auto manifest = tools.to_json();
+  if (!manifest) {
+    std::cerr << manifest.error().message << '\n';
+    return 1;
+  }
+  std::cout << manifest->text << '\n';
+  std::cout.flush();
+  return std::cout ? 0 : 1;
+}
+
 void print_block(const scry::ContentBlock& block) {
   std::visit(
       [](const auto& value) {
@@ -177,7 +189,12 @@ void print_history(const scry::Conversation& conversation) {
 
 } // namespace
 
-int main() {
+int main(int argc, char* argv[]) {
+  const bool export_tools = argc == 2 && std::string_view{argv[1]} == "--tool-manifest";
+  if (argc != 1 && !export_tools) {
+    std::cerr << "Usage: " << argv[0] << " [--tool-manifest]\n";
+    return 1;
+  }
   // The Application outlives the Harness on purpose. The tool handlers and the
   // turn callbacks below capture it by reference, and a Harness delivers nothing
   // after its destructor begins, so the Harness must be destroyed first. Declaring
@@ -214,6 +231,10 @@ int main() {
   if (const auto registered = register_tools(harness.tools(), app); !registered) {
     std::cerr << registered.error().message << '\n';
     return 1;
+  }
+
+  if (export_tools) {
+    return print_tool_manifest(harness.tools());
   }
 
   auto conversation_result = scry::Conversation::create({
