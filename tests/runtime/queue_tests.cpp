@@ -44,7 +44,7 @@ TEST_CASE("payload accounting sums text, tool call, and tool result blocks") {
   // was already reserved against the Conversation budget.
   const scry::detail::WorkerEvent event{scry::detail::CompletionEvent{
       .turn_id = {.value = 201},
-      .exchange = {message},
+      .transcript = {message},
       .attempt_count = 1,
       .provider_request_id = "req",
   }};

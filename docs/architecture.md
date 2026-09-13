@@ -72,7 +72,9 @@ at least one event before checking time and delivers at least one pending
 callback or tool call if `max_callbacks` permits. Tool dispatch counts as one
 unit against that limit, including its optional `on_tool_call` observer.
 `max_callbacks = 0` prevents dispatch and callback delivery but still allows
-terminal events to commit history and clear busy state.
+terminal events to commit history and clear busy state. Route cleanup runs on
+every update; only the release of discarded events is deferred when the budget
+runs out.
 
 Adjacent worker text events are coalesced, and the pump combines pending text
 for each turn. Queue byte accounting includes events retained by the pump until
@@ -111,8 +113,10 @@ Disconnecting does not cancel tools, and the host must keep pumping for the turn
 to finish.
 
 `Turn::finished()` becomes true after terminal callback delivery, or after
-terminal processing when no terminal callback is attached. Moved-from handles
-and handles whose Harness is gone also report true. Dropping a Conversation
+terminal processing when no terminal callback is attached. Once a turn is
+finished the runtime releases its callbacks and tool snapshot even while a
+handle is retained; the handle then reports identity and status only. Moved-from
+handles and handles whose Harness is gone also report true. Dropping a Conversation
 handle does not cancel an accepted turn: the runtime retains its state.
 
 Harness destruction waits for the worker. The transport checks shutdown between
@@ -398,6 +402,8 @@ semantic failure-as-value contract.
 
 Successful terminal processing in `update()` commits the user message, tool
 rounds, and final assistant response together, before terminal callback delivery.
+They arrive as one transcript: the machine keeps a single message list, resends
+it each round, and hands that same list to the pump.
 Failure or cancellation commits nothing. A completion can have a `length` or
 `unknown` finish reason; inspect `Completion::finish_reason` when the application
 requires an untruncated answer. Text deltas can include intermediate tool rounds;

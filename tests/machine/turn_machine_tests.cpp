@@ -69,10 +69,13 @@ TEST_CASE("non-streaming completion emits one transactional commit intent") {
   CHECK(command.attempt_count == 1);
   CHECK(command.provider_request_id == "provider-id");
   CHECK(command.usage.input_tokens == 4);
-  REQUIRE(command.exchange.size() == 1);
-  CHECK(command.exchange.front().role == scry::detail::Role::assistant);
-  REQUIRE(command.exchange.front().content.size() == 1);
-  CHECK(std::get<scry::detail::TextBlock>(command.exchange.front().content.front())
+  // The transcript is the request's own message list, so it opens with the user
+  // message the turn was built from and ends with the assistant reply.
+  REQUIRE(command.transcript.size() == 2);
+  CHECK(command.transcript.front().role == scry::detail::Role::user);
+  CHECK(command.transcript.back().role == scry::detail::Role::assistant);
+  REQUIRE(command.transcript.back().content.size() == 1);
+  CHECK(std::get<scry::detail::TextBlock>(command.transcript.back().content.front())
             .text == "answer");
   CHECK(machine.phase() == scry::detail::MachinePhase::terminal);
 }
@@ -90,8 +93,9 @@ TEST_CASE("empty text blocks are dropped before the exchange is committed") {
       machine.apply(scry::detail::ModelCompleted{.response = std::move(response)});
   const auto& command = only_command<scry::detail::CommitCompletion>(result);
 
-  REQUIRE(command.exchange.size() == 1);
-  const auto& assistant = command.exchange.front();
+  // The transcript opens with the turn's user message.
+  REQUIRE(command.transcript.size() == 2);
+  const auto& assistant = command.transcript.back();
   CHECK(assistant.role == scry::detail::Role::assistant);
   REQUIRE(assistant.content.size() == 1);
   CHECK(std::get<scry::detail::TextBlock>(assistant.content.front()).text == "hi");
@@ -150,8 +154,9 @@ TEST_CASE("a tool round starts without the response's empty text block") {
   });
   const auto& commit = only_command<scry::detail::CommitCompletion>(completed);
 
-  REQUIRE(commit.exchange.size() == 3);
-  const auto& assistant = commit.exchange.front();
+  // user, assistant tool round, tool results, final assistant.
+  REQUIRE(commit.transcript.size() == 4);
+  const auto& assistant = commit.transcript[1];
   CHECK(assistant.role == scry::detail::Role::assistant);
   REQUIRE(assistant.content.size() == 1);
   CHECK(std::get<scry::detail::ToolCallBlock>(assistant.content.front()).id ==

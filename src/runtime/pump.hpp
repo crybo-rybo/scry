@@ -28,8 +28,7 @@ class TurnRoute final {
 public:
   TurnRoute(TurnId turn_id, std::shared_ptr<std::atomic<bool>> cancelled,
             std::weak_ptr<CommandQueue> commands,
-            std::shared_ptr<ConversationState> conversation, std::string user_message,
-            TurnRouteOptions options);
+            std::shared_ptr<ConversationState> conversation, TurnRouteOptions options);
 
   [[nodiscard]] TurnId id() const noexcept;
   [[nodiscard]] std::shared_ptr<std::atomic<bool>> cancel_flag() const noexcept;
@@ -42,11 +41,20 @@ public:
   [[nodiscard]] bool finished() const noexcept;
   void mark_terminal() noexcept;
 
+  // Pending-event bookkeeping, maintained by PumpState: one increment per entry
+  // the pump retains for this route, one decrement per entry it drops.
+  void note_pending() noexcept;
+  void note_delivered() noexcept;
+  [[nodiscard]] std::size_t pending_events() const noexcept;
+  // Drops the host captures and the tool snapshot a running turn needed. Only
+  // legal once finished() with no pending event left to deliver, and idempotent
+  // because finished() stays true once the callbacks are gone.
+  void retire() noexcept;
+
   [[nodiscard]] bool has_callback(const WorkerEvent& event) const noexcept;
   void invoke(const WorkerEvent& event);
 
   [[nodiscard]] const std::shared_ptr<ConversationState>& conversation() const noexcept;
-  [[nodiscard]] const std::string& user_message() const noexcept;
   [[nodiscard]] std::size_t max_conversation_bytes() const noexcept;
 
 private:
@@ -57,11 +65,11 @@ private:
   std::shared_ptr<std::atomic<bool>> cancelled_{};
   std::weak_ptr<CommandQueue> commands_{};
   std::shared_ptr<ConversationState> conversation_{};
-  std::string user_message_{};
   FrozenToolEntries tools_{};
   std::size_t max_tool_result_bytes_{};
   std::size_t remaining_exchange_bytes_{std::numeric_limits<std::size_t>::max()};
   std::size_t max_conversation_bytes_{};
+  std::size_t pending_events_{};
   bool attached_{true};
   bool disconnected_{false};
   bool invoking_{false};

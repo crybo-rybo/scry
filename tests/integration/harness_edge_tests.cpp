@@ -570,3 +570,25 @@ TEST_CASE("send_and_wait disconnects its turn when another turn's callback throw
   REQUIRE(pump_until(fixture.harness, [&second] { return !second.busy(); }));
   CHECK(second.message_count() == 2);
 }
+
+// A retained Turn handle keeps identity and status, not the host state the
+// runtime needed while the turn was running.
+TEST_CASE("a finished turn releases its callback captures while its handle lives") {
+  auto fixture =
+      make_harness_fixture(test_config(), {scripted_exchange(completed_stream)});
+  auto captured = std::make_shared<int>(5);
+  const std::weak_ptr<int> observed = captured;
+  bool finished = false;
+
+  auto turn = unwrap(fixture.harness.send(
+      fixture.conversation, "release the captures",
+      {
+          .on_finished = [&finished, held = std::move(captured)](
+                             scry::Result<scry::Completion>) { finished = *held == 5; },
+      }));
+
+  REQUIRE(pump_until(fixture.harness, [&turn] { return turn.finished(); }));
+  CHECK(finished);
+  CHECK(turn.finished());
+  CHECK(observed.expired());
+}

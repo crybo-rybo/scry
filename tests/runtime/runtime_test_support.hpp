@@ -68,14 +68,23 @@ struct CompletionOptions {
   std::string provider_request_id{"request-id"};
 };
 
+// The transcript a completion carries is the turn's whole message list, so it
+// opens with the user message the turn was sent with.
 [[nodiscard]] inline scry::detail::CompletionEvent
 completion_event(const scry::TurnId turn_id, CompletionOptions options = {}) {
   return {
       .turn_id = turn_id,
-      .exchange = {scry::detail::Message{
-          .role = scry::detail::Role::assistant,
-          .content = {scry::detail::TextBlock{.text = std::move(options.text)}},
-      }},
+      .transcript =
+          {
+              scry::detail::Message{
+                  .role = scry::detail::Role::user,
+                  .content = {scry::detail::TextBlock{.text = "question"}},
+              },
+              scry::detail::Message{
+                  .role = scry::detail::Role::assistant,
+                  .content = {scry::detail::TextBlock{.text = std::move(options.text)}},
+              },
+          },
       .finish_reason = scry::FinishReason::completed,
       .attempt_count = options.attempt_count,
       .provider_request_id = std::move(options.provider_request_id),
@@ -105,7 +114,7 @@ struct PumpFixture {
   route(const std::uint64_t id, RouteOptions options = {}) const {
     return std::make_shared<scry::detail::TurnRoute>(
         scry::TurnId{.value = id}, std::make_shared<std::atomic<bool>>(false), commands,
-        conversation, "question",
+        conversation,
         scry::detail::TurnRouteOptions{
             .tools = std::move(options.tools),
             .max_tool_result_bytes = options.max_tool_result_bytes,

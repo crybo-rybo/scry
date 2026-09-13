@@ -59,10 +59,10 @@ private:
 TurnRoute::TurnRoute(const TurnId turn_id, std::shared_ptr<std::atomic<bool>> cancelled,
                      std::weak_ptr<CommandQueue> commands,
                      std::shared_ptr<ConversationState> conversation,
-                     std::string user_message, TurnRouteOptions options)
+                     TurnRouteOptions options)
     : turn_id_(turn_id), cancelled_(std::move(cancelled)),
       commands_(std::move(commands)), conversation_(std::move(conversation)),
-      user_message_(std::move(user_message)), tools_(std::move(options.tools)),
+      tools_(std::move(options.tools)),
       max_tool_result_bytes_(options.max_tool_result_bytes),
       remaining_exchange_bytes_(options.max_exchange_bytes),
       max_conversation_bytes_(options.max_conversation_bytes),
@@ -117,6 +117,25 @@ bool TurnRoute::finished() const noexcept {
 }
 
 void TurnRoute::mark_terminal() noexcept { terminal_ = true; }
+
+void TurnRoute::note_pending() noexcept { ++pending_events_; }
+
+void TurnRoute::note_delivered() noexcept {
+  if (pending_events_ != 0) {
+    --pending_events_;
+  }
+}
+
+std::size_t TurnRoute::pending_events() const noexcept { return pending_events_; }
+
+// A finished turn never dispatches another tool or reports another outcome, so
+// the host closures and the frozen tool snapshot are dead weight from here on.
+// Everything the handle still answers for - identity, cancel flag, terminal and
+// finished state - is left untouched.
+void TurnRoute::retire() noexcept {
+  callbacks_ = TurnCallbacks{};
+  tools_.reset();
+}
 
 bool TurnRoute::has_callback(const WorkerEvent& event) const noexcept {
   return std::visit(
@@ -234,8 +253,6 @@ void TurnRoute::notify_tool_observer(const ToolCallBlock& call,
 const std::shared_ptr<ConversationState>& TurnRoute::conversation() const noexcept {
   return conversation_;
 }
-
-const std::string& TurnRoute::user_message() const noexcept { return user_message_; }
 
 std::size_t TurnRoute::max_conversation_bytes() const noexcept {
   return max_conversation_bytes_;
