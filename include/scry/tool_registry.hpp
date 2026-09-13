@@ -71,7 +71,9 @@ public:
   /// explicit and reflected registrations are included. Export does not invoke
   /// handlers or contact a provider; the caller owns writing the returned text.
   /// Later registrations appear only in subsequent exports, independently of any
-  /// in-flight turn's frozen tool set.
+  /// in-flight turn's frozen tool set. Object keys are emitted in lexical order.
+  /// The registry requires a successfully created Harness, including libcurl
+  /// 7.84 or newer with thread-safe global initialization and a worker thread.
   /// @return Canonical JSON, or ErrorCategory::invalid_state if the registry is
   /// inactive or its manifest cannot be encoded.
   [[nodiscard]] Result<Json> to_json() const;

@@ -129,7 +129,11 @@ struct StatusResult {
   }
   std::cout << manifest->text << '\n';
   std::cout.flush();
-  return std::cout ? 0 : 1;
+  if (!std::cout) {
+    std::cerr << "Failed to write tool manifest to stdout\n";
+    return 1;
+  }
+  return 0;
 }
 
 void print_block(const scry::ContentBlock& block) {
@@ -184,7 +188,8 @@ void print_history(const scry::Conversation& conversation) {
 int main(int argc, char* argv[]) {
   const bool export_tools = argc == 2 && std::string_view{argv[1]} == "--tool-manifest";
   if (argc != 1 && !export_tools) {
-    std::cerr << "Usage: " << argv[0] << " [--tool-manifest]\n";
+    std::cerr << "Usage: " << (argc > 0 ? argv[0] : "scry_canonical_example")
+              << " [--tool-manifest]\n";
     return 1;
   }
   // Declared before the harness on purpose: the tool handlers and turn callbacks

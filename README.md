@@ -128,8 +128,9 @@ if (!manifest) { std::cerr << manifest.error().message << '\n'; return 1; }
 std::cout << manifest->text << '\n';
 ```
 
-The document has the shape `{"tools":[{"name":"...","description":"...",
-"input_schema":{...}}],"version":1}`. Tools appear in registration order;
+The document has the shape `{"tools":[{"description":"...",
+"input_schema":{...},"name":"..."}],"version":1}`. Object keys are emitted in
+lexical order. Tools appear in registration order;
 schemas are JSON objects, not JSON-encoded strings. Export does not call tool
 handlers or send an LLM request. It captures registrations at the time of the
 call, so run the same registration path and configuration used by your app.
@@ -141,7 +142,10 @@ The canonical example supports writing an artifact without a running model:
 ```
 
 A consumer can use the same pattern in its own executable and run it from a
-build or CI step to generate the artifact.
+build or CI step to generate the artifact. The registry is owned by a `Harness`,
+so this path still requires successful `Harness::create()`: libcurl 7.84 or
+newer with thread-safe global initialization and permission to start a worker
+thread. Export itself performs no network I/O.
 
 ## How it works
 

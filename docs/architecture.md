@@ -160,7 +160,12 @@ envelopes. The export includes both registration paths, invokes no handlers, and
 makes no provider request. It reads the current registry rather than an active
 turn's frozen snapshot, and returns owned text that later registrations do not
 change. The host owns writing that text to a file or running the export as a
-build step; only tools registered on that execution path are included.
+build step; only tools registered on that execution path are included. Registry
+access still requires successful Harness creation, including libcurl global
+initialization and worker-thread startup. The manifest version is independent
+of the library version: incompatible changes to its structure or field meanings
+increment it; additive fields keep the version, and consumers should ignore
+unknown fields.
 
 ### Reflected tools
 

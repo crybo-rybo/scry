@@ -1,4 +1,5 @@
 #include "runtime/tool_registry_impl.hpp"
+#include "support/harness_test_support.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 #include <cstdint>
@@ -36,11 +37,7 @@ handler(const std::shared_ptr<int>& calls = std::make_shared<int>(0)) {
 } // namespace
 
 TEST_CASE("tool manifests export the current registry without invoking handlers") {
-  auto harness = scry::Harness::create({
-      .base_url = "http://127.0.0.1:1",
-      .model = "test-model",
-      .dialect = scry::ProviderDialect::openai_compatible,
-  });
+  auto harness = scry::Harness::create(scry::test_support::test_config());
   REQUIRE(harness);
   const auto empty = harness->tools().to_json();
   REQUIRE(empty);
@@ -76,11 +73,7 @@ TEST_CASE("tool manifests export the current registry without invoking handlers"
 }
 
 TEST_CASE("tool manifests preserve escaped metadata and nested schema values") {
-  auto harness = scry::Harness::create({
-      .base_url = "http://127.0.0.1:1",
-      .model = "test-model",
-      .dialect = scry::ProviderDialect::openai_compatible,
-  });
+  auto harness = scry::Harness::create(scry::test_support::test_config());
   REQUIRE(harness);
   const std::string name = "quoted\"tool\\name";
   const std::string description = "First line\nSecond\tline — café";
