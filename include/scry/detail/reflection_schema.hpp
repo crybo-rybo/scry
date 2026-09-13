@@ -116,14 +116,29 @@ template <std::meta::info Member> consteval std::size_t description_annotation_c
   return count;
 }
 
-consteval void append_description_key(std::vector<char>& output,
-                                      const std::string_view text, bool& needs_comma) {
-  if (needs_comma) {
+// Schema keys are emitted in sorted order, so "description" comes first in most
+// schemas but after the "additionalProperties" of an aggregate and the "anyOf" of an
+// optional. These two helpers cover both placements.
+
+consteval void
+append_schema_prologue(std::vector<char>& output,
+                       const std::optional<std::string_view> description_text) {
+  output.push_back('{');
+  if (description_text.has_value()) {
+    append_literal(output, "\"description\":");
+    append_quoted(output, *description_text);
     output.push_back(',');
   }
-  append_literal(output, "\"description\":");
-  append_quoted(output, text);
-  needs_comma = true;
+}
+
+consteval void
+append_description_key(std::vector<char>& output,
+                       const std::optional<std::string_view> description_text) {
+  if (!description_text.has_value()) {
+    return;
+  }
+  append_literal(output, ",\"description\":");
+  append_quoted(output, *description_text);
 }
 
 template <typename Type>
@@ -159,10 +174,7 @@ append_aggregate_schema(std::vector<char>& output,
                         const std::optional<std::string_view> description_text) {
   output.push_back('{');
   append_literal(output, "\"additionalProperties\":false");
-  if (description_text.has_value()) {
-    append_literal(output, ",\"description\":");
-    append_quoted(output, *description_text);
-  }
+  append_description_key(output, description_text);
   append_literal(output, ",\"properties\":{");
 
   bool first = true;
@@ -195,14 +207,7 @@ consteval void
 append_described_type(std::vector<char>& output,
                       const std::optional<std::string_view> description_text,
                       const std::string_view type) {
-  output.push_back('{');
-  bool needs_comma = false;
-  if (description_text.has_value()) {
-    append_description_key(output, *description_text, needs_comma);
-  }
-  if (needs_comma) {
-    output.push_back(',');
-  }
+  append_schema_prologue(output, description_text);
   append_literal(output, "\"type\":");
   append_quoted(output, type);
   output.push_back('}');
@@ -212,14 +217,7 @@ template <typename Integer>
 consteval void
 append_integer_schema(std::vector<char>& output,
                       const std::optional<std::string_view> description_text) {
-  output.push_back('{');
-  bool needs_comma = false;
-  if (description_text.has_value()) {
-    append_description_key(output, *description_text, needs_comma);
-  }
-  if (needs_comma) {
-    output.push_back(',');
-  }
+  append_schema_prologue(output, description_text);
   append_literal(output, "\"maximum\":");
   append_integer(output, std::numeric_limits<Integer>::max());
   append_literal(output, ",\"minimum\":");
@@ -231,14 +229,7 @@ template <typename Enum>
 consteval void
 append_enum_schema(std::vector<char>& output,
                    const std::optional<std::string_view> description_text) {
-  output.push_back('{');
-  bool needs_comma = false;
-  if (description_text.has_value()) {
-    append_description_key(output, *description_text, needs_comma);
-  }
-  if (needs_comma) {
-    output.push_back(',');
-  }
+  append_schema_prologue(output, description_text);
   append_literal(output, "\"enum\":[");
   bool first = true;
   static constexpr auto enumerators = declared_enumerators_of<Enum>();
@@ -260,22 +251,14 @@ append_optional_schema(std::vector<char>& output,
   append_literal(output, "{\"anyOf\":[");
   append_schema<Element>(output, std::nullopt);
   append_literal(output, ",{\"type\":\"null\"}]");
-  if (description_text.has_value()) {
-    append_literal(output, ",\"description\":");
-    append_quoted(output, *description_text);
-  }
+  append_description_key(output, description_text);
   output.push_back('}');
 }
 
 consteval void
 append_sequence_prefix(std::vector<char>& output,
                        const std::optional<std::string_view> description_text) {
-  output.push_back('{');
-  if (description_text.has_value()) {
-    append_literal(output, "\"description\":");
-    append_quoted(output, *description_text);
-    output.push_back(',');
-  }
+  append_schema_prologue(output, description_text);
   append_literal(output, "\"items\":");
 }
 

@@ -11,6 +11,10 @@ namespace scry::detail {
 
 [[nodiscard]] bool is_retryable(ErrorCategory category) noexcept;
 
+// splitmix64's finalizer. Spreads a seed whose bits are unevenly distributed
+// (a clock reading, a pointer) across the whole 64-bit range.
+[[nodiscard]] std::uint64_t mix_seed(std::uint64_t value) noexcept;
+
 [[nodiscard]] double retry_jitter_sample(std::uint64_t seed, TurnId turn_id,
                                          std::uint32_t failed_attempt) noexcept;
 

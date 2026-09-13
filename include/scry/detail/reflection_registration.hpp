@@ -13,27 +13,27 @@
 
 namespace scry::reflection::detail {
 
+// Return is never a reference: supported_handler_result_impl rejects reference
+// returns, so ToolHandlerFor already excludes handlers that produce one.
 template <typename Return>
   requires(supported_handler_result_impl<Return>())
-[[nodiscard]] Result<Json> encode_handler_result(Return&& result) {
-  using ResultType = std::remove_cvref_t<Return>;
-  if constexpr (expected_traits<ResultType>::recognized) {
-    using Value = typename expected_traits<ResultType>::value_type;
+[[nodiscard]] Result<Json> encode_handler_result(Return result) {
+  if constexpr (expected_traits<Return>::recognized) {
+    using Value = typename expected_traits<Return>::value_type;
     if (!result) {
       return std::unexpected(std::move(result.error()));
     }
     return encode_value<Value>(*result);
   } else {
-    return encode_value<ResultType>(result);
+    return encode_value<Return>(result);
   }
 }
 
 template <ToolArguments Args, typename Handler>
   requires ToolHandlerFor<Handler, Args>
 [[nodiscard]] Result<Json> invoke_and_encode(Handler& handler, Args args) {
-  decltype(auto) result = std::invoke(handler, std::move(args));
-  return encode_handler_result<decltype(result)>(
-      std::forward<decltype(result)>(result));
+  auto result = std::invoke(handler, std::move(args));
+  return encode_handler_result(std::move(result));
 }
 
 template <ToolArguments Args, typename Handler>
@@ -57,12 +57,12 @@ namespace scry::reflection {
 /// Registers a typed reflected tool.
 ///
 /// The argument schema is generated as input_schema_v<Args>, incoming JSON is decoded
-/// strictly, and the typed return is encoded back to JSON. Registration lowers to the
-/// same additive ToolRegistry used by explicit-schema tools.
+/// strictly, and the typed return is encoded back to JSON. The tool is stored in the
+/// same additive ToolRegistry that explicit-schema tools use.
 /// @tparam Args Complete reflected argument aggregate.
 /// @tparam Handler Move-constructible callable satisfying ToolHandlerFor<Handler,
 /// Args>.
-/// @param registry Harness-owned registry that receives the lowered tool.
+/// @param registry Harness-owned registry that receives the tool.
 /// @param metadata Provider-visible tool name and description.
 /// @param handler Callable invoked with Args moved by value.
 /// @return Success, or the explicit registry's immediate validation error.

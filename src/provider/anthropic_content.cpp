@@ -59,9 +59,9 @@ namespace {
   if (!count) {
     return std::unexpected(std::move(count.error()));
   }
-  const auto parsed_count = *count;
-  if (parsed_count) {
-    destination = *parsed_count;
+  const auto parsed = *count;
+  if (parsed) {
+    destination = *parsed;
   }
   return {};
 }

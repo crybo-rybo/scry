@@ -1,6 +1,6 @@
 #include "core/model.hpp"
-#include "runtime/messages.hpp"
 #include "runtime/queue.hpp"
+#include "runtime/worker_messages.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 #include <chrono>

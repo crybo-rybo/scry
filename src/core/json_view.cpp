@@ -9,6 +9,12 @@
 namespace scry {
 namespace {
 
+// JsonView stores its node as a void* so the public header stays free of
+// third-party types; every accessor recovers the real node through here.
+[[nodiscard]] const detail::JsonValue* node(const void* value) noexcept {
+  return static_cast<const detail::JsonValue*>(value);
+}
+
 void append_control_escape(std::string& output, const unsigned char value) {
   constexpr char hexadecimal[] = "0123456789abcdef";
   output.append("\\u00");
@@ -26,8 +32,6 @@ public:
 JsonView::JsonView(std::shared_ptr<const Document> document, const void* value) noexcept
     : document_(std::move(document)), value_(value) {}
 
-// The value is parsed in place because GCC 14 reports a maybe-uninitialized false
-// positive inside std::variant when a JsonValue is moved into the document.
 Result<JsonView> JsonView::parse(const Json& json) {
   auto document = std::make_shared<Document>();
   if (auto status = detail::parse_json_into(document->root, json.text,
@@ -40,7 +44,7 @@ Result<JsonView> JsonView::parse(const Json& json) {
 }
 
 JsonKind JsonView::kind() const noexcept {
-  const auto* value = static_cast<const detail::JsonValue*>(value_);
+  const auto* value = node(value_);
   if (value == nullptr || value->is_null()) {
     return JsonKind::null;
   }
@@ -66,7 +70,7 @@ JsonKind JsonView::kind() const noexcept {
 }
 
 std::optional<bool> JsonView::boolean() const noexcept {
-  const auto* value = static_cast<const detail::JsonValue*>(value_);
+  const auto* value = node(value_);
   if (value == nullptr || !value->is_boolean()) {
     return std::nullopt;
   }
@@ -74,7 +78,7 @@ std::optional<bool> JsonView::boolean() const noexcept {
 }
 
 std::optional<std::int64_t> JsonView::signed_integer() const noexcept {
-  const auto* value = static_cast<const detail::JsonValue*>(value_);
+  const auto* value = node(value_);
   if (value == nullptr || !value->is_int64()) {
     return std::nullopt;
   }
@@ -82,7 +86,7 @@ std::optional<std::int64_t> JsonView::signed_integer() const noexcept {
 }
 
 std::optional<std::uint64_t> JsonView::unsigned_integer() const noexcept {
-  const auto* value = static_cast<const detail::JsonValue*>(value_);
+  const auto* value = node(value_);
   if (value == nullptr || !value->is_uint64()) {
     return std::nullopt;
   }
@@ -90,7 +94,7 @@ std::optional<std::uint64_t> JsonView::unsigned_integer() const noexcept {
 }
 
 std::optional<double> JsonView::number() const noexcept {
-  const auto* value = static_cast<const detail::JsonValue*>(value_);
+  const auto* value = node(value_);
   if (value == nullptr || !value->is_number()) {
     return std::nullopt;
   }
@@ -98,7 +102,7 @@ std::optional<double> JsonView::number() const noexcept {
 }
 
 std::optional<std::string_view> JsonView::string() const noexcept {
-  const auto* value = static_cast<const detail::JsonValue*>(value_);
+  const auto* value = node(value_);
   if (value == nullptr || !value->is_string()) {
     return std::nullopt;
   }
@@ -106,7 +110,7 @@ std::optional<std::string_view> JsonView::string() const noexcept {
 }
 
 std::size_t JsonView::size() const noexcept {
-  const auto* value = static_cast<const detail::JsonValue*>(value_);
+  const auto* value = node(value_);
   if (value == nullptr) {
     return 0;
   }
@@ -120,7 +124,7 @@ std::size_t JsonView::size() const noexcept {
 }
 
 std::optional<JsonView> JsonView::at(const std::size_t index) const noexcept {
-  const auto* value = static_cast<const detail::JsonValue*>(value_);
+  const auto* value = node(value_);
   if (value == nullptr || !value->is_array() || index >= value->get_array().size()) {
     return std::nullopt;
   }
@@ -129,7 +133,7 @@ std::optional<JsonView> JsonView::at(const std::size_t index) const noexcept {
 
 std::optional<std::string_view>
 JsonView::key_at(const std::size_t index) const noexcept {
-  const auto* value = static_cast<const detail::JsonValue*>(value_);
+  const auto* value = node(value_);
   if (value == nullptr || !value->is_object() || index >= value->get_object().size()) {
     return std::nullopt;
   }
@@ -139,7 +143,7 @@ JsonView::key_at(const std::size_t index) const noexcept {
 }
 
 std::optional<JsonView> JsonView::find(const std::string_view name) const noexcept {
-  const auto* value = static_cast<const detail::JsonValue*>(value_);
+  const auto* value = node(value_);
   if (value == nullptr || !value->is_object()) {
     return std::nullopt;
   }

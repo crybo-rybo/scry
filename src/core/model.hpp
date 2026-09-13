@@ -30,21 +30,20 @@ struct ToolSchema {
   Json input_schema{};
 };
 
-// Immutable collections shared across thread and turn boundaries. Ownership is
-// collection-level: a snapshot is one control block rather than one per
-// message or schema, so sharing costs an atomic increment instead of a deep
-// copy, and readers retain locality of the underlying vector.
+// Immutable collections shared across threads and turns. One shared pointer
+// covers the whole vector rather than each element, so handing a snapshot to
+// another turn costs a refcount bump instead of copying every message.
 using HistorySnapshot = std::shared_ptr<const std::vector<Message>>;
 using SchemaSnapshot = std::shared_ptr<const std::vector<ToolSchema>>;
 
 struct ModelRequest {
   std::string system_prompt{};
-  // Committed history shared with the owning Conversation at send time. It is
-  // immutable for the request's lifetime; the Conversation reseats its own
-  // block copy-on-write before a commit if any request still references it.
+  // The Conversation's committed history as of send time, immutable for as long
+  // as this request lives. The Conversation copies its own block before
+  // appending while any request still points at this one.
   HistorySnapshot history{};
-  // Messages introduced by this turn: the user message and each tool round.
-  // The turn machine owns this suffix privately and reseats it copy-on-write.
+  // What this turn adds on top of the history: the user message, then one pair
+  // of messages per tool round. Owned by the turn machine alone.
   std::vector<Message> messages{};
   SchemaSnapshot tools{};
   SamplingConfig sampling{};

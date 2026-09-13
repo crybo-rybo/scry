@@ -29,8 +29,10 @@ namespace {
   return parsed;
 }
 
-[[nodiscard]] Result<std::string> boundary_json_string(const Json& json,
-                                                       const std::string_view name) {
+// Re-serialises host-supplied JSON text so the value that goes on the wire as a
+// JSON string is the parser's own rendering rather than the caller's bytes.
+[[nodiscard]] Result<std::string>
+canonicalize_boundary_json(const Json& json, const std::string_view name) {
   auto parsed = parse_json(json.text, ErrorCategory::invalid_config,
                            "OpenAI " + std::string{name} + " is not valid JSON");
   if (!parsed) {
@@ -72,7 +74,7 @@ namespace {
     return std::unexpected(
         invalid_request("OpenAI tool results require a nonempty call ID"));
   }
-  auto content = boundary_json_string(result.result, "tool result");
+  auto content = canonicalize_boundary_json(result.result, "tool result");
   if (!content) {
     return std::unexpected(std::move(content.error()));
   }

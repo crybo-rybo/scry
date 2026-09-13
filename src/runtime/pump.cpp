@@ -26,11 +26,10 @@ template <typename> inline constexpr bool unhandled_worker_event = false;
   return tools ? *tools : empty;
 }
 
-// Marks a route as invoking for the length of one callback and performs the
-// clear a disconnect made from inside that callback had to defer. It is RAII
-// rather than a statement after the visit because a throwing host callback
-// leaves through update() with the Harness still required to be valid, so the
-// clear has to happen on the exception path too.
+// Marks a route as running a callback, and on the way out performs the clear
+// that a disconnect made from inside that callback had to defer. It is a guard
+// rather than a statement after the call because a host callback may throw, and
+// the Harness has to stay valid on that path too.
 class InvocationGuard final {
 public:
   InvocationGuard(bool& invoking, const bool& disconnected,
@@ -88,16 +87,12 @@ bool TurnRoute::cancel() noexcept {
   return changed;
 }
 
-// Clearing the callbacks is the whole operation: has_callback then reports
-// false for text and terminal events, so the pump releases them instead of
-// delivering them, while tool dispatch — which belongs to the registry, not to
-// the callbacks — keeps running and history still commits.
-//
-// A host may disconnect from inside a callback it is currently running, and the
-// callbacks own that closure, so clearing them there would free the frame's own
-// captures. Such a disconnect only records the intent; InvocationGuard performs
-// the clear once the invocation unwinds, which still stops delivery at the very
-// next event.
+// Dropping the callbacks is the whole operation: the pump then releases text
+// and terminal events instead of delivering them, while tool dispatch and the
+// history commit, which belong to the registry and the Conversation, carry on.
+// A host may call this from inside a callback the route is running, and the
+// callbacks own that closure, so dropping them there would free the running
+// frame's own captures; InvocationGuard drops them once the call returns.
 bool TurnRoute::disconnect() noexcept {
   if (disconnected_ || finished()) {
     return false;
