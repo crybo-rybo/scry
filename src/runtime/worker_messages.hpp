@@ -43,12 +43,13 @@ struct ToolCallEvent {
   std::size_t remaining_exchange_bytes{std::numeric_limits<std::size_t>::max()};
 };
 
-// The pump moves `exchange` into the Conversation and keeps `text`, a copy of
-// the final assistant text, for the completion callback. Because that text is
-// already counted inside `exchange`, event_payload_bytes ignores it.
+// The pump moves `transcript` into the Conversation and keeps `text`, a copy of
+// the final assistant text, for the completion callback. The transcript opens
+// with the turn's user message and was reserved against the Conversation budget
+// by the machine, so event_payload_bytes charges neither it nor `text`.
 struct CompletionEvent {
   TurnId turn_id{};
-  std::vector<Message> exchange{};
+  std::vector<Message> transcript{};
   std::string text{};
   FinishReason finish_reason{FinishReason::unknown};
   Usage usage{};

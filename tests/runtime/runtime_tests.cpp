@@ -310,7 +310,7 @@ TEST_CASE("turn cancellation stays safe after its command queue expires") {
   auto cancelled = std::make_shared<std::atomic<bool>>(false);
   const auto route = std::make_shared<scry::detail::TurnRoute>(
       scry::TurnId{.value = 221}, cancelled,
-      std::weak_ptr<scry::detail::CommandQueue>{}, conversation, "question",
+      std::weak_ptr<scry::detail::CommandQueue>{}, conversation,
       scry::detail::TurnRouteOptions{
           .max_tool_result_bytes = 1024,
           .max_conversation_bytes = 1024,

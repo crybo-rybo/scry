@@ -6,10 +6,10 @@ namespace scry::detail {
 namespace {
 
 [[nodiscard]] std::string completion_text(const CompletionEvent& event) {
-  if (event.exchange.empty()) {
+  if (event.transcript.empty()) {
     return {};
   }
-  const auto& final_message = event.exchange.back();
+  const auto& final_message = event.transcript.back();
   std::string text;
   for (const auto& block : final_message.content) {
     if (const auto* value = std::get_if<TextBlock>(&block)) {
@@ -19,23 +19,19 @@ namespace {
   return text;
 }
 
-// Appends the user message and the committed exchange to the Conversation's
-// history. The history block is shared with in-flight request snapshots, so it
-// is copied first whenever anyone else still holds a reference.
-void append_history(ConversationState& conversation, const std::string_view user_text,
-                    std::vector<Message>&& exchange) {
+// Appends the turn's whole transcript - its user message, every tool round, and
+// the final assistant reply - to the Conversation's history. The history block
+// is shared with in-flight request snapshots, so it is copied first whenever
+// anyone else still holds a reference.
+void append_history(ConversationState& conversation,
+                    std::vector<Message>&& transcript) {
   if (conversation.messages.use_count() > 1) {
     conversation.messages =
         std::make_shared<std::vector<Message>>(*conversation.messages);
   }
   auto& messages = *conversation.messages;
-  Message user{
-      .role = Role::user,
-      .content = {TextBlock{.text = std::string{user_text}}},
-  };
-  conversation.payload_bytes += message_payload_bytes(user);
-  messages.push_back(std::move(user));
-  for (auto& message : exchange) {
+  messages.reserve(messages.size() + transcript.size());
+  for (auto& message : transcript) {
     conversation.payload_bytes += message_payload_bytes(message);
     messages.push_back(std::move(message));
   }
@@ -118,12 +114,14 @@ UpdateStats PumpState::update(const UpdateOptions options) {
       break;
     }
   }
-  // Both sweeps walk every pending event and every route, so they are skipped
-  // when the time budget ran out; the next update() picks them up.
+  // Releasing discarded events walks every pending event, so it is skipped when
+  // the time budget ran out; the next update() picks it up. Route cleanup is a
+  // single pass over the routes and always runs, so a finished turn drops its
+  // host captures even when every update is out of time.
   if (!out_of_time) {
     release_discarded();
-    clean_routes();
   }
+  clean_routes();
   const auto hit_callback_limit =
       delivered == options.max_callbacks && has_deliverable();
   return UpdateStats{
@@ -169,8 +167,8 @@ bool PumpState::ingest_events(const std::chrono::steady_clock::time_point deadli
 
 void PumpState::accept_event(WorkerEvent event) {
   // Every release below credits the size measured here on arrival. Remeasuring
-  // later would under-credit a committed completion, whose exchange has by then
-  // moved into the Conversation, and strand the remainder in the queue's
+  // later would under-credit a committed completion, whose transcript has by
+  // then moved into the Conversation, and strand the remainder in the queue's
   // per-turn byte ledger.
   const auto turn_id = event_turn_id(event);
   const auto accounted_bytes = event_payload_bytes(event);
@@ -199,6 +197,9 @@ void PumpState::accept_event(WorkerEvent event) {
       .event = std::move(event),
       .accounted_bytes = accounted_bytes,
   });
+  // Only a new entry counts: coalescing above merges into one the route was
+  // already charged for.
+  route->note_pending();
 }
 
 bool PumpState::coalesce_pending_delta(const TextDeltaEvent& event,
@@ -246,11 +247,11 @@ bool PumpState::conversation_limit_exceeded(
     const TurnRoute& route, const CompletionEvent& event) const noexcept {
   const auto current = route.conversation()->payload_bytes;
   const auto limit = route.max_conversation_bytes();
-  if (current > limit || route.user_message().size() > limit - current) {
+  if (current > limit) {
     return true;
   }
-  auto remaining = limit - current - route.user_message().size();
-  for (const auto& message : event.exchange) {
+  auto remaining = limit - current;
+  for (const auto& message : event.transcript) {
     const auto bytes = message_payload_bytes(message);
     if (bytes > remaining) {
       return true;
@@ -263,26 +264,36 @@ bool PumpState::conversation_limit_exceeded(
 void PumpState::commit_completion(TurnRoute& route, CompletionEvent& event) {
   auto& conversation = *route.conversation();
   // The callback needs only the final assistant text, so capture it before the
-  // exchange moves into the Conversation rather than retaining a second copy.
+  // transcript moves into the Conversation rather than retaining a second copy.
   event.text = completion_text(event);
-  append_history(conversation, route.user_message(), std::move(event.exchange));
-  event.exchange.clear();
+  append_history(conversation, std::move(event.transcript));
+  event.transcript.clear();
 }
 
 bool PumpState::deliver_one(std::size_t& callbacks_delivered) {
-  for (auto entry = pending_callbacks_.begin(); entry != pending_callbacks_.end();
-       ++entry) {
+  auto entry = pending_callbacks_.begin();
+  while (entry != pending_callbacks_.end()) {
     const auto turn_id = event_turn_id(entry->event);
     const auto route = find_route(turn_id);
-    if (!route || !route->has_callback(entry->event)) {
-      continue;
+    if (route && route->has_callback(entry->event)) {
+      auto pending = std::move(*entry);
+      pending_callbacks_.erase(entry);
+      route->note_delivered();
+      events_->release(turn_id, pending.accounted_bytes);
+      ++callbacks_delivered;
+      route->invoke(pending.event);
+      return true;
     }
-    auto pending = std::move(*entry);
-    pending_callbacks_.erase(entry);
-    events_->release(turn_id, pending.accounted_bytes);
-    ++callbacks_delivered;
-    route->invoke(pending.event);
-    return true;
+    // Every input to has_callback is monotonic - callbacks are only ever
+    // cleared, the terminal and dispatch-failure flags only ever go true, and a
+    // route that has left the map never returns - so this entry can never
+    // become deliverable. Dropping it here returns its bytes at once instead of
+    // walking past it on every later delivery.
+    events_->release(turn_id, entry->accounted_bytes);
+    if (route) {
+      route->note_delivered();
+    }
+    entry = pending_callbacks_.erase(entry);
   }
   return false;
 }
@@ -300,24 +311,31 @@ void PumpState::release_discarded() {
   // terminal state or failed a dispatch, and any event on a route the host
   // disconnected.
   std::erase_if(pending_callbacks_, [this](const auto& event) {
-    const auto route = find_route(event_turn_id(event.event));
+    const auto turn_id = event_turn_id(event.event);
+    const auto route = find_route(turn_id);
     const auto discard = !route || !route->has_callback(event.event);
     if (discard) {
-      events_->release(event_turn_id(event.event), event.accounted_bytes);
+      events_->release(turn_id, event.accounted_bytes);
+      if (route) {
+        route->note_delivered();
+      }
     }
     return discard;
   });
 }
 
+// One pass over the routes, no inner scan: the per-route pending count already
+// answers whether anything still references it. A finished route retires - its
+// host captures and tool snapshot go - as soon as nothing is owed to it, and it
+// leaves the map once the host has dropped its handle too.
 void PumpState::clean_routes() {
-  std::erase_if(routes_, [this](const auto& entry) {
-    const auto& [turn_id, route] = entry;
-    if (!route->terminal() || route->attached()) {
+  std::erase_if(routes_, [](const auto& entry) {
+    const auto& route = entry.second;
+    if (!route->finished() || route->pending_events() != 0) {
       return false;
     }
-    return std::ranges::none_of(pending_callbacks_, [turn_id](const auto& event) {
-      return event_turn_id(event.event) == turn_id;
-    });
+    route->retire();
+    return !route->attached();
   });
 }
 

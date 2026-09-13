@@ -61,8 +61,11 @@ private:
   // retry jitter.
   [[nodiscard]] TransitionResult failed_attempt(TurnMachine& machine, Error error,
                                                 TurnId turn_id);
+  // Takes the issued command by value: the attempt releases its request
+  // snapshot the moment the provider has encoded it, so the machine is the
+  // request's only owner again while the response is still streaming in.
   [[nodiscard]] TransitionResult
-  perform_attempt(TurnMachine& machine, const IssueModelRequest& issue,
+  perform_attempt(TurnMachine& machine, IssueModelRequest issue,
                   const std::shared_ptr<std::atomic<bool>>& cancelled,
                   const std::stop_token& stopped);
   [[nodiscard]] TransitionResult

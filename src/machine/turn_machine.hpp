@@ -109,10 +109,11 @@ struct PublishToolCall {
 };
 
 // The driver forwards this terminal intent to the pump as one value. The pump
-// owns the atomic Conversation commit and callback delivery.
+// owns the atomic Conversation commit and callback delivery. The transcript is
+// the request's own message list, so it opens with the turn's user message.
 struct CommitCompletion {
   TurnId turn_id{};
-  std::vector<Message> exchange{};
+  std::vector<Message> transcript{};
   FinishReason finish_reason{FinishReason::unknown};
   Usage usage{};
   std::uint32_t attempt_count{};
@@ -242,11 +243,14 @@ private:
   [[nodiscard]] Error correlate(Error error) const;
 
   TurnId turn_id_{};
+  // The turn's one transcript: the user message the turn opened with, every
+  // committed tool round, and finally the assistant reply that ends it. The
+  // machine resends it and hands it to the pump; nothing else holds a second
+  // copy.
   std::shared_ptr<ModelRequest> request_{};
   RetryPolicy retry_policy_{};
   ToolLoopPolicy tool_policy_{};
   State state_{QueuedState{}};
-  std::vector<Message> exchange_{};
   std::optional<MachineTimePoint> request_started_at_{};
   std::optional<MachineTimePoint> latest_time_{};
   std::uint32_t attempt_count_{};

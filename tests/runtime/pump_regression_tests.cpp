@@ -25,13 +25,13 @@ namespace {
   };
 }
 
-// A completion carrying far more exchange than the queue budget would allow if
-// the exchange were charged to it.
+// A completion carrying far more transcript than the queue budget would allow
+// if the transcript were charged to it.
 [[nodiscard]] scry::detail::CompletionEvent
 large_completion(const scry::TurnId turn_id) {
   return {
       .turn_id = turn_id,
-      .exchange = {scry::detail::Message{
+      .transcript = {scry::detail::Message{
           .role = scry::detail::Role::assistant,
           .content = {scry::detail::TextBlock{
               .text = std::string(4096, 'a'),
@@ -43,11 +43,12 @@ large_completion(const scry::TurnId turn_id) {
   };
 }
 
-// The pump derives the callback text while committing, before the exchange
+// The pump derives the callback text while committing, before the transcript
 // moves into the Conversation, so these cases drive real deliveries rather
 // than invoking the route directly.
-[[nodiscard]] std::string delivered_text(PumpFixture& fixture, const std::uint64_t id,
-                                         std::vector<scry::detail::Message> exchange) {
+[[nodiscard]] std::string
+delivered_text(PumpFixture& fixture, const std::uint64_t id,
+               std::vector<scry::detail::Message> transcript) {
   scry::detail::PumpState pump{fixture.events};
   std::string observed;
   bool delivered = false;
@@ -67,7 +68,7 @@ large_completion(const scry::TurnId turn_id) {
   REQUIRE(fixture.events->push(
       scry::detail::CompletionEvent{
           .turn_id = route->id(),
-          .exchange = std::move(exchange),
+          .transcript = std::move(transcript),
           .finish_reason = scry::FinishReason::completed,
       },
       1024));
@@ -287,7 +288,7 @@ TEST_CASE("a nonpositive pump budget still ingests and delivers one unit of work
   CHECK(drained.events_remaining == 0);
 }
 
-TEST_CASE("completion callback text concatenates only the exchange text blocks") {
+TEST_CASE("completion callback text concatenates only the final message text blocks") {
   PumpFixture fixture;
 
   CHECK(delivered_text(fixture, 402, {}).empty());
@@ -306,7 +307,7 @@ TEST_CASE("completion callback text concatenates only the exchange text blocks")
                        }}) == "first second");
 }
 
-TEST_CASE("committing a completion moves its exchange into the Conversation") {
+TEST_CASE("committing a completion moves its transcript into the Conversation") {
   PumpFixture fixture;
   scry::detail::PumpState pump{fixture.events};
   const auto route = fixture.route(
@@ -720,4 +721,104 @@ TEST_CASE("disconnecting from inside on_finished reports false") {
   CHECK(finished);
   CHECK_FALSE(disconnect_reported);
   CHECK(observed_size == 64);
+}
+
+TEST_CASE("a finished route releases its callback captures while its handle stays "
+          "attached") {
+  PumpFixture fixture;
+  scry::detail::PumpState pump{fixture.events};
+  auto captured = std::make_shared<int>(7);
+  const std::weak_ptr<int> observed = captured;
+  bool finished = false;
+  const auto route = fixture.route(
+      226,
+      {
+          .callbacks =
+              scry::TurnCallbacks{
+                  .on_finished =
+                      [&finished, held = std::move(captured)](
+                          scry::Result<scry::Completion>) { finished = *held == 7; },
+              },
+      });
+  pump.add_route(route);
+  REQUIRE(fixture.events->push_terminal(completion_event(route->id()), 1024));
+
+  CHECK(pump.update({}).callbacks_delivered == 1);
+  CHECK(finished);
+
+  // The handle is still attached, so the route keeps its identity and status,
+  // but a finished turn has no further use for the host's captures.
+  CHECK(pump.find_route(route->id()));
+  CHECK(route->finished());
+  CHECK(observed.expired());
+}
+
+TEST_CASE("a route with no on_finished still delivers a text delta queued before its "
+          "terminal event") {
+  PumpFixture fixture;
+  scry::detail::PumpState pump{fixture.events};
+  auto captured = std::make_shared<int>(11);
+  const std::weak_ptr<int> observed = captured;
+  std::string streamed;
+  const auto route =
+      fixture.route(227, {
+                             .callbacks =
+                                 scry::TurnCallbacks{
+                                     .on_text_delta =
+                                         [&streamed, held = std::move(captured)](
+                                             const std::string_view delta) {
+                                           streamed.append(delta);
+                                           CHECK(*held == 11);
+                                         },
+                                 },
+                         });
+  pump.add_route(route);
+  REQUIRE(fixture.events->push(
+      scry::detail::TextDeltaEvent{.turn_id = route->id(), .text = "streamed"}, 1024));
+  REQUIRE(fixture.events->push_terminal(completion_event(route->id()), 1024));
+
+  // The terminal lands with nothing observing it, so the route is finished
+  // while the delta it queued earlier is still owed to the host.
+  const auto terminal = pump.update({.max_callbacks = 0});
+  CHECK(terminal.callbacks_delivered == 0);
+  CHECK(route->finished());
+  CHECK(streamed.empty());
+  CHECK_FALSE(observed.expired());
+
+  CHECK(pump.update({}).callbacks_delivered == 1);
+  CHECK(streamed == "streamed");
+  CHECK(observed.expired());
+}
+
+TEST_CASE("terminal routes are cleaned even when every update is out of time") {
+  PumpFixture fixture;
+  const auto now = std::chrono::steady_clock::time_point{};
+  scry::detail::PumpState pump{fixture.events, [now] { return now; }};
+  bool finished = false;
+  const auto route = fixture.route(
+      228,
+      {
+          .callbacks =
+              scry::TurnCallbacks{
+                  .on_finished =
+                      [&finished](scry::Result<scry::Completion>) { finished = true; },
+              },
+      });
+  pump.add_route(route);
+  route->detach();
+  REQUIRE(fixture.events->push_terminal(completion_event(route->id()), 1024));
+  // A second queued event keeps ingestion from draining the queue, so the
+  // deadline check after the first pop reports an exhausted budget.
+  REQUIRE(fixture.events->push(
+      scry::detail::TextDeltaEvent{.turn_id = scry::TurnId{.value = 999},
+                                   .text = "orphan"},
+      1024));
+
+  const auto stats = pump.update({.time_budget = std::chrono::microseconds{0}});
+
+  CHECK(stats.budget_exhausted);
+  CHECK(stats.callbacks_delivered == 1);
+  CHECK(finished);
+  // Cleanup is a single pass over the routes, so it runs even here.
+  CHECK_FALSE(pump.find_route(route->id()));
 }

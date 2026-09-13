@@ -42,8 +42,8 @@ constexpr std::size_t terminal_event_reserve = 512;
     return event;
   }
   if (auto* completion = std::get_if<CompletionEvent>(&event)) {
-    // A completion is charged only its correlation id, because the exchange is
-    // already reserved against the Conversation budget. Transport policy caps a
+    // A completion is charged only its correlation id, because the transcript
+    // is already reserved against the Conversation budget. Transport policy caps a
     // real identifier well under the reserve, so dropping one that still
     // overruns it keeps the completion itself deliverable.
     completion->provider_request_id.clear();
@@ -195,12 +195,16 @@ void WorkerActor::process_turn(SendTurnCommand&& command,
 void WorkerActor::process_machine_command(
     TurnMachine& machine, MachineCommand command, const SendTurnCommand& turn,
     const std::stop_token& stopped, std::deque<MachineCommand>& pending_commands) {
-  if (const auto* issue = std::get_if<IssueModelRequest>(&command)) {
+  if (auto* issue = std::get_if<IssueModelRequest>(&command)) {
     if (turn.cancelled->load(std::memory_order_acquire)) {
       append_commands(pending_commands, machine.apply(CancelTurn{}));
     } else {
-      append_commands(pending_commands,
-                      perform_attempt(machine, *issue, turn.cancelled, stopped));
+      // The command owns the only snapshot outside the machine, and it is moved
+      // rather than borrowed so perform_attempt can drop it as soon as the
+      // request is encoded; the machine is then the sole owner and commits its
+      // transcript without copying.
+      append_commands(pending_commands, perform_attempt(machine, std::move(*issue),
+                                                        turn.cancelled, stopped));
     }
     return;
   }
@@ -245,10 +249,14 @@ TransitionResult WorkerActor::failed_attempt(TurnMachine& machine, Error error,
 }
 
 TransitionResult
-WorkerActor::perform_attempt(TurnMachine& machine, const IssueModelRequest& issue,
+WorkerActor::perform_attempt(TurnMachine& machine, IssueModelRequest issue,
                              const std::shared_ptr<std::atomic<bool>>& cancelled,
                              const std::stop_token& stopped) {
   auto request = provider_->make_request(config_, *issue.request);
+  // Everything below reads the encoded TransportRequest, never the model
+  // request, so the snapshot is released here. Dropping it leaves the machine
+  // the only owner, which is what lets a completion move its transcript out.
+  issue.request.reset();
   if (!request) {
     return failed_attempt(machine, std::move(request.error()), issue.turn_id);
   }
@@ -504,7 +512,7 @@ void WorkerActor::publish_terminal_command(MachineCommand command) {
   if (auto* completion = std::get_if<CommitCompletion>(&command)) {
     publish_terminal_event(CompletionEvent{
         .turn_id = completion->turn_id,
-        .exchange = std::move(completion->exchange),
+        .transcript = std::move(completion->transcript),
         .finish_reason = completion->finish_reason,
         .usage = completion->usage,
         .attempt_count = completion->attempt_count,

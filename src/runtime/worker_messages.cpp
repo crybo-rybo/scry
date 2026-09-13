@@ -19,7 +19,7 @@ std::size_t event_payload_bytes(const WorkerEvent& event) noexcept {
         } else if constexpr (std::is_same_v<Event, ToolCallEvent>) {
           return content_payload_bytes(value.call);
         } else if constexpr (std::is_same_v<Event, CompletionEvent>) {
-          // The exchange was already reserved against the Conversation budget
+          // The transcript was already reserved against the Conversation budget
           // by the machine, and the completion only transfers its ownership to
           // the host; the queue charges delivery buffering only.
           return value.provider_request_id.size();

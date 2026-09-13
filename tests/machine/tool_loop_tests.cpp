@@ -1,6 +1,7 @@
 #include "machine_test_support.hpp"
 
 #include <catch2/catch_test_macros.hpp>
+#include <cstddef>
 #include <string>
 #include <variant>
 #include <vector>
@@ -144,7 +145,7 @@ TEST_CASE("tool-call arguments are canonicalized once for dispatch and for histo
       R"({"a":1,"b":2})");
 }
 
-TEST_CASE("multi-round completion carries the transactional exchange and totals") {
+TEST_CASE("multi-round completion carries the transactional transcript and totals") {
   auto machine = make_machine();
   begin(machine);
 
@@ -171,12 +172,15 @@ TEST_CASE("multi-round completion carries the transactional exchange and totals"
   CHECK(commit.usage.output_tokens == 23);
   CHECK(commit.finish_reason == scry::FinishReason::completed);
   CHECK(commit.provider_request_id == "final-request");
-  REQUIRE(commit.exchange.size() == 5);
-  static_cast<void>(message_at(commit.exchange, 0, scry::detail::Role::assistant));
-  static_cast<void>(message_at(commit.exchange, 1, scry::detail::Role::user));
-  static_cast<void>(message_at(commit.exchange, 2, scry::detail::Role::assistant));
-  static_cast<void>(message_at(commit.exchange, 3, scry::detail::Role::user));
-  const auto& final = message_at(commit.exchange, 4, scry::detail::Role::assistant);
+  // The user message the turn opened with, then one assistant/results pair per
+  // tool round, then the final assistant reply.
+  REQUIRE(commit.transcript.size() == 6);
+  static_cast<void>(message_at(commit.transcript, 0, scry::detail::Role::user));
+  static_cast<void>(message_at(commit.transcript, 1, scry::detail::Role::assistant));
+  static_cast<void>(message_at(commit.transcript, 2, scry::detail::Role::user));
+  static_cast<void>(message_at(commit.transcript, 3, scry::detail::Role::assistant));
+  static_cast<void>(message_at(commit.transcript, 4, scry::detail::Role::user));
+  const auto& final = message_at(commit.transcript, 5, scry::detail::Role::assistant);
   REQUIRE(final.content.size() == 1);
   CHECK(std::get<scry::detail::TextBlock>(final.content.front()).text == "finished");
 }
@@ -469,4 +473,38 @@ TEST_CASE("an issued request snapshot never observes later tool-round messages")
   CHECK(snapshot->messages.size() == 1);
   CHECK(reissued.request->messages.size() == 3);
   CHECK(reissued.request.get() != snapshot.get());
+}
+
+// The request the machine resends already holds every committed message, so the
+// commit is that vector with the final reply appended rather than a second
+// transcript assembled alongside it.
+TEST_CASE("a completed transcript is the last issued request plus the final reply") {
+  auto machine = make_machine();
+  begin(machine);
+
+  auto round_one =
+      machine.apply(scry::detail::ModelCompleted{.response = tool_response()});
+  static_cast<void>(only_command<scry::detail::PublishToolCall>(round_one));
+  auto issued = machine.apply(result("call-1", R"({"one":1})", at(10ms)));
+  const auto& issue = only_command<scry::detail::IssueModelRequest>(issued);
+  // The machine and this command are the request's only owners, so releasing
+  // the command below lets the commit move the transcript instead of copying it.
+  CHECK(issue.request.use_count() == 2);
+  const auto sent = issue.request->messages;
+  issued.commands.clear();
+
+  const auto completed = machine.apply(
+      scry::detail::ModelCompleted{.response = final_response("finished")});
+  const auto& commit = only_command<scry::detail::CommitCompletion>(completed);
+
+  REQUIRE(commit.transcript.size() == sent.size() + 1);
+  for (std::size_t index = 0; index < sent.size(); ++index) {
+    CHECK(commit.transcript[index].role == sent[index].role);
+    CHECK(scry::detail::message_payload_bytes(commit.transcript[index]) ==
+          scry::detail::message_payload_bytes(sent[index]));
+  }
+  const auto& reply =
+      message_at(commit.transcript, sent.size(), scry::detail::Role::assistant);
+  REQUIRE(reply.content.size() == 1);
+  CHECK(std::get<scry::detail::TextBlock>(reply.content.front()).text == "finished");
 }

@@ -172,9 +172,9 @@ public:
     auto tools = detail::ToolRegistryAccess::snapshot(tools_);
     auto cancelled = std::make_shared<std::atomic<bool>>(false);
     auto messages = std::vector<detail::Message>{};
-    messages.push_back(user_message(text));
+    messages.push_back(user_message(std::move(text)));
     auto route = std::make_shared<detail::TurnRoute>(
-        turn_id, cancelled, commands_, conversation, std::move(text),
+        turn_id, cancelled, commands_, conversation,
         detail::TurnRouteOptions{
             .tools = std::move(tools.entries),
             .max_tool_result_bytes = config_.limits.max_tool_result_bytes,
