@@ -1,6 +1,6 @@
 #pragma once
 
-#include "runtime/messages.hpp"
+#include "runtime/worker_messages.hpp"
 
 #include <chrono>
 #include <condition_variable>

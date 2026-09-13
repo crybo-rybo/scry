@@ -86,11 +86,10 @@ enum class MachineEventKind : std::uint8_t {
   cancel,
 };
 
-// The request is a shared immutable snapshot rather than a per-attempt copy:
-// retries and tool rounds reissue the same conversation, and the machine
-// outlives every attempt that reads it. TurnMachine reseats the snapshot
-// copy-on-write, so a snapshot handed to one attempt never observes the
-// messages a later tool round appends.
+// Tells the worker to send one model request. The request is shared rather than
+// copied, because retries and tool rounds resend the same conversation; the
+// machine copies it before adding a tool round, so the snapshot an attempt is
+// reading never changes underneath it.
 struct IssueModelRequest {
   TurnId turn_id{};
   std::shared_ptr<const ModelRequest> request{};

@@ -7,9 +7,7 @@
 #include <array>
 #include <limits>
 #include <ranges>
-#include <ratio>
 #include <string_view>
-#include <type_traits>
 #include <utility>
 
 namespace scry::detail {
@@ -21,47 +19,26 @@ template <typename Command> [[nodiscard]] TransitionResult applied(Command comma
   return result;
 }
 
+// A negative max_elapsed is meaningless; clamp it once here. Mirrors
+// bounded_backoff in core/retry.cpp.
 [[nodiscard]] std::chrono::milliseconds
 bounded_elapsed(const RetryPolicy& policy) noexcept {
   return std::max(policy.max_elapsed, std::chrono::milliseconds{0});
 }
 
-// Conversion to the clock's usually finer tick period can overflow before the
-// later time-point addition gets a chance to enforce its own bound.
+// Converts a millisecond delay to the clock's tick period, reporting nullopt
+// when it does not fit. The clock's period is usually far finer than a
+// millisecond, so the multiplication overflows long before the clock's range.
 [[nodiscard]] std::optional<MachineTimePoint::duration>
 clock_duration(const std::chrono::milliseconds value) noexcept {
   using Duration = MachineTimePoint::duration;
-  using Conversion =
-      std::ratio_divide<std::chrono::milliseconds::period, Duration::period>;
-  using Common =
-      std::common_type_t<std::chrono::milliseconds::rep, Duration::rep, std::intmax_t>;
-
-  const auto count = static_cast<Common>(value.count());
-  const auto maximum = static_cast<Common>(Duration::max().count());
-  if (count <= 0) {
+  if (value <= std::chrono::milliseconds::zero()) {
     return Duration::zero();
   }
-  Common converted{};
-  if constexpr (Conversion::den == 1) {
-    if (count > maximum / static_cast<Common>(Conversion::num)) {
-      return std::nullopt;
-    }
-    converted = count * static_cast<Common>(Conversion::num);
-  } else if constexpr (Conversion::num == 1) {
-    converted = count / static_cast<Common>(Conversion::den);
-  } else {
-    const auto scaled = static_cast<long double>(count) *
-                        static_cast<long double>(Conversion::num) /
-                        static_cast<long double>(Conversion::den);
-    if (scaled >= static_cast<long double>(maximum)) {
-      return std::nullopt;
-    }
-    converted = static_cast<Common>(scaled);
-  }
-  if (converted > maximum) {
+  if (value > std::chrono::floor<std::chrono::milliseconds>(Duration::max())) {
     return std::nullopt;
   }
-  return Duration{static_cast<Duration::rep>(converted)};
+  return std::chrono::duration_cast<Duration>(value);
 }
 
 [[nodiscard]] MachineTimePoint

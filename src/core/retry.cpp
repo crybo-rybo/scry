@@ -10,6 +10,13 @@ namespace {
 
 using MillisecondsRep = std::chrono::milliseconds::rep;
 
+// A negative max_backoff is meaningless, and clamping it here keeps the two
+// places that cap a delay from disagreeing.
+[[nodiscard]] std::chrono::milliseconds
+bounded_backoff(const RetryPolicy& policy) noexcept {
+  return std::max(policy.max_backoff, std::chrono::milliseconds{0});
+}
+
 [[nodiscard]] std::chrono::milliseconds
 exponential_delay(const RetryPolicy& policy, std::uint32_t failed_attempt) noexcept {
   constexpr auto rep_max = std::numeric_limits<MillisecondsRep>::max();
@@ -22,8 +29,7 @@ exponential_delay(const RetryPolicy& policy, std::uint32_t failed_attempt) noexc
     }
     value *= 2;
   }
-  return std::min(std::chrono::milliseconds{value},
-                  std::max(policy.max_backoff, std::chrono::milliseconds{0}));
+  return std::min(std::chrono::milliseconds{value}, bounded_backoff(policy));
 }
 
 [[nodiscard]] MillisecondsRep saturating_round(const std::chrono::milliseconds base,
@@ -39,19 +45,22 @@ exponential_delay(const RetryPolicy& policy, std::uint32_t failed_attempt) noexc
 
 } // namespace
 
+std::uint64_t mix_seed(std::uint64_t value) noexcept {
+  value += std::uint64_t{0x9E3779B97F4A7C15};
+  value = (value ^ (value >> 30U)) * std::uint64_t{0xBF58476D1CE4E5B9};
+  value = (value ^ (value >> 27U)) * std::uint64_t{0x94D049BB133111EB};
+  return value ^ (value >> 31U);
+}
+
 bool is_retryable(const ErrorCategory category) noexcept {
   return category == ErrorCategory::rate_limit || category == ErrorCategory::network;
 }
 
 double retry_jitter_sample(const std::uint64_t seed, const TurnId turn_id,
                            const std::uint32_t failed_attempt) noexcept {
-  auto value =
+  const auto value = mix_seed(
       seed ^ turn_id.value ^
-      (static_cast<std::uint64_t>(failed_attempt) * std::uint64_t{0x9E3779B97F4A7C15});
-  value += std::uint64_t{0x9E3779B97F4A7C15};
-  value = (value ^ (value >> 30U)) * std::uint64_t{0xBF58476D1CE4E5B9};
-  value = (value ^ (value >> 27U)) * std::uint64_t{0x94D049BB133111EB};
-  value ^= value >> 31U;
+      (static_cast<std::uint64_t>(failed_attempt) * std::uint64_t{0x9E3779B97F4A7C15}));
   constexpr double maximum_unit_value = 9007199254740991.0;
   const auto unit = static_cast<double>(value >> 11U) / maximum_unit_value;
   return (unit * 2.0) - 1.0;
@@ -72,7 +81,7 @@ retry_delay(const RetryPolicy& policy, const std::uint32_t failed_attempt,
   if (retry_after) {
     delay = std::max(delay, std::max(*retry_after, std::chrono::milliseconds{0}));
   }
-  return std::min(delay, std::max(policy.max_backoff, std::chrono::milliseconds{0}));
+  return std::min(delay, bounded_backoff(policy));
 }
 
 } // namespace scry::detail

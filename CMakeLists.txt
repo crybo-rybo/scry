@@ -237,7 +237,7 @@ add_library(
     src/runtime/conversation.cpp
     src/runtime/conversation_persistence.cpp
     src/runtime/harness.cpp
-    src/runtime/messages.cpp
+    src/runtime/worker_messages.cpp
     src/runtime/pump.cpp
     src/runtime/pump_state.cpp
     src/runtime/queue.cpp

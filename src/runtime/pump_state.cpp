@@ -19,11 +19,9 @@ namespace {
   return text;
 }
 
-// Appends one committed exchange onto the Conversation's history block. The
-// block is shared with accepted-turn request snapshots, so a commit reseats it
-// copy-on-write whenever a live request still holds it. Terminalization releases
-// the worker's request before publishing completion, so ordinary commit reuses
-// the block deterministically; retained external snapshots still take this path.
+// Appends the user message and the committed exchange to the Conversation's
+// history. The history block is shared with in-flight request snapshots, so it
+// is copied first whenever anyone else still holds a reference.
 void append_history(ConversationState& conversation, const std::string_view user_text,
                     std::vector<Message>&& exchange) {
   if (conversation.messages.use_count() > 1) {
@@ -108,28 +106,30 @@ UpdateStats PumpState::update(const UpdateOptions options) {
   const auto started = clock_();
   const auto deadline = update_deadline(started, options.time_budget);
   std::size_t delivered = 0;
-  bool exhausted = ingest_events(deadline);
+  bool out_of_time = ingest_events(deadline);
   while (delivered < options.max_callbacks && has_deliverable()) {
-    // The first deliverable callback is delivered without consulting the
-    // deadline, for the same reason the first event is ingested without one.
+    // The first deliverable callback goes out without consulting the deadline,
+    // for the same reason the first event is ingested without one.
     if (delivered > 0 && clock_() >= deadline) {
-      exhausted = true;
+      out_of_time = true;
       break;
     }
     if (!deliver_one(delivered)) {
       break;
     }
   }
-  if (!exhausted) {
+  // Both sweeps walk every pending event and every route, so they are skipped
+  // when the time budget ran out; the next update() picks them up.
+  if (!out_of_time) {
     release_discarded();
     clean_routes();
   }
-  const auto remaining = pending_callbacks_.size() + events_->size();
-  exhausted = exhausted || (delivered == options.max_callbacks && has_deliverable());
+  const auto hit_callback_limit =
+      delivered == options.max_callbacks && has_deliverable();
   return UpdateStats{
       .callbacks_delivered = delivered,
-      .events_remaining = remaining,
-      .budget_exhausted = exhausted,
+      .events_remaining = pending_callbacks_.size() + events_->size(),
+      .budget_exhausted = out_of_time || hit_callback_limit,
   };
 }
 
@@ -270,21 +270,21 @@ void PumpState::commit_completion(TurnRoute& route, CompletionEvent& event) {
 }
 
 bool PumpState::deliver_one(std::size_t& callbacks_delivered) {
-  const auto found = std::find_if(
-      pending_callbacks_.begin(), pending_callbacks_.end(), [this](const auto& event) {
-        const auto route = find_route(event_turn_id(event.event));
-        return route && route->has_callback(event.event);
-      });
-  if (found == pending_callbacks_.end()) {
-    return false;
+  for (auto entry = pending_callbacks_.begin(); entry != pending_callbacks_.end();
+       ++entry) {
+    const auto turn_id = event_turn_id(entry->event);
+    const auto route = find_route(turn_id);
+    if (!route || !route->has_callback(entry->event)) {
+      continue;
+    }
+    auto pending = std::move(*entry);
+    pending_callbacks_.erase(entry);
+    events_->release(turn_id, pending.accounted_bytes);
+    ++callbacks_delivered;
+    route->invoke(pending.event);
+    return true;
   }
-  auto pending = std::move(*found);
-  pending_callbacks_.erase(found);
-  const auto route = find_route(event_turn_id(pending.event));
-  events_->release(event_turn_id(pending.event), pending.accounted_bytes);
-  ++callbacks_delivered;
-  route->invoke(pending.event);
-  return true;
+  return false;
 }
 
 bool PumpState::has_deliverable() const noexcept {

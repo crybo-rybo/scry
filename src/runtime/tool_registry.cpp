@@ -51,11 +51,10 @@ Status add_tool_registration(ToolRegistryState& state, ToolDefinition definition
   return {};
 }
 
-ToolSnapshots snapshot_tools(ToolRegistryState& state) {
-  // The registry is additive-only and single-app-thread, so a frozen view whose
-  // size matches the working list is current. Registration leaves the frozen
-  // pair stale; the first accepted send pays one rebuild after admission
-  // validation, and every later accepted turn shares the same immutable blocks.
+FrozenToolSnapshot snapshot_tools(ToolRegistryState& state) {
+  // Tools are only ever added, and only from the app thread, so a frozen
+  // snapshot with as many entries as the working list is still current. Any
+  // rebuild is shared by every turn until the next registration.
   if (state.frozen.entries && state.frozen.entries->size() == state.entries.size()) {
     return state.frozen;
   }
@@ -69,7 +68,7 @@ ToolSnapshots snapshot_tools(ToolRegistryState& state) {
         .input_schema = registration->definition.input_schema,
     });
   }
-  state.frozen = ToolSnapshots{
+  state.frozen = FrozenToolSnapshot{
       .entries = std::move(entries),
       .schemas = std::move(schemas),
   };
