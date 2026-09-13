@@ -50,6 +50,16 @@ inline constexpr TurnId turn_id{42};
   };
 }
 
+// A well-formed plain-text completion. Every committed message needs at least
+// one non-empty block, so an empty ModelResponse is not a completion any
+// machine will accept.
+[[nodiscard]] inline ModelResponse text_response(std::string text = "answer") {
+  return {
+      .content = {TextBlock{.text = std::move(text)}},
+      .finish_reason = FinishReason::completed,
+  };
+}
+
 [[nodiscard]] inline ToolCallBlock tool_call(std::string id = "call-1",
                                              std::string name = "lookup",
                                              std::string arguments = R"({"x":1})") {
@@ -138,7 +148,7 @@ inline void enter_awaiting_tool(TurnMachine& machine) {
   case semantic_output:
     return ModelSemanticOutput{};
   case completed:
-    return ModelCompleted{};
+    return ModelCompleted{.response = text_response()};
   case attempt_failed:
     return AttemptFailed{
         .error = error(ErrorCategory::protocol),

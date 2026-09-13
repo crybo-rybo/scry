@@ -96,6 +96,18 @@ validated_call(const ToolCallBlock& call, const std::vector<std::string>& respon
   return normalized;
 }
 
+// An empty text block is representable on the wire - an Anthropic content block
+// that opens and never receives a delta, for one - but nothing downstream can
+// carry it: persistence rejects it and providers reject it on the next request.
+// Dropping it here keeps the committed history encodable by construction.
+void drop_empty_text_blocks(std::vector<ContentBlock>& content) {
+  const auto removed = std::ranges::remove_if(content, [](const ContentBlock& block) {
+    const auto* text = std::get_if<TextBlock>(&block);
+    return text != nullptr && text->text.empty();
+  });
+  content.erase(removed.begin(), removed.end());
+}
+
 } // namespace
 
 TurnMachine::TurnMachine(TurnId turn_id, ModelRequest request, RetryPolicy retry_policy,
@@ -446,6 +458,7 @@ bool TurnMachine::retry_is_allowed(const Error& error,
 
 Result<std::vector<ToolCallBlock>>
 TurnMachine::validate_response(ModelResponse& response) const {
+  drop_empty_text_blocks(response.content);
   std::vector<ToolCallBlock> calls;
   std::vector<std::string> response_ids;
   for (auto& block : response.content) {
@@ -465,6 +478,11 @@ TurnMachine::validate_response(ModelResponse& response) const {
     response_ids.push_back(call->id);
     *call = std::move(*validated);
     calls.push_back(*call);
+  }
+
+  if (calls.empty() && response.content.empty()) {
+    return std::unexpected(
+        response_error(ErrorCategory::protocol, "model response contained no content"));
   }
 
   const auto declares_tools = response.finish_reason == FinishReason::tool_use;

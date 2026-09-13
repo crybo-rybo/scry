@@ -392,6 +392,15 @@ Failure or cancellation commits nothing. A completion can have a `length` or
 requires an untruncated answer. Text deltas can include intermediate tool rounds;
 `Completion::text` contains only the final assistant response.
 
+Every committed message holds at least one block and no empty text block. The
+machine drops empty text blocks from a model response before it commits or
+dispatches anything, so a response of one empty text block plus real text
+commits only the text, and a response announcing a tool call alongside an empty
+text block commits only the call. A response left with neither text nor tool
+calls fails the turn with `protocol` and commits nothing. Committed history is
+therefore always encodable by `to_json()` and never carries the empty content
+that providers reject on resend.
+
 `Conversation::messages()` exposes committed history, excluding the system
 prompt. Its reference is borrowed until a committing `update()`, or until the
 handle is moved or destroyed. Callback views and references are borrowed only

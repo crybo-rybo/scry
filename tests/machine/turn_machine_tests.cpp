@@ -77,6 +77,87 @@ TEST_CASE("non-streaming completion emits one transactional commit intent") {
   CHECK(machine.phase() == scry::detail::MachinePhase::terminal);
 }
 
+TEST_CASE("empty text blocks are dropped before the exchange is committed") {
+  auto machine = make_machine();
+  begin(machine);
+
+  scry::detail::ModelResponse response{
+      .content = {scry::detail::TextBlock{.text = ""},
+                  scry::detail::TextBlock{.text = "hi"}},
+      .finish_reason = scry::detail::FinishReason::completed,
+  };
+  const auto result =
+      machine.apply(scry::detail::ModelCompleted{.response = std::move(response)});
+  const auto& command = only_command<scry::detail::CommitCompletion>(result);
+
+  REQUIRE(command.exchange.size() == 1);
+  const auto& assistant = command.exchange.front();
+  CHECK(assistant.role == scry::detail::Role::assistant);
+  REQUIRE(assistant.content.size() == 1);
+  CHECK(std::get<scry::detail::TextBlock>(assistant.content.front()).text == "hi");
+  CHECK(machine.phase() == scry::detail::MachinePhase::terminal);
+}
+
+TEST_CASE("a response carrying no content fails the turn instead of committing") {
+  auto machine = make_machine();
+  begin(machine);
+
+  std::vector<scry::detail::ContentBlock> content;
+  SECTION("one empty text block") {
+    content.push_back(scry::detail::TextBlock{.text = ""});
+  }
+  SECTION("no blocks at all") {}
+
+  scry::detail::ModelResponse response{
+      .content = std::move(content),
+      .finish_reason = scry::detail::FinishReason::completed,
+  };
+  const auto result =
+      machine.apply(scry::detail::ModelCompleted{.response = std::move(response)});
+  const auto& error = only_command<scry::detail::PublishError>(result).error;
+
+  CHECK(error.category == scry::ErrorCategory::protocol);
+  CHECK(error.message == "model response contained no content");
+  CHECK(machine.phase() == scry::detail::MachinePhase::terminal);
+}
+
+TEST_CASE("a tool round starts without the response's empty text block") {
+  auto machine = make_machine();
+  begin(machine);
+
+  const auto published = machine.apply(scry::detail::ModelCompleted{
+      .response = tool_response(
+          {scry::detail::TextBlock{.text = ""}, tool_call("call-1", "lookup")}),
+  });
+  CHECK(only_command<scry::detail::PublishToolCall>(published).call.id == "call-1");
+
+  const auto issued = machine.apply(scry::detail::ToolResultReady{
+      .result =
+          {
+              .tool_call_id = "call-1",
+              .result = scry::Json{.text = R"({"ok":true})"},
+          },
+      .observed_at = at(1ms),
+  });
+  static_cast<void>(only_command<scry::detail::IssueModelRequest>(issued));
+
+  const auto completed = machine.apply(scry::detail::ModelCompleted{
+      .response =
+          {
+              .content = {scry::detail::TextBlock{.text = "done"}},
+              .finish_reason = scry::detail::FinishReason::completed,
+          },
+  });
+  const auto& commit = only_command<scry::detail::CommitCompletion>(completed);
+
+  REQUIRE(commit.exchange.size() == 3);
+  const auto& assistant = commit.exchange.front();
+  CHECK(assistant.role == scry::detail::Role::assistant);
+  REQUIRE(assistant.content.size() == 1);
+  CHECK(std::get<scry::detail::ToolCallBlock>(assistant.content.front()).id ==
+        "call-1");
+}
+
 TEST_CASE("terminal transitions release the model request snapshot") {
   const auto history = std::make_shared<std::vector<scry::detail::Message>>();
   auto model_request = request();
@@ -89,7 +170,8 @@ TEST_CASE("terminal transitions release the model request snapshot") {
     issued.commands.clear();
     REQUIRE(history.use_count() == 2);
 
-    const auto completed = machine.apply(scry::detail::ModelCompleted{});
+    const auto completed =
+        machine.apply(scry::detail::ModelCompleted{.response = text_response()});
     static_cast<void>(only_command<scry::detail::CommitCompletion>(completed));
     CHECK(history.use_count() == 1);
   }
@@ -136,7 +218,8 @@ TEST_CASE("text deltas enter streaming and preserve attempt correlation") {
   CHECK(second_command.text == "lo");
   CHECK(second_command.attempt == 1);
 
-  const auto completed = machine.apply(scry::detail::ModelCompleted{});
+  const auto completed =
+      machine.apply(scry::detail::ModelCompleted{.response = text_response()});
   static_cast<void>(only_command<scry::detail::CommitCompletion>(completed));
 }
 
@@ -530,7 +613,7 @@ TEST_CASE("terminal state is idempotent across event orderings") {
     auto machine = make_machine();
     begin(machine);
     std::vector<scry::detail::MachineEvent> terminal_events{
-        scry::detail::ModelCompleted{},
+        scry::detail::ModelCompleted{.response = text_response()},
         scry::detail::AttemptFailed{
             .error = error(scry::ErrorCategory::protocol),
             .observed_at = at(1ms),
