@@ -86,7 +86,9 @@ caught and converted into tool-error results.
 `send_and_wait()` runs `send()` and pumps `update()` until the requested turn
 finishes. It also runs callbacks and handlers for other accepted turns. It does
 not expose the waited Turn handle, and calling it from a callback or handler
-returns `invalid_state`.
+returns `invalid_state`. When `update()` throws while it is pumping, the
+exception propagates out of `send_and_wait()` and the waited turn is
+disconnected; that turn keeps running and still commits its history.
 
 | Operation | Effect |
 |---|---|
@@ -101,8 +103,10 @@ result and remaining calls are suppressed. Cancellation does not reverse a
 terminal outcome already produced by the worker.
 
 Disconnecting inside a callback takes effect for subsequent delivery; the
-executing callback remains alive until it returns or throws. Disconnecting does
-not cancel tools, and the host must keep pumping for the turn to finish.
+executing callback remains alive until it returns or throws. A tool handler that
+disconnects also suppresses the `on_tool_call` observer for its own call.
+Disconnecting does not cancel tools, and the host must keep pumping for the turn
+to finish.
 
 `Turn::finished()` becomes true after terminal callback delivery, or after
 terminal processing when no terminal callback is attached. Moved-from handles

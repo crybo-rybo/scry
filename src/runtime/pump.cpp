@@ -202,7 +202,10 @@ void TurnRoute::dispatch(const ToolCallEvent& event) {
   // The observer sees the same result block the model receives, so it is copied
   // out before the command queue takes ownership. A framework failure leaves the
   // result empty and fails the turn instead, and the observer does not fire.
-  auto observed = result.has_value() && callbacks_.on_tool_call
+  // A handler that disconnected from inside this dispatch is checked explicitly:
+  // InvocationGuard defers clearing the callbacks until the frame returns, so
+  // on_tool_call is still set here even though delivery is no longer wanted.
+  auto observed = result.has_value() && callbacks_.on_tool_call && !disconnected_
                       ? std::optional<ToolResultBlock>{*result}
                       : std::nullopt;
   if (const auto commands = commands_.lock()) {

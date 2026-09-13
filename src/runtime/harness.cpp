@@ -72,6 +72,31 @@ make_request(const Config& config, const detail::ConversationState& conversation
   };
 }
 
+// Keeps the send_and_wait() wait unwind-safe. That wait pumps callbacks for
+// every accepted turn, so another turn's callback can throw straight through it
+// while the waited turn is still running. Turn's destructor only detaches, and
+// the route keeps the on_finished closure that writes into the wait's own stack
+// slot, so the guard disconnects the waited turn on any exit that is not the
+// normal one. The turn keeps running and still commits its history.
+class WaitGuard final {
+public:
+  explicit WaitGuard(Turn& turn) noexcept : turn_(turn) {}
+  WaitGuard(const WaitGuard&) = delete;
+  WaitGuard(WaitGuard&&) = delete;
+  WaitGuard& operator=(const WaitGuard&) = delete;
+  WaitGuard& operator=(WaitGuard&&) = delete;
+  ~WaitGuard() {
+    if (!completed) {
+      static_cast<void>(turn_.disconnect());
+    }
+  }
+
+  bool completed{false};
+
+private:
+  Turn& turn_;
+};
+
 } // namespace
 
 class Harness::Impl final {
@@ -299,13 +324,17 @@ Result<Completion> Harness::send_and_wait(Conversation& conversation,
   if (!turn_result) {
     return std::unexpected(std::move(turn_result.error()));
   }
-  const auto turn = std::move(*turn_result);
+  // The Turn is declared before the guard so it outlives the disconnect the
+  // guard performs when the wait is abandoned.
+  auto turn = std::move(*turn_result);
+  WaitGuard guard{turn};
   while (!outcome) {
     static_cast<void>(update());
     if (!outcome) {
       static_cast<void>(impl_->wait_for_event());
     }
   }
+  guard.completed = true;
   return std::move(*outcome);
 }
 

@@ -128,7 +128,8 @@ struct TurnCallbacks {
   /// The ToolCall carries the canonical result sent to the model and its is_error
   /// flag, including for a handler that failed. It does not fire when a framework
   /// failure fails the turn instead of producing a result, for example when the
-  /// result exceeds a configured byte limit.
+  /// result exceeds a configured byte limit, nor when the handler itself
+  /// disconnected the turn.
   ToolCallCallback on_tool_call{};
   /// When non-empty, invoked once per accepted turn while the host keeps pumping,
   /// unless disconnected or discarded by Harness destruction.
