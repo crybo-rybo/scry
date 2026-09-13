@@ -22,14 +22,7 @@ using scry::ErrorCategory;
 using scry::detail::BodyChunkSink;
 using scry::detail::CurlTransport;
 using scry::detail::TransportRequest;
-
-[[nodiscard]] std::string response(const std::string_view status,
-                                   const std::string_view headers,
-                                   const std::string_view body) {
-  return "HTTP/1.1 " + std::string{status} + "\r\n" + std::string{headers} +
-         "Content-Length: " + std::to_string(body.size()) +
-         "\r\nConnection: close\r\n\r\n" + std::string{body};
-}
+using scry::test::http_response;
 
 [[nodiscard]] TransportRequest request(const std::string& url) {
   return TransportRequest{
@@ -58,7 +51,7 @@ struct InterruptedTransfer {
 
 [[nodiscard]] InterruptedTransfer interrupt_during_transfer(const bool stop_harness) {
   using namespace std::chrono_literals;
-  scry::test::LoopbackServer server{response("200 OK", "", "body"), true};
+  scry::test::LoopbackServer server{http_response("200 OK", "", "body"), true};
   CurlTransport transport;
   auto held_request = request(server.url());
   // No total bound: cancellation and shutdown must work on their own.
@@ -89,7 +82,7 @@ struct InterruptedTransfer {
 } // namespace
 
 TEST_CASE("loopback server destruction wakes an unconnected listener") {
-  const scry::test::LoopbackServer server{response("200 OK", "", "unused")};
+  const scry::test::LoopbackServer server{http_response("200 OK", "", "unused")};
 }
 
 TEST_CASE("curl global initialization is process-wide and repeatable") {
@@ -138,9 +131,9 @@ TEST_CASE("curl runtime rejects capabilities that cannot honor host shutdown") {
 }
 
 TEST_CASE("curl transport posts request data and returns response metadata") {
-  scry::test::LoopbackServer server{
-      response("200 OK", "Content-Type: application/json\r\nrequest-id: req-123\r\n",
-               R"({"text":"hello"})")};
+  scry::test::LoopbackServer server{http_response(
+      "200 OK", "Content-Type: application/json\r\nrequest-id: req-123\r\n",
+      R"({"text":"hello"})")};
   CurlTransport transport;
   std::string body;
   auto sink = append_to(body);
@@ -165,8 +158,8 @@ TEST_CASE("curl transport sends extra headers and routes through a configured pr
   // request line to it rather than resolving the unreachable origin host. No
   // TLS loopback exists, so the CA bundle option is covered by configuration
   // validation and the provider request carry-through tests instead.
-  scry::test::LoopbackServer server{
-      response("200 OK", "Content-Type: application/json\r\n", R"({"text":"via"})")};
+  scry::test::LoopbackServer server{http_response(
+      "200 OK", "Content-Type: application/json\r\n", R"({"text":"via"})")};
   CurlTransport transport;
   std::string body;
   auto sink = append_to(body);
@@ -188,7 +181,7 @@ TEST_CASE("curl transport sends extra headers and routes through a configured pr
 }
 
 TEST_CASE("curl transport enforces declared response size before the sink") {
-  scry::test::LoopbackServer server{response("200 OK", "", "response-too-large")};
+  scry::test::LoopbackServer server{http_response("200 OK", "", "response-too-large")};
   CurlTransport transport;
   auto bounded_request = request(server.url());
   bounded_request.limits.max_response_bytes = 4;
@@ -233,7 +226,7 @@ TEST_CASE("curl transport enforces streamed response size before each sink call"
 }
 
 TEST_CASE("curl transport sanitizes response consumer errors") {
-  scry::test::LoopbackServer server{response("200 OK", "", "body")};
+  scry::test::LoopbackServer server{http_response("200 OK", "", "body")};
   CurlTransport transport;
   BodyChunkSink sink{[](std::string_view) -> scry::Status {
     return std::unexpected(scry::Error{
@@ -303,7 +296,7 @@ TEST_CASE("curl transport maps HTTP failures without leaking request data") {
     CAPTURE(std::string{test_case.status});
     const auto retry_after =
         test_case.category == ErrorCategory::rate_limit ? "Retry-After: 7\r\n" : "";
-    scry::test::LoopbackServer server{response(
+    scry::test::LoopbackServer server{http_response(
         test_case.status, "request-id: failed-request\r\n" + std::string{retry_after},
         test_case.response_body)};
     CurlTransport transport;
@@ -338,7 +331,7 @@ TEST_CASE("curl transport maps HTTP failures without leaking request data") {
 
 TEST_CASE("curl transport fails a silent response after the idle bound") {
   using namespace std::chrono_literals;
-  scry::test::LoopbackServer server{response("200 OK", "", "body"), true};
+  scry::test::LoopbackServer server{http_response("200 OK", "", "body"), true};
   CurlTransport transport;
   auto silent_request = request(server.url());
   silent_request.timeouts.connect = 1s;
@@ -375,7 +368,7 @@ TEST_CASE("curl transport fails a silent response after the idle bound") {
 
 TEST_CASE("curl transport fails a held response after the total transfer bound") {
   using namespace std::chrono_literals;
-  scry::test::LoopbackServer server{response("200 OK", "", "body"), true};
+  scry::test::LoopbackServer server{http_response("200 OK", "", "body"), true};
   CurlTransport transport;
   auto bounded_request = request(server.url());
   bounded_request.timeouts.connect = 1s;
@@ -448,8 +441,8 @@ TEST_CASE("curl progress callback independently observes both cancellation signa
 
 TEST_CASE("curl transport never forwards redirect bodies to the response sink") {
   scry::test::LoopbackServer server{
-      response("302 Found", "Location: /elsewhere\r\n",
-               "event: content_block_delta\r\ndata: semantic-output\r\n\r\n")};
+      http_response("302 Found", "Location: /elsewhere\r\n",
+                    "event: content_block_delta\r\ndata: semantic-output\r\n\r\n")};
   CurlTransport transport;
   std::string body;
   auto sink = append_to(body);
@@ -466,8 +459,8 @@ TEST_CASE("curl transport never forwards redirect bodies to the response sink") 
 
 TEST_CASE("curl transport parses HTTP-date Retry-After values") {
   scry::test::LoopbackServer server{
-      response("429 Too Many Requests",
-               "Retry-After: Wed, 21 Oct 2099 07:28:00 GMT\r\n", "retry later")};
+      http_response("429 Too Many Requests",
+                    "Retry-After: Wed, 21 Oct 2099 07:28:00 GMT\r\n", "retry later")};
   CurlTransport transport;
   std::string body;
   auto sink = append_to(body);
@@ -486,7 +479,7 @@ TEST_CASE("curl transport parses HTTP-date Retry-After values") {
 
 TEST_CASE("curl transport preserves provider-neutral sanitized error detail") {
   scry::test::LoopbackServer server{
-      response("200 OK", "request-id: header-request\r\n", "body")};
+      http_response("200 OK", "request-id: header-request\r\n", "body")};
   CurlTransport transport;
   BodyChunkSink sink{[](std::string_view) -> scry::Status {
     return std::unexpected(scry::Error{
@@ -512,7 +505,7 @@ TEST_CASE("curl transport preserves provider-neutral sanitized error detail") {
 }
 
 TEST_CASE("curl callbacks contain response consumer exceptions") {
-  scry::test::LoopbackServer server{response("200 OK", "", "body")};
+  scry::test::LoopbackServer server{http_response("200 OK", "", "body")};
   CurlTransport transport;
   BodyChunkSink sink{[](std::string_view) -> scry::Status { throw 42; }};
   std::stop_source shutdown;
@@ -652,7 +645,7 @@ TEST_CASE("curl transport classifies malformed and unsupported URLs locally") {
 
 TEST_CASE("curl transport falls back to the response request ID on sink failure") {
   scry::test::LoopbackServer server{
-      response("200 OK", "request-id: header-request\r\n", "body")};
+      http_response("200 OK", "request-id: header-request\r\n", "body")};
   CurlTransport transport;
   BodyChunkSink sink{[](std::string_view) -> scry::Status {
     return std::unexpected(scry::Error{
