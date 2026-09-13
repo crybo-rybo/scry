@@ -157,8 +157,7 @@ format, build, tests, a staged install, and a downstream `find_package(scry)`
 consumer.
 
 The showcase is a standalone project under `extras/showcase/` that the root build
-never configures; `./scripts/ci-showcase.sh` (`just showcase`) builds it, runs
-the deterministic NPC and fake-panel tests and a real headless ImGui frame, then
+never configures; `./scripts/ci-showcase.sh` (`just showcase`) builds it, then
 audits that nothing it adds reached the installed package.
 
 The five fuzz targets are `sse`, `anthropic`, `openai`, `response_policy`, and

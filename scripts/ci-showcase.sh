@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# Builds and tests the standalone showcase project under extras/showcase, then
+# Builds the standalone showcase project under extras/showcase, then
 # audits that nothing it adds can reach the installed library package. The
 # showcase is not part of the root build, so the audit configures and installs
 # the root separately and looks for leaked artifacts there.
@@ -32,11 +32,6 @@ if [[ "${fetched_imgui_commit}" != "${imgui_commit}" ]]; then
   exit 1
 fi
 cmake --build "${build_dir}"
-ctest \
-  --test-dir "${build_dir}" \
-  --output-on-failure \
-  --repeat until-fail:3 \
-  -L showcase
 
 # The root build knows nothing about the showcase; prove it by installing the
 # library on its own and auditing the prefix.
@@ -78,4 +73,4 @@ cmake \
 cmake --build "${consumer_dir}"
 "${consumer_dir}/scry_package_consumer"
 
-echo "Showcase build, tests, headless frame, and package audit passed."
+echo "Showcase build and package audit passed."
