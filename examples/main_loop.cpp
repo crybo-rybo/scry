@@ -197,6 +197,18 @@ int main(int argc, char* argv[]) {
   // captures cannot dangle during shutdown.
   Application app;
 
+  // A registry is a plain value, so the tool contract can be built and exported
+  // with no provider configuration, no libcurl, and no worker thread.
+  scry::ToolRegistry tools;
+  if (const auto registered = register_tools(tools, app); !registered) {
+    std::cerr << registered.error().message << '\n';
+    return 1;
+  }
+
+  if (export_tools) {
+    return print_tool_manifest(tools);
+  }
+
   // Assumes `ollama serve` is running and `ollama pull qwen3:8b` has completed.
   const scry::Config config{
       .base_url = "http://127.0.0.1:11434/v1",
@@ -213,21 +225,14 @@ int main(int argc, char* argv[]) {
     return 1;
   }
 
-  auto harness_result = scry::Harness::create(config);
+  // The harness adopts the registry; `tools` is inactive from here on, and any
+  // further registration goes through harness.tools().
+  auto harness_result = scry::Harness::create(config, std::move(tools));
   if (!harness_result) {
     std::cerr << harness_result.error().message << '\n';
     return 1;
   }
   auto harness = std::move(*harness_result);
-
-  if (const auto registered = register_tools(harness.tools(), app); !registered) {
-    std::cerr << registered.error().message << '\n';
-    return 1;
-  }
-
-  if (export_tools) {
-    return print_tool_manifest(harness.tools());
-  }
 
   auto conversation_result = scry::Conversation::create({
       .system_prompt = "Answer briefly and use tools when useful.",

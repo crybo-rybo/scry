@@ -60,14 +60,10 @@ FrozenToolSnapshot snapshot_tools(ToolRegistryState& state) {
     return state.frozen;
   }
   auto entries = std::make_shared<ToolSnapshot>(state.entries);
-  auto schemas = std::make_shared<std::vector<ToolSchema>>();
+  auto schemas = std::make_shared<std::vector<ToolDefinition>>();
   schemas->reserve(entries->size());
   for (const auto& registration : *entries) {
-    schemas->push_back(ToolSchema{
-        .name = registration->definition.name,
-        .description = registration->definition.description,
-        .input_schema = registration->definition.input_schema,
-    });
+    schemas->push_back(registration->definition);
   }
   state.frozen = FrozenToolSnapshot{
       .entries = std::move(entries),
@@ -97,8 +93,7 @@ Status ToolRegistry::Impl::add(ToolDefinition definition, ToolHandler handler) {
                                        std::move(handler));
 }
 
-ToolRegistry::ToolRegistry(std::unique_ptr<Impl> impl) noexcept
-    : impl_(std::move(impl)) {}
+ToolRegistry::ToolRegistry() : impl_(std::make_unique<Impl>()) {}
 
 ToolRegistry::~ToolRegistry() = default;
 ToolRegistry::ToolRegistry(ToolRegistry&&) noexcept = default;
@@ -171,3 +166,18 @@ Result<Json> ToolRegistry::to_json() const {
 }
 
 } // namespace scry
+
+namespace scry::detail {
+
+void ToolRegistryAccess::ensure_active(ToolRegistry& tools) {
+  if (tools.impl_ == nullptr) {
+    tools.impl_ = std::make_unique<ToolRegistry::Impl>();
+  }
+}
+
+FrozenToolSnapshot ToolRegistryAccess::snapshot(ToolRegistry& tools) {
+  ensure_active(tools);
+  return tools.impl_->snapshot();
+}
+
+} // namespace scry::detail

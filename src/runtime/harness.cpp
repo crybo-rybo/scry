@@ -105,20 +105,12 @@ public:
   /// already succeeded.
   [[nodiscard]] static Result<Harness>
   start(Config config, std::unique_ptr<detail::ProviderAdapter> provider,
-        std::unique_ptr<detail::Transport> transport,
+        std::unique_ptr<detail::Transport> transport, ToolRegistry tools,
         detail::WorkerEnvironment environment);
 
-  /// Constructs a ToolRegistry. Its constructor is private to Harness and its
-  /// members, so building one here spares the public header a factory
-  /// declaration no consumer could call.
-  [[nodiscard]] static std::unique_ptr<ToolRegistry> make_tool_registry() {
-    return std::unique_ptr<ToolRegistry>{
-        new ToolRegistry{std::make_unique<ToolRegistry::Impl>()}};
-  }
-
   Impl(Config config, std::unique_ptr<detail::ProviderAdapter> provider,
-       std::unique_ptr<detail::Transport> transport,
-       std::unique_ptr<ToolRegistry> tools, detail::WorkerEnvironment environment)
+       std::unique_ptr<detail::Transport> transport, ToolRegistry tools,
+       detail::WorkerEnvironment environment)
       : config_(std::move(config)), commands_(std::make_shared<detail::CommandQueue>()),
         events_(std::make_shared<detail::EventQueue>()), pump_(events_),
         tools_(std::move(tools)),
@@ -130,7 +122,11 @@ public:
                                     std::move(transport), std::move(commands),
                                     std::move(events),    std::move(environment)};
           actor.run(stopped);
-        }) {}
+        }) {
+    // An adopted registry that was already moved from would otherwise leave
+    // tools() permanently unusable; give this Harness an empty active one.
+    detail::ToolRegistryAccess::ensure_active(tools_);
+  }
 
   ~Impl() {
     worker_.request_stop();
@@ -173,7 +169,7 @@ public:
     const auto turn_id = TurnId{.value = ++next_turn_id_};
     const auto max_exchange_bytes = config_.limits.max_conversation_bytes -
                                     conversation->payload_bytes - text.size();
-    auto tools = tools_->impl_->snapshot();
+    auto tools = detail::ToolRegistryAccess::snapshot(tools_);
     auto cancelled = std::make_shared<std::atomic<bool>>(false);
     auto messages = std::vector<detail::Message>{};
     messages.push_back(user_message(text));
@@ -208,8 +204,8 @@ public:
     const auto route = pump_.find_route(turn_id);
     return route != nullptr && route->disconnect();
   }
-  [[nodiscard]] ToolRegistry& tools() noexcept { return *tools_; }
-  [[nodiscard]] const ToolRegistry& tools() const noexcept { return *tools_; }
+  [[nodiscard]] ToolRegistry& tools() noexcept { return tools_; }
+  [[nodiscard]] const ToolRegistry& tools() const noexcept { return tools_; }
   [[nodiscard]] UpdateStats update(const UpdateOptions options) {
     return pump_.update(options);
   }
@@ -223,7 +219,7 @@ private:
   std::shared_ptr<detail::CommandQueue> commands_{};
   std::shared_ptr<detail::EventQueue> events_{};
   detail::PumpState pump_;
-  std::unique_ptr<ToolRegistry> tools_{};
+  ToolRegistry tools_{};
   std::jthread worker_{};
   std::uint64_t next_turn_id_{};
 };
@@ -231,8 +227,8 @@ private:
 Result<Harness> Harness::Impl::start(Config config,
                                      std::unique_ptr<detail::ProviderAdapter> provider,
                                      std::unique_ptr<detail::Transport> transport,
+                                     ToolRegistry tools,
                                      detail::WorkerEnvironment environment) {
-  auto tools = make_tool_registry();
   return detail::translate_worker_start_failure<Harness>(
       [config = std::move(config), provider = std::move(provider),
        transport = std::move(transport), tools = std::move(tools),
@@ -249,7 +245,7 @@ Harness::~Harness() = default;
 Harness::Harness(Harness&&) noexcept = default;
 Harness& Harness::operator=(Harness&&) noexcept = default;
 
-Result<Harness> Harness::create(Config config) {
+Result<Harness> Harness::create(Config config, ToolRegistry tools) {
   if (auto status = detail::validate_config(config); !status) {
     return std::unexpected(std::move(status.error()));
   }
@@ -260,6 +256,7 @@ Result<Harness> Harness::create(Config config) {
   }
   const auto retry_jitter_seed = make_retry_jitter_seed(transport.get());
   return Impl::start(std::move(config), std::move(provider), std::move(transport),
+                     std::move(tools),
                      detail::WorkerEnvironment{.retry_jitter_seed = retry_jitter_seed});
 }
 
@@ -348,7 +345,7 @@ Result<Harness> HarnessTestAccess::create(Config config,
                                           std::unique_ptr<ProviderAdapter> provider,
                                           std::unique_ptr<Transport> transport,
                                           const std::uint64_t retry_jitter_seed,
-                                          WorkerTimeSource time) {
+                                          WorkerTimeSource time, ToolRegistry tools) {
   if (auto status = validate_config(config); !status) {
     return std::unexpected(std::move(status.error()));
   }
@@ -358,7 +355,7 @@ Result<Harness> HarnessTestAccess::create(Config config,
                         "provider and transport components must not be empty"));
   }
   return Harness::Impl::start(std::move(config), std::move(provider),
-                              std::move(transport),
+                              std::move(transport), std::move(tools),
                               WorkerEnvironment{.retry_jitter_seed = retry_jitter_seed,
                                                 .time = std::move(time)});
 }

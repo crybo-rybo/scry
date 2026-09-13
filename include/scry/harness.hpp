@@ -26,10 +26,16 @@ class HarnessTestAccess;
 /// application access is not internally synchronized.
 class Harness final {
 public:
-  /// Validates configuration and starts a Harness-owned worker.
+  /// Validates configuration, takes ownership of a tool registry, and starts a
+  /// Harness-owned worker.
+  ///
+  /// Tools registered before create() are visible to the first turn; the moved-from
+  /// registry variable is inactive afterwards, and further registration goes through
+  /// tools().
   /// @param config Provider, retry, timeout, and resource configuration.
+  /// @param tools Registry to adopt. Defaults to an empty one.
   /// @return A Harness, or a configuration, libcurl startup, or worker-start error.
-  [[nodiscard]] static Result<Harness> create(Config config);
+  [[nodiscard]] static Result<Harness> create(Config config, ToolRegistry tools = {});
 
   /// Runs exactly the configuration checks create() runs, without initializing
   /// libcurl or starting a worker.

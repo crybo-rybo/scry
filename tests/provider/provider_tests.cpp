@@ -134,8 +134,8 @@ TEST_CASE("Anthropic request encoding preserves neutral tool shapes") {
   REQUIRE(adapter);
   auto model_request = request();
   model_request.tools =
-      std::make_shared<const std::vector<ToolSchema>>(std::vector<ToolSchema>{
-          ToolSchema{
+      std::make_shared<const std::vector<ToolDefinition>>(std::vector<ToolDefinition>{
+          ToolDefinition{
               .name = "lookup",
               .description = "Lookup a value",
               .input_schema = Json{.text = R"({"type":"object"})"},

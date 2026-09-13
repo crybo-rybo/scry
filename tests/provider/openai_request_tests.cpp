@@ -87,13 +87,15 @@ using namespace scry::detail;
                       },
               },
           },
-      .tools = std::make_shared<const std::vector<ToolSchema>>(std::vector<ToolSchema>{
-          ToolSchema{
-              .name = "weather",
-              .description = "Get weather",
-              .input_schema = Json{.text = R"({"type":"object","required":["city"]})"},
-          },
-      }),
+      .tools = std::make_shared<const std::vector<ToolDefinition>>(
+          std::vector<ToolDefinition>{
+              ToolDefinition{
+                  .name = "weather",
+                  .description = "Get weather",
+                  .input_schema =
+                      Json{.text = R"({"type":"object","required":["city"]})"},
+              },
+          }),
       .sampling =
           SamplingConfig{
               .temperature = 1.5,
@@ -256,10 +258,10 @@ TEST_CASE("OpenAI request rejects neutral shapes that cannot be preserved") {
   CHECK(encoded.error().category == ErrorCategory::invalid_config);
 
   invalid = request();
-  invalid.tools = std::make_shared<const std::vector<ToolSchema>>(
-      std::vector<ToolSchema>{{.name = "weather",
-                               .description = "Get weather",
-                               .input_schema = {.text = "[]"}}});
+  invalid.tools = std::make_shared<const std::vector<ToolDefinition>>(
+      std::vector<ToolDefinition>{{.name = "weather",
+                                   .description = "Get weather",
+                                   .input_schema = {.text = "[]"}}});
   encoded = adapter.make_request(config(), invalid);
   REQUIRE_FALSE(encoded);
   CHECK(encoded.error().category == ErrorCategory::invalid_config);
@@ -317,16 +319,16 @@ TEST_CASE("OpenAI request rejects malformed tool boundary fields") {
   require_invalid_request(config(), invalid);
 
   invalid = request();
-  invalid.tools = std::make_shared<const std::vector<ToolSchema>>(
-      std::vector<ToolSchema>{{.name = "",
-                               .description = "lookup",
-                               .input_schema = {.text = R"({"type":"object"})"}}});
+  invalid.tools = std::make_shared<const std::vector<ToolDefinition>>(
+      std::vector<ToolDefinition>{{.name = "",
+                                   .description = "lookup",
+                                   .input_schema = {.text = R"({"type":"object"})"}}});
   require_invalid_request(config(), invalid);
 
   invalid = request();
-  invalid.tools = std::make_shared<const std::vector<ToolSchema>>(
-      std::vector<ToolSchema>{{.name = "weather",
-                               .description = "Get weather",
-                               .input_schema = {.text = "{"}}});
+  invalid.tools = std::make_shared<const std::vector<ToolDefinition>>(
+      std::vector<ToolDefinition>{{.name = "weather",
+                                   .description = "Get weather",
+                                   .input_schema = {.text = "{"}}});
   require_invalid_request(config(), invalid);
 }

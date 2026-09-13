@@ -168,7 +168,7 @@ TEST_CASE("Anthropic request encoding preserves optional and tool branches") {
   value_request.system_prompt = "system";
   value_request.sampling.top_p = 0.8;
   value_request.tools =
-      std::make_shared<const std::vector<ToolSchema>>(std::vector<ToolSchema>{
+      std::make_shared<const std::vector<ToolDefinition>>(std::vector<ToolDefinition>{
           {.name = "lookup",
            .description = "lookup",
            .input_schema = {.text = R"({"type":"object"})"}},
@@ -202,8 +202,9 @@ TEST_CASE("Anthropic request encoding propagates invalid boundary JSON") {
       ToolResultBlock{.tool_call_id = "id", .result = {.text = "{"}}};
   require_request_error(adapter, config(), value);
   value = request();
-  value.tools = std::make_shared<const std::vector<ToolSchema>>(std::vector<ToolSchema>{
-      {.name = "tool", .description = "tool", .input_schema = {.text = "{"}}});
+  value.tools =
+      std::make_shared<const std::vector<ToolDefinition>>(std::vector<ToolDefinition>{
+          {.name = "tool", .description = "tool", .input_schema = {.text = "{"}}});
   require_request_error(adapter, config(), value);
 }
 TEST_CASE("Anthropic stream start handles initial content and rejects bad envelopes") {
