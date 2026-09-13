@@ -58,58 +58,39 @@ string_error_token(const JsonValue& error, const std::string_view field) {
   return token;
 }
 
-[[nodiscard]] std::optional<ErrorDescriptor>
-recognized_descriptor(const std::optional<std::string>& token) {
-  if (!token) {
-    return std::nullopt;
-  }
-  const auto category = error_category(*token);
-  if (category == ErrorCategory::protocol) {
-    return std::nullopt;
-  }
-  return ErrorDescriptor{.token = *token, .category = category};
+[[nodiscard]] ErrorDescriptor protocol_descriptor(std::string token) {
+  return ErrorDescriptor{.token = std::move(token),
+                         .category = ErrorCategory::protocol};
 }
 
-[[nodiscard]] ErrorDescriptor
-fallback_descriptor(const JsonValue& error, const std::optional<std::string>& type,
-                    const std::optional<std::string>& code) {
-  if (type) {
-    return ErrorDescriptor{.token = *type, .category = ErrorCategory::protocol};
-  }
-  if (code) {
-    return ErrorDescriptor{.token = *code, .category = ErrorCategory::protocol};
-  }
-  const auto* numeric_code = json_field(error, "code");
-  if (numeric_code != nullptr && numeric_code->is_uint64()) {
-    return ErrorDescriptor{
-        .token =
-            sanitize_error_token(std::to_string(numeric_code->get<std::uint64_t>())),
-        .category = ErrorCategory::protocol,
-    };
-  }
-  return ErrorDescriptor{
-      .token = "unknown_error",
-      .category = ErrorCategory::protocol,
-  };
-}
-
+// Picks the token that names the error. A "type" or "code" string that maps to a
+// specific category wins, type first; otherwise the first of the two that is
+// present labels a protocol error, and a numeric "code" is the last resort.
 [[nodiscard]] ErrorDescriptor error_descriptor(const JsonValue& root) {
   const auto* error = json_field(root, "error");
   if (error == nullptr || !error->is_object()) {
-    return ErrorDescriptor{
-        .token = "unknown_error",
-        .category = ErrorCategory::protocol,
-    };
+    return protocol_descriptor("unknown_error");
   }
   const auto type = string_error_token(*error, "type");
   const auto code = string_error_token(*error, "code");
-  if (auto recognized = recognized_descriptor(type)) {
-    return *recognized;
+  for (const auto* token : {&type, &code}) {
+    if (!token->has_value()) {
+      continue;
+    }
+    if (const auto category = error_category(**token);
+        category != ErrorCategory::protocol) {
+      return ErrorDescriptor{.token = **token, .category = category};
+    }
   }
-  if (auto recognized = recognized_descriptor(code)) {
-    return *recognized;
+  if (type || code) {
+    return protocol_descriptor(type ? *type : *code);
   }
-  return fallback_descriptor(*error, type, code);
+  const auto* numeric_code = json_field(*error, "code");
+  if (numeric_code != nullptr && numeric_code->is_uint64()) {
+    return protocol_descriptor(
+        sanitize_error_token(std::to_string(numeric_code->get<std::uint64_t>())));
+  }
+  return protocol_descriptor("unknown_error");
 }
 
 [[nodiscard]] bool retryable_category(const ErrorCategory category) noexcept {
