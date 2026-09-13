@@ -9,18 +9,15 @@ namespace {
 
 constexpr glz::opts json_read_options{.null_terminated = false};
 
-// Every input arrives as a string_view, so the reader is told the buffer is not
-// NUL-terminated — and Glaze then treats the end of the buffer as an implicit
-// terminator, accepting documents that stop mid-value. Skipping the document
-// once with both validations on is what rejects a truncated body, a second
-// document, and trailing garbage before the real read runs. A whitespace-only
-// input still reads as null; that residual gap is the caller's to reject.
+// Input always arrives as a string_view, and Glaze treats the end of a buffer it
+// is told is not NUL-terminated as an implicit terminator, so a plain read accepts
+// a document that stops mid-value. Skipping the input once with both validations
+// on is what rejects truncation, trailing garbage, and a second document.
 struct JsonValidateOptions : glz::opts {
   bool validate_skipped = true;
   bool validate_trailing_whitespace = true;
 };
-constexpr JsonValidateOptions json_validate_options{
-    {.null_terminated = false}, true, true};
+constexpr JsonValidateOptions json_validate_options{{.null_terminated = false}};
 
 [[nodiscard]] Error field_error(const std::string_view name,
                                 const std::string_view expected) {

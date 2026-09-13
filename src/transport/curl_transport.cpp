@@ -178,18 +178,23 @@ std::size_t body_callback(char* data, const std::size_t size, const std::size_t 
   }
 }
 
-int progress_callback(void* userdata, curl_off_t, curl_off_t, curl_off_t,
-                      curl_off_t) noexcept {
-  auto& context = *static_cast<TransferContext*>(userdata);
+// Records why the transfer is being abandoned so the eventual
+// CURLE_ABORTED_BY_CALLBACK can be reported as the right kind of cancellation.
+[[nodiscard]] bool cancellation_requested(TransferContext& context) noexcept {
   if (context.shutdown.stop_requested()) {
     context.abort_cause = curl_error::AbortCause::harness_shutdown;
-    return 1;
+    return true;
   }
   if (context.cancelled->load(std::memory_order_acquire)) {
     context.abort_cause = curl_error::AbortCause::turn_cancelled;
-    return 1;
+    return true;
   }
-  return 0;
+  return false;
+}
+
+int progress_callback(void* userdata, curl_off_t, curl_off_t, curl_off_t,
+                      curl_off_t) noexcept {
+  return cancellation_requested(*static_cast<TransferContext*>(userdata)) ? 1 : 0;
 }
 
 [[nodiscard]] Result<HeaderList> build_headers(const std::vector<HttpHeader>& headers) {
@@ -294,11 +299,11 @@ private:
   return options.status();
 }
 
-[[nodiscard]] Status validate_execution(const Status& startup_status,
+[[nodiscard]] Status validate_execution(Status startup_status,
                                         const std::stop_token& shutdown,
                                         const std::atomic<bool>& cancelled) {
   if (!startup_status) {
-    return std::unexpected(startup_status.error());
+    return std::unexpected(std::move(startup_status.error()));
   }
   if (shutdown.stop_requested()) {
     return std::unexpected(
@@ -309,18 +314,6 @@ private:
         curl_error::cancelled(curl_error::AbortCause::turn_cancelled));
   }
   return {};
-}
-
-[[nodiscard]] bool cancellation_requested(TransferContext& context) noexcept {
-  if (context.shutdown.stop_requested()) {
-    context.abort_cause = curl_error::AbortCause::harness_shutdown;
-    return true;
-  }
-  if (context.cancelled->load(std::memory_order_acquire)) {
-    context.abort_cause = curl_error::AbortCause::turn_cancelled;
-    return true;
-  }
-  return false;
 }
 
 [[nodiscard]] Result<CURLcode>
@@ -407,11 +400,9 @@ public:
     return startup_status_;
   }
 
-  // One worker thread owns a transport for the harness lifetime, so the multi
-  // handle persists across attempts. It carries libcurl's connection cache:
-  // keeping it is what lets a retry, a tool round, or a later turn reuse an
-  // established TCP connection and TLS session instead of repeating the
-  // handshake. A null return is reported as transfer setup failure.
+  // Creates the multi handle once and keeps it for the transport's lifetime,
+  // because it holds libcurl's connection cache: reusing it is what lets a
+  // retry or a later turn skip the TCP and TLS handshake. Null on failure.
   [[nodiscard]] CURLM* multi() {
     if (!multi_) {
       multi_.reset(curl_multi_init());
