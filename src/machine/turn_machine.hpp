@@ -28,12 +28,6 @@ enum class MachinePhase : std::uint8_t {
   terminal,
 };
 
-enum class MachineTerminalKind : std::uint8_t {
-  completed,
-  failed,
-  cancelled,
-};
-
 struct BeginTurn {
   MachineTimePoint observed_at{};
 };
@@ -178,7 +172,6 @@ public:
 
   [[nodiscard]] MachinePhase phase() const noexcept;
   [[nodiscard]] std::uint32_t attempt_count() const noexcept;
-  [[nodiscard]] std::optional<MachineTerminalKind> terminal_kind() const noexcept;
 
 private:
   struct QueuedState {};
@@ -208,9 +201,7 @@ private:
     std::string provider_request_id{};
   };
 
-  struct TerminalState {
-    MachineTerminalKind kind{MachineTerminalKind::failed};
-  };
+  struct TerminalState {};
 
   using State = std::variant<QueuedState, AwaitingModelState, StreamingState,
                              RetryWaitState, AwaitingToolState, TerminalState>;

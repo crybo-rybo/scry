@@ -84,7 +84,7 @@ TEST_CASE("tool exchange budget rejects an assistant round before dispatch") {
   const auto& error = only_command<scry::detail::PublishError>(rejected).error;
   CHECK(error.category == scry::ErrorCategory::resource_limit);
   CHECK(error.provider_request_id == "tool-request");
-  CHECK(machine.terminal_kind() == scry::detail::MachineTerminalKind::failed);
+  CHECK(machine.phase() == scry::detail::MachinePhase::terminal);
 }
 
 TEST_CASE("tool exchange budget is exact across every ordered result") {

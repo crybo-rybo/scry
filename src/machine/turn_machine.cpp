@@ -122,13 +122,6 @@ MachinePhase TurnMachine::phase() const noexcept {
 
 std::uint32_t TurnMachine::attempt_count() const noexcept { return attempt_count_; }
 
-std::optional<MachineTerminalKind> TurnMachine::terminal_kind() const noexcept {
-  if (const auto* terminal = std::get_if<TerminalState>(&state_)) {
-    return terminal->kind;
-  }
-  return std::nullopt;
-}
-
 TransitionResult TurnMachine::on_event(const BeginTurn event) {
   if (!std::holds_alternative<QueuedState>(state_)) {
     return illegal(MachineEventKind::begin,
@@ -317,7 +310,7 @@ TransitionResult TurnMachine::on_event(ToolExecutionFailed event) {
 }
 
 TransitionResult TurnMachine::on_event(const CancelTurn /*event*/) {
-  state_.emplace<TerminalState>(MachineTerminalKind::cancelled);
+  state_.emplace<TerminalState>();
   request_.reset();
   return applied(PublishCancelled{.turn_id = turn_id_});
 }
@@ -401,7 +394,7 @@ TransitionResult TurnMachine::complete_turn(ModelResponse response) {
                          std::move(response.provider_request_id));
   }
   exchange_.push_back(std::move(assistant));
-  state_.emplace<TerminalState>(MachineTerminalKind::completed);
+  state_.emplace<TerminalState>();
   request_.reset();
   return applied(CommitCompletion{
       .turn_id = turn_id_,
@@ -414,7 +407,7 @@ TransitionResult TurnMachine::complete_turn(ModelResponse response) {
 }
 
 TransitionResult TurnMachine::finish_error(Error error) {
-  state_.emplace<TerminalState>(MachineTerminalKind::failed);
+  state_.emplace<TerminalState>();
   request_.reset();
   return applied(PublishError{.error = std::move(error)});
 }

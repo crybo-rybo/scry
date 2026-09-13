@@ -40,7 +40,6 @@ TEST_CASE("queued turn issues its first model attempt") {
 
   CHECK(machine.phase() == scry::detail::MachinePhase::queued);
   CHECK(machine.attempt_count() == 0);
-  CHECK_FALSE(machine.terminal_kind().has_value());
 
   const auto result = machine.apply(scry::detail::BeginTurn{.observed_at = at(250ms)});
   const auto& command = only_command<scry::detail::IssueModelRequest>(result);
@@ -76,7 +75,6 @@ TEST_CASE("non-streaming completion emits one transactional commit intent") {
   CHECK(std::get<scry::detail::TextBlock>(command.exchange.front().content.front())
             .text == "answer");
   CHECK(machine.phase() == scry::detail::MachinePhase::terminal);
-  CHECK(machine.terminal_kind() == scry::detail::MachineTerminalKind::completed);
 }
 
 TEST_CASE("terminal transitions release the model request snapshot") {
@@ -260,7 +258,7 @@ TEST_CASE("attempt cap publishes the last retryable error") {
   CHECK(terminal.error.retryable);
   CHECK(terminal.error.attempt == 2);
   CHECK(terminal.error.turn_id == turn_id);
-  CHECK(machine.terminal_kind() == scry::detail::MachineTerminalKind::failed);
+  CHECK(machine.phase() == scry::detail::MachinePhase::terminal);
 }
 
 TEST_CASE("elapsed retry cap rejects waits beyond the deadline") {
@@ -378,7 +376,7 @@ TEST_CASE("transport cancellation maps to the cancelled terminal channel") {
   });
 
   CHECK(only_command<scry::detail::PublishCancelled>(failed).turn_id == turn_id);
-  CHECK(machine.terminal_kind() == scry::detail::MachineTerminalKind::cancelled);
+  CHECK(machine.phase() == scry::detail::MachinePhase::terminal);
 }
 
 TEST_CASE("error commands carry stable turn and attempt correlation") {
