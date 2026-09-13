@@ -36,6 +36,11 @@ namespace {
   return 1;
 }
 
+void append_events(std::vector<SseEvent>& destination, std::vector<SseEvent> parsed) {
+  destination.insert(destination.end(), std::make_move_iterator(parsed.begin()),
+                     std::make_move_iterator(parsed.end()));
+}
+
 } // namespace
 
 SseParser::SseParser(const std::size_t max_event_bytes)
@@ -50,9 +55,7 @@ Result<std::vector<SseEvent>> SseParser::push(const std::string_view bytes) {
         input_buffer_.push_back('\n');
         remaining.remove_prefix(1);
       }
-      auto parsed = process_complete_lines(true);
-      events.insert(events.end(), std::make_move_iterator(parsed.begin()),
-                    std::make_move_iterator(parsed.end()));
+      append_events(events, process_complete_lines(true));
       continue;
     }
 
@@ -64,9 +67,7 @@ Result<std::vector<SseEvent>> SseParser::push(const std::string_view bytes) {
     input_buffer_.append(remaining.substr(0, count));
     remaining.remove_prefix(count);
 
-    auto parsed = process_complete_lines();
-    events.insert(events.end(), std::make_move_iterator(parsed.begin()),
-                  std::make_move_iterator(parsed.end()));
+    append_events(events, process_complete_lines());
   }
   return events;
 }

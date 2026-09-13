@@ -9,6 +9,16 @@
 
 namespace scry::test {
 
+// Builds a complete HTTP/1.1 response for LoopbackServer to serve. `headers`
+// must already be CRLF-terminated; Content-Length and Connection are appended.
+[[nodiscard]] inline std::string http_response(const std::string_view status,
+                                               const std::string_view headers,
+                                               const std::string_view body) {
+  return "HTTP/1.1 " + std::string{status} + "\r\n" + std::string{headers} +
+         "Content-Length: " + std::to_string(body.size()) +
+         "\r\nConnection: close\r\n\r\n" + std::string{body};
+}
+
 class LoopbackServer final {
 public:
   // Serving more than one request keeps the accepted connection open between

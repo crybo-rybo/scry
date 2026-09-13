@@ -7,8 +7,7 @@
 
 namespace scry::reflection::detail {
 
-// The component reuses the public read-only JSON view rather than owning a second
-// one; these aliases keep the historical spelling for the generated code.
+// Reflection reuses the public read-only JSON view instead of owning a second one.
 using JsonKind = scry::JsonKind;
 using JsonView = scry::JsonView;
 

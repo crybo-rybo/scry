@@ -25,22 +25,10 @@ const std::string completed_stream =
 const std::string correlated_stream =
     anthropic_text_stream("correlated", "msg_correlated", "stream-request", 3, 1);
 
-constexpr std::string_view tool_stream = R"(event: message_start
-data: {"type":"message_start","message":{"id":"msg_tool","type":"message","role":"assistant","content":[],"model":"test-model","stop_reason":null,"usage":{"input_tokens":3,"output_tokens":0}}}
-
-event: content_block_start
-data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"call_1","name":"lookup","input":{}}}
-
-event: content_block_stop
-data: {"type":"content_block_stop","index":0}
-
-event: message_delta
-data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}
-
-event: message_stop
-data: {"type":"message_stop"}
-
-)";
+// Announces a tool call and then ends the turn: content and finish reason
+// disagree, which is what the test using it asserts on.
+const std::string tool_stream =
+    anthropic_tool_stream({{.id = "call_1", .name = "lookup"}}, "msg_tool", "end_turn");
 
 [[nodiscard]] scry::Result<scry::Harness>
 fake_harness(scry::Config config, scry::test::ScriptedExchange scripted) {
@@ -50,29 +38,10 @@ fake_harness(scry::Config config, scry::test::ScriptedExchange scripted) {
                                                  std::move(fake));
 }
 
+// A single text delta far larger than the tightened event-queue budget the
+// test configures.
 [[nodiscard]] std::string large_delta_stream() {
-  auto stream = std::string{R"(event: message_start
-data: {"type":"message_start","message":{"id":"msg_large","type":"message","role":"assistant","content":[],"model":"test-model","stop_reason":null,"usage":{"input_tokens":1,"output_tokens":0}}}
-
-event: content_block_start
-data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
-
-event: content_block_delta
-data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":")"};
-  stream.append(600, 'x');
-  stream.append(R"("}}
-
-event: content_block_stop
-data: {"type":"content_block_stop","index":0}
-
-event: message_delta
-data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}
-
-event: message_stop
-data: {"type":"message_stop"}
-
-)");
-  return stream;
+  return anthropic_text_stream(std::string(600, 'x'), "msg_large", {}, 1, 1);
 }
 
 [[nodiscard]] scry::ToolDefinition tool() {
@@ -219,27 +188,22 @@ TEST_CASE("a Turn can cancel safely after its Harness has been destroyed") {
 }
 
 TEST_CASE("a completed turn publishes its history, busy state, and finished flag") {
-  auto harness_result =
-      fake_harness(test_config(), scripted_exchange(completed_stream));
-  REQUIRE(harness_result);
-  auto harness = std::move(*harness_result);
-  auto conversation_result = scry::Conversation::create({.system_prompt = "Be brief."});
-  REQUIRE(conversation_result);
-  auto conversation = std::move(*conversation_result);
+  auto harness =
+      unwrap(fake_harness(test_config(), scripted_exchange(completed_stream)));
+  auto conversation =
+      unwrap(scry::Conversation::create({.system_prompt = "Be brief."}));
   CHECK(conversation.system_prompt() == "Be brief.");
   CHECK_FALSE(conversation.busy());
 
   bool finished = false;
-  auto turn_result =
-      harness.send(conversation, "question",
-                   {
-                       .on_finished =
-                           [&finished](scry::Result<scry::Completion> outcome) {
-                             finished = outcome.has_value();
-                           },
-                   });
-  REQUIRE(turn_result);
-  const auto turn = std::move(*turn_result);
+  const auto turn =
+      unwrap(harness.send(conversation, "question",
+                          {
+                              .on_finished =
+                                  [&finished](scry::Result<scry::Completion> outcome) {
+                                    finished = outcome.has_value();
+                                  },
+                          }));
   CHECK(conversation.busy());
   CHECK_FALSE(turn.finished());
 
@@ -263,9 +227,7 @@ TEST_CASE("a turn without on_finished still reports finished once update runs") 
   auto fixture =
       make_harness_fixture(test_config(), {scripted_exchange(completed_stream)});
 
-  auto turn_result = fixture.harness.send(fixture.conversation, "question");
-  REQUIRE(turn_result);
-  const auto turn = std::move(*turn_result);
+  const auto turn = unwrap(fixture.harness.send(fixture.conversation, "question"));
   CHECK_FALSE(turn.finished());
 
   REQUIRE(pump_until(fixture.harness, [&turn] { return turn.finished(); }));
@@ -276,26 +238,21 @@ TEST_CASE("a turn without on_finished still reports finished once update runs") 
 TEST_CASE("Harness::cancel addresses an in-flight turn by identifier") {
   auto transport = std::make_unique<HeldTransport>();
   auto* held = transport.get();
-  auto harness_result = scry::detail::HarnessTestAccess::create(
-      test_config(), provider(), std::move(transport));
-  REQUIRE(harness_result);
-  auto harness = std::move(*harness_result);
-  auto conversation_result = scry::Conversation::create();
-  REQUIRE(conversation_result);
-  auto conversation = std::move(*conversation_result);
+  auto harness = unwrap(scry::detail::HarnessTestAccess::create(
+      test_config(), provider(), std::move(transport)));
+  auto conversation = unwrap(scry::Conversation::create());
 
   bool cancelled = false;
-  auto turn_result =
-      harness.send(conversation, "hold the transfer",
-                   {
-                       .on_finished =
-                           [&cancelled](scry::Result<scry::Completion> outcome) {
-                             cancelled = !outcome && outcome.error().category ==
-                                                         scry::ErrorCategory::cancelled;
-                           },
-                   });
-  REQUIRE(turn_result);
-  const auto turn = std::move(*turn_result);
+  const auto turn =
+      unwrap(harness.send(conversation, "hold the transfer",
+                          {
+                              .on_finished =
+                                  [&cancelled](scry::Result<scry::Completion> outcome) {
+                                    cancelled =
+                                        !outcome && outcome.error().category ==
+                                                        scry::ErrorCategory::cancelled;
+                                  },
+                          }));
   held->wait_for_entry();
 
   CHECK_FALSE(harness.cancel(scry::TurnId{999}));
@@ -311,26 +268,20 @@ TEST_CASE("Harness::cancel addresses an in-flight turn by identifier") {
 TEST_CASE("Harness::disconnect stops delivery while the turn still runs") {
   auto transport = std::make_unique<HeldTransport>();
   auto* held = transport.get();
-  auto harness_result = scry::detail::HarnessTestAccess::create(
-      test_config(), provider(), std::move(transport));
-  REQUIRE(harness_result);
-  auto harness = std::move(*harness_result);
-  auto conversation_result = scry::Conversation::create();
-  REQUIRE(conversation_result);
-  auto conversation = std::move(*conversation_result);
+  auto harness = unwrap(scry::detail::HarnessTestAccess::create(
+      test_config(), provider(), std::move(transport)));
+  auto conversation = unwrap(scry::Conversation::create());
 
   std::string streamed;
   bool reported = false;
-  auto turn_result = harness.send(
+  const auto turn = unwrap(harness.send(
       conversation, "hold the transfer",
       {
           .on_text_delta =
               [&streamed](std::string_view delta) { streamed.append(delta); },
           .on_finished =
               [&reported](scry::Result<scry::Completion>) { reported = true; },
-      });
-  REQUIRE(turn_result);
-  const auto turn = std::move(*turn_result);
+      }));
   held->wait_for_entry();
 
   CHECK_FALSE(harness.disconnect(scry::TurnId{999}));

@@ -11,8 +11,10 @@
 namespace scry::detail {
 namespace {
 
+// Host-supplied JSON reaches the adapter as text; parsing it here is what lets
+// it be embedded as a value in the request body instead of a quoted string.
 [[nodiscard]] Result<JsonValue>
-encode_boundary_json(const Json& json, const std::string_view failure_message) {
+parse_boundary_json(const Json& json, const std::string_view failure_message) {
   return parse_json(json.text, ErrorCategory::invalid_config, failure_message);
 }
 
@@ -24,7 +26,7 @@ encode_boundary_json(const Json& json, const std::string_view failure_message) {
 }
 
 [[nodiscard]] Result<JsonValue> encode_tool_call(const ToolCallBlock& block) {
-  auto input = encode_boundary_json(block.arguments, "Tool input is not valid JSON");
+  auto input = parse_boundary_json(block.arguments, "Tool input is not valid JSON");
   if (!input) {
     return std::unexpected(std::move(input.error()));
   }
@@ -38,7 +40,7 @@ encode_boundary_json(const Json& json, const std::string_view failure_message) {
 }
 
 [[nodiscard]] Result<JsonValue> encode_tool_result(const ToolResultBlock& block) {
-  auto result = encode_boundary_json(block.result, "Tool result is not valid JSON");
+  auto result = parse_boundary_json(block.result, "Tool result is not valid JSON");
   if (!result) {
     return std::unexpected(std::move(result.error()));
   }
@@ -115,7 +117,7 @@ encode_boundary_json(const Json& json, const std::string_view failure_message) {
 
 [[nodiscard]] Result<JsonValue> encode_tool(const ToolSchema& tool) {
   auto schema =
-      encode_boundary_json(tool.input_schema, "Tool input schema is not valid JSON");
+      parse_boundary_json(tool.input_schema, "Tool input schema is not valid JSON");
   if (!schema) {
     return std::unexpected(std::move(schema.error()));
   }

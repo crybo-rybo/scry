@@ -1,4 +1,5 @@
 #include "core/provider.hpp"
+#include "core/retry.hpp"
 #include "runtime/config.hpp"
 #include "runtime/conversation_impl.hpp"
 #include "runtime/pump.hpp"
@@ -34,13 +35,6 @@ namespace {
   };
 }
 
-[[nodiscard]] std::uint64_t mix_seed(std::uint64_t value) noexcept {
-  value += std::uint64_t{0x9E3779B97F4A7C15};
-  value = (value ^ (value >> 30U)) * std::uint64_t{0xBF58476D1CE4E5B9};
-  value = (value ^ (value >> 27U)) * std::uint64_t{0x94D049BB133111EB};
-  return value ^ (value >> 31U);
-}
-
 [[nodiscard]] std::uint64_t make_retry_jitter_seed(const void* identity) noexcept {
   const auto now = static_cast<std::uint64_t>(
       std::chrono::steady_clock::now().time_since_epoch().count());
@@ -56,7 +50,7 @@ namespace {
     // Mark the fallback domain; process, time, and allocation identity remain.
     seed ^= std::uint64_t{0xD1B54A32D192ED03};
   }
-  return mix_seed(seed);
+  return detail::mix_seed(seed);
 }
 
 [[nodiscard]] detail::Message user_message(std::string text) {
@@ -82,9 +76,9 @@ make_request(const Config& config, const detail::ConversationState& conversation
 
 class Harness::Impl final {
 public:
-  /// ToolRegistry's constructor is private to its friend Harness, which extends to
-  /// Harness's members. Keeping the factory here spares the public header a
-  /// declaration that no consumer can use.
+  /// Constructs a ToolRegistry. Its constructor is private to Harness and its
+  /// members, so building one here spares the public header a factory
+  /// declaration no consumer could call.
   [[nodiscard]] static std::unique_ptr<ToolRegistry> make_tool_registry() {
     return std::unique_ptr<ToolRegistry>{
         new ToolRegistry{std::make_unique<ToolRegistry::Impl>()}};

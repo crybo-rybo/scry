@@ -64,28 +64,6 @@ void redact_sensitive_fields(Error& error, const std::string_view secret) {
   }
 }
 
-[[nodiscard]] TransitionResult failed_attempt(TurnMachine& machine, Error error,
-                                              const TurnId turn_id,
-                                              const std::string_view secret,
-                                              const std::uint64_t retry_jitter_seed,
-                                              const MachineTimePoint observed_at) {
-  redact_sensitive_fields(error, secret);
-  const auto attempt = machine.attempt_count();
-  const auto retry_after = error.retry_after;
-  if (!error.turn_id) {
-    error.turn_id = turn_id;
-  }
-  if (error.attempt == 0) {
-    error.attempt = attempt;
-  }
-  return machine.apply(AttemptFailed{
-      .error = std::move(error),
-      .observed_at = observed_at,
-      .retry_after = retry_after,
-      .jitter_sample = retry_jitter_sample(retry_jitter_seed, turn_id, attempt),
-  });
-}
-
 struct AttemptLimits final {
   std::size_t maximum_event_bytes{};
   std::size_t maximum_tool_arguments_bytes{};
@@ -238,6 +216,10 @@ bool WorkerActor::process_machine_command(
   if (published) {
     return true;
   }
+  // The event queue is full. What that means depends on where the turn is: a
+  // terminal turn has nothing left to report but the overflow itself, a turn
+  // waiting on a tool fails that tool round, and any other turn treats the
+  // overflow as a failed attempt, which may still retry.
   if (machine.phase() == MachinePhase::terminal) {
     auto error = worker_error(ErrorCategory::resource_limit,
                               "turn events exceed the configured queue limit",
@@ -251,11 +233,30 @@ bool WorkerActor::process_machine_command(
                                           .error = std::move(published.error()),
                                       }));
   } else {
-    append_commands(pending_commands,
-                    failed_attempt(machine, std::move(published.error()), turn.turn_id,
-                                   config_.api_key, retry_jitter_seed_, time_.now()));
+    append_commands(
+        pending_commands,
+        failed_attempt(machine, std::move(published.error()), turn.turn_id));
   }
   return true;
+}
+
+TransitionResult WorkerActor::failed_attempt(TurnMachine& machine, Error error,
+                                             const TurnId turn_id) {
+  redact_sensitive_fields(error, config_.api_key);
+  const auto attempt = machine.attempt_count();
+  const auto retry_after = error.retry_after;
+  if (!error.turn_id) {
+    error.turn_id = turn_id;
+  }
+  if (error.attempt == 0) {
+    error.attempt = attempt;
+  }
+  return machine.apply(AttemptFailed{
+      .error = std::move(error),
+      .observed_at = time_.now(),
+      .retry_after = retry_after,
+      .jitter_sample = retry_jitter_sample(retry_jitter_seed_, turn_id, attempt),
+  });
 }
 
 TransitionResult
@@ -264,8 +265,7 @@ WorkerActor::perform_attempt(TurnMachine& machine, const IssueModelRequest& issu
                              const std::stop_token& stopped) {
   auto request = provider_->make_request(config_, *issue.request);
   if (!request) {
-    return failed_attempt(machine, std::move(request.error()), issue.turn_id,
-                          config_.api_key, retry_jitter_seed_, time_.now());
+    return failed_attempt(machine, std::move(request.error()), issue.turn_id);
   }
 
   AttemptState state{AttemptLimits{
@@ -279,13 +279,11 @@ WorkerActor::perform_attempt(TurnMachine& machine, const IssueModelRequest& issu
 
   auto result = transport_->perform(*request, stopped, *cancelled, body_sink);
   if (!result) {
-    return failed_attempt(machine, std::move(result.error()), issue.turn_id,
-                          config_.api_key, retry_jitter_seed_, time_.now());
+    return failed_attempt(machine, std::move(result.error()), issue.turn_id);
   }
   auto response = finish_stream(machine, state);
   if (!response) {
-    return failed_attempt(machine, std::move(response.error()), issue.turn_id,
-                          config_.api_key, retry_jitter_seed_, time_.now());
+    return failed_attempt(machine, std::move(response.error()), issue.turn_id);
   }
   return complete_attempt(machine, std::move(*response), *result);
 }

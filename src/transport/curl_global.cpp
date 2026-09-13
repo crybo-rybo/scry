@@ -75,10 +75,8 @@ Status validate_curl_runtime_capabilities(const CurlRuntimeCapabilities capabili
 }
 
 Status curl_global_status() {
-  // Function-static initialization serializes the one process-wide attempt.
-  // Its result, including the first failure, is stable for the rest of the
-  // process. The owner's destructor pairs a successful initialization with
-  // exactly one cleanup after ordinary library objects have been destroyed.
+  // The function-static owner supplies the guarantees documented on the
+  // declaration in curl_global.hpp.
   return curl_global_owner().status();
 }
 

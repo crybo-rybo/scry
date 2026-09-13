@@ -18,10 +18,10 @@
 
 namespace scry::detail {
 
-// The worker's only two reads of real time. Empty members mean the real steady
-// clock and CommandQueue::wait_pop_until; only the internal test seam supplies
-// anything else, which is what makes backoff and Retry-After scheduling
-// assertable without waiting on a wall clock.
+// The worker's only two reads of real time. Both are empty in production,
+// meaning the real steady clock and CommandQueue::wait_pop_until; tests fill
+// them in so backoff and Retry-After scheduling are assertable to the
+// millisecond without waiting on a wall clock.
 struct WorkerTimeSource {
   UniqueFunction<MachineTimePoint()> now{};
   UniqueFunction<std::optional<WorkerCommand>(CommandQueue&, const std::stop_token&,
@@ -29,10 +29,10 @@ struct WorkerTimeSource {
       wait_until{};
 };
 
-// Everything the worker would otherwise read from the ambient environment,
-// grouped so the actor's constructor stays inside the argument-count gate. In
-// production the seed is randomized per Harness and the time members are empty;
-// only the internal test seam pins either.
+// The rest of what the worker would otherwise read from its surroundings, in
+// one struct so the constructor stays within the six-argument limit. In
+// production the seed is randomized per Harness; tests pin it to make jitter
+// reproducible.
 struct WorkerEnvironment {
   std::uint64_t retry_jitter_seed{};
   WorkerTimeSource time{};
@@ -56,6 +56,11 @@ private:
   process_machine_command(TurnMachine& machine, MachineCommand command,
                           const SendTurnCommand& turn, const std::stop_token& stopped,
                           std::deque<MachineCommand>& pending_commands);
+  // Records a failed attempt on the machine: redacts the API key out of the
+  // error, fills in the turn and attempt numbers, and draws this attempt's
+  // retry jitter.
+  [[nodiscard]] TransitionResult failed_attempt(TurnMachine& machine, Error error,
+                                                TurnId turn_id);
   [[nodiscard]] TransitionResult
   perform_attempt(TurnMachine& machine, const IssueModelRequest& issue,
                   const std::shared_ptr<std::atomic<bool>>& cancelled,
