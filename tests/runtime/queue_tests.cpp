@@ -40,14 +40,15 @@ TEST_CASE("payload accounting sums text, tool call, and tool result blocks") {
   };
   constexpr std::size_t message_bytes = 3 + 2 + 4 + 5 + 3 + 4 + sizeof(bool);
   CHECK(scry::detail::message_payload_bytes(message) == message_bytes);
+  // A completion is charged only its correlation id: the exchange it carries
+  // was already reserved against the Conversation budget.
   const scry::detail::WorkerEvent event{scry::detail::CompletionEvent{
       .turn_id = {.value = 201},
       .exchange = {message},
       .attempt_count = 1,
       .provider_request_id = "req",
   }};
-  CHECK(scry::detail::event_payload_bytes(event) ==
-        message_bytes + std::string_view{"req"}.size());
+  CHECK(scry::detail::event_payload_bytes(event) == std::string_view{"req"}.size());
 }
 
 TEST_CASE("payload accounting reports the turn and bytes of every event kind") {

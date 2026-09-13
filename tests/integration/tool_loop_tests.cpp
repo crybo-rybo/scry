@@ -273,6 +273,38 @@ TEST_CASE("tool call batches fail atomically at the event queue boundary") {
   CHECK(requests->requests().size() == 1);
 }
 
+// A tool result may be far larger than the per-turn event budget. The machine
+// reserves the whole exchange against the Conversation limit before resending
+// it, so the completion that hands that exchange to the host is not charged a
+// second time at the queue boundary.
+TEST_CASE("a tool result larger than the queue limit still completes when it fits "
+          "the Conversation limit") {
+  const std::string large_result = "\"" + std::string(3 * 1024 * 1024, 'x') + "\"";
+  auto fixture = make_harness_fixture(
+      test_config(),
+      {scripted_exchange(anthropic_tool_stream(
+                             {{.id = "call-1", .name = "large", .arguments = "{}"}}),
+                         "tool-request"),
+       scripted_exchange(anthropic_text_stream("done"), "final-request")});
+  REQUIRE(fixture.harness.tools().add(
+      scry::ToolDefinition{
+          .name = "large",
+          .description = "Returns a result larger than the event queue limit",
+          .input_schema = {.text = "{}"},
+      },
+      [&large_result](scry::Json) -> scry::Result<scry::Json> {
+        return scry::Json{.text = large_result};
+      }));
+
+  auto completion =
+      fixture.harness.send_and_wait(fixture.conversation, "return a large result");
+
+  REQUIRE(completion);
+  CHECK(completion->text == "done");
+  CHECK(fixture.transport->requests().size() == 2);
+  CHECK(fixture.conversation.message_count() == 4);
+}
+
 TEST_CASE("Harness destruction stops a worker awaiting an app-thread tool result") {
   auto fixture = make_harness_fixture(
       test_config(), {scripted_exchange(two_tool_stream, "tool-request")});

@@ -12,14 +12,29 @@ using namespace scry::test_support;
 
 namespace {
 
+// An error whose diagnostic alone fills most of a tightened per-turn budget.
+[[nodiscard]] scry::detail::ErrorEvent oversized_error(const scry::TurnId turn_id) {
+  return {
+      .turn_id = turn_id,
+      .error =
+          {
+              .category = scry::ErrorCategory::resource_limit,
+              .message = std::string(128, 'a'),
+              .turn_id = turn_id,
+          },
+  };
+}
+
+// A completion carrying far more exchange than the queue budget would allow if
+// the exchange were charged to it.
 [[nodiscard]] scry::detail::CompletionEvent
-oversized_completion(const scry::TurnId turn_id) {
+large_completion(const scry::TurnId turn_id) {
   return {
       .turn_id = turn_id,
       .exchange = {scry::detail::Message{
           .role = scry::detail::Role::assistant,
           .content = {scry::detail::TextBlock{
-              .text = std::string(128, 'a'),
+              .text = std::string(4096, 'a'),
           }},
       }},
       .finish_reason = scry::detail::FinishReason::completed,
@@ -97,13 +112,15 @@ TEST_CASE("bounded terminal push preserves the per-turn event byte limit") {
       queue.push(scry::detail::TextDeltaEvent{.turn_id = turn_id, .text = "z"}, limit));
 }
 
-TEST_CASE("completion mutation releases the originally accounted queue bytes") {
+// Delivery credits the bytes measured when the event arrived, so the per-turn
+// ledger drains exactly. Errors are the charged terminal event now that a
+// completion costs only its correlation id.
+TEST_CASE("delivering a terminal error releases the originally accounted queue bytes") {
   PumpFixture fixture;
   scry::detail::PumpState pump{fixture.events};
   std::optional<scry::Error> delivered_error;
   const auto route = fixture.route(
       102, {
-               .max_conversation_bytes = 1,
                .callbacks =
                    scry::TurnCallbacks{
                        .on_finished =
@@ -116,7 +133,7 @@ TEST_CASE("completion mutation releases the originally accounted queue bytes") {
            });
   pump.add_route(route);
 
-  REQUIRE(fixture.events->push(oversized_completion(route->id()), 256));
+  REQUIRE(fixture.events->push_terminal(oversized_error(route->id()), 256));
 
   const auto stats = pump.update({});
   CHECK(stats.callbacks_delivered == 1);
@@ -124,12 +141,26 @@ TEST_CASE("completion mutation releases the originally accounted queue bytes") {
   CHECK(delivered_error->category == scry::ErrorCategory::resource_limit);
   CHECK(fixture.conversation->messages->empty());
 
+  // The 128 diagnostic bytes returned to the ledger, so a 256-byte delta fits
+  // again under the same per-turn limit.
   REQUIRE(fixture.events->push(
       scry::detail::TextDeltaEvent{
           .turn_id = route->id(),
           .text = std::string(256, 'b'),
       },
       256));
+}
+
+TEST_CASE("a queued completion consumes only its correlation id bytes") {
+  scry::detail::EventQueue queue;
+  const auto turn_id = scry::TurnId{.value = 106};
+  constexpr std::size_t limit = 256 + std::string_view{"request-id"}.size();
+
+  REQUIRE(queue.push(large_completion(turn_id), limit));
+
+  CHECK(queue.push(
+      scry::detail::TextDeltaEvent{.turn_id = turn_id, .text = std::string(256, 'c')},
+      limit));
 }
 
 TEST_CASE("events enqueued by a callback wait for the next pump update") {

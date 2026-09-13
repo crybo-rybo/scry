@@ -353,8 +353,11 @@ Conversation accounting includes the system prompt, text, tool identifiers and
 names, tool-result error flags, and serialized arguments/results across history and
 pending exchange. It excludes JSON envelope syntax and allocator overhead; it is
 not the size of `to_json()`. The pump and machine reserve exchange payloads before
-resend and commit. The queue also retains completion payloads, so its limit can
-fail a turn whose exchange fits the Conversation limit. `from_json()` has no
+resend and commit. A completion payload is charged to the Conversation budget
+when the machine reserves it, never to the queued-event limit, so a completion
+that fits the Conversation limit is always deliverable; the queued-event limit
+bounds the text deltas, tool-call batches, and error diagnostics awaiting
+delivery. `from_json()` has no
 Harness configuration and does not apply these byte limits; they apply when the
 restored Conversation is sent through a Harness.
 

@@ -93,7 +93,10 @@ struct ResourceLimits {
   std::size_t max_tool_arguments_bytes{std::size_t{1024} * 1024};
   /// Maximum serialized result bytes returned by one tool.
   std::size_t max_tool_result_bytes{std::size_t{4} * 1024 * 1024};
-  /// Maximum queued callback payload bytes retained for one turn.
+  /// Maximum queued callback payload bytes retained for one turn: the text
+  /// deltas, tool-call batches, and error diagnostics awaiting delivery.
+  /// Completion payloads are charged to max_conversation_bytes instead, so a
+  /// completion that fits the Conversation limit is always deliverable.
   std::size_t max_queued_event_bytes_per_turn{std::size_t{2} * 1024 * 1024};
   /// Maximum Conversation payload bytes, including the system prompt, text, tool
   /// identifiers and names, and serialized arguments/results. JSON envelope syntax

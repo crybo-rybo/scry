@@ -425,19 +425,38 @@ TEST_CASE("accepted results redact the configured API key from correlation field
   CHECK(completion->provider_request_id.empty());
 }
 
-TEST_CASE("an oversized completion becomes a bounded queue-limit error") {
+// The exchange a completion carries is reserved against the Conversation budget
+// by the machine, so the queue charges the completion only its correlation id.
+// An id past the terminal reserve is dropped rather than failing the turn;
+// transport policy caps a real one at 256 bytes, well inside that reserve.
+TEST_CASE("a completion is never charged against the queue limit") {
   auto config = test_config();
   config.limits.max_queued_event_bytes_per_turn = 1024;
-  auto fixture = make_harness_fixture(
-      config, {scripted_exchange(completed_stream, std::string(600, 'r'))});
 
-  auto completion =
-      fixture.harness.send_and_wait(fixture.conversation, "oversized completion");
+  SECTION("a correlation id within the terminal reserve is delivered intact") {
+    auto fixture = make_harness_fixture(
+        config, {scripted_exchange(completed_stream, std::string(256, 'r'))});
 
-  REQUIRE_FALSE(completion);
-  CHECK(completion.error().category == scry::ErrorCategory::resource_limit);
-  CHECK(completion.error().message == "turn events exceed the configured queue limit");
-  CHECK(fixture.conversation.empty());
+    auto completion =
+        fixture.harness.send_and_wait(fixture.conversation, "correlated completion");
+
+    REQUIRE(completion);
+    CHECK(completion->provider_request_id.size() == 256);
+    CHECK(fixture.conversation.message_count() == 2);
+  }
+
+  SECTION("a correlation id past the terminal reserve is dropped, not failed") {
+    auto fixture = make_harness_fixture(
+        config, {scripted_exchange(completed_stream, std::string(600, 'r'))});
+
+    auto completion =
+        fixture.harness.send_and_wait(fixture.conversation, "oversized completion");
+
+    REQUIRE(completion);
+    CHECK(completion->text == "coverage answer");
+    CHECK(completion->provider_request_id.empty());
+    CHECK(fixture.conversation.message_count() == 2);
+  }
 }
 
 TEST_CASE("an oversized streamed delta terminates with a queue-limit error") {
