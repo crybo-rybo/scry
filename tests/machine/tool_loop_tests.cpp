@@ -207,7 +207,7 @@ TEST_CASE("tool-round cap fails before publishing any call from excess round") {
   CHECK(error.turn_id == turn_id);
   CHECK(error.attempt == 2);
   CHECK(error.provider_request_id == "tool-request");
-  CHECK(machine.terminal_kind() == scry::detail::MachineTerminalKind::failed);
+  CHECK(machine.phase() == scry::detail::MachinePhase::terminal);
 }
 
 TEST_CASE("zero tool-round cap rejects the first call batch") {
@@ -380,7 +380,7 @@ TEST_CASE("framework tool execution failure terminates from awaiting tool") {
   CHECK(published.turn_id == turn_id);
   CHECK(published.attempt == 1);
   CHECK(published.provider_request_id == "tool-request");
-  CHECK(machine.terminal_kind() == scry::detail::MachineTerminalKind::failed);
+  CHECK(machine.phase() == scry::detail::MachinePhase::terminal);
 }
 
 TEST_CASE("retry caps and elapsed windows reset for each model request") {

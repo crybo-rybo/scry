@@ -76,6 +76,13 @@ make_request(const Config& config, const detail::ConversationState& conversation
 
 class Harness::Impl final {
 public:
+  /// Starts a Harness from components whose entry-point-specific checks have
+  /// already succeeded.
+  [[nodiscard]] static Result<Harness>
+  start(Config config, std::unique_ptr<detail::ProviderAdapter> provider,
+        std::unique_ptr<detail::Transport> transport,
+        detail::WorkerEnvironment environment);
+
   /// Constructs a ToolRegistry. Its constructor is private to Harness and its
   /// members, so building one here spares the public header a factory
   /// declaration no consumer could call.
@@ -185,11 +192,6 @@ public:
   [[nodiscard]] bool wait_for_event() {
     return events_->wait_for_data(std::chrono::milliseconds{10});
   }
-  [[nodiscard]] bool has_current_tool_snapshot() const noexcept {
-    const auto& state = tools_->impl_->state;
-    return state.frozen.entries != nullptr &&
-           state.frozen.entries->size() == state.entries.size();
-  }
 
 private:
   Config config_{};
@@ -200,6 +202,21 @@ private:
   std::jthread worker_{};
   std::uint64_t next_turn_id_{};
 };
+
+Result<Harness> Harness::Impl::start(Config config,
+                                     std::unique_ptr<detail::ProviderAdapter> provider,
+                                     std::unique_ptr<detail::Transport> transport,
+                                     detail::WorkerEnvironment environment) {
+  auto tools = make_tool_registry();
+  return detail::translate_worker_start_failure<Harness>(
+      [config = std::move(config), provider = std::move(provider),
+       transport = std::move(transport), tools = std::move(tools),
+       environment = std::move(environment)]() mutable {
+        return Harness{std::make_unique<Impl>(std::move(config), std::move(provider),
+                                              std::move(transport), std::move(tools),
+                                              std::move(environment))};
+      });
+}
 
 Harness::Harness(std::unique_ptr<Impl> impl) noexcept : impl_(std::move(impl)) {}
 
@@ -216,17 +233,9 @@ Result<Harness> Harness::create(Config config) {
   if (auto status = transport->status(); !status) {
     return std::unexpected(std::move(status.error()));
   }
-  auto tools = Impl::make_tool_registry();
   const auto retry_jitter_seed = make_retry_jitter_seed(transport.get());
-  return detail::translate_worker_start_failure<Harness>(
-      [config = std::move(config), provider = std::move(provider),
-       transport = std::move(transport), tools = std::move(tools),
-       retry_jitter_seed]() mutable {
-        return Harness{std::make_unique<Impl>(
-            std::move(config), std::move(provider), std::move(transport),
-            std::move(tools),
-            detail::WorkerEnvironment{.retry_jitter_seed = retry_jitter_seed})};
-      });
+  return Impl::start(std::move(config), std::move(provider), std::move(transport),
+                     detail::WorkerEnvironment{.retry_jitter_seed = retry_jitter_seed});
 }
 
 Status Harness::validate(const Config& config) {
@@ -319,21 +328,10 @@ Result<Harness> HarnessTestAccess::create(Config config,
         immediate_error(ErrorCategory::invalid_config,
                         "provider and transport components must not be empty"));
   }
-  auto tools = Harness::Impl::make_tool_registry();
-  return translate_worker_start_failure<Harness>(
-      [config = std::move(config), provider = std::move(provider),
-       transport = std::move(transport), tools = std::move(tools), retry_jitter_seed,
-       time = std::move(time)]() mutable {
-        return Harness{std::make_unique<Harness::Impl>(
-            std::move(config), std::move(provider), std::move(transport),
-            std::move(tools),
-            WorkerEnvironment{.retry_jitter_seed = retry_jitter_seed,
-                              .time = std::move(time)})};
-      });
-}
-
-bool HarnessTestAccess::has_current_tool_snapshot(const Harness& harness) noexcept {
-  return harness.impl_ != nullptr && harness.impl_->has_current_tool_snapshot();
+  return Harness::Impl::start(std::move(config), std::move(provider),
+                              std::move(transport),
+                              WorkerEnvironment{.retry_jitter_seed = retry_jitter_seed,
+                                                .time = std::move(time)});
 }
 
 } // namespace detail

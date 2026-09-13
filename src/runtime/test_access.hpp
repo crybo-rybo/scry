@@ -21,7 +21,6 @@ public:
                                               std::unique_ptr<Transport> transport,
                                               std::uint64_t retry_jitter_seed = 0,
                                               WorkerTimeSource time = {});
-  [[nodiscard]] static bool has_current_tool_snapshot(const Harness& harness) noexcept;
 };
 
 } // namespace scry::detail

@@ -329,21 +329,35 @@ TEST_CASE("construction and synchronous admission failures are immediate") {
   CHECK_FALSE(harness->send_and_wait(*empty, ""));
 }
 
-TEST_CASE("rejected admission does not freeze a new tool snapshot generation") {
+TEST_CASE("a rejected send leaves the conversation and tool registry reusable") {
   auto fixture =
       make_harness_fixture(test_config(), {scripted_exchange(completed_stream)});
   auto& harness = fixture.harness;
   REQUIRE(harness.tools().add(tool(), static_handler(R"({"ok":true})")));
-  REQUIRE_FALSE(scry::detail::HarnessTestAccess::has_current_tool_snapshot(harness));
 
   const auto rejected = harness.send(fixture.conversation, "");
   REQUIRE_FALSE(rejected);
   CHECK(rejected.error().category == scry::ErrorCategory::invalid_argument);
-  CHECK_FALSE(scry::detail::HarnessTestAccess::has_current_tool_snapshot(harness));
+  CHECK(fixture.conversation.empty());
+  CHECK_FALSE(fixture.conversation.busy());
+  CHECK(fixture.transport->requests().empty());
 
-  const auto accepted = harness.send(fixture.conversation, "freeze after validation");
-  REQUIRE(accepted);
-  CHECK(scry::detail::HarnessTestAccess::has_current_tool_snapshot(harness));
+  auto added_after_rejection = tool();
+  added_after_rejection.name = "added_after_rejection";
+  REQUIRE(harness.tools().add(std::move(added_after_rejection),
+                              static_handler(R"({"ok":true})")));
+
+  const auto completion =
+      harness.send_and_wait(fixture.conversation, "send after validation failure");
+  REQUIRE(completion);
+  CHECK(completion->text == "coverage answer");
+  CHECK(fixture.conversation.message_count() == 2);
+  CHECK_FALSE(fixture.conversation.busy());
+
+  const auto requests = fixture.transport->requests();
+  REQUIRE(requests.size() == 1);
+  CHECK(requests.front().body.find("coverage_tool") != std::string::npos);
+  CHECK(requests.front().body.find("added_after_rejection") != std::string::npos);
 }
 
 TEST_CASE("oversized terminal diagnostics are bounded before publication") {
