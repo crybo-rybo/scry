@@ -279,6 +279,13 @@ auto traced = scry::reflection::add<ForecastArgs>(
 The tool name and description come from `ToolMetadata`. Parameter descriptions
 come from P3394 `scry::reflection::description` annotations on members. Duplicate
 Scry description annotations on one member fail at compile time.
+`scry::reflection::description_of<View>()` builds the same annotation from a
+`std::string_view` with static storage duration, so a host can keep its parameter
+text in one catalog instead of in literals spread across aggregates.
+
+`scry::reflection::schema_v<Value>` is the same generator over any `SupportedValue`,
+including handler result types; Scry sends only `input_schema_v<Args>` to a provider,
+so a result schema is for a host's own contract export.
 
 Argument objects and nested objects must be complete, default-constructible,
 move-constructible, move-assignable plain aggregates. They must have no bases,

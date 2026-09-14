@@ -151,6 +151,10 @@ The canonical example supports writing an artifact without a running model:
 ./build/dev/examples/scry_canonical_example --tool-manifest > tools.json
 ```
 
+`--result-schema` prints the reflected result schema of the status tool instead,
+which is `scry::reflection::schema_v<T>`: the half of a tool contract the model
+never sees, kept next to the manifest by hosts that publish both.
+
 A consumer can use the same pattern in its own executable and run it from a
 build or CI step to generate the artifact. That step builds only the registry,
 so it needs neither a provider endpoint nor libcurl, and performs no network

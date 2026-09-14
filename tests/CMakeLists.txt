@@ -168,3 +168,8 @@ scry_add_reflection_compile_fail_test(
   duplicate_description.cpp
   "a reflected member may have at most one scry::reflection::description annotation"
 )
+scry_add_reflection_compile_fail_test(
+  unsupported-schema-root
+  unsupported_schema_root.cpp
+  "SupportedValue"
+)

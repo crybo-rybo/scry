@@ -314,9 +314,9 @@ consteval void append_schema(std::vector<char>& output,
   }
 }
 
-template <ToolArguments Args> consteval std::string_view make_input_schema() {
+template <SupportedValue Value> consteval std::string_view make_schema() {
   std::vector<char> output{};
-  append_schema<Args>(output, std::nullopt);
+  append_schema<Value>(output, std::nullopt);
   const auto* storage = std::define_static_string(output);
   return {storage, output.size()};
 }
@@ -325,9 +325,17 @@ template <ToolArguments Args> consteval std::string_view make_input_schema() {
 
 namespace scry::reflection {
 
+/// Canonical provider-neutral JSON Schema generated for any supported reflected value.
+///
+/// Handler result types are supported roots too. Scry never sends a result schema to a
+/// model; it is here so a host can export its own tool contracts.
+/// @tparam Value Type satisfying SupportedValue.
+template <SupportedValue Value>
+inline constexpr std::string_view schema_v = detail::make_schema<Value>();
+
 /// Canonical provider-neutral JSON Schema generated for a reflected argument aggregate.
 /// @tparam Args Type satisfying ToolArguments.
 template <ToolArguments Args>
-inline constexpr std::string_view input_schema_v = detail::make_input_schema<Args>();
+inline constexpr std::string_view input_schema_v = schema_v<Args>;
 
 } // namespace scry::reflection

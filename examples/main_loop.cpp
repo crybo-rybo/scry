@@ -1,5 +1,6 @@
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <iostream>
 #include <optional>
 #include <scry/reflection.hpp>
@@ -141,6 +142,18 @@ struct StatusResult {
   return 0;
 }
 
+// Result schemas never reach the model; exporting one lets a host publish the full
+// tool contract next to the manifest.
+[[nodiscard]] int print_result_schema() {
+  std::cout << scry::reflection::schema_v<StatusResult> << '\n';
+  std::cout.flush();
+  if (!std::cout) {
+    std::cerr << "Failed to write result schema to stdout\n";
+    return 1;
+  }
+  return 0;
+}
+
 void print_block(const scry::ContentBlock& block) {
   std::visit(
       [](const auto& value) {
@@ -222,13 +235,36 @@ void print_completion(const scry::Completion& completion) {
   };
 }
 
+// The two export modes build only the registry, so they exit before any
+// provider configuration or worker exists.
+enum class Mode : std::uint8_t {
+  run,
+  tool_manifest,
+  result_schema,
+  usage,
+};
+
+[[nodiscard]] Mode parse_mode(const int argc, char* argv[]) {
+  if (argc == 1) {
+    return Mode::run;
+  }
+  const auto flag = argc == 2 ? std::string_view{argv[1]} : std::string_view{};
+  if (flag == "--tool-manifest") {
+    return Mode::tool_manifest;
+  }
+  if (flag == "--result-schema") {
+    return Mode::result_schema;
+  }
+  return Mode::usage;
+}
+
 } // namespace
 
 int main(int argc, char* argv[]) {
-  const bool export_tools = argc == 2 && std::string_view{argv[1]} == "--tool-manifest";
-  if (argc != 1 && !export_tools) {
+  const auto mode = parse_mode(argc, argv);
+  if (mode == Mode::usage) {
     std::cerr << "Usage: " << (argc > 0 ? argv[0] : "scry_canonical_example")
-              << " [--tool-manifest]\n";
+              << " [--tool-manifest | --result-schema]\n";
     return 1;
   }
   // Declared before the harness on purpose: the tool handlers and turn callbacks
@@ -244,8 +280,11 @@ int main(int argc, char* argv[]) {
     return 1;
   }
 
-  if (export_tools) {
+  if (mode == Mode::tool_manifest) {
     return print_tool_manifest(tools);
+  }
+  if (mode == Mode::result_schema) {
+    return print_result_schema();
   }
 
   // Assumes `ollama serve` is running and `ollama pull qwen3:8b` has completed.
