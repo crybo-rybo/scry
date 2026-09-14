@@ -6,6 +6,16 @@ find_dependency(Threads)
 
 include("${CMAKE_CURRENT_LIST_DIR}/scryTargets.cmake")
 
+# The optional "testing" component is scry::testing, the scripted-transport
+# harness builder. It ships in the same targets file, so its presence there is
+# what tells an install built with SCRY_BUILD_TESTING_SUPPORT=ON apart from one
+# built without it.
+if(TARGET scry::testing)
+  set(scry_testing_FOUND TRUE)
+else()
+  set(scry_testing_FOUND FALSE)
+endif()
+
 # scry::scry's public headers are C++26 and use P2996 reflection, so a consumer
 # on any other toolchain cannot compile against this package at all.
 if(

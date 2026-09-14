@@ -81,7 +81,8 @@ with a separate translation unit per header.
 | Option | Default | Purpose |
 |---|---|---|
 | `SCRY_BUILD_TESTS` | On at top level | Build tests and standalone header checks |
-| `SCRY_BUILD_EXAMPLES` | On at top level | Compile `examples/main_loop.cpp` |
+| `SCRY_BUILD_EXAMPLES` | On at top level | Compile the programs under `examples/` |
+| `SCRY_BUILD_TESTING_SUPPORT` | On | Build and install `scry::testing` |
 | `SCRY_WARNINGS_AS_ERRORS` | On at top level | Treat project warnings as errors |
 | `SCRY_ENABLE_CLANG_TIDY` | Off | Analyze library sources while compiling |
 | `SCRY_CLANG_TOOLING` | Off | Build the C++23 implementation with Clang for tooling |
@@ -105,7 +106,7 @@ ctest --test-dir build/dev --output-on-failure    # just test
 
 Catch2 suites are registered with ctest under a per-suite prefix (`runtime.`,
 `machine.`, `protocol.`, `provider.`, `transport.`, `integration.`,
-`reflection.`); `public-api-contract` is a plain executable test.
+`reflection.`, `testing.`); `public-api-contract` is a plain executable test.
 
 ```sh
 ctest --test-dir build/dev -R 'runtime\.'                     # one suite
@@ -198,12 +199,63 @@ SCRY_NIGHTLY_FUZZ_SECONDS=1200 ./scripts/ci-nightly-fuzz.sh sse
   cover schemas and codecs. Transport and integration tests also use local
   loopback HTTP/TLS servers; the optional local-model smoke uses a live model.
 
+## Testing downstream with `scry::testing`
+
+`scry::testing` is an optional package component that hands a consumer the same
+scripted-transport seam Scry's own suites use. It replaces the HTTP transfer and
+nothing else: a turn run against it still goes through the worker thread, the
+dialect's request encoder and stream decoder, retry scheduling, tool dispatch,
+transactional history, and the pump.
+
+```cmake
+find_package(scry CONFIG REQUIRED COMPONENTS testing)
+target_link_libraries(my_tests PRIVATE scry::scry scry::testing)
+```
+
+```cpp
+#include <scry/scry.hpp>
+#include <scry/testing/scripted_transport.hpp>
+#include <scry/testing/streams.hpp>
+
+scry::testing::ScriptedTransport transport;
+transport.enqueue({.body_chunks = {scry::testing::anthropic_text_stream("hi")}});
+auto harness = scry::testing::create_harness(my_config(), transport);
+```
+
+`<scry/testing/streams.hpp>` builds the response bodies each dialect decodes:
+`anthropic_text_stream`, `anthropic_tool_stream`, `openai_text_stream`, and
+`openai_tool_stream`. Every string they embed — assistant text, identifiers, and
+a tool-argument document — is encoded as a JSON string literal, so text with
+newlines, tabs, quotes, or backslashes and pretty-printed tool arguments survive
+the round trip through the real decoder.
+
+`ScriptedResponse::status` is classified exactly as a real HTTP status is: a
+non-2xx status never reaches the stream decoder and becomes an error whose
+category, retryability, and `http_status` match what `CurlTransport` would
+report, with the body mined only for the provider's sanitized error token. Pair
+a non-2xx status with `openai_error_body` or `anthropic_error_body`, which build
+each provider's plain JSON error body. `ScriptedResponse` also scripts a
+transfer that fails outright (`failure`) or one that blocks until `release()`
+(`hold`); a held transfer also ends when the turn is cancelled, so retry and
+cancellation paths are reachable without a server. The handle stays usable for
+inspection after `create_harness` — `requests()` returns the bytes Scry actually
+sent.
+
+Retry waits are real time bounded by the `Config`'s retry policy, so a test that
+scripts a retried failure should shrink `initial_backoff` and `max_backoff`
+rather than pay production backoff.
+
+`examples/testing_scripted.cpp` is a complete framework-free test in this shape;
+`tests/testing/scripted_transport_tests.cpp` is the Catch2 equivalent. Configure
+with `-DSCRY_BUILD_TESTING_SUPPORT=OFF` to build and install nothing of it, in
+which case a consumer must not request the component.
+
 ## Mechanical limits
 
 - Top-level builds enable `-Wall -Wextra -Wconversion -Wshadow` and treat
   warnings as errors on GCC and Clang. `SCRY_WARNINGS_AS_ERRORS` controls this.
 - lizard: cyclomatic complexity must not exceed 15 and argument count must not
-  exceed 6, for C++ in `include src examples tests extras`.
+  exceed 6, for C++ in `include src testing examples tests extras`.
 - clang-tidy: cognitive complexity must not exceed 25, with a checked-in check
   list. The tidy script uses `SCRY_CLANG_TOOLING` and analyzes the library
   target; it does not analyze reflection, examples, or ordinary tests.

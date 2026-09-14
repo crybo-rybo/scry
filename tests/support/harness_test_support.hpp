@@ -7,10 +7,9 @@
 #include <catch2/catch_test_macros.hpp>
 #include <chrono>
 #include <cstddef>
-#include <cstdint>
-#include <initializer_list>
 #include <memory>
 #include <scry/scry.hpp>
+#include <scry/testing/streams.hpp>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -54,209 +53,16 @@ scripted_exchange(const std::string_view stream,
   };
 }
 
-// The canonical five-event Anthropic text completion, built once instead of
-// retyped in every suite that needs a plain successful turn. Streams whose exact
-// bytes or malformed shape are the thing under test stay next to their tests.
-[[nodiscard]] inline std::string anthropic_text_stream(
-    const std::string_view text, const std::string_view message_id = "msg_test",
-    const std::string_view request_id = {}, const std::uint32_t input_tokens = 2,
-    const std::uint32_t output_tokens = 2) {
-  auto correlation = std::string{};
-  if (!request_id.empty()) {
-    correlation = R"(,"request_id":")" + std::string{request_id} + R"(")";
-  }
-  auto stream = std::string{"event: message_start\ndata: "};
-  stream += R"({"type":"message_start","message":{"id":")";
-  stream += message_id;
-  stream += R"(")";
-  stream += correlation;
-  stream += R"(,"type":"message","role":"assistant","content":[],)";
-  stream += R"("model":"test-model","stop_reason":null,"usage":{"input_tokens":)";
-  stream += std::to_string(input_tokens);
-  stream += R"(,"output_tokens":0}}})";
-  stream += "\n\nevent: content_block_start\ndata: ";
-  stream += R"({"type":"content_block_start","index":0,)";
-  stream += R"("content_block":{"type":"text","text":""}})";
-  stream += "\n\nevent: content_block_delta\ndata: ";
-  stream += R"({"type":"content_block_delta","index":0,)";
-  stream += R"("delta":{"type":"text_delta","text":")";
-  stream += text;
-  stream += R"("}})";
-  stream += "\n\nevent: content_block_stop\ndata: ";
-  stream += R"({"type":"content_block_stop","index":0})";
-  stream += "\n\nevent: message_delta\ndata: ";
-  stream += R"({"type":"message_delta","delta":{"stop_reason":"end_turn"},)";
-  stream += R"("usage":{"output_tokens":)";
-  stream += std::to_string(output_tokens);
-  stream += R"(}})";
-  stream += "\n\nevent: message_stop\ndata: ";
-  stream += R"({"type":"message_stop"})";
-  stream += "\n\n";
-  return stream;
-}
-
-// One tool_use block of an Anthropic stream. `arguments` is the tool input as
-// plain JSON; the builder escapes it into the partial_json delta, and an empty
-// value emits no delta at all.
-struct ToolUseBlock {
-  std::string_view id{};
-  std::string_view name{};
-  std::string_view arguments{};
-};
-
-[[nodiscard]] inline std::string quoted_json(const std::string_view text) {
-  auto escaped = std::string{};
-  for (const auto character : text) {
-    if (character == '"' || character == '\\') {
-      escaped.push_back('\\');
-    }
-    escaped.push_back(character);
-  }
-  return escaped;
-}
-
-[[nodiscard]] inline std::string tool_block_events(const std::size_t index,
-                                                   const ToolUseBlock& block) {
-  const auto position = std::to_string(index);
-  auto events = std::string{"event: content_block_start\ndata: "};
-  events += R"({"type":"content_block_start","index":)" + position;
-  events += R"(,"content_block":{"type":"tool_use","id":")";
-  events += block.id;
-  events += R"(","name":")";
-  events += block.name;
-  events += R"(","input":{}}})";
-  events += "\n\n";
-  if (!block.arguments.empty()) {
-    events += "event: content_block_delta\ndata: ";
-    events += R"({"type":"content_block_delta","index":)" + position;
-    events += R"(,"delta":{"type":"input_json_delta","partial_json":")";
-    events += quoted_json(block.arguments);
-    events += R"("}})";
-    events += "\n\n";
-  }
-  events += "event: content_block_stop\ndata: ";
-  events += R"({"type":"content_block_stop","index":)" + position + "}";
-  events += "\n\n";
-  return events;
-}
-
-// An Anthropic stream whose content is one or more tool_use blocks. The stop
-// reason is a parameter because a stream that announces tool calls and then
-// ends the turn is itself a case under test. Reported output_tokens is the
-// block count.
-[[nodiscard]] inline std::string
-anthropic_tool_stream(const std::initializer_list<ToolUseBlock> blocks,
-                      const std::string_view message_id = "msg_tools",
-                      const std::string_view stop_reason = "tool_use",
-                      const std::uint32_t input_tokens = 3) {
-  auto stream = std::string{"event: message_start\ndata: "};
-  stream += R"({"type":"message_start","message":{"id":")";
-  stream += message_id;
-  stream += R"(","type":"message","role":"assistant","content":[],)";
-  stream += R"("model":"test-model","stop_reason":null,"usage":{"input_tokens":)";
-  stream += std::to_string(input_tokens);
-  stream += R"(,"output_tokens":0}}})";
-  stream += "\n\n";
-  auto index = std::size_t{0};
-  for (const auto& block : blocks) {
-    stream += tool_block_events(index, block);
-    ++index;
-  }
-  stream += "event: message_delta\ndata: ";
-  stream += R"({"type":"message_delta","delta":{"stop_reason":")";
-  stream += stop_reason;
-  stream += R"("},"usage":{"output_tokens":)";
-  stream += std::to_string(blocks.size());
-  stream += R"(}})";
-  stream += "\n\nevent: message_stop\ndata: ";
-  stream += R"({"type":"message_stop"})";
-  stream += "\n\n";
-  return stream;
-}
-
-// The canonical OpenAI-compatible text completion: a role chunk, one content
-// delta, a finish chunk, a usage chunk, then the terminating sentinel. An empty
-// `text` still emits the content delta, because a compatible server streaming
-// nothing is itself a case under test.
-[[nodiscard]] inline std::string openai_text_stream(
-    const std::string_view text, const std::string_view completion_id = "chatcmpl-test",
-    const std::uint32_t prompt_tokens = 4, const std::uint32_t completion_tokens = 2) {
-  const auto prefix = R"(data: {"id":")" + std::string{completion_id} +
-                      R"(","object":"chat.completion.chunk","choices":)";
-  auto stream = prefix;
-  stream += R"([{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]})";
-  stream += "\n\n";
-  stream += prefix;
-  stream += R"([{"index":0,"delta":{"content":")";
-  stream += quoted_json(text);
-  stream += R"("},"finish_reason":null}]})";
-  stream += "\n\n";
-  stream += prefix;
-  stream += R"([{"index":0,"delta":{},"finish_reason":"stop"}]})";
-  stream += "\n\n";
-  stream += prefix;
-  stream += R"([],"usage":{"prompt_tokens":)";
-  stream += std::to_string(prompt_tokens);
-  stream += R"(,"completion_tokens":)";
-  stream += std::to_string(completion_tokens);
-  stream += R"(,"total_tokens":)";
-  stream += std::to_string(prompt_tokens + completion_tokens);
-  stream += R"(}})";
-  stream += "\n\ndata: [DONE]\n\n";
-  return stream;
-}
-
-// One tool call of an OpenAI-compatible stream. `arguments` is the tool input as
-// plain JSON; the builder escapes it into the delta's `arguments` string.
-struct OpenAiToolCall {
-  std::string_view id{};
-  std::string_view name{};
-  std::string_view arguments{};
-};
-
-// The OpenAI-compatible counterpart of anthropic_tool_stream: a role chunk, one
-// delta per call, the tool_calls finish chunk, usage, then the sentinel. Each
-// call arrives whole because fragment reassembly is covered by the suites that
-// script their own bytes.
-[[nodiscard]] inline std::string
-openai_tool_call_stream(const std::initializer_list<OpenAiToolCall> calls,
-                        const std::string_view completion_id = "chatcmpl-tools",
-                        const std::uint32_t prompt_tokens = 4,
-                        const std::uint32_t completion_tokens = 3) {
-  const auto prefix = R"(data: {"id":")" + std::string{completion_id} +
-                      R"(","object":"chat.completion.chunk","choices":)";
-  auto stream = prefix;
-  stream += R"([{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]})";
-  stream += "\n\n";
-  auto index = std::size_t{0};
-  for (const auto& call : calls) {
-    stream += prefix;
-    stream += R"([{"index":0,"delta":{"tool_calls":[{"index":)";
-    stream += std::to_string(index);
-    stream += R"(,"id":")";
-    stream += call.id;
-    stream += R"(","type":"function","function":{"name":")";
-    stream += call.name;
-    stream += R"(","arguments":")";
-    stream += quoted_json(call.arguments);
-    stream += R"("}}]},"finish_reason":null}]})";
-    stream += "\n\n";
-    ++index;
-  }
-  stream += prefix;
-  stream += R"([{"index":0,"delta":{},"finish_reason":"tool_calls"}]})";
-  stream += "\n\n";
-  stream += prefix;
-  stream += R"([],"usage":{"prompt_tokens":)";
-  stream += std::to_string(prompt_tokens);
-  stream += R"(,"completion_tokens":)";
-  stream += std::to_string(completion_tokens);
-  stream += R"(,"total_tokens":)";
-  stream += std::to_string(prompt_tokens + completion_tokens);
-  stream += R"(}})";
-  stream += "\n\ndata: [DONE]\n\n";
-  return stream;
-}
+// The stream builders now live in the installed scry::testing component; the
+// suites keep their unqualified spelling so scry's own tests exercise exactly
+// the bodies a downstream consumer scripts.
+using scry::testing::anthropic_error_body;
+using scry::testing::anthropic_text_stream;
+using scry::testing::anthropic_tool_stream;
+using scry::testing::openai_error_body;
+using scry::testing::openai_text_stream;
+using scry::testing::openai_tool_stream;
+using scry::testing::ToolUseBlock;
 
 [[nodiscard]] inline scry::ToolHandler static_handler(std::string result) {
   return [result = std::move(result)](scry::Json) -> scry::Result<scry::Json> {

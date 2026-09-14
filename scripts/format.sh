@@ -19,7 +19,8 @@ cd "${root_dir}"
 # paths containing spaces intact, and --exclude-standard skips build outputs.
 git ls-files --cached --others --exclude-standard -z -- \
   'examples/*.cpp' 'extras/*.cpp' 'extras/*.hpp' 'include/*.hpp' \
-  'src/*.cpp' 'src/*.hpp' 'tests/*.cpp' 'tests/*.hpp' 'cmake/probes/*.cpp' |
+  'src/*.cpp' 'src/*.hpp' 'testing/*.cpp' 'tests/*.cpp' 'tests/*.hpp' \
+  'cmake/probes/*.cpp' |
   while IFS= read -r -d '' source; do
     if [[ -f "${source}" ]]; then
       printf '%s\0' "${source}"
