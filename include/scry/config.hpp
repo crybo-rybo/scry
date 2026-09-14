@@ -138,6 +138,13 @@ struct Config {
   ResourceLimits limits{};
   /// Maximum tool-call rounds in one turn.
   std::uint32_t max_tool_rounds{8};
+  /// Maximum tool calls dispatched to handlers in one turn, across every round.
+  ///
+  /// max_tool_rounds cannot bound this on its own, because one response may request
+  /// many calls. Calls past the limit are refused with a fixed model-visible message
+  /// instead of running their handler, and the turn continues. Unset means unlimited;
+  /// zero is rejected by Harness::create() and Harness::validate().
+  std::optional<std::uint32_t> max_tool_calls_per_turn{};
   /// Whether HTTPS peer certificates are verified.
   ///
   /// Disabling verification is intended only for explicitly trusted development

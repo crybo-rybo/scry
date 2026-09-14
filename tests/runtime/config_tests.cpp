@@ -109,6 +109,23 @@ TEST_CASE("Harness::validate runs the create-time configuration checks") {
   REQUIRE_FALSE(rejected);
   CHECK(rejected.error().message == "max_tool_rounds must be greater than 0");
 
+  auto zero_calls = valid_config();
+  zero_calls.max_tool_calls_per_turn = 0;
+  rejected = scry::Harness::validate(zero_calls);
+  REQUIRE_FALSE(rejected);
+  CHECK(rejected.error().category == scry::ErrorCategory::invalid_config);
+  CHECK(rejected.error().message ==
+        "max_tool_calls_per_turn must be greater than 0 when set");
+
+  auto one_call = valid_config();
+  one_call.max_tool_calls_per_turn = 1;
+  CHECK(scry::Harness::validate(one_call));
+
+  // Unset is the default and means unlimited, so it must stay acceptable.
+  auto unlimited_calls = valid_config();
+  unlimited_calls.max_tool_calls_per_turn.reset();
+  CHECK(scry::Harness::validate(unlimited_calls));
+
   auto no_max_tokens = valid_config();
   no_max_tokens.sampling.max_tokens.reset();
   rejected = scry::Harness::validate(no_max_tokens);
@@ -319,6 +336,10 @@ TEST_CASE("configuration rejects zero timeouts, undersized limits, and zero tool
 
   config = valid_config();
   config.max_tool_rounds = 0;
+  CHECK_FALSE(scry::detail::validate_config(config));
+
+  config = valid_config();
+  config.max_tool_calls_per_turn = 0;
   CHECK_FALSE(scry::detail::validate_config(config));
 }
 

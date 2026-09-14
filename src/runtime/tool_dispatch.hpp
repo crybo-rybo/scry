@@ -5,8 +5,22 @@
 
 #include <cstddef>
 #include <scry/error.hpp>
+#include <string_view>
 
 namespace scry::detail {
+
+// Whether the snapshot a turn froze can service this name. The route asks before
+// consulting its admission hook, so a host is never offered a call no handler
+// could have run.
+[[nodiscard]] bool tool_is_registered(const ToolSnapshot& snapshot,
+                                      std::string_view name) noexcept;
+
+// The model-visible error result for a call that produced no handler value: a
+// refusal, a failed handler, or an unknown tool. Falls back to a fixed text and
+// then to a framework failure when the message itself will not fit.
+[[nodiscard]] Result<ToolResultBlock> error_result(const ToolCallBlock& call,
+                                                   std::string_view message,
+                                                   std::size_t max_result_bytes);
 
 [[nodiscard]] Result<ToolResultBlock> dispatch_tool(const ToolSnapshot& snapshot,
                                                     const ToolCallBlock& call,

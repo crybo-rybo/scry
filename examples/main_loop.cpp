@@ -1,6 +1,7 @@
 #include <chrono>
 #include <cstddef>
 #include <iostream>
+#include <optional>
 #include <scry/reflection.hpp>
 #include <scry/scry.hpp>
 #include <string>
@@ -166,10 +167,32 @@ void print_history(const scry::Conversation& conversation) {
   }
 }
 
+// Admission runs before every handler, after Config::max_tool_calls_per_turn has
+// had its say. Refusing costs the model an answer, not the turn: it sees
+// {"error": model_message} and keeps going. The same shape gives "accept this
+// result, then stop": set a flag from on_tool_call or from a handler and refuse
+// everything afterwards. Cancelling cannot do that, because it rolls the turn
+// back and discards the results the executed tools produced; whatever those
+// handlers already changed outside the conversation is left for the host to
+// reconcile.
+[[nodiscard]] scry::ToolAdmissionCallback echo_once_per_turn() {
+  using Verdict = std::optional<scry::ToolRejection>;
+  return [echo_calls = 0](const scry::ToolRequest& request) mutable -> Verdict {
+    if (request.context.tool_name != "echo" || echo_calls++ == 0) {
+      return std::nullopt;
+    }
+    return scry::ToolRejection{
+        .model_message =
+            "echo may be called once per turn; answer with what you already have",
+    };
+  };
+}
+
 // on_finished runs exactly once: with the completion, or with the terminal error
 // (including a cancelled one), unless harness destruction begins first.
 [[nodiscard]] scry::TurnCallbacks loop_callbacks(Application& app) {
   return {
+      .on_tool_request = echo_once_per_turn(),
       .on_tool_call =
           [](const scry::ToolCall& call) {
             std::cout << "tool " << call.name

@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <scry/error.hpp>
 #include <scry/events.hpp>
 #include <scry/json.hpp>
@@ -107,6 +108,7 @@ struct RouteOptions {
   std::size_t max_tool_result_bytes{1024};
   std::size_t max_exchange_bytes{std::numeric_limits<std::size_t>::max()};
   std::size_t max_conversation_bytes{1024};
+  std::optional<std::uint32_t> max_tool_calls{};
   scry::TurnCallbacks callbacks{};
 };
 
@@ -128,6 +130,7 @@ struct PumpFixture {
             .max_tool_result_bytes = options.max_tool_result_bytes,
             .max_exchange_bytes = options.max_exchange_bytes,
             .max_conversation_bytes = options.max_conversation_bytes,
+            .max_tool_calls = options.max_tool_calls,
             .callbacks = std::move(options.callbacks),
         });
   }

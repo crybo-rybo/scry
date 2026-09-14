@@ -4,6 +4,7 @@
 #include <concepts>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <scry/scry.hpp>
 #include <string>
 #include <string_view>
@@ -13,6 +14,8 @@
 #include <vector>
 
 static_assert(std::is_aggregate_v<scry::Config>);
+static_assert(std::same_as<decltype(scry::Config::max_tool_calls_per_turn),
+                           std::optional<std::uint32_t>>);
 static_assert(std::is_aggregate_v<scry::HttpHeader>);
 static_assert(std::is_enum_v<scry::ReasoningMode>);
 static_assert(std::is_aggregate_v<scry::Error>);
@@ -39,6 +42,8 @@ static_assert(std::is_aggregate_v<scry::TurnCallbacks>);
 static_assert(std::is_enum_v<scry::FinishReason>);
 static_assert(std::is_aggregate_v<scry::Usage>);
 static_assert(std::is_aggregate_v<scry::ToolCall>);
+static_assert(std::is_aggregate_v<scry::ToolRequest>);
+static_assert(std::is_aggregate_v<scry::ToolRejection>);
 static_assert(std::is_aggregate_v<scry::Completion>);
 static_assert(std::is_aggregate_v<scry::UpdateStats>);
 static_assert(std::is_aggregate_v<scry::ConversationConfig>);
@@ -58,6 +63,8 @@ static_assert(std::same_as<decltype(scry::Completion::usage), scry::Usage>);
 static_assert(
     std::same_as<decltype(scry::Completion::tool_round_count), std::uint32_t>);
 static_assert(std::same_as<decltype(scry::Completion::tool_call_count), std::uint32_t>);
+static_assert(
+    std::same_as<decltype(scry::Completion::rejected_tool_call_count), std::uint32_t>);
 static_assert(
     std::same_as<decltype(scry::UpdateStats::callbacks_delivered), std::size_t>);
 static_assert(std::same_as<decltype(scry::UpdateStats::events_remaining), std::size_t>);
@@ -106,6 +113,8 @@ static_assert(std::is_move_constructible_v<scry::TurnCallbacks>);
 static_assert(!std::is_copy_constructible_v<scry::TurnCallbacks>);
 static_assert(std::same_as<decltype(scry::TurnCallbacks::on_text_delta),
                            scry::TextDeltaCallback>);
+static_assert(std::same_as<decltype(scry::TurnCallbacks::on_tool_request),
+                           scry::ToolAdmissionCallback>);
 static_assert(
     std::same_as<decltype(scry::TurnCallbacks::on_tool_call), scry::ToolCallCallback>);
 static_assert(std::same_as<decltype(scry::TurnCallbacks::on_finished),
@@ -175,6 +184,31 @@ static_assert(
     std::same_as<decltype(scry::ToolCallContext::tool_name), std::string_view>);
 static_assert(std::same_as<decltype(scry::ToolCallContext::round), std::uint32_t>);
 static_assert(std::same_as<decltype(scry::ToolCallContext::index), std::uint32_t>);
+// A tool request is a borrowed view of the call being admitted: it names the same
+// identity the handler sees and cannot outlive the dispatch, so it carries a
+// reference and is not default-constructible.
+static_assert(
+    std::same_as<decltype(scry::ToolRequest::context), scry::ToolCallContext>);
+static_assert(std::same_as<decltype(scry::ToolRequest::arguments), const scry::Json&>);
+static_assert(!std::is_default_constructible_v<scry::ToolRequest>);
+static_assert(std::is_copy_constructible_v<scry::ToolRequest>);
+static_assert(std::same_as<decltype(scry::ToolRejection::model_message), std::string>);
+static_assert(std::is_default_constructible_v<scry::ToolRejection>);
+
+// The hook's return says admit or refuse, so a lambda spelling either answer has
+// to convert, and an empty callback is the "admit everything" default.
+using AdmissionLambda = decltype([](const scry::ToolRequest& request)
+                                     -> std::optional<scry::ToolRejection> {
+  if (request.arguments.text.empty()) {
+    return scry::ToolRejection{.model_message = "no arguments"};
+  }
+  return std::nullopt;
+});
+static_assert(std::is_constructible_v<scry::ToolAdmissionCallback, AdmissionLambda>);
+static_assert(std::is_default_constructible_v<scry::ToolAdmissionCallback>);
+static_assert(std::is_move_constructible_v<scry::ToolAdmissionCallback>);
+static_assert(!std::is_copy_constructible_v<scry::ToolAdmissionCallback>);
+
 static_assert(std::is_move_constructible_v<scry::ToolHandler>);
 static_assert(!std::is_copy_constructible_v<scry::ToolHandler>);
 static_assert(std::is_move_constructible_v<scry::ContextualToolHandler>);

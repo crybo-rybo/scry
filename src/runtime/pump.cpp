@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <optional>
+#include <string_view>
 #include <type_traits>
 #include <utility>
 
@@ -36,6 +37,23 @@ template <typename> inline constexpr bool unhandled_worker_event = false;
       .round = event.round,
       .index = event.index,
   };
+}
+
+// Model-visible refusal text for a call the per-turn limit will not admit. It
+// tells the model what to do next rather than only what went wrong, because it
+// is the model that has to get the turn moving again.
+constexpr std::string_view call_limit_message =
+    "tool call limit for this turn reached; respond without calling tools";
+
+// An admission hook that throws is indistinguishable, from the model's side,
+// from a handler that throws, so it says the same thing.
+[[nodiscard]] std::optional<ToolRejection>
+consult_admission(ToolAdmissionCallback& hook, const ToolRequest& request) noexcept {
+  try {
+    return hook(request);
+  } catch (...) {
+    return ToolRejection{.model_message = "tool handler threw an exception"};
+  }
 }
 
 // Marks a route as running a callback, and on the way out performs the clear
@@ -78,6 +96,7 @@ TurnRoute::TurnRoute(const TurnId turn_id, std::shared_ptr<std::atomic<bool>> ca
       max_tool_result_bytes_(options.max_tool_result_bytes),
       remaining_exchange_bytes_(options.max_exchange_bytes),
       max_conversation_bytes_(options.max_conversation_bytes),
+      max_tool_calls_(options.max_tool_calls),
       callbacks_(std::move(options.callbacks)) {}
 
 TurnId TurnRoute::id() const noexcept { return turn_id_; }
@@ -193,6 +212,7 @@ void TurnRoute::invoke(const WorkerEvent& event) {
               .provider_request_id = value.provider_request_id,
               .tool_round_count = value.tool_round_count,
               .tool_call_count = value.tool_call_count,
+              .rejected_tool_call_count = rejected_count_,
           });
         } else if constexpr (std::is_same_v<Event, ErrorEvent>) {
           terminal_delivered_ = true;
@@ -208,14 +228,57 @@ void TurnRoute::invoke(const WorkerEvent& event) {
       event);
 }
 
+// Every call that reaches the route counts against the limit, including one
+// naming a tool nobody registered: the model spent the turn's budget by asking.
+// An unknown tool is refused by dispatch_tool with its own text and the hook is
+// not consulted, because there is no handler for the host to admit.
+std::optional<Result<ToolResultBlock>> TurnRoute::admit(const ToolCallEvent& event) {
+  ++dispatched_count_;
+  if (max_tool_calls_ && dispatched_count_ > *max_tool_calls_) {
+    ++rejected_count_;
+    return error_result(event.call, call_limit_message, max_tool_result_bytes_);
+  }
+  if (callbacks_.on_tool_request &&
+      tool_is_registered(route_tools(tools_), event.call.name)) {
+    const auto rejection =
+        consult_admission(callbacks_.on_tool_request,
+                          ToolRequest{.context = call_context(turn_id_, event),
+                                      .arguments = event.call.arguments});
+    if (rejection) {
+      ++rejected_count_;
+      return error_result(event.call, rejection->model_message, max_tool_result_bytes_);
+    }
+  }
+  return std::nullopt;
+}
+
+// A hook may cancel the turn and still admit the call. Cancellation is honoured
+// before the handler runs, because a handler's side effects on host state are
+// the one thing the rollback cannot undo; the limit and the hook have already
+// spent their counts by then, and a suppressed call is not a refusal.
+std::optional<Result<ToolResultBlock>> TurnRoute::produce(const ToolCallEvent& event) {
+  auto refusal = admit(event);
+  if (cancelled_->load(std::memory_order_acquire)) {
+    return std::nullopt;
+  }
+  if (refusal) {
+    return refusal;
+  }
+  return dispatch_tool(route_tools(tools_), event.call, call_context(turn_id_, event),
+                       max_tool_result_bytes_);
+}
+
 void TurnRoute::dispatch(const ToolCallEvent& event) {
   if (cancelled_->load(std::memory_order_acquire)) {
     return;
   }
   remaining_exchange_bytes_ =
       std::min(remaining_exchange_bytes_, event.remaining_exchange_bytes);
-  auto result = dispatch_tool(route_tools(tools_), event.call,
-                              call_context(turn_id_, event), max_tool_result_bytes_);
+  auto produced = produce(event);
+  if (!produced) {
+    return;
+  }
+  auto result = std::move(*produced);
   if (result) {
     const auto result_bytes = content_payload_bytes(*result);
     if (result_bytes > remaining_exchange_bytes_) {
@@ -236,7 +299,8 @@ void TurnRoute::dispatch(const ToolCallEvent& event) {
   // The observer sees the same result block the model receives, so it is copied
   // out before the command queue takes ownership. A framework failure leaves the
   // result empty and fails the turn instead, and the observer does not fire.
-  // A handler that disconnected from inside this dispatch is checked explicitly:
+  // A handler or admission hook that disconnected from inside this dispatch is
+  // checked explicitly:
   // InvocationGuard defers clearing the callbacks until the frame returns, so
   // on_tool_call is still set here even though delivery is no longer wanted.
   auto observed = result.has_value() && callbacks_.on_tool_call && !disconnected_

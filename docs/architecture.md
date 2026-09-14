@@ -176,6 +176,46 @@ either beyond its return must copy the text. Registrations store one handler
 shape internally, so the two paths export an identical tool contract and differ
 in nothing the model can see.
 
+Before a handler runs, a call passes two admission gates in a fixed order. First
+`Config::max_tool_calls_per_turn`, which bounds the calls one turn may dispatch
+across every round; `max_tool_rounds` cannot do that on its own, because one
+response may request many calls. Then `TurnCallbacks::on_tool_request`, the
+host's own policy, which receives a `ToolRequest` naming the call and its
+canonical arguments and answers with nothing to admit it or a `ToolRejection` to
+refuse it.
+
+Every call that reaches the route counts against the limit, including one naming
+a tool nobody registered: the model spent the turn's budget by asking. An unknown
+tool is refused by dispatch with its own message and never reaches the hook,
+because there is no handler for the host to admit. A refused call runs no handler
+and so can have no side effect. The model is given `{"error": message}` flagged
+as a tool error: the fixed text `tool call limit for this turn reached; respond
+without calling tools` for the limit, the host's `model_message` for a hook
+refusal. That result reaches `on_tool_call` with `is_error` and is posted to the
+worker like any other, so the turn continues and commits normally. A hook that
+throws is treated exactly like a handler that throws: the call is refused with the
+same fixed text and the turn carries on. The hook runs under the same invocation
+guard as every other callback, so a `disconnect()` from inside it is deferred
+until the call returns and suppresses that call's `on_tool_call` observation.
+
+A hook that cancels the turn is obeyed before the handler runs, whether it admits
+the call or refuses it. The cancel flag is read again the moment the hook returns:
+when it is set, no handler runs, no result is posted, and no `on_tool_call` fires,
+and the turn ends through the worker's ordinary cancellation path. That is the one
+thing the rollback could not repair on the host's behalf, because a handler's
+effects on host state outlive the transcript the turn discards. The counts are
+unchanged by it: the call still spent the per-turn limit, but a call cancellation
+suppressed is not a refusal and is not counted as one.
+
+Cancelling from inside a handler is a different thing and rarely what a host
+wants: it discards the pending transcript, so the results the executed tools
+produced are thrown away and the whole turn rolls back, while the side effects
+those handlers already had on host state remain and are the host's to reconcile.
+A host that wants the turn to finish but no further tools to run sets its own
+flag, from the handler or from `on_tool_call`, and refuses every later request
+from `on_tool_request`. The model is told why, the turn completes, and history
+commits.
+
 `ToolRegistry::to_json()` exports a version-1 JSON manifest with a `tools` array
 in registration order. Every entry contains the registered `name`, `description`,
 and `input_schema` object, including reflected parameter annotations. This is
@@ -394,6 +434,7 @@ Defaults are defined in `include/scry/config.hpp`:
 | Queued event payload per turn | 2 MiB |
 | Conversation payload | 16 MiB |
 | Tool rounds | 8 |
+| Tool calls per turn | Unset |
 | Maximum output tokens | 1024 |
 | Retry attempts / elapsed window per model request | 3 / 30 s |
 | Initial / maximum retry backoff | 250 ms / 10 s |
@@ -402,7 +443,8 @@ Defaults are defined in `include/scry/config.hpp`:
 | Total transfer timeout | Unset |
 
 Resource limits must be positive; the queued-event limit must be at least 1024
-bytes. Admission failures reject `send()` immediately; an accepted turn that
+bytes. `max_tool_calls_per_turn` is optional: unset means unlimited and zero is
+rejected as `invalid_config`. Admission failures reject `send()` immediately; an accepted turn that
 exceeds its limit fails with `resource_limit`.
 
 Conversation accounting includes the system prompt, text, tool identifiers and
@@ -460,7 +502,10 @@ requires an untruncated answer.
 
 `Completion::tool_round_count` and `Completion::tool_call_count` report what the
 loop ran before that final response; the call count includes unknown tools and
-calls whose handler failed. Each observed `ToolCall` carries its own `round` and
+calls whose handler failed. `Completion::rejected_tool_call_count` is the subset
+of those calls that never reached a handler because the per-turn call limit or
+`on_tool_request` refused them; a refusal is an answer to the model, not a turn
+failure, so it appears in both counts. Each observed `ToolCall` carries its own `round` and
 its `index` within that round's batch, in provider order. Text deltas can include
 intermediate tool rounds and `Completion::text` contains only the final assistant
 response, but deltas of round N+1 are delivered only after every `on_tool_call` of
