@@ -5,8 +5,8 @@
 #
 #   cmake -S extras/showcase -B build/showcase -G Ninja -DCMAKE_BUILD_TYPE=Debug
 #
-# ./scripts/ci-showcase.sh does exactly that and audits that no showcase artifact
-# reaches the installed package.
+# ./scripts/ci-showcase.sh builds this project; the core CI script audits the
+# installed package.
 
 cmake_minimum_required(VERSION 3.28)
 

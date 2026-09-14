@@ -5,8 +5,9 @@ Build commands, checks, and contribution requirements for the current tree.
 ## Toolchain
 
 Scry needs GCC 16 or newer (with reflection support), CMake 3.28 or newer,
-Ninja, and libcurl 7.84 or newer with development headers. Development presets
-also require clang-format; CI uses version 18.
+Ninja, and libcurl 7.84 or newer with development headers. Formatting uses
+clang-format; CI uses version 18. It runs independently of CMake and does not
+require a compiler or fetched dependencies.
 
 **Linux:**
 
@@ -31,10 +32,9 @@ python3 -m pip install --user --break-system-packages lizard==1.24.0
 ```
 
 Ensure `g++-16 --version` succeeds. When the compiler has another path, pass it
-with `-DCMAKE_CXX_COMPILER=...`. Linux installations with only the versioned
-formatter can configure with
-`-DSCRY_CLANG_FORMAT_EXECUTABLE=clang-format-18`. Doxygen and Graphviz are needed
-for the documentation gate; Doxygen 1.9.8 is the minimum.
+with `-DCMAKE_CXX_COMPILER=...`. Select a versioned formatter with
+`CLANG_FORMAT=clang-format-18 ./scripts/format.sh --check`. Doxygen and Graphviz
+are needed for the documentation gate; Doxygen 1.9.8 is the minimum.
 
 The optional clang-tidy gate needs Clang and clang-tidy. CI uses version 18;
 preflight probes Homebrew's keg-only `llvm@18` before `llvm` when clang-tidy is
@@ -69,6 +69,13 @@ Use a compatible local Clang path in place of `clang++-21` as needed. When
 changing a compiler in an existing build directory, add `--fresh` to the
 configure command so CMake reapplies the preset without stale cache settings.
 
+The root `CMakeLists.txt` defines the library sources, dependencies, and package.
+Compiler compatibility checks live in `cmake/ScryCompilerChecks.cmake`, with the
+reflection probe in `cmake/probes/reflection.cpp`. Warning flags, sanitizers,
+clang-tidy, and the public-header audit live in
+`cmake/ScryDeveloperTools.cmake`. Standalone header checks share one build target,
+with a separate translation unit per header.
+
 ## Build options
 
 | Option | Default | Purpose |
@@ -76,7 +83,6 @@ configure command so CMake reapplies the preset without stale cache settings.
 | `SCRY_BUILD_TESTS` | On at top level | Build tests and standalone header checks |
 | `SCRY_BUILD_EXAMPLES` | On at top level | Compile `examples/main_loop.cpp` |
 | `SCRY_WARNINGS_AS_ERRORS` | On at top level | Treat project warnings as errors |
-| `SCRY_ENABLE_FORMAT_CHECK` | Off; on in `dev` and `ci` | Create `format` and `format-check` targets |
 | `SCRY_ENABLE_CLANG_TIDY` | Off | Analyze library sources while compiling |
 | `SCRY_CLANG_TOOLING` | Off | Build the C++23 implementation with Clang for tooling |
 | `SCRY_CLANG_TOOLING_LIBCXX` | Off | Select libc++ in Clang tooling mode |
@@ -84,8 +90,9 @@ configure command so CMake reapplies the preset without stale cache settings.
 | `SCRY_SANITIZER` | `none` | Select `none`, `address-undefined`, or `thread` |
 
 Tests, examples, and warnings-as-errors default to off when Scry is embedded.
-Clang tooling mode disables examples and ordinary tests; enable fuzzers to
-build its test targets. The consumer build always includes reflection in
+Clang tooling mode disables examples and ordinary tests. Fuzzers require that
+mode and are registered separately under `tests/fuzz/`, even when
+`SCRY_BUILD_TESTS=OFF`. The consumer build always includes reflection in
 `scry::scry`.
 
 ## The loop
@@ -106,25 +113,26 @@ ctest --test-dir build/dev -R 'event queue coalesces'         # one case by name
 ./build/dev/tests/scry_runtime_tests "event queue coalesces adjacent deltas"
 ```
 
-Formatting is clang-format, LLVM base, 88 columns:
+Formatting is clang-format, LLVM base, 88 columns. The shared script checks
+tracked and untracked C++ sources, excluding ignored files:
 
 ```sh
-cmake --build build/dev --target format         # just format
-cmake --build build/dev --target format-check   # just format-check
+./scripts/format.sh --fix      # just format
+./scripts/format.sh --check    # just format-check
 ```
 
 ## Gates
 
 The core, documentation, clang-tidy, sanitizer, fuzz, showcase, and local-model
 checks have scripts under `scripts/`. Workflows supply their toolchains and
-invoke those scripts. The pinned format check, CodeQL, and release publication
-also have workflow-specific steps.
+invoke those scripts. Formatting uses `scripts/format.sh` in both CI and local
+commands. CodeQL and release publication have workflow-specific steps.
 
 **Per commit** (`.github/workflows/ci.yml`):
 
 | Job | Runs |
 |---|---|
-| Doxygen API site + clang-format | `./scripts/ci-docs.sh`, then a pinned `clang-format-18` dry run |
+| Doxygen API site + clang-format | `./scripts/ci-docs.sh`, then `CLANG_FORMAT=clang-format-18 ./scripts/format.sh --check` |
 | Core, Linux GCC 16 and macOS GCC 16 | `./scripts/ci-local.sh` |
 | clang-tidy | `./scripts/ci-tidy.sh` with `SCRY_TIDY_LIBCXX=1`, because Ubuntu 24.04's libstdc++ `<expected>` is newer than clang 18 can parse |
 | ASan + UBSan, TSan | `./scripts/ci-sanitizer.sh asan` and `... tsan` |
@@ -157,8 +165,12 @@ format, build, tests, a staged install, and a downstream `find_package(scry)`
 consumer.
 
 The showcase is a standalone project under `extras/showcase/` that the root build
-never configures; `./scripts/ci-showcase.sh` (`just showcase`) builds it, then
-audits that nothing it adds reached the installed package.
+never configures; `./scripts/ci-showcase.sh` (`just showcase`) only builds it.
+The existing staged-install check in `ci-local.sh` also audits that no showcase
+artifact or dependency reaches the installed package.
+
+The live-model smoke executable is excluded from default builds;
+`ci-local-model.sh` explicitly builds its target when requested.
 
 The five fuzz targets are `sse`, `anthropic`, `openai`, `response_policy`, and
 `conversation`. Each replays its checked-in seed corpus per commit, so a target

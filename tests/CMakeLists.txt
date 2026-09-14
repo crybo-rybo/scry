@@ -1,28 +1,3 @@
-# SCRY_CLANG_TOOLING builds only the portable C++23 implementation plus the fuzz
-# targets that exercise it. Everything else here — the Catch2 suites, the
-# per-header compiles, the public-API contract, the reflected suites, and the
-# nightly smoke — reaches the C++26 public API through <scry/scry.hpp>, which no
-# Clang can compile. Nothing below this block is configured in that mode.
-if(SCRY_CLANG_TOOLING)
-  if(SCRY_BUILD_FUZZERS)
-    scry_require_fuzzer_compiler()
-    set(SCRY_FUZZ_TEST_PREFIX "runtime.")
-    # The document codec pulls in the pump and worker through Conversation's
-    # translation units, so this target links the library rather than curating a
-    # minimal source set that would drift with every runtime change.
-    scry_add_fuzzer(
-      scry_conversation_fuzz
-      conversation
-      SOURCES runtime/conversation_fuzz.cpp
-      LINK_LIBRARIES scry::scry
-    )
-  endif()
-  add_subdirectory(protocol)
-  add_subdirectory(provider)
-  add_subdirectory(transport)
-  return()
-endif()
-
 FetchContent_Declare(
   Catch2
   GIT_REPOSITORY https://github.com/catchorg/Catch2.git
@@ -43,6 +18,10 @@ include(Catch)
 # the include spelling from the last "include/" in each path rather than
 # assuming a source-relative one.
 file(MAKE_DIRECTORY "${PROJECT_BINARY_DIR}/generated/header_checks")
+add_library(scry_header_checks OBJECT)
+# Keep one translation unit per header even in a unity build.
+set_target_properties(scry_header_checks PROPERTIES UNITY_BUILD OFF)
+target_link_libraries(scry_header_checks PRIVATE scry::scry scry_project_options)
 foreach(
   SCRY_HEADER
   IN
@@ -60,15 +39,7 @@ foreach(
     OUTPUT "${SCRY_HEADER_CHECK_SOURCE}"
     CONTENT "#include <${SCRY_HEADER_INCLUDE}>\n"
   )
-  add_library(
-    "scry_header_${SCRY_HEADER_NAME}"
-    OBJECT
-    "${SCRY_HEADER_CHECK_SOURCE}"
-  )
-  target_link_libraries(
-    "scry_header_${SCRY_HEADER_NAME}"
-    PRIVATE scry::scry scry_project_options
-  )
+  target_sources(scry_header_checks PRIVATE "${SCRY_HEADER_CHECK_SOURCE}")
 endforeach()
 
 add_executable(scry_public_api_contract public_api_contract.cpp)
@@ -121,20 +92,6 @@ target_link_libraries(
     scry_project_options
 )
 catch_discover_tests(scry_runtime_tests TEST_PREFIX "runtime.")
-
-if(SCRY_BUILD_FUZZERS)
-  scry_require_fuzzer_compiler()
-  set(SCRY_FUZZ_TEST_PREFIX "runtime.")
-  # The document codec pulls in the pump and worker through Conversation's
-  # translation units, so this target links the library rather than curating a
-  # minimal source set that would drift with every runtime change.
-  scry_add_fuzzer(
-    scry_conversation_fuzz
-    conversation
-    SOURCES runtime/conversation_fuzz.cpp
-    LINK_LIBRARIES scry::scry
-  )
-endif()
 
 add_subdirectory(machine)
 add_subdirectory(nightly)

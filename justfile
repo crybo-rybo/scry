@@ -10,10 +10,10 @@ test:
     ctest --test-dir build/dev --output-on-failure
 
 format:
-    cmake --build build/dev --target format
+    ./scripts/format.sh --fix
 
 format-check:
-    cmake --build build/dev --target format-check
+    ./scripts/format.sh --check
 
 ci-fast:
     ./scripts/ci-local.sh

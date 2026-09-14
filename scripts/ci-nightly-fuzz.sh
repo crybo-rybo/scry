@@ -39,31 +39,13 @@ if [[ "$#" -ne 1 ]]; then
 fi
 
 case "${fuzz_kind}" in
-  sse)
-    readonly target="scry_sse_fuzz"
-    readonly binary_subdir="tests/protocol"
-    ;;
-  anthropic)
-    readonly target="scry_anthropic_fuzz"
-    readonly binary_subdir="tests/provider"
-    ;;
-  openai)
-    readonly target="scry_openai_fuzz"
-    readonly binary_subdir="tests/provider"
-    ;;
-  response_policy)
-    readonly target="scry_response_policy_fuzz"
-    readonly binary_subdir="tests/transport"
-    ;;
-  conversation)
-    readonly target="scry_conversation_fuzz"
-    readonly binary_subdir="tests"
-    ;;
+  sse | anthropic | openai | response_policy | conversation) ;;
   *)
     usage
     exit 2
     ;;
 esac
+readonly target="scry_${fuzz_kind}_fuzz"
 
 require_positive_integer SCRY_NIGHTLY_FUZZ_SECONDS "${fuzz_seconds}"
 require_positive_integer \
@@ -94,7 +76,7 @@ if ! cmake --build "${build_dir}" --target help | grep -Eq \
 fi
 cmake --build "${build_dir}" --target "${target}"
 
-readonly binary="${build_dir}/${binary_subdir}/${target}"
+readonly binary="${build_dir}/tests/fuzz/${target}"
 if [[ ! -x "${binary}" ]]; then
   echo "Built fuzz executable is missing or not executable: ${binary}" >&2
   exit 1

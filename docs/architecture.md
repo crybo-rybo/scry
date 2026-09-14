@@ -439,7 +439,8 @@ API, ABI, and persistence-format stability are not promised before 1.0.
 
 The implementation under `src/` avoids reflection and builds as C++23 in
 `SCRY_CLANG_TOOLING` mode. That mode requires Clang and supports clang-tidy and
-libFuzzer; it excludes examples and ordinary tests. It is a tooling build, not
+libFuzzer; it excludes examples and ordinary tests. Fuzz targets are registered
+separately from the ordinary test build. It is a tooling build, not
 a supported consumer configuration.
 
 libcurl is a linked dependency. Glaze is a private header-only build dependency,

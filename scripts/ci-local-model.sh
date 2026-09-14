@@ -88,7 +88,7 @@ mkdir -p "${artifact_dir}"
 wait_for_health
 
 cd "${root_dir}"
-cmake --preset ci -DSCRY_ENABLE_FORMAT_CHECK=OFF
+cmake --preset ci
 cmake --build build/ci --target scry_local_model_smoke
 
 echo "Running public-API local-model smoke against ${model}." |

@@ -2,7 +2,8 @@
 
 This opt-in showcase demonstrates how a host can present one asynchronous Scry turn
 inside an existing Dear ImGui application. It is example code, not part of Scry's
-installed API.
+installed API. The panel owns its current `scry::Turn` and submits directly
+through the host's harness and conversation.
 
 The host owns the `scry::Harness`, `scry::Conversation`, ImGui context, platform and
 renderer backends, window, and main loop. Both Scry callbacks and `ChatPanel::draw()`
