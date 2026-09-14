@@ -382,12 +382,16 @@ TransitionResult TurnMachine::begin_tool_round(ModelResponse response,
   TransitionResult result{};
   const auto& pending = std::get<AwaitingToolState>(state_);
   result.commands.reserve(pending.calls.size());
+  std::uint32_t index = 0;
   for (const auto& call : pending.calls) {
     result.commands.emplace_back(PublishToolCall{
         .turn_id = turn_id_,
         .call = call.call,
         .remaining_exchange_bytes = remaining_exchange_bytes(),
+        .round = tool_round_count_,
+        .index = index,
     });
+    ++index;
   }
   return result;
 }
@@ -414,6 +418,8 @@ TransitionResult TurnMachine::complete_turn(ModelResponse response) {
       .usage = usage_,
       .attempt_count = attempt_count_,
       .provider_request_id = std::move(response.provider_request_id),
+      .tool_round_count = tool_round_count_,
+      .tool_call_count = static_cast<std::uint32_t>(dispatched_tool_ids_.size()),
   });
 }
 

@@ -106,6 +106,8 @@ struct PublishToolCall {
   TurnId turn_id{};
   ToolCallBlock call{};
   std::size_t remaining_exchange_bytes{std::numeric_limits<std::size_t>::max()};
+  std::uint32_t round{};
+  std::uint32_t index{};
 };
 
 // The driver forwards this terminal intent to the pump as one value. The pump
@@ -118,6 +120,8 @@ struct CommitCompletion {
   Usage usage{};
   std::uint32_t attempt_count{};
   std::string provider_request_id{};
+  std::uint32_t tool_round_count{};
+  std::uint32_t tool_call_count{};
 };
 
 struct PublishError {

@@ -59,7 +59,7 @@ public:
 
 private:
   void dispatch(const ToolCallEvent& event);
-  void notify_tool_observer(const ToolCallBlock& call, const ToolResultBlock& result);
+  void notify_tool_observer(const ToolCallEvent& event, const ToolResultBlock& result);
 
   TurnId turn_id_{};
   std::shared_ptr<std::atomic<bool>> cancelled_{};

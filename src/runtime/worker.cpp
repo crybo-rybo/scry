@@ -467,6 +467,8 @@ Status WorkerActor::publish_tool_batch(PublishToolCall first,
       .turn_id = turn_id,
       .call = std::move(first.call),
       .remaining_exchange_bytes = first.remaining_exchange_bytes,
+      .round = first.round,
+      .index = first.index,
   });
   while (!pending_commands.empty()) {
     auto* next = std::get_if<PublishToolCall>(&pending_commands.front());
@@ -477,6 +479,8 @@ Status WorkerActor::publish_tool_batch(PublishToolCall first,
         .turn_id = turn_id,
         .call = std::move(next->call),
         .remaining_exchange_bytes = next->remaining_exchange_bytes,
+        .round = next->round,
+        .index = next->index,
     });
     pending_commands.pop_front();
   }
@@ -517,6 +521,8 @@ void WorkerActor::publish_terminal_command(MachineCommand command) {
         .usage = completion->usage,
         .attempt_count = completion->attempt_count,
         .provider_request_id = std::move(completion->provider_request_id),
+        .tool_round_count = completion->tool_round_count,
+        .tool_call_count = completion->tool_call_count,
     });
     return;
   }

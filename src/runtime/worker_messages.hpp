@@ -3,6 +3,7 @@
 #include "core/model.hpp"
 
 #include <atomic>
+#include <cstdint>
 #include <limits>
 #include <memory>
 #include <scry/error.hpp>
@@ -41,6 +42,8 @@ struct ToolCallEvent {
   TurnId turn_id{};
   ToolCallBlock call{};
   std::size_t remaining_exchange_bytes{std::numeric_limits<std::size_t>::max()};
+  std::uint32_t round{};
+  std::uint32_t index{};
 };
 
 // The pump moves `transcript` into the Conversation and keeps `text`, a copy of
@@ -55,6 +58,8 @@ struct CompletionEvent {
   Usage usage{};
   std::uint32_t attempt_count{};
   std::string provider_request_id{};
+  std::uint32_t tool_round_count{};
+  std::uint32_t tool_call_count{};
 };
 
 struct ErrorEvent {

@@ -175,6 +175,7 @@ void print_history(const scry::Conversation& conversation) {
       .on_finished =
           [&app](scry::Result<scry::Completion> finished) {
             if (finished) {
+              std::cout << "tools used: " << finished->tool_call_count << '\n';
               app.show_answer(finished->text);
             } else {
               app.show_error(finished.error().message);

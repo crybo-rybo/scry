@@ -53,6 +53,8 @@ TEST_CASE("two-tool turn snapshots tools, resends results, and commits atomicall
                                  .arguments = call.arguments,
                                  .result = call.result,
                                  .is_error = call.is_error,
+                                 .round = call.round,
+                                 .index = call.index,
                              });
                            },
                        .on_finished =
@@ -89,11 +91,15 @@ TEST_CASE("two-tool turn snapshots tools, resends results, and commits atomicall
   CHECK(observed[0].arguments.text == R"({"ordinal":1})");
   CHECK(observed[0].result.text == R"({"handled":"first"})");
   CHECK_FALSE(observed[0].is_error);
+  CHECK(observed[0].round == 1);
+  CHECK(observed[0].index == 0);
   CHECK(observed[1].id == "call-b");
   CHECK(observed[1].name == "second_tool");
   CHECK(observed[1].arguments.text == R"({"ordinal":2})");
   CHECK(observed[1].result.text == R"({"handled":"second"})");
   CHECK_FALSE(observed[1].is_error);
+  CHECK(observed[1].round == 1);
+  CHECK(observed[1].index == 1);
   CHECK(reentrant_registration_succeeded);
   CHECK(harness.tools().size() == 4);
   for (const auto callback_thread : callback_threads) {
@@ -105,6 +111,9 @@ TEST_CASE("two-tool turn snapshots tools, resends results, and commits atomicall
   CHECK(completion->usage.input_tokens == 10);
   CHECK(completion->usage.output_tokens == 7);
   CHECK(completion->attempt_count == 2);
+  CHECK(completion->finish_reason == scry::FinishReason::completed);
+  CHECK(completion->tool_round_count == 1);
+  CHECK(completion->tool_call_count == 2);
   CHECK(conversation.message_count() == 4);
   auto serialized = conversation.to_json();
   REQUIRE(serialized);

@@ -20,7 +20,8 @@ enum class FinishReason : std::uint8_t {
   completed,
   /// The configured or provider limit truncated the response.
   length,
-  /// The model requested one or more tools.
+  /// Internal to the loop. A Completion never carries this value; a response that
+  /// requests tools starts a round or fails with max_tool_rounds.
   tool_use,
   /// The provider supplied no recognized finish reason.
   unknown,
@@ -55,6 +56,10 @@ struct ToolCall {
   /// True when the result is a tool error: the handler returned an error, threw,
   /// returned invalid JSON, or the model requested an unknown tool.
   bool is_error{false};
+  /// One-based tool round within the turn that issued this call.
+  std::uint32_t round{};
+  /// Zero-based position of this call in its round's batch, in provider order.
+  std::uint32_t index{};
 };
 
 /// Final successful result of an accepted turn.
@@ -74,6 +79,11 @@ struct Completion {
   std::uint32_t attempt_count{};
   /// Sanitized provider request identifier for the completion.
   std::string provider_request_id{};
+  /// Tool rounds that ran before the final response.
+  std::uint32_t tool_round_count{};
+  /// Tool calls the model issued across those rounds, including unknown tools
+  /// and calls whose handler failed.
+  std::uint32_t tool_call_count{};
 };
 
 /// Limits one Harness::update() pump invocation.
