@@ -118,9 +118,9 @@ struct MoveResult {
   return scry::test_support::make_harness_fixture(
       openai_config(),
       {
-          scripted_exchange(openai_tool_call_stream(
-                                {{.id = "call-a", .name = "move", .arguments = call}}),
-                            "openai-tool-request"),
+          scripted_exchange(
+              openai_tool_stream({{.id = "call-a", .name = "move", .arguments = call}}),
+              "openai-tool-request"),
           scripted_exchange(openai_text_stream("done"), "openai-final-request"),
       },
       scry::ProviderDialect::openai_compatible);

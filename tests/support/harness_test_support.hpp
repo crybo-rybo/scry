@@ -64,58 +64,6 @@ using scry::testing::openai_text_stream;
 using scry::testing::openai_tool_stream;
 using scry::testing::ToolUseBlock;
 
-// One tool call of an OpenAI-compatible stream. `arguments` is the tool input as
-// plain JSON; the builder escapes it into the delta's `arguments` string.
-struct OpenAiToolCall {
-  std::string_view id{};
-  std::string_view name{};
-  std::string_view arguments{};
-};
-
-// The OpenAI-compatible counterpart of anthropic_tool_stream: a role chunk, one
-// delta per call, the tool_calls finish chunk, usage, then the sentinel. Each
-// call arrives whole because fragment reassembly is covered by the suites that
-// script their own bytes.
-[[nodiscard]] inline std::string
-openai_tool_call_stream(const std::initializer_list<OpenAiToolCall> calls,
-                        const std::string_view completion_id = "chatcmpl-tools",
-                        const std::uint32_t prompt_tokens = 4,
-                        const std::uint32_t completion_tokens = 3) {
-  const auto prefix = R"(data: {"id":")" + std::string{completion_id} +
-                      R"(","object":"chat.completion.chunk","choices":)";
-  auto stream = prefix;
-  stream += R"([{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]})";
-  stream += "\n\n";
-  auto index = std::size_t{0};
-  for (const auto& call : calls) {
-    stream += prefix;
-    stream += R"([{"index":0,"delta":{"tool_calls":[{"index":)";
-    stream += std::to_string(index);
-    stream += R"(,"id":")";
-    stream += call.id;
-    stream += R"(","type":"function","function":{"name":")";
-    stream += call.name;
-    stream += R"(","arguments":")";
-    stream += quoted_json(call.arguments);
-    stream += R"("}}]},"finish_reason":null}]})";
-    stream += "\n\n";
-    ++index;
-  }
-  stream += prefix;
-  stream += R"([{"index":0,"delta":{},"finish_reason":"tool_calls"}]})";
-  stream += "\n\n";
-  stream += prefix;
-  stream += R"([],"usage":{"prompt_tokens":)";
-  stream += std::to_string(prompt_tokens);
-  stream += R"(,"completion_tokens":)";
-  stream += std::to_string(completion_tokens);
-  stream += R"(,"total_tokens":)";
-  stream += std::to_string(prompt_tokens + completion_tokens);
-  stream += R"(}})";
-  stream += "\n\ndata: [DONE]\n\n";
-  return stream;
-}
-
 [[nodiscard]] inline scry::ToolHandler static_handler(std::string result) {
   return [result = std::move(result)](scry::Json) -> scry::Result<scry::Json> {
     return scry::Json{.text = result};
