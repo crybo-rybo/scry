@@ -49,10 +49,15 @@ static_assert(std::same_as<decltype(scry::ToolCall::turn_id), scry::TurnId>);
 static_assert(std::same_as<decltype(scry::ToolCall::arguments), scry::Json>);
 static_assert(std::same_as<decltype(scry::ToolCall::result), scry::Json>);
 static_assert(std::same_as<decltype(scry::ToolCall::is_error), bool>);
+static_assert(std::same_as<decltype(scry::ToolCall::round), std::uint32_t>);
+static_assert(std::same_as<decltype(scry::ToolCall::index), std::uint32_t>);
 static_assert(std::same_as<decltype(scry::Completion::turn_id), scry::TurnId>);
 static_assert(
     std::same_as<decltype(scry::Completion::finish_reason), scry::FinishReason>);
 static_assert(std::same_as<decltype(scry::Completion::usage), scry::Usage>);
+static_assert(
+    std::same_as<decltype(scry::Completion::tool_round_count), std::uint32_t>);
+static_assert(std::same_as<decltype(scry::Completion::tool_call_count), std::uint32_t>);
 static_assert(
     std::same_as<decltype(scry::UpdateStats::callbacks_delivered), std::size_t>);
 static_assert(std::same_as<decltype(scry::UpdateStats::events_remaining), std::size_t>);

@@ -422,10 +422,20 @@ Successful terminal processing in `update()` commits the user message, tool
 rounds, and final assistant response together, before terminal callback delivery.
 They arrive as one transcript: the machine keeps a single message list, resends
 it each round, and hands that same list to the pump.
-Failure or cancellation commits nothing. A completion can have a `length` or
-`unknown` finish reason; inspect `Completion::finish_reason` when the application
-requires an untruncated answer. Text deltas can include intermediate tool rounds;
-`Completion::text` contains only the final assistant response.
+Failure or cancellation commits nothing. `Completion::finish_reason` is
+`completed`, `length`, or `unknown`: `tool_use` is internal to the loop, because a
+response that requests tools either starts another round or fails with
+`max_tool_rounds`. Inspect `Completion::finish_reason` when the application
+requires an untruncated answer.
+
+`Completion::tool_round_count` and `Completion::tool_call_count` report what the
+loop ran before that final response; the call count includes unknown tools and
+calls whose handler failed. Each observed `ToolCall` carries its own `round` and
+its `index` within that round's batch, in provider order. Text deltas can include
+intermediate tool rounds and `Completion::text` contains only the final assistant
+response, but deltas of round N+1 are delivered only after every `on_tool_call` of
+round N, so a host can attribute deltas to rounds by counting `on_tool_call`
+observations.
 
 Every committed message holds at least one block and no empty text block. The
 machine drops empty text blocks from a model response before it commits or

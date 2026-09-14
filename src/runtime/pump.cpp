@@ -179,6 +179,8 @@ void TurnRoute::invoke(const WorkerEvent& event) {
               .usage = value.usage,
               .attempt_count = value.attempt_count,
               .provider_request_id = value.provider_request_id,
+              .tool_round_count = value.tool_round_count,
+              .tool_call_count = value.tool_call_count,
           });
         } else if constexpr (std::is_same_v<Event, ErrorEvent>) {
           terminal_delivered_ = true;
@@ -234,19 +236,21 @@ void TurnRoute::dispatch(const ToolCallEvent& event) {
     });
   }
   if (observed) {
-    notify_tool_observer(event.call, *observed);
+    notify_tool_observer(event, *observed);
   }
 }
 
-void TurnRoute::notify_tool_observer(const ToolCallBlock& call,
+void TurnRoute::notify_tool_observer(const ToolCallEvent& event,
                                      const ToolResultBlock& result) {
   callbacks_.on_tool_call(ToolCall{
       .turn_id = turn_id_,
-      .id = call.id,
-      .name = call.name,
-      .arguments = call.arguments,
+      .id = event.call.id,
+      .name = event.call.name,
+      .arguments = event.call.arguments,
       .result = result.result,
       .is_error = result.is_error,
+      .round = event.round,
+      .index = event.index,
   });
 }
 

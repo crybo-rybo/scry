@@ -185,6 +185,56 @@ TEST_CASE("multi-round completion carries the transactional transcript and total
   CHECK(std::get<scry::detail::TextBlock>(final.content.front()).text == "finished");
 }
 
+TEST_CASE("published calls carry their round and batch position") {
+  auto machine = make_machine();
+  begin(machine);
+
+  const auto round_one = machine.apply(scry::detail::ModelCompleted{
+      .response = tool_response({
+          tool_call("call-a", "first"),
+          tool_call("call-b", "second"),
+      }),
+  });
+  REQUIRE(round_one.commands.size() == 2);
+  const auto& first = std::get<scry::detail::PublishToolCall>(round_one.commands[0]);
+  const auto& second = std::get<scry::detail::PublishToolCall>(round_one.commands[1]);
+  CHECK(first.round == 1);
+  CHECK(first.index == 0);
+  CHECK(second.round == 1);
+  CHECK(second.index == 1);
+
+  static_cast<void>(machine.apply(result("call-a", "{}", at(1ms))));
+  const auto issued = machine.apply(result("call-b", "{}", at(2ms)));
+  static_cast<void>(only_command<scry::detail::IssueModelRequest>(issued));
+
+  const auto round_two = machine.apply(scry::detail::ModelCompleted{
+      .response = tool_response({tool_call("call-c", "third")}),
+  });
+  const auto& third = only_command<scry::detail::PublishToolCall>(round_two);
+  CHECK(third.round == 2);
+  CHECK(third.index == 0);
+
+  const auto next = machine.apply(result("call-c", "{}", at(3ms)));
+  static_cast<void>(only_command<scry::detail::IssueModelRequest>(next));
+  const auto completed =
+      machine.apply(scry::detail::ModelCompleted{.response = final_response()});
+  const auto& commit = only_command<scry::detail::CommitCompletion>(completed);
+  CHECK(commit.tool_round_count == 2);
+  CHECK(commit.tool_call_count == 3);
+}
+
+TEST_CASE("a text-only turn completes with no tool rounds or calls") {
+  auto machine = make_machine();
+  begin(machine);
+
+  const auto completed =
+      machine.apply(scry::detail::ModelCompleted{.response = final_response()});
+  const auto& commit = only_command<scry::detail::CommitCompletion>(completed);
+  CHECK(commit.tool_round_count == 0);
+  CHECK(commit.tool_call_count == 0);
+  CHECK(commit.finish_reason == scry::FinishReason::completed);
+}
+
 TEST_CASE("tool-round cap fails before publishing any call from excess round") {
   auto tools = tool_policy();
   tools.max_rounds = 1;
