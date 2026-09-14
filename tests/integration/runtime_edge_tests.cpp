@@ -528,7 +528,13 @@ TEST_CASE("ToolRegistry rejects invalid and duplicate registrations") {
   REQUIRE_FALSE(status);
   CHECK(status.error().category == scry::ErrorCategory::invalid_argument);
 
-  status = tools.add(tool("missing_handler"), {});
+  // Two add() overloads now share the name, so an empty handler has to say which
+  // shape it is empty of. Both are rejected the same way.
+  status = tools.add(tool("missing_handler"), scry::ToolHandler{});
+  REQUIRE_FALSE(status);
+  CHECK(status.error().category == scry::ErrorCategory::invalid_argument);
+
+  status = tools.add(tool("missing_handler"), scry::ContextualToolHandler{});
   REQUIRE_FALSE(status);
   CHECK(status.error().category == scry::ErrorCategory::invalid_argument);
 

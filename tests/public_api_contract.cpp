@@ -165,6 +165,48 @@ static_assert(requires(const scry::ToolRegistry& registry) {
   { registry.names() } -> std::same_as<std::vector<std::string>>;
   { registry.to_json() } -> std::same_as<scry::Result<scry::Json>>;
 });
+
+// A tool handler's call identity: a borrowed value the handler reads and does not
+// own, so the views are string_view and the whole thing stays an aggregate.
+static_assert(std::is_aggregate_v<scry::ToolCallContext>);
+static_assert(std::same_as<decltype(scry::ToolCallContext::turn_id), scry::TurnId>);
+static_assert(std::same_as<decltype(scry::ToolCallContext::call_id), std::string_view>);
+static_assert(
+    std::same_as<decltype(scry::ToolCallContext::tool_name), std::string_view>);
+static_assert(std::same_as<decltype(scry::ToolCallContext::round), std::uint32_t>);
+static_assert(std::same_as<decltype(scry::ToolCallContext::index), std::uint32_t>);
+static_assert(std::is_move_constructible_v<scry::ToolHandler>);
+static_assert(!std::is_copy_constructible_v<scry::ToolHandler>);
+static_assert(std::is_move_constructible_v<scry::ContextualToolHandler>);
+static_assert(!std::is_copy_constructible_v<scry::ContextualToolHandler>);
+
+// The two add() overloads are separated by the handler's arity alone, so each
+// lambda shape has to reach exactly one of them. A converting constructor that
+// did not constrain on invocability would make both of these ambiguous.
+using PlainToolLambda =
+    decltype([](scry::Json input) -> scry::Result<scry::Json> { return input; });
+using ContextualToolLambda =
+    decltype([](const scry::ToolCallContext&,
+                scry::Json input) -> scry::Result<scry::Json> { return input; });
+static_assert(std::is_constructible_v<scry::ToolHandler, PlainToolLambda>);
+static_assert(!std::is_constructible_v<scry::ToolHandler, ContextualToolLambda>);
+static_assert(
+    std::is_constructible_v<scry::ContextualToolHandler, ContextualToolLambda>);
+static_assert(!std::is_constructible_v<scry::ContextualToolHandler, PlainToolLambda>);
+static_assert(requires(scry::ToolRegistry& registry) {
+  {
+    registry.add(scry::ToolDefinition{}, PlainToolLambda{})
+  } -> std::same_as<scry::Status>;
+  {
+    registry.add(scry::ToolDefinition{}, ContextualToolLambda{})
+  } -> std::same_as<scry::Status>;
+  {
+    registry.add(scry::ToolDefinition{}, scry::ToolHandler{})
+  } -> std::same_as<scry::Status>;
+  {
+    registry.add(scry::ToolDefinition{}, scry::ContextualToolHandler{})
+  } -> std::same_as<scry::Status>;
+});
 static_assert(requires(const scry::Conversation& conversation) {
   { conversation.messages() } -> std::same_as<const std::vector<scry::Message>&>;
   { conversation.system_prompt() } -> std::same_as<const std::string&>;

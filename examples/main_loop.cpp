@@ -97,7 +97,11 @@ struct StatusResult {
               .description =
                   "Report whether the host application's main loop is running",
           },
-          [&app](StatusArguments arguments) {
+          // A reflected handler may take the call's identity as an optional
+          // leading parameter; its string views are borrowed for this call only.
+          [&app](const scry::ToolCallContext& context, StatusArguments arguments) {
+            std::cout << "tool " << context.tool_name << " in round " << context.round
+                      << '\n';
             const bool running = app.running();
             const auto* label = running ? "main loop running" : "main loop stopped";
             return StatusResult{

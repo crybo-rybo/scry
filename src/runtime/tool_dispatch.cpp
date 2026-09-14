@@ -37,10 +37,11 @@ namespace {
   };
 }
 
-[[nodiscard]] Result<Json> invoke_handler(ToolHandler& handler,
-                                          const ToolCallBlock& call) noexcept {
+[[nodiscard]] Result<Json> invoke_handler(ContextualToolHandler& handler,
+                                          const ToolCallBlock& call,
+                                          const ToolCallContext& context) noexcept {
   try {
-    return handler(call.arguments);
+    return handler(context, call.arguments);
   } catch (...) {
     return std::unexpected(
         dispatch_error(ErrorCategory::tool, "tool handler threw an exception"));
@@ -117,9 +118,10 @@ successful_result(const ToolCallBlock& call, const Json& value,
 }
 
 [[nodiscard]] Result<ToolResultBlock>
-dispatch_tool_handler(ToolHandler& handler, const ToolCallBlock& call,
+dispatch_tool_handler(ContextualToolHandler& handler, const ToolCallBlock& call,
+                      const ToolCallContext& context,
                       const std::size_t max_result_bytes) {
-  auto invoked = invoke_handler(handler, call);
+  auto invoked = invoke_handler(handler, call, context);
   if (!invoked) {
     // Only text the handler deliberately published travels on; `message` and any
     // exception text stay on the host side of the boundary.
@@ -136,6 +138,7 @@ dispatch_tool_handler(ToolHandler& handler, const ToolCallBlock& call,
 
 Result<ToolResultBlock> dispatch_tool(const ToolSnapshot& snapshot,
                                       const ToolCallBlock& call,
+                                      const ToolCallContext& context,
                                       const std::size_t max_result_bytes) {
   const auto registration = find_tool_registration(snapshot, call.name);
   if (!registration) {
@@ -148,7 +151,7 @@ Result<ToolResultBlock> dispatch_tool(const ToolSnapshot& snapshot,
   if (!registration->handler || !*registration->handler) {
     return error_result(call, "tool handler is unavailable", max_result_bytes);
   }
-  return dispatch_tool_handler(*registration->handler, call, max_result_bytes);
+  return dispatch_tool_handler(*registration->handler, call, context, max_result_bytes);
 }
 
 } // namespace scry::detail

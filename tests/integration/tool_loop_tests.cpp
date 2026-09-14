@@ -1,5 +1,6 @@
 #include "tool_loop_test_support.hpp"
 
+#include <cstdint>
 #include <optional>
 
 using namespace scry::test_support;
@@ -17,13 +18,30 @@ TEST_CASE("two-tool turn snapshots tools, resends results, and commits atomicall
   std::vector<scry::ToolCall> observed;
   std::string first_arguments;
   std::string second_arguments;
+  scry::TurnId first_context_turn{};
+  std::string first_context_call_id;
+  std::string first_context_tool_name;
+  std::uint32_t first_context_round{};
+  std::uint32_t first_context_index{};
   bool reentrant_registration_succeeded = false;
 
+  // The contextual overload: the handler learns which call it is servicing
+  // before the observer is told anything about it.
   REQUIRE(harness.tools().add(ordinal_tool_definition("first_tool"),
-                              [&](scry::Json arguments) -> scry::Result<scry::Json> {
+                              [&](const scry::ToolCallContext& context,
+                                  scry::Json arguments) -> scry::Result<scry::Json> {
                                 timeline.emplace_back("handler:first");
                                 callback_threads.push_back(std::this_thread::get_id());
                                 first_arguments = std::move(arguments.text);
+                                // The context's views borrow from the call block being
+                                // dispatched, so only owning copies survive past this
+                                // frame.
+                                first_context_turn = context.turn_id;
+                                first_context_call_id = std::string{context.call_id};
+                                first_context_tool_name =
+                                    std::string{context.tool_name};
+                                first_context_round = context.round;
+                                first_context_index = context.index;
                                 reentrant_registration_succeeded =
                                     static_cast<bool>(harness.tools().add(
                                         ordinal_tool_definition("reentrant_tool"),
@@ -93,6 +111,12 @@ TEST_CASE("two-tool turn snapshots tools, resends results, and commits atomicall
   CHECK_FALSE(observed[0].is_error);
   CHECK(observed[0].round == 1);
   CHECK(observed[0].index == 0);
+  // The handler and the observer describe the same call.
+  CHECK(first_context_call_id == observed[0].id);
+  CHECK(first_context_tool_name == observed[0].name);
+  CHECK(first_context_turn == observed[0].turn_id);
+  CHECK(first_context_round == observed[0].round);
+  CHECK(first_context_index == observed[0].index);
   CHECK(observed[1].id == "call-b");
   CHECK(observed[1].name == "second_tool");
   CHECK(observed[1].arguments.text == R"({"ordinal":2})");

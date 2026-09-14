@@ -164,6 +164,18 @@ no replacement or removal operation. Each accepted turn retains the
 registrations visible at `send()`. Immutable registration and schema snapshots
 are reused until another tool is added; handlers stay on the host thread.
 
+Every tool handler, reflected or explicit, comes in two shapes: one that receives
+only its arguments, and one that also receives a `ToolCallContext` naming the call
+it is servicing — the `TurnId`, the provider-assigned `call_id`, the registered
+`tool_name`, the one-based `round`, and the zero-based `index` within that round's
+batch. These are the same values the later `on_tool_call` observation carries, so
+a handler can correlate its own work with the turn without counting calls itself.
+The context is borrowed: both string views point into the call block being
+dispatched and are valid only until the handler returns. A handler that keeps
+either beyond its return must copy the text. Registrations store one handler
+shape internally, so the two paths export an identical tool contract and differ
+in nothing the model can see.
+
 `ToolRegistry::to_json()` exports a version-1 JSON manifest with a `tools` array
 in registration order. Every entry contains the registered `name`, `description`,
 and `input_schema` object, including reflected parameter annotations. This is
@@ -197,6 +209,15 @@ auto status = scry::reflection::add<ForecastArgs>(
     tools,
     {.name = "forecast", .description = "Return the forecast for one city"},
     [](ForecastArgs args) -> scry::Result<Forecast> {
+      return lookup_forecast(std::move(args));
+    });
+
+// The same registration, with the call's identity as an optional leading parameter.
+auto traced = scry::reflection::add<ForecastArgs>(
+    tools,
+    {.name = "traced_forecast", .description = "Return the forecast for one city"},
+    [](const scry::ToolCallContext& context, ForecastArgs args) -> Forecast {
+      log(context.turn_id, context.round, context.call_id);
       return lookup_forecast(std::move(args));
     });
 ```
@@ -250,8 +271,12 @@ result type, whose schema the model never sees, so the model receives the fixed
 diagnostic.
 
 Handlers are invoked with moved arguments and return a supported value or
-`Result` of one. Raw `Json`, `void`, `Status`, references, futures, and awaitables
-are not reflected result types. The returned object is encoded without an
+`Result` of one. A handler may declare a leading `const ToolCallContext&`
+parameter; `ToolHandlerFor` accepts either arity and checks the result type of
+whichever form is viable, preferring the contextual one. The context must lead:
+a handler that trails it is not a reflected handler and fails to compile. Raw
+`Json`, `void`, `Status`, references, futures, and awaitables are not reflected
+result types. The returned object is encoded without an
 additional copy or move, including aggregates whose user-declared destructor
 suppresses an implicit move constructor. `reflection::encode(value)` uses the
 same value encoder without requiring registration.
@@ -259,11 +284,16 @@ same value encoder without requiring registration.
 ### Explicit-schema tools
 
 `ToolRegistry::add(ToolDefinition, ToolHandler)` accepts a JSON schema object and
-a move-only `Json -> Result<Json>` callable. Registration validates and
-canonicalizes the schema as a JSON object; Scry does not implement general JSON
-Schema validation. The handler receives canonical object arguments and owns
-validation against its schema. It must synchronously return valid JSON or an
-error. Asynchronous or deferred tool results are not supported.
+a move-only `Json -> Result<Json>` callable;
+`ToolRegistry::add(ToolDefinition, ContextualToolHandler)` accepts a move-only
+`(const ToolCallContext&, Json) -> Result<Json>` callable instead. The overloads
+are separated by the handler's arity, so a lambda of either shape selects one of
+them without a cast. Registration validates and canonicalizes the schema as a
+JSON object; Scry does not implement general JSON Schema validation. An empty
+handler of either shape is rejected at registration. The handler receives
+canonical object arguments and owns validation against its schema. It must
+synchronously return valid JSON or an error. Asynchronous or deferred tool
+results are not supported.
 
 Unknown tools, reflected decode failures, handler errors, exceptions, and invalid
 result JSON produce bounded model-visible error results. A handler error's
