@@ -122,6 +122,10 @@ struct CommitCompletion {
   std::string provider_request_id{};
   std::uint32_t tool_round_count{};
   std::uint32_t tool_call_count{};
+  // Calls the final response asked for and the loop never dispatched, carried to
+  // the host so it can see what the round limit cost it. They are deliberately
+  // absent from the transcript: nothing ran, so nothing may be committed.
+  std::vector<ToolCallBlock> unexecuted_tool_calls{};
 };
 
 struct PublishError {
@@ -166,6 +170,7 @@ struct ToolLoopPolicy {
   std::uint32_t max_rounds{8};
   std::size_t max_argument_bytes{std::size_t{1024} * 1024};
   std::size_t max_exchange_bytes{std::numeric_limits<std::size_t>::max()};
+  ToolRoundLimitPolicy limit_policy{ToolRoundLimitPolicy::fail};
 };
 
 class TurnMachine {
@@ -225,7 +230,11 @@ private:
   [[nodiscard]] TransitionResult issue_attempt();
   [[nodiscard]] TransitionResult begin_tool_round(ModelResponse response,
                                                   std::vector<ToolCallBlock> calls);
-  [[nodiscard]] TransitionResult complete_turn(ModelResponse response);
+  [[nodiscard]] TransitionResult
+  complete_turn(ModelResponse response, std::vector<ToolCallBlock> unexecuted = {});
+  // Ends the turn at the round limit instead of failing it: the response's text
+  // is committed and its calls are handed back undispatched.
+  [[nodiscard]] TransitionResult complete_at_round_limit(ModelResponse response);
   [[nodiscard]] TransitionResult finish_error(Error error);
   [[nodiscard]] TransitionResult fail_response(ErrorCategory category,
                                                std::string message,

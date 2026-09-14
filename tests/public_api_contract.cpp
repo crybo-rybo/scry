@@ -2,6 +2,7 @@
 #include <array>
 #include <chrono>
 #include <concepts>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -16,6 +17,11 @@
 static_assert(std::is_aggregate_v<scry::Config>);
 static_assert(std::same_as<decltype(scry::Config::max_tool_calls_per_turn),
                            std::optional<std::uint32_t>>);
+static_assert(
+    std::same_as<decltype(scry::Config::tool_round_limit), scry::ToolRoundLimitPolicy>);
+static_assert(std::is_enum_v<scry::ToolRoundLimitPolicy>);
+static_assert(
+    std::same_as<std::underlying_type_t<scry::ToolRoundLimitPolicy>, std::uint8_t>);
 static_assert(std::is_aggregate_v<scry::HttpHeader>);
 static_assert(std::is_enum_v<scry::ReasoningMode>);
 static_assert(std::is_aggregate_v<scry::Error>);
@@ -65,6 +71,15 @@ static_assert(
 static_assert(std::same_as<decltype(scry::Completion::tool_call_count), std::uint32_t>);
 static_assert(
     std::same_as<decltype(scry::Completion::rejected_tool_call_count), std::uint32_t>);
+static_assert(std::same_as<decltype(scry::Completion::unexecuted_tool_calls),
+                           std::vector<scry::ToolCallBlock>>);
+// The soft stop appends its finish reason; the existing enumerators keep the
+// values a host may already have persisted.
+static_assert(std::to_underlying(scry::FinishReason::completed) == 0);
+static_assert(std::to_underlying(scry::FinishReason::length) == 1);
+static_assert(std::to_underlying(scry::FinishReason::tool_use) == 2);
+static_assert(std::to_underlying(scry::FinishReason::unknown) == 3);
+static_assert(std::to_underlying(scry::FinishReason::tool_round_limit) == 4);
 static_assert(
     std::same_as<decltype(scry::UpdateStats::callbacks_delivered), std::size_t>);
 static_assert(std::same_as<decltype(scry::UpdateStats::events_remaining), std::size_t>);
@@ -388,6 +403,8 @@ int main() {
       config.limits.max_queued_event_bytes_per_turn == 2 * kibibyte * kibibyte,
       config.limits.max_conversation_bytes == 16 * kibibyte * kibibyte,
       config.max_tool_rounds == 8,
+      config.tool_round_limit == scry::ToolRoundLimitPolicy::fail,
+      !config.max_tool_calls_per_turn.has_value(),
       config.sampling.max_tokens == 1024,
       config.reasoning_mode == scry::ReasoningMode::provider_default,
       config.retry.max_attempts == 3,

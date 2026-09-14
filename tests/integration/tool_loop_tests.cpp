@@ -581,3 +581,150 @@ TEST_CASE("cancelling from the admission hook runs no handler and commits nothin
   CHECK(conversation.message_count() == messages_before);
   CHECK_FALSE(conversation.busy());
 }
+
+TEST_CASE("the soft round limit commits one round and keeps the history sendable") {
+  auto config = test_config();
+  config.max_tool_rounds = 1;
+  config.tool_round_limit = scry::ToolRoundLimitPolicy::complete;
+
+  const auto first_round = anthropic_tool_stream({
+      {.id = "call-a", .name = "first_tool", .arguments = R"({"ordinal":1})"},
+  });
+  // The round the limit refuses: tool calls and nothing else, so the turn commits
+  // no assistant message and history ends with the first round's results.
+  const auto excess_round = anthropic_tool_stream(
+      {
+          {.id = "call-b", .name = "second_tool", .arguments = R"({"ordinal":2})"},
+      },
+      "msg_excess");
+  auto fixture = make_harness_fixture(
+      std::move(config),
+      {
+          scripted_exchange(first_round, "tool-request"),
+          scripted_exchange(excess_round, "stop-request"),
+          scripted_exchange(anthropic_text_stream("second answer", "msg_second"),
+                            "second-request"),
+      });
+  auto* requests = fixture.transport;
+  auto& harness = fixture.harness;
+  auto& conversation = fixture.conversation;
+
+  std::size_t first_calls = 0;
+  std::size_t second_calls = 0;
+  REQUIRE(harness.tools().add(ordinal_tool_definition("first_tool"),
+                              [&first_calls](scry::Json) -> scry::Result<scry::Json> {
+                                ++first_calls;
+                                return scry::Json{.text = R"({"handled":"first"})"};
+                              }));
+  REQUIRE(harness.tools().add(ordinal_tool_definition("second_tool"),
+                              [&second_calls](scry::Json) -> scry::Result<scry::Json> {
+                                ++second_calls;
+                                return scry::Json{.text = R"({"handled":"second"})"};
+                              }));
+
+  std::optional<scry::Completion> completion;
+  REQUIRE(harness.send(conversation, "Run the tool",
+                       {
+                           .on_finished =
+                               [&completion](scry::Result<scry::Completion> finished) {
+                                 REQUIRE(finished);
+                                 completion = std::move(*finished);
+                               },
+                       }));
+  REQUIRE(pump_until(harness, [&] { return completion.has_value(); }));
+
+  REQUIRE(completion);
+  CHECK(completion->finish_reason == scry::FinishReason::tool_round_limit);
+  CHECK(completion->tool_round_count == 1);
+  CHECK(completion->tool_call_count == 1);
+  CHECK(completion->text.empty());
+  REQUIRE(completion->unexecuted_tool_calls.size() == 1);
+  CHECK(completion->unexecuted_tool_calls.front().id == "call-b");
+  CHECK(completion->unexecuted_tool_calls.front().name == "second_tool");
+  CHECK(completion->unexecuted_tool_calls.front().arguments.text == R"({"ordinal":2})");
+  // The refused call never ran, so host state and committed history agree.
+  CHECK(first_calls == 1);
+  CHECK(second_calls == 0);
+  REQUIRE(conversation.message_count() == 3);
+  CHECK(conversation.messages().back().role == scry::Role::user);
+  CHECK_FALSE(conversation.busy());
+
+  std::optional<scry::Completion> second;
+  REQUIRE(harness.send(conversation, "Anything else?",
+                       {
+                           .on_finished =
+                               [&second](scry::Result<scry::Completion> finished) {
+                                 REQUIRE(finished);
+                                 second = std::move(*finished);
+                               },
+                       }));
+  REQUIRE(pump_until(harness, [&] { return second.has_value(); }));
+  REQUIRE(second);
+  CHECK(second->text == "second answer");
+
+  const auto recorded = requests->requests();
+  REQUIRE(recorded.size() == 3);
+  const auto& resumed_body = recorded[2].body;
+  // The Messages API takes one message per role turn, so the tool results and the
+  // new question travel as one user message rather than two in a row.
+  CHECK(count_occurrences(resumed_body, R"("role":"user")") == 2);
+  CHECK(count_occurrences(resumed_body, R"("role":"assistant")") == 1);
+  require_order(resumed_body, R"("tool_use_id":"call-a")", "Anything else?");
+  CHECK(resumed_body.find(R"("type":"tool_result"},{"text":"Anything else?")") !=
+        std::string::npos);
+}
+
+TEST_CASE("large dropped calls reach the host intact") {
+  auto config = test_config();
+  config.max_tool_rounds = 1;
+  config.tool_round_limit = scry::ToolRoundLimitPolicy::complete;
+
+  const auto first_round = anthropic_tool_stream({
+      {.id = "call-a", .name = "first_tool", .arguments = R"({"ordinal":1})"},
+  });
+  // Two calls whose arguments together dwarf the worker's terminal event reserve.
+  // They are reserved against the Conversation budget, not the event queue, so
+  // they arrive whole rather than being shed to keep the completion deliverable.
+  const std::string first_padding(600, 'p');
+  const std::string second_padding(600, 'q');
+  const std::string first_arguments =
+      R"({"ordinal":2,"pad":")" + first_padding + R"("})";
+  const std::string second_arguments =
+      R"({"ordinal":3,"pad":")" + second_padding + R"("})";
+  const auto excess_round = anthropic_tool_stream(
+      {
+          {.id = "call-b", .name = "second_tool", .arguments = first_arguments},
+          {.id = "call-c", .name = "second_tool", .arguments = second_arguments},
+      },
+      "msg_excess");
+  auto fixture = make_harness_fixture(
+      std::move(config), {
+                             scripted_exchange(first_round, "tool-request"),
+                             scripted_exchange(excess_round, "stop-request"),
+                         });
+  auto& harness = fixture.harness;
+  auto& conversation = fixture.conversation;
+  REQUIRE(harness.tools().add(ordinal_tool_definition("first_tool"),
+                              static_handler(R"({"handled":"first"})")));
+
+  std::optional<scry::Completion> completion;
+  REQUIRE(harness.send(conversation, "Run the tool",
+                       {
+                           .on_finished =
+                               [&completion](scry::Result<scry::Completion> finished) {
+                                 REQUIRE(finished);
+                                 completion = std::move(*finished);
+                               },
+                       }));
+  REQUIRE(pump_until(harness, [&] { return completion.has_value(); }));
+
+  REQUIRE(completion);
+  CHECK(completion->finish_reason == scry::FinishReason::tool_round_limit);
+  CHECK(completion->tool_round_count == 1);
+  REQUIRE(completion->unexecuted_tool_calls.size() == 2);
+  CHECK(completion->unexecuted_tool_calls[0].id == "call-b");
+  CHECK(completion->unexecuted_tool_calls[0].arguments.text == first_arguments);
+  CHECK(completion->unexecuted_tool_calls[1].id == "call-c");
+  CHECK(completion->unexecuted_tool_calls[1].arguments.text == second_arguments);
+  CHECK(conversation.message_count() == 3);
+}

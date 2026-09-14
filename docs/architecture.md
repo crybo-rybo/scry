@@ -139,8 +139,16 @@ observer. The worker resends once all results are ready. A fatal dispatch or
 payload-budget failure suppresses later handlers in the batch.
 
 Tool-call IDs must be unique within a turn. Scry rejects reused IDs rather than
-executing them again. `Config::max_tool_rounds` bounds the loop; exceeding it
-fails with `max_tool_rounds`.
+executing them again. `Config::max_tool_rounds` bounds the loop, and
+`Config::tool_round_limit` decides what a response that asks for one round too
+many does. Under `ToolRoundLimitPolicy::fail`, the default, the turn fails with
+`max_tool_rounds` and commits nothing. Under `ToolRoundLimitPolicy::complete`, the
+turn stops instead of failing: the rounds that ran and the final response's text
+are committed, that response's tool-call blocks are dropped into
+`Completion::unexecuted_tool_calls`, and the finish reason is
+`tool_round_limit`. A response left with no text after the drop commits no
+assistant message at all, so the transcript ends with the previous round's tool
+results.
 
 Automatic retries apply to retryable network and rate-limit failures, including
 HTTP 5xx responses, only before semantic output is consumed. Text or tool-call
@@ -206,6 +214,12 @@ thing the rollback could not repair on the host's behalf, because a handler's
 effects on host state outlive the transcript the turn discards. The counts are
 unchanged by it: the call still spent the per-turn limit, but a call cancellation
 suppressed is not a refusal and is not counted as one.
+
+A refused call and a call dropped at the round limit share the same guarantee: the
+handler never ran, so nothing it would have changed happened. Under
+`ToolRoundLimitPolicy::complete`, host state and history agree because the dropped
+calls never ran; the host learns what the model asked for from
+`Completion::unexecuted_tool_calls` and can put it in the next send.
 
 Cancelling from inside a handler is a different thing and rarely what a host
 wants: it discards the pending transcript, so the results the executed tools
@@ -387,8 +401,14 @@ An OpenAI-compatible server must implement the subset Scry sends, including the
 optional reasoning field when enabled. Azure-specific endpoints, the Responses
 API, structured output, and other server extensions are not implemented.
 
+The Anthropic adapter merges consecutive same-role messages into one message whose
+content array concatenates their blocks, because the Messages API takes one message
+per role turn and a history that stopped at the tool-round limit can end with the
+user message carrying that round's results.
+
 OpenAI requests encode system text and function tools, and emit a separate ordered
-`role: "tool"` message for each result. Streaming accumulates bounded tool-call
+`role: "tool"` message for each result, so a `user` message may follow tool results
+directly and no merge is needed. Streaming accumulates bounded tool-call
 fragments by index and requires complete contiguous calls at finish. A finish
 reason followed by `[DONE]` completes the stream; a trailing usage-only chunk is
 allowed before `[DONE]`. Missing, duplicate, or early terminal markers and
@@ -495,10 +515,20 @@ rounds, and final assistant response together, before terminal callback delivery
 They arrive as one transcript: the machine keeps a single message list, resends
 it each round, and hands that same list to the pump.
 Failure or cancellation commits nothing. `Completion::finish_reason` is
-`completed`, `length`, or `unknown`: `tool_use` is internal to the loop, because a
-response that requests tools either starts another round or fails with
-`max_tool_rounds`. Inspect `Completion::finish_reason` when the application
-requires an untruncated answer.
+`completed`, `length`, `unknown`, or `tool_round_limit`: `tool_use` is internal to
+the loop, because a response that requests tools either starts another round,
+fails with `max_tool_rounds`, or, under `ToolRoundLimitPolicy::complete`, ends the
+turn as `tool_round_limit`. Inspect `Completion::finish_reason` when the
+application requires an untruncated answer.
+
+`Completion::unexecuted_tool_calls` holds the tool calls that final response asked
+for and the loop never dispatched, in provider order. It is non-empty only for
+`tool_round_limit`. The calls are reserved against the Conversation byte limit
+during the turn, exactly as the tool round they replace would have been, and are
+never charged to the queued-event limit; they are handed to the host and are not
+committed to history. Those calls are absent from committed history and their
+handlers never ran, so they count in neither `tool_call_count` nor
+`rejected_tool_call_count`: the model asked and was not answered.
 
 `Completion::tool_round_count` and `Completion::tool_call_count` report what the
 loop ran before that final response; the call count includes unknown tools and

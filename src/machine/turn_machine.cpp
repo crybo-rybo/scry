@@ -184,7 +184,9 @@ TransitionResult TurnMachine::on_event(ModelCompleted event) {
     error.provider_request_id = std::move(event.response.provider_request_id);
     return finish_error(correlate(std::move(error)));
   }
-  if (!calls->empty() && tool_round_count_ >= tool_policy_.max_rounds) {
+  const auto at_round_limit =
+      !calls->empty() && tool_round_count_ >= tool_policy_.max_rounds;
+  if (at_round_limit && tool_policy_.limit_policy == ToolRoundLimitPolicy::fail) {
     return fail_response(ErrorCategory::max_tool_rounds,
                          "model exceeded the configured tool-round limit",
                          std::move(event.response.provider_request_id));
@@ -196,6 +198,9 @@ TransitionResult TurnMachine::on_event(ModelCompleted event) {
   }
   accumulate_usage(event.response.usage);
 
+  if (at_round_limit) {
+    return complete_at_round_limit(std::move(event.response));
+  }
   if (!calls->empty()) {
     return begin_tool_round(std::move(event.response), std::move(*calls));
   }
@@ -396,7 +401,38 @@ TransitionResult TurnMachine::begin_tool_round(ModelResponse response,
   return result;
 }
 
-TransitionResult TurnMachine::complete_turn(ModelResponse response) {
+// Splits the response at the round limit: its text is what the turn commits, its
+// calls are what the host is told it did not get. Nothing here dispatches, so no
+// handler runs and host state stays in step with the committed history.
+TransitionResult TurnMachine::complete_at_round_limit(ModelResponse response) {
+  std::vector<ToolCallBlock> unexecuted;
+  std::vector<ContentBlock> text;
+  std::size_t dropped_bytes = 0;
+  for (auto& block : response.content) {
+    if (auto* call = std::get_if<ToolCallBlock>(&block)) {
+      dropped_bytes =
+          saturating_payload_add(dropped_bytes, content_payload_bytes(*call));
+      unexecuted.push_back(std::move(*call));
+      continue;
+    }
+    text.push_back(std::move(block));
+  }
+  // The dropped calls go to the host rather than to a handler, but they are
+  // reserved here just as the round they replace would have been, so the turn
+  // costs the same either way and the queue can charge them nothing.
+  if (!reserve_exchange_bytes(dropped_bytes)) {
+    return fail_response(
+        ErrorCategory::resource_limit,
+        "unexecuted tool calls exceed the remaining Conversation byte limit",
+        std::move(response.provider_request_id));
+  }
+  response.content = std::move(text);
+  response.finish_reason = FinishReason::tool_round_limit;
+  return complete_turn(std::move(response), std::move(unexecuted));
+}
+
+TransitionResult TurnMachine::complete_turn(ModelResponse response,
+                                            std::vector<ToolCallBlock> unexecuted) {
   Message assistant{
       .role = Role::assistant,
       .content = std::move(response.content),
@@ -407,7 +443,12 @@ TransitionResult TurnMachine::complete_turn(ModelResponse response) {
                          std::move(response.provider_request_id));
   }
   auto& request = mutable_request();
-  request.messages.push_back(std::move(assistant));
+  // Every committed message carries at least one block. A calls-only response at
+  // the round limit leaves nothing to commit once its calls are dropped, so the
+  // transcript ends with the previous round's tool results instead.
+  if (!assistant.content.empty()) {
+    request.messages.push_back(std::move(assistant));
+  }
   auto transcript = std::move(request.messages);
   state_.emplace<TerminalState>();
   request_.reset();
@@ -420,6 +461,7 @@ TransitionResult TurnMachine::complete_turn(ModelResponse response) {
       .provider_request_id = std::move(response.provider_request_id),
       .tool_round_count = tool_round_count_,
       .tool_call_count = static_cast<std::uint32_t>(dispatched_tool_ids_.size()),
+      .unexecuted_tool_calls = std::move(unexecuted),
   });
 }
 

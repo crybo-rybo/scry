@@ -55,7 +55,9 @@ public:
   void retire() noexcept;
 
   [[nodiscard]] bool has_callback(const WorkerEvent& event) const noexcept;
-  void invoke(const WorkerEvent& event);
+  // Takes the event by mutable reference so the terminal payloads it owns move
+  // into the callback's value instead of being copied into it.
+  void invoke(WorkerEvent& event);
 
   [[nodiscard]] const std::shared_ptr<ConversationState>& conversation() const noexcept;
   [[nodiscard]] std::size_t max_conversation_bytes() const noexcept;

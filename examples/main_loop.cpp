@@ -188,6 +188,17 @@ void print_history(const scry::Conversation& conversation) {
   };
 }
 
+// Under ToolRoundLimitPolicy::complete the round limit ends the turn rather than
+// failing it, so the answer is real and what is missing is only whatever the
+// dropped calls would have added.
+void print_completion(const scry::Completion& completion) {
+  std::cout << "tools used: " << completion.tool_call_count << '\n';
+  if (completion.finish_reason == scry::FinishReason::tool_round_limit) {
+    std::cout << "tool rounds exhausted; " << completion.unexecuted_tool_calls.size()
+              << " requested calls never ran\n";
+  }
+}
+
 // on_finished runs exactly once: with the completion, or with the terminal error
 // (including a cancelled one), unless harness destruction begins first.
 [[nodiscard]] scry::TurnCallbacks loop_callbacks(Application& app) {
@@ -202,7 +213,7 @@ void print_history(const scry::Conversation& conversation) {
       .on_finished =
           [&app](scry::Result<scry::Completion> finished) {
             if (finished) {
-              std::cout << "tools used: " << finished->tool_call_count << '\n';
+              print_completion(*finished);
               app.show_answer(finished->text);
             } else {
               app.show_error(finished.error().message);
@@ -242,6 +253,10 @@ int main(int argc, char* argv[]) {
       .base_url = "http://127.0.0.1:11434/v1",
       .model = "qwen3:8b",
       .dialect = scry::ProviderDialect::openai_compatible,
+      // Stop at the round limit instead of failing: the tools that ran already
+      // changed this application's state, and rolling the turn back would not undo
+      // them.
+      .tool_round_limit = scry::ToolRoundLimitPolicy::complete,
       // A corporate deployment would also set `.proxy` and `.ca_bundle_path`.
       .extra_headers = {{.name = "x-scry-example", .value = "main-loop"}},
   };

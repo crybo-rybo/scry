@@ -166,6 +166,7 @@ void WorkerActor::process_turn(SendTurnCommand&& command,
           .max_rounds = config_.max_tool_rounds,
           .max_argument_bytes = config_.limits.max_tool_arguments_bytes,
           .max_exchange_bytes = command.max_exchange_bytes,
+          .limit_policy = config_.tool_round_limit,
       },
   };
   std::deque<MachineCommand> machine_commands;
@@ -523,6 +524,7 @@ void WorkerActor::publish_terminal_command(MachineCommand command) {
         .provider_request_id = std::move(completion->provider_request_id),
         .tool_round_count = completion->tool_round_count,
         .tool_call_count = completion->tool_call_count,
+        .unexecuted_tool_calls = std::move(completion->unexecuted_tool_calls),
     });
     return;
   }

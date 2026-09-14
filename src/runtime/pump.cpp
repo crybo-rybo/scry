@@ -190,10 +190,10 @@ bool TurnRoute::has_callback(const WorkerEvent& event) const noexcept {
       event);
 }
 
-void TurnRoute::invoke(const WorkerEvent& event) {
+void TurnRoute::invoke(WorkerEvent& event) {
   const InvocationGuard guard{invoking_, disconnected_, callbacks_};
   std::visit(
-      [this](const auto& value) {
+      [this](auto& value) {
         using Event = std::decay_t<decltype(value)>;
         if constexpr (std::is_same_v<Event, TextDeltaEvent>) {
           callbacks_.on_text_delta(value.text);
@@ -213,6 +213,7 @@ void TurnRoute::invoke(const WorkerEvent& event) {
               .tool_round_count = value.tool_round_count,
               .tool_call_count = value.tool_call_count,
               .rejected_tool_call_count = rejected_count_,
+              .unexecuted_tool_calls = std::move(value.unexecuted_tool_calls),
           });
         } else if constexpr (std::is_same_v<Event, ErrorEvent>) {
           terminal_delivered_ = true;

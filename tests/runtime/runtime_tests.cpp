@@ -353,15 +353,17 @@ TEST_CASE("a turn route reports completion, failure, and cancellation as one fin
                   },
           },
       });
-  const scry::detail::WorkerEvent text_event{
+  // invoke() takes its event by mutable reference so a terminal payload moves
+  // into the delivered value rather than being copied.
+  scry::detail::WorkerEvent text_event{
       scry::detail::TextDeltaEvent{.turn_id = route->id(), .text = "delta"}};
-  const scry::detail::WorkerEvent completed{
+  scry::detail::WorkerEvent completed{
       completion_event(route->id(), {.text = "answer", .attempt_count = 2})};
-  const scry::detail::WorkerEvent error_event{scry::detail::ErrorEvent{
+  scry::detail::WorkerEvent error_event{scry::detail::ErrorEvent{
       .turn_id = route->id(),
       .error = {.category = scry::ErrorCategory::network, .message = "failure"},
   }};
-  const scry::detail::WorkerEvent cancelled_event{
+  scry::detail::WorkerEvent cancelled_event{
       scry::detail::CancelledEvent{.turn_id = route->id()}};
   CHECK(route->has_callback(text_event));
   CHECK(route->has_callback(completed));

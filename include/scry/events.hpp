@@ -7,11 +7,13 @@
 #include <optional>
 #include <scry/error.hpp>
 #include <scry/json.hpp>
+#include <scry/message.hpp>
 #include <scry/tool_registry.hpp>
 #include <scry/turn_id.hpp>
 #include <scry/unique_function.hpp>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace scry {
 
@@ -22,10 +24,16 @@ enum class FinishReason : std::uint8_t {
   /// The configured or provider limit truncated the response.
   length,
   /// Internal to the loop. A Completion never carries this value; a response that
-  /// requests tools starts a round or fails with max_tool_rounds.
+  /// requests tools starts a round, fails with max_tool_rounds, or, under
+  /// ToolRoundLimitPolicy::complete, ends the turn as tool_round_limit.
   tool_use,
   /// The provider supplied no recognized finish reason.
   unknown,
+  /// The response requested tools past Config::max_tool_rounds and
+  /// Config::tool_round_limit is ToolRoundLimitPolicy::complete, so the turn
+  /// committed the rounds that ran plus this response's text and dropped its
+  /// tool calls into Completion::unexecuted_tool_calls.
+  tool_round_limit,
 };
 
 /// Token usage reported by the provider for a completed turn.
@@ -90,6 +98,13 @@ struct Completion {
   /// Config::max_tool_calls_per_turn. Every refusal is also counted by
   /// tool_call_count and reported to on_tool_call with is_error.
   std::uint32_t rejected_tool_call_count{};
+  /// Tool calls the final response requested and the loop never dispatched, in
+  /// provider order. Non-empty only when finish_reason is tool_round_limit. Their
+  /// handlers never ran, so nothing they would have changed happened, and they are
+  /// absent from committed history: the model asked and was not answered. Their
+  /// size is bounded by ResourceLimits::max_conversation_bytes during the turn and
+  /// is never charged to ResourceLimits::max_queued_event_bytes_per_turn.
+  std::vector<ToolCallBlock> unexecuted_tool_calls{};
 };
 
 /// Limits one Harness::update() pump invocation.
