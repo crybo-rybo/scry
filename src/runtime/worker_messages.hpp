@@ -49,7 +49,9 @@ struct ToolCallEvent {
 // The pump moves `transcript` into the Conversation and keeps `text`, a copy of
 // the final assistant text, for the completion callback. The transcript opens
 // with the turn's user message and was reserved against the Conversation budget
-// by the machine, so event_payload_bytes charges neither it nor `text`.
+// by the machine, so event_payload_bytes charges neither it nor `text`. The calls
+// dropped at the tool-round limit were reserved the same way and are charged the
+// same nothing.
 struct CompletionEvent {
   TurnId turn_id{};
   std::vector<Message> transcript{};
@@ -60,6 +62,7 @@ struct CompletionEvent {
   std::string provider_request_id{};
   std::uint32_t tool_round_count{};
   std::uint32_t tool_call_count{};
+  std::vector<ToolCallBlock> unexecuted_tool_calls{};
 };
 
 struct ErrorEvent {
