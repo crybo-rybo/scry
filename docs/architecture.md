@@ -443,6 +443,20 @@ libFuzzer; it excludes examples and ordinary tests. Fuzz targets are registered
 separately from the ordinary test build. It is a tooling build, not
 a supported consumer configuration.
 
+`scry::testing` is an optional second static library, installed as the package
+component `testing` and built unless `SCRY_BUILD_TESTING_SUPPORT` is off. It
+publishes `scry::testing::ScriptedTransport`, a queue of scripted responses, and
+`create_harness`, which builds a Harness over it with a seeded retry jitter. It
+substitutes for the HTTP transfer alone: a scripted turn drives the real worker,
+the real provider request encoder and stream decoder, real retry scheduling,
+real tool dispatch, and the real pump, so its guarantees are the ones described
+above. A scripted response carries a status, and a non-2xx one is classified by
+the same transport policy a live response is, so a scripted 429 or 500 reaches
+the runtime as the retryable error a real one would. It does not exercise libcurl, TLS, or any timeout curl enforces; those
+stay covered by the loopback transport and integration suites. Its headers
+depend only on `<scry/*>`, and its retry waits are real time bounded by the
+`Config`'s retry policy.
+
 libcurl is a linked dependency. Glaze is a private header-only build dependency,
 resolved from an installed package or a pinned FetchContent checkout. The
 installed package exports no Glaze target; it discovers curl and Threads.

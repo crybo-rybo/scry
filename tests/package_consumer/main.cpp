@@ -6,6 +6,10 @@
 #include <scry/reflection.hpp>
 #include <scry/scry.hpp>
 #include <scry/version.hpp>
+#if defined(SCRY_CONSUMER_HAS_TESTING)
+#include <scry/testing/scripted_transport.hpp>
+#include <scry/testing/streams.hpp>
+#endif
 #include <string_view>
 #include <utility>
 
@@ -19,6 +23,34 @@ struct PackageArguments {
   const auto encoded = scry::reflection::encode(PackageArguments{.ready = true});
   return encoded && encoded->text == R"({"ready":true})";
 }
+
+#if defined(SCRY_CONSUMER_HAS_TESTING)
+// The optional testing component must drive a whole turn from the installed
+// package alone: headers, library, and the runtime underneath all of it.
+[[nodiscard]] bool scripted_turn_smoke() {
+  scry::testing::ScriptedTransport transport;
+  transport.enqueue({
+      .request_id = "package-smoke",
+      .body_chunks = {scry::testing::anthropic_text_stream("installed")},
+  });
+  auto config = scry::Config{
+      .base_url = "http://127.0.0.1:1",
+      .api_key = "package-smoke",
+      .model = "package-smoke",
+  };
+  config.retry.max_attempts = 1;
+  auto created = scry::testing::create_harness(std::move(config), transport);
+  if (!created) {
+    return false;
+  }
+  auto conversation = scry::Conversation::create();
+  if (!conversation) {
+    return false;
+  }
+  const auto completion = created->send_and_wait(*conversation, "Question");
+  return completion && completion->text == "installed" && transport.calls() == 1;
+}
+#endif
 
 } // namespace
 
@@ -64,5 +96,15 @@ int main() {
       },
       [](PackageArguments arguments) { return arguments.ready; });
 
-  return registration && harness.tools().size() == 1 && encode_smoke() ? 0 : 4;
+  if (!registration || harness.tools().size() != 1 || !encode_smoke()) {
+    return 4;
+  }
+
+#if defined(SCRY_CONSUMER_HAS_TESTING)
+  if (!scripted_turn_smoke()) {
+    return 5;
+  }
+#endif
+
+  return 0;
 }

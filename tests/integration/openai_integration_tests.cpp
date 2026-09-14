@@ -16,7 +16,7 @@ using namespace scry::test_support;
 
 namespace {
 
-constexpr std::string_view openai_tool_stream =
+constexpr std::string_view openai_tool_call_fixture =
     R"(data: {"id":"chatcmpl-tools","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call-a","type":"function","function":{"name":"lookup","arguments":"{\"city\":"}}]},"finish_reason":null}]}
 
 data: {"id":"chatcmpl-tools","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"Boston\"}"}}]},"finish_reason":null}]}
@@ -103,7 +103,7 @@ byte_chunked_exchange(const std::string_view stream, std::string request_id) {
 TEST_CASE("OpenAI-compatible config drives a fragmented transactional tool round") {
   auto fake = std::make_unique<scry::test::FakeTransport>();
   auto* requests = fake.get();
-  fake->enqueue(byte_chunked_exchange(openai_tool_stream, "openai-tool-request"));
+  fake->enqueue(byte_chunked_exchange(openai_tool_call_fixture, "openai-tool-request"));
   fake->enqueue(byte_chunked_exchange(openai_final_stream, "openai-final-request"));
   auto created = scry::detail::HarnessTestAccess::create(
       openai_config(), provider(scry::ProviderDialect::openai_compatible),
