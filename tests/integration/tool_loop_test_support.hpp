@@ -4,6 +4,7 @@
 #include "support/harness_test_support.hpp"
 
 #include <catch2/catch_test_macros.hpp>
+#include <cstddef>
 #include <scry/scry.hpp>
 #include <string>
 #include <string_view>
@@ -39,6 +40,16 @@ large_tool_batch_stream(const std::string_view first, const std::string_view sec
       {.id = "call-a", .name = first},
       {.id = "call-b", .name = second},
   });
+}
+
+[[nodiscard]] inline std::size_t count_occurrences(const std::string& text,
+                                                   const std::string_view needle) {
+  std::size_t total = 0;
+  for (auto position = text.find(needle); position != std::string::npos;
+       position = text.find(needle, position + needle.size())) {
+    ++total;
+  }
+  return total;
 }
 
 inline void require_order(const std::string& text, const std::string_view first,

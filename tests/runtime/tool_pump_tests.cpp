@@ -1,8 +1,12 @@
 #include "runtime_test_support.hpp"
 
 #include <array>
+#include <optional>
+#include <stdexcept>
+#include <string>
 #include <thread>
 #include <variant>
+#include <vector>
 
 using namespace scry::test_support;
 
@@ -97,7 +101,8 @@ TEST_CASE("an unknown tool reaches the observer as an error result") {
 
   CHECK(observer_calls == 1);
   CHECK(observed_is_error);
-  CHECK(observed_result.text == R"({"error":"model requested an unknown tool"})");
+  CHECK(observed_result.text ==
+        R"({"error":"unknown tool \"absent_tool\"; no tools are registered"})");
   auto command = fixture.commands->try_pop();
   REQUIRE(command);
   const auto* result = std::get_if<scry::detail::ToolResultCommand>(&*command);
@@ -287,4 +292,275 @@ TEST_CASE("a terminal route suppresses a previously buffered tool call") {
   CHECK(observer_calls == 0);
   CHECK(fixture.commands->size() == 0);
   CHECK(pump.live_route_count() == 0);
+}
+
+TEST_CASE("an admission hook refuses one call and lets the next through") {
+  PumpFixture fixture;
+  std::size_t handler_calls = 0;
+  std::size_t admissions = 0;
+  std::string second_request_call_id;
+  std::string second_request_tool_name;
+  std::string second_request_arguments;
+  std::vector<bool> observed_errors;
+  std::vector<std::string> observed_results;
+  const scry::detail::ToolSnapshot tools{
+      registered_tool("forecast", [&](scry::Json) -> scry::Result<scry::Json> {
+        ++handler_calls;
+        return scry::Json{.text = R"({"ok":true})"};
+      })};
+  const auto route = fixture.route(
+      310, {
+               .tools = frozen_tools(tools),
+               .callbacks = scry::TurnCallbacks{
+                   .on_tool_request = [&](const scry::ToolRequest& request)
+                       -> std::optional<scry::ToolRejection> {
+                     if (++admissions == 1) {
+                       return std::nullopt;
+                     }
+                     second_request_call_id = std::string{request.context.call_id};
+                     second_request_tool_name = std::string{request.context.tool_name};
+                     second_request_arguments = request.arguments.text;
+                     return scry::ToolRejection{.model_message = "one call is enough"};
+                   },
+                   .on_tool_call =
+                       [&](const scry::ToolCall& call) {
+                         observed_errors.push_back(call.is_error);
+                         observed_results.push_back(call.result.text);
+                       },
+               },
+           });
+  scry::detail::PumpState pump{fixture.events};
+  pump.add_route(route);
+  REQUIRE(fixture.events->push(tool_event(route->id(), "forecast", "call-1"), 1024));
+  REQUIRE(fixture.events->push(tool_event(route->id(), "forecast", "call-2"), 1024));
+
+  CHECK(pump.update({}).events_remaining == 0);
+
+  CHECK(admissions == 2);
+  CHECK(handler_calls == 1);
+  CHECK(second_request_call_id == "call-2");
+  CHECK(second_request_tool_name == "forecast");
+  CHECK(second_request_arguments == R"({"z":2,"a":1})");
+  CHECK(observed_errors == std::vector<bool>{false, true});
+  REQUIRE(observed_results.size() == 2);
+  CHECK(observed_results[0] == R"({"ok":true})");
+  CHECK(observed_results[1] == R"({"error":"one call is enough"})");
+  // The refusal is a result like any other: the worker gets both, so the model
+  // sees an answer for every call it made.
+  CHECK(fixture.commands->size() == 2);
+  for (const auto expected_error : {false, true}) {
+    auto command = fixture.commands->try_pop();
+    REQUIRE(command);
+    const auto* posted = std::get_if<scry::detail::ToolResultCommand>(&*command);
+    REQUIRE(posted);
+    REQUIRE(posted->result);
+    CHECK(posted->result->is_error == expected_error);
+  }
+}
+
+TEST_CASE("the per-turn call limit refuses calls past it without failing the turn") {
+  PumpFixture fixture;
+  std::size_t handler_calls = 0;
+  std::size_t admissions = 0;
+  std::vector<std::string> observed_results;
+  const scry::detail::ToolSnapshot tools{registered_tool(
+      "forecast", [&handler_calls](scry::Json) -> scry::Result<scry::Json> {
+        ++handler_calls;
+        return scry::Json{.text = R"({"ok":true})"};
+      })};
+  const auto route = fixture.route(
+      311, {
+               .tools = frozen_tools(tools),
+               .max_tool_calls = 1,
+               .callbacks = scry::TurnCallbacks{
+                   .on_tool_request = [&admissions](const scry::ToolRequest&)
+                       -> std::optional<scry::ToolRejection> {
+                     ++admissions;
+                     return std::nullopt;
+                   },
+                   .on_tool_call =
+                       [&observed_results](const scry::ToolCall& call) {
+                         observed_results.push_back(call.result.text);
+                       },
+               },
+           });
+  scry::detail::PumpState pump{fixture.events};
+  pump.add_route(route);
+  REQUIRE(fixture.events->push(tool_event(route->id(), "forecast", "call-1"), 1024));
+  REQUIRE(fixture.events->push(tool_event(route->id(), "forecast", "call-2"), 1024));
+
+  CHECK(pump.update({}).events_remaining == 0);
+
+  CHECK(handler_calls == 1);
+  // The limit is checked before the hook, so the refused call never reaches it.
+  CHECK(admissions == 1);
+  REQUIRE(observed_results.size() == 2);
+  CHECK(observed_results[0] == R"({"ok":true})");
+  CHECK(
+      observed_results[1] ==
+      R"({"error":"tool call limit for this turn reached; respond without calling tools"})");
+  CHECK(fixture.commands->size() == 2);
+}
+
+TEST_CASE("an unknown tool spends the call limit without consulting the hook") {
+  PumpFixture fixture;
+  std::size_t admissions = 0;
+  std::vector<std::string> observed_results;
+  const scry::detail::ToolSnapshot tools{
+      registered_tool("forecast", [](scry::Json) -> scry::Result<scry::Json> {
+        return scry::Json{.text = R"({"ok":true})"};
+      })};
+  const auto route = fixture.route(
+      312, {
+               .tools = frozen_tools(tools),
+               .max_tool_calls = 1,
+               .callbacks = scry::TurnCallbacks{
+                   .on_tool_request = [&admissions](const scry::ToolRequest&)
+                       -> std::optional<scry::ToolRejection> {
+                     ++admissions;
+                     return std::nullopt;
+                   },
+                   .on_tool_call =
+                       [&observed_results](const scry::ToolCall& call) {
+                         observed_results.push_back(call.result.text);
+                       },
+               },
+           });
+  scry::detail::PumpState pump{fixture.events};
+  pump.add_route(route);
+  REQUIRE(fixture.events->push(tool_event(route->id(), "absent_tool", "call-1"), 1024));
+  REQUIRE(fixture.events->push(tool_event(route->id(), "forecast", "call-2"), 1024));
+
+  CHECK(pump.update({}).events_remaining == 0);
+
+  CHECK(admissions == 0);
+  REQUIRE(observed_results.size() == 2);
+  CHECK(observed_results[0] ==
+        R"({"error":"unknown tool \"absent_tool\"; registered tools: forecast"})");
+  CHECK(
+      observed_results[1] ==
+      R"({"error":"tool call limit for this turn reached; respond without calling tools"})");
+}
+
+TEST_CASE("a throwing admission hook refuses the call and the turn continues") {
+  PumpFixture fixture;
+  std::size_t handler_calls = 0;
+  std::vector<std::string> observed_results;
+  const scry::detail::ToolSnapshot tools{registered_tool(
+      "forecast", [&handler_calls](scry::Json) -> scry::Result<scry::Json> {
+        ++handler_calls;
+        return scry::Json{.text = R"({"ok":true})"};
+      })};
+  const auto route =
+      fixture.route(313, {
+                             .tools = frozen_tools(tools),
+                             .callbacks = scry::TurnCallbacks{
+                                 .on_tool_request = [](const scry::ToolRequest&)
+                                     -> std::optional<scry::ToolRejection> {
+                                   throw std::runtime_error{"policy exploded"};
+                                 },
+                                 .on_tool_call =
+                                     [&observed_results](const scry::ToolCall& call) {
+                                       observed_results.push_back(call.result.text);
+                                     },
+                             },
+                         });
+  scry::detail::PumpState pump{fixture.events};
+  pump.add_route(route);
+  REQUIRE(fixture.events->push(tool_event(route->id(), "forecast", "call-1"), 1024));
+  REQUIRE(fixture.events->push(tool_event(route->id(), "forecast", "call-2"), 1024));
+
+  CHECK(pump.update({}).events_remaining == 0);
+
+  CHECK(handler_calls == 0);
+  CHECK(observed_results ==
+        std::vector<std::string>{R"({"error":"tool handler threw an exception"})",
+                                 R"({"error":"tool handler threw an exception"})"});
+  CHECK(fixture.commands->size() == 2);
+}
+
+TEST_CASE("an admission hook that disconnects suppresses its own observation") {
+  PumpFixture fixture;
+  std::shared_ptr<scry::detail::TurnRoute> route;
+  std::size_t observer_calls = 0;
+  bool disconnected = false;
+  const scry::detail::ToolSnapshot tools{
+      registered_tool("forecast", [](scry::Json) -> scry::Result<scry::Json> {
+        return scry::Json{.text = R"({"ok":true})"};
+      })};
+  route = fixture.route(
+      314,
+      {
+          .tools = frozen_tools(tools),
+          .callbacks = scry::TurnCallbacks{
+              .on_tool_request =
+                  [&](const scry::ToolRequest&) -> std::optional<scry::ToolRejection> {
+                disconnected = route->disconnect();
+                return scry::ToolRejection{.model_message = "no more tools"};
+              },
+              .on_tool_call =
+                  [&observer_calls](const scry::ToolCall&) { ++observer_calls; },
+          },
+      });
+  scry::detail::PumpState pump{fixture.events};
+  pump.add_route(route);
+  REQUIRE(fixture.events->push(tool_event(route->id(), "forecast", "call-1"), 1024));
+
+  CHECK(pump.update({}).events_remaining == 0);
+
+  CHECK(disconnected);
+  CHECK(observer_calls == 0);
+  // Dropping the callbacks stops delivery, not the loop: the refusal still
+  // reaches the worker so the model gets an answer for the call it made.
+  CHECK(fixture.commands->size() == 1);
+  auto command = fixture.commands->try_pop();
+  REQUIRE(command);
+  const auto* posted = std::get_if<scry::detail::ToolResultCommand>(&*command);
+  REQUIRE(posted);
+  REQUIRE(posted->result);
+  CHECK(posted->result->is_error);
+  CHECK(posted->result->result.text == R"({"error":"no more tools"})");
+}
+
+TEST_CASE("an admission hook that cancels stops the call it admitted") {
+  PumpFixture fixture;
+  std::shared_ptr<scry::detail::TurnRoute> route;
+  std::size_t handler_calls = 0;
+  std::size_t observer_calls = 0;
+  bool cancellation_requested = false;
+  const scry::detail::ToolSnapshot tools{registered_tool(
+      "forecast", [&handler_calls](scry::Json) -> scry::Result<scry::Json> {
+        ++handler_calls;
+        return scry::Json{.text = R"({"ok":true})"};
+      })};
+  route = fixture.route(
+      315,
+      {
+          .tools = frozen_tools(tools),
+          .callbacks = scry::TurnCallbacks{
+              .on_tool_request =
+                  [&](const scry::ToolRequest&) -> std::optional<scry::ToolRejection> {
+                cancellation_requested = route->cancel();
+                return std::nullopt;
+              },
+              .on_tool_call =
+                  [&observer_calls](const scry::ToolCall&) { ++observer_calls; },
+          },
+      });
+  scry::detail::PumpState pump{fixture.events};
+  pump.add_route(route);
+  REQUIRE(fixture.events->push(tool_event(route->id(), "forecast", "call-1"), 1024));
+
+  CHECK(pump.update({}).events_remaining == 0);
+
+  CHECK(cancellation_requested);
+  // Admitting a call the host then cancelled is not permission to run it: the
+  // handler's side effects would outlive the transcript the rollback discards.
+  CHECK(handler_calls == 0);
+  CHECK(observer_calls == 0);
+  // Only the cancellation reaches the worker; no result is posted for the call.
+  CHECK(fixture.commands->size() == 1);
+  auto command = fixture.commands->try_pop();
+  REQUIRE(command);
+  CHECK(std::holds_alternative<scry::detail::CancelTurnCommand>(*command));
 }

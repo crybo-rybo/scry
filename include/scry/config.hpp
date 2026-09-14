@@ -26,6 +26,18 @@ enum class ReasoningMode : std::uint8_t {
   disabled,
 };
 
+/// What a turn does when a model response requests tools past Config::max_tool_rounds.
+enum class ToolRoundLimitPolicy : std::uint8_t {
+  /// Fail the turn with ErrorCategory::max_tool_rounds and roll the Conversation
+  /// back, discarding the rounds that already ran.
+  fail,
+  /// Complete the turn: commit the executed rounds and the final response's text,
+  /// drop that response's tool-call blocks, and report
+  /// FinishReason::tool_round_limit with the dropped calls in
+  /// Completion::unexecuted_tool_calls.
+  complete,
+};
+
 /// Sampling parameters sent with each model request.
 ///
 /// Values are validated by Harness::create() for the selected provider dialect.
@@ -138,6 +150,19 @@ struct Config {
   ResourceLimits limits{};
   /// Maximum tool-call rounds in one turn.
   std::uint32_t max_tool_rounds{8};
+  /// Maximum tool calls dispatched to handlers in one turn, across every round.
+  ///
+  /// max_tool_rounds cannot bound this on its own, because one response may request
+  /// many calls. Calls past the limit are refused with a fixed model-visible message
+  /// instead of running their handler, and the turn continues. Unset means unlimited;
+  /// zero is rejected by Harness::create() and Harness::validate().
+  std::optional<std::uint32_t> max_tool_calls_per_turn{};
+  /// What happens when a response requests tools past max_tool_rounds.
+  ///
+  /// The default fails the turn, which rolls back every round that already ran even
+  /// though their handlers already changed host state. ToolRoundLimitPolicy::complete
+  /// keeps host state and history in agreement instead.
+  ToolRoundLimitPolicy tool_round_limit{ToolRoundLimitPolicy::fail};
   /// Whether HTTPS peer certificates are verified.
   ///
   /// Disabling verification is intended only for explicitly trusted development

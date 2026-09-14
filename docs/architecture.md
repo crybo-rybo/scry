@@ -139,8 +139,16 @@ observer. The worker resends once all results are ready. A fatal dispatch or
 payload-budget failure suppresses later handlers in the batch.
 
 Tool-call IDs must be unique within a turn. Scry rejects reused IDs rather than
-executing them again. `Config::max_tool_rounds` bounds the loop; exceeding it
-fails with `max_tool_rounds`.
+executing them again. `Config::max_tool_rounds` bounds the loop, and
+`Config::tool_round_limit` decides what a response that asks for one round too
+many does. Under `ToolRoundLimitPolicy::fail`, the default, the turn fails with
+`max_tool_rounds` and commits nothing. Under `ToolRoundLimitPolicy::complete`, the
+turn stops instead of failing: the rounds that ran and the final response's text
+are committed, that response's tool-call blocks are dropped into
+`Completion::unexecuted_tool_calls`, and the finish reason is
+`tool_round_limit`. A response left with no text after the drop commits no
+assistant message at all, so the transcript ends with the previous round's tool
+results.
 
 Automatic retries apply to retryable network and rate-limit failures, including
 HTTP 5xx responses, only before semantic output is consumed. Text or tool-call
@@ -163,6 +171,64 @@ registrations. A registry is additive: duplicate names are rejected and there is
 no replacement or removal operation. Each accepted turn retains the
 registrations visible at `send()`. Immutable registration and schema snapshots
 are reused until another tool is added; handlers stay on the host thread.
+
+Every tool handler, reflected or explicit, comes in two shapes: one that receives
+only its arguments, and one that also receives a `ToolCallContext` naming the call
+it is servicing — the `TurnId`, the provider-assigned `call_id`, the registered
+`tool_name`, the one-based `round`, and the zero-based `index` within that round's
+batch. These are the same values the later `on_tool_call` observation carries, so
+a handler can correlate its own work with the turn without counting calls itself.
+The context is borrowed: both string views point into the call block being
+dispatched and are valid only until the handler returns. A handler that keeps
+either beyond its return must copy the text. Registrations store one handler
+shape internally, so the two paths export an identical tool contract and differ
+in nothing the model can see.
+
+Before a handler runs, a call passes two admission gates in a fixed order. First
+`Config::max_tool_calls_per_turn`, which bounds the calls one turn may dispatch
+across every round; `max_tool_rounds` cannot do that on its own, because one
+response may request many calls. Then `TurnCallbacks::on_tool_request`, the
+host's own policy, which receives a `ToolRequest` naming the call and its
+canonical arguments and answers with nothing to admit it or a `ToolRejection` to
+refuse it.
+
+Every call that reaches the route counts against the limit, including one naming
+a tool nobody registered: the model spent the turn's budget by asking. An unknown
+tool is refused by dispatch with its own message and never reaches the hook,
+because there is no handler for the host to admit. A refused call runs no handler
+and so can have no side effect. The model is given `{"error": message}` flagged
+as a tool error: the fixed text `tool call limit for this turn reached; respond
+without calling tools` for the limit, the host's `model_message` for a hook
+refusal. That result reaches `on_tool_call` with `is_error` and is posted to the
+worker like any other, so the turn continues and commits normally. A hook that
+throws is treated exactly like a handler that throws: the call is refused with the
+same fixed text and the turn carries on. The hook runs under the same invocation
+guard as every other callback, so a `disconnect()` from inside it is deferred
+until the call returns and suppresses that call's `on_tool_call` observation.
+
+A hook that cancels the turn is obeyed before the handler runs, whether it admits
+the call or refuses it. The cancel flag is read again the moment the hook returns:
+when it is set, no handler runs, no result is posted, and no `on_tool_call` fires,
+and the turn ends through the worker's ordinary cancellation path. That is the one
+thing the rollback could not repair on the host's behalf, because a handler's
+effects on host state outlive the transcript the turn discards. The counts are
+unchanged by it: the call still spent the per-turn limit, but a call cancellation
+suppressed is not a refusal and is not counted as one.
+
+A refused call and a call dropped at the round limit share the same guarantee: the
+handler never ran, so nothing it would have changed happened. Under
+`ToolRoundLimitPolicy::complete`, host state and history agree because the dropped
+calls never ran; the host learns what the model asked for from
+`Completion::unexecuted_tool_calls` and can put it in the next send.
+
+Cancelling from inside a handler is a different thing and rarely what a host
+wants: it discards the pending transcript, so the results the executed tools
+produced are thrown away and the whole turn rolls back, while the side effects
+those handlers already had on host state remain and are the host's to reconcile.
+A host that wants the turn to finish but no further tools to run sets its own
+flag, from the handler or from `on_tool_call`, and refuses every later request
+from `on_tool_request`. The model is told why, the turn completes, and history
+commits.
 
 `ToolRegistry::to_json()` exports a version-1 JSON manifest with a `tools` array
 in registration order. Every entry contains the registered `name`, `description`,
@@ -197,6 +263,15 @@ auto status = scry::reflection::add<ForecastArgs>(
     tools,
     {.name = "forecast", .description = "Return the forecast for one city"},
     [](ForecastArgs args) -> scry::Result<Forecast> {
+      return lookup_forecast(std::move(args));
+    });
+
+// The same registration, with the call's identity as an optional leading parameter.
+auto traced = scry::reflection::add<ForecastArgs>(
+    tools,
+    {.name = "traced_forecast", .description = "Return the forecast for one city"},
+    [](const scry::ToolCallContext& context, ForecastArgs args) -> Forecast {
+      log(context.turn_id, context.round, context.call_id);
       return lookup_forecast(std::move(args));
     });
 ```
@@ -246,9 +321,23 @@ incorrect fixed-array lengths. A floating-point JSON value such as `1.0` does
 not decode into an integer member. Canonical parsing collapses duplicate object
 keys before dispatch, so handlers do not see the original lexical duplicates.
 
+A decode failure fills `Error::model_message` with the host `message` minus its
+`reflected JSON at ` prefix: the JSON path of the offending value and what the
+schema required there, plus the declared enumerator names when an enum value is
+unrecognized. Argument text that is not JSON at all reports `tool arguments are
+not valid JSON`. Every word of it is derived from the schema the model was
+already given, so the model can correct itself without learning anything new. A
+result-encoding failure fills no `model_message`: it describes the handler's own
+result type, whose schema the model never sees, so the model receives the fixed
+diagnostic.
+
 Handlers are invoked with moved arguments and return a supported value or
-`Result` of one. Raw `Json`, `void`, `Status`, references, futures, and awaitables
-are not reflected result types. The returned object is encoded without an
+`Result` of one. A handler may declare a leading `const ToolCallContext&`
+parameter; `ToolHandlerFor` accepts either arity and checks the result type of
+whichever form is viable, preferring the contextual one. The context must lead:
+a handler that trails it is not a reflected handler and fails to compile. Raw
+`Json`, `void`, `Status`, references, futures, and awaitables are not reflected
+result types. The returned object is encoded without an
 additional copy or move, including aggregates whose user-declared destructor
 suppresses an implicit move constructor. `reflection::encode(value)` uses the
 same value encoder without requiring registration.
@@ -256,16 +345,29 @@ same value encoder without requiring registration.
 ### Explicit-schema tools
 
 `ToolRegistry::add(ToolDefinition, ToolHandler)` accepts a JSON schema object and
-a move-only `Json -> Result<Json>` callable. Registration validates and
-canonicalizes the schema as a JSON object; Scry does not implement general JSON
-Schema validation. The handler receives canonical object arguments and owns
-validation against its schema. It must synchronously return valid JSON or an
-error. Asynchronous or deferred tool results are not supported.
+a move-only `Json -> Result<Json>` callable;
+`ToolRegistry::add(ToolDefinition, ContextualToolHandler)` accepts a move-only
+`(const ToolCallContext&, Json) -> Result<Json>` callable instead. The overloads
+are separated by the handler's arity, so a lambda of either shape selects one of
+them without a cast. Registration validates and canonicalizes the schema as a
+JSON object; Scry does not implement general JSON Schema validation. An empty
+handler of either shape is rejected at registration. The handler receives
+canonical object arguments and owns validation against its schema. It must
+synchronously return valid JSON or an error. Asynchronous or deferred tool
+results are not supported.
 
 Unknown tools, reflected decode failures, handler errors, exceptions, and invalid
-result JSON produce bounded model-visible error results. Handler-supplied error
-messages and exception text are not forwarded. An oversized result, or an error
-result that cannot fit its bound, fails the turn with `resource_limit`.
+result JSON produce bounded model-visible error results. A handler error's
+`model_message` is forwarded inside `{"error": ...}` subject to the result byte
+cap; its `message` and any exception text are not. `scry::tool_error(model_message,
+host_message)` builds such an error; an empty `model_message` keeps Scry's fixed
+diagnostic, and one too large for the cap falls back to it. Reflected decode
+failures and unknown-tool errors carry schema-derived `model_message` text: an
+unknown tool names the requested tool and the registered tool names, which the
+request's tool list already carried. Scry applies no redaction to
+`model_message`, so a host that puts a secret in one has published it. An
+oversized result, or an error result that cannot fit its bound, fails the turn
+with `resource_limit`.
 `on_tool_call` observes the canonical result and its `is_error` flag after the
 result is posted to the worker; it does not confirm that the server received it.
 Cancellation or a fatal framework failure can suppress this observer.
@@ -306,8 +408,14 @@ An OpenAI-compatible server must implement the subset Scry sends, including the
 optional reasoning field when enabled. Azure-specific endpoints, the Responses
 API, structured output, and other server extensions are not implemented.
 
+The Anthropic adapter merges consecutive same-role messages into one message whose
+content array concatenates their blocks, because the Messages API takes one message
+per role turn and a history that stopped at the tool-round limit can end with the
+user message carrying that round's results.
+
 OpenAI requests encode system text and function tools, and emit a separate ordered
-`role: "tool"` message for each result. Streaming accumulates bounded tool-call
+`role: "tool"` message for each result, so a `user` message may follow tool results
+directly and no merge is needed. Streaming accumulates bounded tool-call
 fragments by index and requires complete contiguous calls at finish. A finish
 reason followed by `[DONE]` completes the stream; a trailing usage-only chunk is
 allowed before `[DONE]`. Missing, duplicate, or early terminal markers and
@@ -353,6 +461,7 @@ Defaults are defined in `include/scry/config.hpp`:
 | Queued event payload per turn | 2 MiB |
 | Conversation payload | 16 MiB |
 | Tool rounds | 8 |
+| Tool calls per turn | Unset |
 | Maximum output tokens | 1024 |
 | Retry attempts / elapsed window per model request | 3 / 30 s |
 | Initial / maximum retry backoff | 250 ms / 10 s |
@@ -361,7 +470,8 @@ Defaults are defined in `include/scry/config.hpp`:
 | Total transfer timeout | Unset |
 
 Resource limits must be positive; the queued-event limit must be at least 1024
-bytes. Admission failures reject `send()` immediately; an accepted turn that
+bytes. `max_tool_calls_per_turn` is optional: unset means unlimited and zero is
+rejected as `invalid_config`. Admission failures reject `send()` immediately; an accepted turn that
 exceeds its limit fails with `resource_limit`.
 
 Conversation accounting includes the system prompt, text, tool identifiers and
@@ -411,10 +521,33 @@ Successful terminal processing in `update()` commits the user message, tool
 rounds, and final assistant response together, before terminal callback delivery.
 They arrive as one transcript: the machine keeps a single message list, resends
 it each round, and hands that same list to the pump.
-Failure or cancellation commits nothing. A completion can have a `length` or
-`unknown` finish reason; inspect `Completion::finish_reason` when the application
-requires an untruncated answer. Text deltas can include intermediate tool rounds;
-`Completion::text` contains only the final assistant response.
+Failure or cancellation commits nothing. `Completion::finish_reason` is
+`completed`, `length`, `unknown`, or `tool_round_limit`: `tool_use` is internal to
+the loop, because a response that requests tools either starts another round,
+fails with `max_tool_rounds`, or, under `ToolRoundLimitPolicy::complete`, ends the
+turn as `tool_round_limit`. Inspect `Completion::finish_reason` when the
+application requires an untruncated answer.
+
+`Completion::unexecuted_tool_calls` holds the tool calls that final response asked
+for and the loop never dispatched, in provider order. It is non-empty only for
+`tool_round_limit`. The calls are reserved against the Conversation byte limit
+during the turn, exactly as the tool round they replace would have been, and are
+never charged to the queued-event limit; they are handed to the host and are not
+committed to history. Those calls are absent from committed history and their
+handlers never ran, so they count in neither `tool_call_count` nor
+`rejected_tool_call_count`: the model asked and was not answered.
+
+`Completion::tool_round_count` and `Completion::tool_call_count` report what the
+loop ran before that final response; the call count includes unknown tools and
+calls whose handler failed. `Completion::rejected_tool_call_count` is the subset
+of those calls that never reached a handler because the per-turn call limit or
+`on_tool_request` refused them; a refusal is an answer to the model, not a turn
+failure, so it appears in both counts. Each observed `ToolCall` carries its own `round` and
+its `index` within that round's batch, in provider order. Text deltas can include
+intermediate tool rounds and `Completion::text` contains only the final assistant
+response, but deltas of round N+1 are delivered only after every `on_tool_call` of
+round N, so a host can attribute deltas to rounds by counting `on_tool_call`
+observations.
 
 Every committed message holds at least one block and no empty text block. The
 machine drops empty text blocks from a model response before it commits or

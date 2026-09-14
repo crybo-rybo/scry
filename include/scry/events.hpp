@@ -7,10 +7,13 @@
 #include <optional>
 #include <scry/error.hpp>
 #include <scry/json.hpp>
+#include <scry/message.hpp>
+#include <scry/tool_registry.hpp>
 #include <scry/turn_id.hpp>
 #include <scry/unique_function.hpp>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace scry {
 
@@ -20,10 +23,17 @@ enum class FinishReason : std::uint8_t {
   completed,
   /// The configured or provider limit truncated the response.
   length,
-  /// The model requested one or more tools.
+  /// Internal to the loop. A Completion never carries this value; a response that
+  /// requests tools starts a round, fails with max_tool_rounds, or, under
+  /// ToolRoundLimitPolicy::complete, ends the turn as tool_round_limit.
   tool_use,
   /// The provider supplied no recognized finish reason.
   unknown,
+  /// The response requested tools past Config::max_tool_rounds and
+  /// Config::tool_round_limit is ToolRoundLimitPolicy::complete, so the turn
+  /// committed the rounds that ran plus this response's text and dropped its
+  /// tool calls into Completion::unexecuted_tool_calls.
+  tool_round_limit,
 };
 
 /// Token usage reported by the provider for a completed turn.
@@ -53,8 +63,13 @@ struct ToolCall {
   /// Canonical JSON result returned to the model for this call.
   Json result{};
   /// True when the result is a tool error: the handler returned an error, threw,
-  /// returned invalid JSON, or the model requested an unknown tool.
+  /// returned invalid JSON, the model requested an unknown tool, or the call was
+  /// refused before its handler ran.
   bool is_error{false};
+  /// One-based tool round within the turn that issued this call.
+  std::uint32_t round{};
+  /// Zero-based position of this call in its round's batch, in provider order.
+  std::uint32_t index{};
 };
 
 /// Final successful result of an accepted turn.
@@ -74,6 +89,22 @@ struct Completion {
   std::uint32_t attempt_count{};
   /// Sanitized provider request identifier for the completion.
   std::string provider_request_id{};
+  /// Tool rounds that ran before the final response.
+  std::uint32_t tool_round_count{};
+  /// Tool calls the model issued across those rounds, including unknown tools
+  /// and calls whose handler failed.
+  std::uint32_t tool_call_count{};
+  /// Calls refused before their handler ran, by on_tool_request or by
+  /// Config::max_tool_calls_per_turn. Every refusal is also counted by
+  /// tool_call_count and reported to on_tool_call with is_error.
+  std::uint32_t rejected_tool_call_count{};
+  /// Tool calls the final response requested and the loop never dispatched, in
+  /// provider order. Non-empty only when finish_reason is tool_round_limit. Their
+  /// handlers never ran, so nothing they would have changed happened, and they are
+  /// absent from committed history: the model asked and was not answered. Their
+  /// size is bounded by ResourceLimits::max_conversation_bytes during the turn and
+  /// is never charged to ResourceLimits::max_queued_event_bytes_per_turn.
+  std::vector<ToolCallBlock> unexecuted_tool_calls{};
 };
 
 /// Limits one Harness::update() pump invocation.
@@ -105,6 +136,28 @@ struct UpdateStats {
   bool budget_exhausted{false};
 };
 
+/// A tool call the loop is about to dispatch, offered to on_tool_request.
+///
+/// Everything here is borrowed for the duration of the callback: the context's
+/// string views and the arguments name the live call block. Copy whatever must
+/// outlive the call.
+struct ToolRequest {
+  /// Identity of the call, the same values its handler and observation carry.
+  ToolCallContext context{};
+  /// Canonical JSON object the handler would receive.
+  const Json& arguments;
+};
+
+/// Refusal of a tool call, returned from on_tool_request.
+///
+/// The model receives {"error": model_message} as the call's result, flagged as a
+/// tool error. A refusal does not fail the turn.
+struct ToolRejection {
+  /// Text the model is shown in place of a result. It is sent verbatim, so it
+  /// carries whatever the host is willing to tell the model.
+  std::string model_message{};
+};
+
 /// Callback for a coalesced fragment of streamed assistant text.
 ///
 /// The string view is borrowed only for the callback invocation.
@@ -112,6 +165,12 @@ using TextDeltaCallback = UniqueFunction<void(std::string_view)>;
 
 /// Callback observing a tool call after its result is posted to the worker.
 using ToolCallCallback = UniqueFunction<void(const ToolCall&)>;
+
+/// Callback admitting or refusing a tool call before its handler runs.
+///
+/// An empty optional admits the call; a ToolRejection refuses it.
+using ToolAdmissionCallback =
+    UniqueFunction<std::optional<ToolRejection>(const ToolRequest&)>;
 
 /// Callbacks delivered on the Harness::update() thread for one turn.
 ///
@@ -123,13 +182,31 @@ using ToolCallCallback = UniqueFunction<void(const ToolCall&)>;
 struct TurnCallbacks {
   /// Observes coalesced fragments of streamed assistant text.
   TextDeltaCallback on_text_delta{};
+  /// Consulted once before each tool handler runs, after
+  /// Config::max_tool_calls_per_turn has admitted the call and only when the requested
+  /// tool is registered.
+  ///
+  /// An empty callback admits everything. A returned ToolRejection skips the handler
+  /// and gives the model {"error": model_message} with is_error, which reaches
+  /// on_tool_call and the provider like any other result; the turn carries on and
+  /// the refusal is counted by Completion::rejected_tool_call_count. A hook that
+  /// throws is treated exactly like a handler that throws: the call is refused with
+  /// the same fixed text and the turn continues. Refused calls run no handler and
+  /// so can have no side effects.
+  ///
+  /// Cancelling the turn from inside this callback, by Turn::cancel() or
+  /// Harness::cancel(), is honoured before the handler runs even when the call is
+  /// admitted: no handler runs, no result reaches the model, on_tool_call does not
+  /// fire, and the turn ends as cancelled.
+  ToolAdmissionCallback on_tool_request{};
   /// Observes tool calls after their results are posted to the worker.
   ///
   /// The ToolCall carries the canonical result sent to the model and its is_error
   /// flag, including for a handler that failed. It does not fire when a framework
   /// failure fails the turn instead of producing a result, for example when the
-  /// result exceeds a configured byte limit, nor when the handler itself
-  /// disconnected the turn.
+  /// result exceeds a configured byte limit, nor when the handler or the
+  /// admission hook itself disconnected the turn. A refused call does fire it,
+  /// carrying the refusal text as an error result.
   ToolCallCallback on_tool_call{};
   /// When non-empty, invoked once per accepted turn while the host keeps pumping,
   /// unless disconnected or discarded by Harness destruction.

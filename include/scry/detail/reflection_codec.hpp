@@ -21,6 +21,9 @@
 
 namespace scry::reflection::detail {
 
+// A host-only codec diagnostic. Result encoding uses this shape: the failure
+// describes the handler's own result type, whose schema the model never sees,
+// so nothing about it is text the model could act on.
 [[nodiscard]] inline Error codec_error(const std::string_view path,
                                        const std::string_view message) {
   std::string text{"reflected JSON at "};
@@ -31,6 +34,18 @@ namespace scry::reflection::detail {
       .category = ErrorCategory::tool,
       .message = std::move(text),
   };
+}
+
+// An argument-decode diagnostic. Every word of this text is derived from the
+// input schema the model was already given, so the model copy is the host copy
+// without the library's prefix.
+[[nodiscard]] inline Error decode_error(const std::string_view path,
+                                        const std::string_view message) {
+  auto error = codec_error(path, message);
+  error.model_message.assign(path);
+  error.model_message.push_back(' ');
+  error.model_message.append(message);
+  return error;
 }
 
 [[nodiscard]] inline std::string member_path(const std::string& path,
@@ -63,13 +78,13 @@ template <typename Integer>
     if constexpr (std::is_signed_v<Integer>) {
       if (value < static_cast<std::int64_t>(std::numeric_limits<Integer>::lowest()) ||
           value > static_cast<std::int64_t>(std::numeric_limits<Integer>::max())) {
-        return std::unexpected(codec_error(path, "is outside the integer range"));
+        return std::unexpected(decode_error(path, "is outside the integer range"));
       }
     } else {
       if (value < 0 ||
           static_cast<std::uint64_t>(value) >
               static_cast<std::uint64_t>(std::numeric_limits<Integer>::max())) {
-        return std::unexpected(codec_error(path, "is outside the integer range"));
+        return std::unexpected(decode_error(path, "is outside the integer range"));
       }
     }
     return static_cast<Integer>(value);
@@ -78,12 +93,12 @@ template <typename Integer>
   if (view.kind() == JsonKind::unsigned_integer) {
     const auto value = *view.unsigned_integer();
     if (value > static_cast<std::uint64_t>(std::numeric_limits<Integer>::max())) {
-      return std::unexpected(codec_error(path, "is outside the integer range"));
+      return std::unexpected(decode_error(path, "is outside the integer range"));
     }
     return static_cast<Integer>(value);
   }
 
-  return std::unexpected(codec_error(path, "must be an integer"));
+  return std::unexpected(decode_error(path, "must be an integer"));
 }
 
 template <typename Float>
@@ -102,25 +117,41 @@ template <typename Float>
     value = static_cast<long double>(*view.number());
     break;
   default:
-    return std::unexpected(codec_error(path, "must be a number"));
+    return std::unexpected(decode_error(path, "must be a number"));
   }
 
   const auto maximum = static_cast<long double>(std::numeric_limits<Float>::max());
   if (!std::isfinite(value) || value < -maximum || value > maximum) {
-    return std::unexpected(codec_error(path, "must be a finite in-range number"));
+    return std::unexpected(decode_error(path, "must be a finite in-range number"));
   }
   const auto converted = static_cast<Float>(value);
   if (!std::isfinite(converted) || (value != 0.0L && converted == Float{0})) {
-    return std::unexpected(codec_error(path, "must be a finite in-range number"));
+    return std::unexpected(decode_error(path, "must be a finite in-range number"));
   }
   return converted;
+}
+
+// The enumerator names are already in the generated schema's `enum` array, so
+// repeating them in the failure keeps a retrying model from having to guess.
+template <typename Enum>
+  requires is_supported_enum_v<Enum>
+[[nodiscard]] std::string enumerator_list() {
+  std::string names{};
+  static constexpr auto enumerators = declared_enumerators_of<Enum>();
+  template for (constexpr std::meta::info enumerator : enumerators) {
+    if (!names.empty()) {
+      names.append(", ");
+    }
+    names.append(std::meta::identifier_of(enumerator));
+  }
+  return names;
 }
 
 template <typename Enum>
   requires is_supported_enum_v<Enum>
 [[nodiscard]] Result<Enum> decode_enum(const JsonView& view, const std::string& path) {
   if (view.kind() != JsonKind::string) {
-    return std::unexpected(codec_error(path, "must be an enumerator name"));
+    return std::unexpected(decode_error(path, "must be an enumerator name"));
   }
 
   const auto name = *view.string();
@@ -132,7 +163,9 @@ template <typename Enum>
     }
   }
   if (!value.has_value()) {
-    return std::unexpected(codec_error(path, "is not a declared enumerator"));
+    std::string message{"is not a declared enumerator; must be one of: "};
+    message.append(enumerator_list<Enum>());
+    return std::unexpected(decode_error(path, message));
   }
   return *value;
 }
@@ -154,7 +187,7 @@ template <typename Type>
 [[nodiscard]] Result<Type> decode_aggregate(const JsonView& view,
                                             const std::string& path) {
   if (view.kind() != JsonKind::object) {
-    return std::unexpected(codec_error(path, "must be an object"));
+    return std::unexpected(decode_error(path, "must be an object"));
   }
 
   for (std::size_t index = 0; index < view.size(); ++index) {
@@ -162,7 +195,7 @@ template <typename Type>
     if (key.has_value() && !is_reflected_member<Type>(*key)) {
       std::string message{"contains unknown member "};
       append_json_string(message, *key);
-      return std::unexpected(codec_error(path, message));
+      return std::unexpected(decode_error(path, message));
     }
   }
 
@@ -175,7 +208,7 @@ template <typename Type>
       const auto field = view.find(name);
       if (!field.has_value()) {
         if constexpr (!std::meta::has_default_member_initializer(member)) {
-          failure = codec_error(member_path(path, name), "is a required member");
+          failure = decode_error(member_path(path, name), "is a required member");
         }
       } else {
         using Member = [:std::meta::type_of(member):];
@@ -213,7 +246,7 @@ template <typename Vector>
                                            const std::string& path) {
   using Element = typename vector_traits<Vector>::value_type;
   if (view.kind() != JsonKind::array) {
-    return std::unexpected(codec_error(path, "must be an array"));
+    return std::unexpected(decode_error(path, "must be an array"));
   }
   Vector values{};
   values.reserve(view.size());
@@ -233,7 +266,7 @@ template <typename Array>
   using Element = typename array_traits<Array>::value_type;
   if (view.kind() != JsonKind::array || view.size() != array_traits<Array>::size) {
     return std::unexpected(
-        codec_error(path, "must be an array of the declared fixed size"));
+        decode_error(path, "must be an array of the declared fixed size"));
   }
   Array values{};
   for (std::size_t index = 0; index < values.size(); ++index) {
@@ -251,7 +284,7 @@ template <typename Type>
 Result<Type> decode(const JsonView& view, std::string path) {
   if constexpr (std::same_as<Type, bool>) {
     if (view.kind() != JsonKind::boolean) {
-      return std::unexpected(codec_error(path, "must be a boolean"));
+      return std::unexpected(decode_error(path, "must be a boolean"));
     }
     return *view.boolean();
   } else if constexpr (is_supported_integer_v<Type>) {
@@ -260,7 +293,7 @@ Result<Type> decode(const JsonView& view, std::string path) {
     return decode_float<Type>(view, path);
   } else if constexpr (std::same_as<Type, std::string>) {
     if (view.kind() != JsonKind::string) {
-      return std::unexpected(codec_error(path, "must be a string"));
+      return std::unexpected(decode_error(path, "must be a string"));
     }
     return std::string{*view.string()};
   } else if constexpr (is_supported_enum_v<Type>) {

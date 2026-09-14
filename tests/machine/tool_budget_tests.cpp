@@ -4,6 +4,7 @@
 #include <limits>
 #include <string>
 #include <utility>
+#include <variant>
 
 using namespace std::chrono_literals;
 using namespace scry::detail::machine_test;
@@ -175,4 +176,144 @@ TEST_CASE("framework failures preserve their own provider correlation") {
 
   CHECK(only_command<scry::detail::PublishError>(failed).error.provider_request_id ==
         "dispatch-request");
+}
+
+namespace {
+
+// Runs exactly one tool round on a machine whose cap is one, leaving it awaiting
+// the response that will ask for a second round it cannot have.
+void run_one_round(scry::detail::TurnMachine& machine) {
+  begin(machine);
+  const auto first =
+      machine.apply(scry::detail::ModelCompleted{.response = tool_response()});
+  static_cast<void>(only_command<scry::detail::PublishToolCall>(first));
+  const auto issue = machine.apply(result("call-1", R"({"ok":true})", at(1ms)));
+  static_cast<void>(only_command<scry::detail::IssueModelRequest>(issue));
+}
+
+[[nodiscard]] scry::detail::ToolLoopPolicy soft_stop_policy() {
+  auto tools = tool_policy();
+  tools.max_rounds = 1;
+  tools.limit_policy = scry::ToolRoundLimitPolicy::complete;
+  return tools;
+}
+
+} // namespace
+
+TEST_CASE(
+    "soft-stop round limit commits the final text and reports its dropped calls") {
+  auto machine = make_machine(retry_policy(), soft_stop_policy());
+  run_one_round(machine);
+
+  const auto stopped = machine.apply(scry::detail::ModelCompleted{
+      .response = tool_response({
+          scry::detail::TextBlock{.text = "wrapping up"},
+          tool_call("call-2", "again"),
+      }),
+  });
+
+  const auto& commit = only_command<scry::detail::CommitCompletion>(stopped);
+  CHECK(commit.finish_reason == scry::FinishReason::tool_round_limit);
+  CHECK(commit.tool_round_count == 1);
+  CHECK(commit.tool_call_count == 1);
+  CHECK(commit.provider_request_id == "tool-request");
+  REQUIRE(commit.unexecuted_tool_calls.size() == 1);
+  CHECK(commit.unexecuted_tool_calls.front().id == "call-2");
+  CHECK(commit.unexecuted_tool_calls.front().name == "again");
+  CHECK(commit.unexecuted_tool_calls.front().arguments.text == R"({"x":1})");
+  // The committed assistant message keeps the text and none of the calls.
+  REQUIRE(commit.transcript.size() == 4);
+  const auto& last = commit.transcript.back();
+  CHECK(last.role == scry::detail::Role::assistant);
+  REQUIRE(last.content.size() == 1);
+  CHECK(std::get<scry::detail::TextBlock>(last.content.front()).text == "wrapping up");
+  CHECK(machine.phase() == scry::detail::MachinePhase::terminal);
+}
+
+TEST_CASE("a calls-only response at the soft-stop limit commits no empty message") {
+  auto machine = make_machine(retry_policy(), soft_stop_policy());
+  run_one_round(machine);
+
+  const auto stopped = machine.apply(scry::detail::ModelCompleted{
+      .response = tool_response({tool_call("call-2", "again")}),
+  });
+
+  const auto& commit = only_command<scry::detail::CommitCompletion>(stopped);
+  CHECK(commit.finish_reason == scry::FinishReason::tool_round_limit);
+  REQUIRE(commit.unexecuted_tool_calls.size() == 1);
+  // Every committed message holds at least one block, so the transcript stops at
+  // the previous round's results rather than gaining an empty assistant message.
+  REQUIRE(commit.transcript.size() == 3);
+  const auto& last = commit.transcript.back();
+  CHECK(last.role == scry::detail::Role::user);
+  REQUIRE(last.content.size() == 1);
+  CHECK(std::get<scry::detail::ToolResultBlock>(last.content.front()).tool_call_id ==
+        "call-1");
+}
+
+TEST_CASE("the soft-stop policy still accumulates the stopping response's usage") {
+  auto machine = make_machine(retry_policy(), soft_stop_policy());
+  run_one_round(machine);
+
+  const auto stopped = machine.apply(scry::detail::ModelCompleted{
+      .response = tool_response({
+          scry::detail::TextBlock{.text = "wrapping up"},
+          tool_call("call-2", "again"),
+      }),
+  });
+
+  // Two responses of the same shape, both counted.
+  const auto& commit = only_command<scry::detail::CommitCompletion>(stopped);
+  CHECK(commit.usage.input_tokens == 4);
+  CHECK(commit.usage.output_tokens == 6);
+}
+
+TEST_CASE("the default round-limit policy still fails the turn and commits nothing") {
+  auto tools = soft_stop_policy();
+  tools.limit_policy = scry::ToolRoundLimitPolicy::fail;
+  auto machine = make_machine(retry_policy(), tools);
+  run_one_round(machine);
+
+  const auto excess = machine.apply(scry::detail::ModelCompleted{
+      .response = tool_response({
+          scry::detail::TextBlock{.text = "wrapping up"},
+          tool_call("call-2", "again"),
+      }),
+  });
+
+  const auto& error = only_command<scry::detail::PublishError>(excess).error;
+  CHECK(error.category == scry::ErrorCategory::max_tool_rounds);
+  CHECK(error.provider_request_id == "tool-request");
+  CHECK(machine.phase() == scry::detail::MachinePhase::terminal);
+}
+
+TEST_CASE("dropped calls must fit the remaining exchange budget") {
+  const scry::detail::Message round_assistant{
+      .role = scry::detail::Role::assistant,
+      .content = tool_response().content,
+  };
+  const scry::detail::ToolResultBlock round_result{
+      .tool_call_id = "call-1",
+      .result = scry::Json{.text = R"({"ok":true})"},
+  };
+  const auto dropped = tool_call("call-2", "again");
+  // Room for the round that runs, one byte short of the calls it may not run.
+  auto tools = soft_stop_policy();
+  tools.max_exchange_bytes = scry::detail::message_payload_bytes(round_assistant) +
+                             scry::detail::content_payload_bytes(round_result) +
+                             scry::detail::content_payload_bytes(dropped) - 1;
+  auto machine = make_machine(retry_policy(), tools);
+  run_one_round(machine);
+
+  const auto rejected = machine.apply(scry::detail::ModelCompleted{
+      .response = tool_response({
+          scry::detail::TextBlock{.text = "wrapping up"},
+          dropped,
+      }),
+  });
+
+  const auto& error = only_command<scry::detail::PublishError>(rejected).error;
+  CHECK(error.category == scry::ErrorCategory::resource_limit);
+  CHECK(error.provider_request_id == "tool-request");
+  CHECK(machine.phase() == scry::detail::MachinePhase::terminal);
 }

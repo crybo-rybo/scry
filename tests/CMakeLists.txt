@@ -159,6 +159,11 @@ scry_add_reflection_compile_fail_test(
   "ToolHandlerFor"
 )
 scry_add_reflection_compile_fail_test(
+  wrong-context-order
+  wrong_context_order.cpp
+  "ToolHandlerFor"
+)
+scry_add_reflection_compile_fail_test(
   duplicate-description
   duplicate_description.cpp
   "a reflected member may have at most one scry::reflection::description annotation"
