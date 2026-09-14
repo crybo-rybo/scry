@@ -1,6 +1,7 @@
 #include <chrono>
 #include <cstddef>
 #include <iostream>
+#include <optional>
 #include <scry/reflection.hpp>
 #include <scry/scry.hpp>
 #include <string>
@@ -97,7 +98,11 @@ struct StatusResult {
               .description =
                   "Report whether the host application's main loop is running",
           },
-          [&app](StatusArguments arguments) {
+          // A reflected handler may take the call's identity as an optional
+          // leading parameter; its string views are borrowed for this call only.
+          [&app](const scry::ToolCallContext& context, StatusArguments arguments) {
+            std::cout << "tool " << context.tool_name << " in round " << context.round
+                      << '\n';
             const bool running = app.running();
             const auto* label = running ? "main loop running" : "main loop stopped";
             return StatusResult{
@@ -162,10 +167,43 @@ void print_history(const scry::Conversation& conversation) {
   }
 }
 
+// Admission runs before every handler, after Config::max_tool_calls_per_turn has
+// had its say. Refusing costs the model an answer, not the turn: it sees
+// {"error": model_message} and keeps going. The same shape gives "accept this
+// result, then stop": set a flag from on_tool_call or from a handler and refuse
+// everything afterwards. Cancelling cannot do that, because it rolls the turn
+// back and discards the results the executed tools produced; whatever those
+// handlers already changed outside the conversation is left for the host to
+// reconcile.
+[[nodiscard]] scry::ToolAdmissionCallback echo_once_per_turn() {
+  using Verdict = std::optional<scry::ToolRejection>;
+  return [echo_calls = 0](const scry::ToolRequest& request) mutable -> Verdict {
+    if (request.context.tool_name != "echo" || echo_calls++ == 0) {
+      return std::nullopt;
+    }
+    return scry::ToolRejection{
+        .model_message =
+            "echo may be called once per turn; answer with what you already have",
+    };
+  };
+}
+
+// Under ToolRoundLimitPolicy::complete the round limit ends the turn rather than
+// failing it, so the answer is real and what is missing is only whatever the
+// dropped calls would have added.
+void print_completion(const scry::Completion& completion) {
+  std::cout << "tools used: " << completion.tool_call_count << '\n';
+  if (completion.finish_reason == scry::FinishReason::tool_round_limit) {
+    std::cout << "tool rounds exhausted; " << completion.unexecuted_tool_calls.size()
+              << " requested calls never ran\n";
+  }
+}
+
 // on_finished runs exactly once: with the completion, or with the terminal error
 // (including a cancelled one), unless harness destruction begins first.
 [[nodiscard]] scry::TurnCallbacks loop_callbacks(Application& app) {
   return {
+      .on_tool_request = echo_once_per_turn(),
       .on_tool_call =
           [](const scry::ToolCall& call) {
             std::cout << "tool " << call.name
@@ -175,6 +213,7 @@ void print_history(const scry::Conversation& conversation) {
       .on_finished =
           [&app](scry::Result<scry::Completion> finished) {
             if (finished) {
+              print_completion(*finished);
               app.show_answer(finished->text);
             } else {
               app.show_error(finished.error().message);
@@ -214,6 +253,10 @@ int main(int argc, char* argv[]) {
       .base_url = "http://127.0.0.1:11434/v1",
       .model = "qwen3:8b",
       .dialect = scry::ProviderDialect::openai_compatible,
+      // Stop at the round limit instead of failing: the tools that ran already
+      // changed this application's state, and rolling the turn back would not undo
+      // them.
+      .tool_round_limit = scry::ToolRoundLimitPolicy::complete,
       // A corporate deployment would also set `.proxy` and `.ca_bundle_path`.
       .extra_headers = {{.name = "x-scry-example", .value = "main-loop"}},
   };

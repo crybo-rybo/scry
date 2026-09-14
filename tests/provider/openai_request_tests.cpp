@@ -5,6 +5,7 @@
 
 #include <array>
 #include <catch2/catch_test_macros.hpp>
+#include <cstddef>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -331,4 +332,54 @@ TEST_CASE("OpenAI request rejects malformed tool boundary fields") {
                                    .description = "Get weather",
                                    .input_schema = {.text = "{"}}});
   require_invalid_request(config(), invalid);
+}
+
+TEST_CASE("OpenAI request leaves a history ending in tool results unmerged") {
+  // The Anthropic adapter merges consecutive same-role messages so a turn stopped
+  // at the tool-round limit stays encodable. This dialect needs no such rule: tool
+  // results already become their own `tool` messages, so a `user` message may
+  // follow them directly.
+  OpenAiAdapter adapter;
+  auto model_request = request();
+  model_request.history =
+      std::make_shared<const std::vector<Message>>(
+          std::vector<Message>{
+              Message{.role = Role::user,
+                      .content = {TextBlock{.text = "first question"}}},
+              Message{.role = Role::assistant,
+                      .content =
+                          {
+                              ToolCallBlock{
+                                  .id = "tool_1",
+                                  .name = "lookup",
+                                  .arguments = Json{.text = R"({"key":"value"})"},
+                              },
+                          }},
+              Message{.role = Role::user,
+                      .content =
+                          {
+                              ToolResultBlock{
+                                  .tool_call_id = "tool_1",
+                                  .result = Json{.text = R"({"answer":42})"},
+                              },
+                          }},
+          });
+  model_request.messages = {
+      Message{.role = Role::user, .content = {TextBlock{.text = "second question"}}},
+  };
+
+  const auto encoded = adapter.make_request(config(), model_request);
+  REQUIRE(encoded);
+  const auto body =
+      parse_json(encoded->body, ErrorCategory::protocol, "body is not valid JSON");
+  REQUIRE(body);
+  const auto messages = required_json_array(*body, "messages");
+  REQUIRE(messages);
+  REQUIRE((*messages)->size() == 5);
+  const std::array expected{"system", "user", "assistant", "tool", "user"};
+  for (std::size_t index = 0; index < expected.size(); ++index) {
+    const auto role = required_json_string((**messages)[index], "role");
+    REQUIRE(role);
+    CHECK(*role == expected[index]);
+  }
 }

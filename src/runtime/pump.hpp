@@ -6,9 +6,11 @@
 #include <atomic>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <deque>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <scry/events.hpp>
 #include <scry/unique_function.hpp>
 #include <string>
@@ -21,6 +23,7 @@ struct TurnRouteOptions {
   std::size_t max_tool_result_bytes{};
   std::size_t max_exchange_bytes{std::numeric_limits<std::size_t>::max()};
   std::size_t max_conversation_bytes{};
+  std::optional<std::uint32_t> max_tool_calls{};
   TurnCallbacks callbacks{};
 };
 
@@ -52,14 +55,26 @@ public:
   void retire() noexcept;
 
   [[nodiscard]] bool has_callback(const WorkerEvent& event) const noexcept;
-  void invoke(const WorkerEvent& event);
+  // Takes the event by mutable reference so the terminal payloads it owns move
+  // into the callback's value instead of being copied into it.
+  void invoke(WorkerEvent& event);
 
   [[nodiscard]] const std::shared_ptr<ConversationState>& conversation() const noexcept;
   [[nodiscard]] std::size_t max_conversation_bytes() const noexcept;
 
 private:
+  // The two gates in front of a handler: the per-turn limit, then the host's
+  // admission hook. An engaged value is the refusal the model is given in place
+  // of a result; std::nullopt admits the call and asks for the handler.
+  [[nodiscard]] std::optional<Result<ToolResultBlock>>
+  admit(const ToolCallEvent& event);
+  // What the model is told about one call, or nothing when cancellation was
+  // requested before the handler ran and the turn owes the model no answer at
+  // all. Only a framework failure leaves it with a result that holds no block.
+  [[nodiscard]] std::optional<Result<ToolResultBlock>>
+  produce(const ToolCallEvent& event);
   void dispatch(const ToolCallEvent& event);
-  void notify_tool_observer(const ToolCallBlock& call, const ToolResultBlock& result);
+  void notify_tool_observer(const ToolCallEvent& event, const ToolResultBlock& result);
 
   TurnId turn_id_{};
   std::shared_ptr<std::atomic<bool>> cancelled_{};
@@ -70,6 +85,11 @@ private:
   std::size_t remaining_exchange_bytes_{std::numeric_limits<std::size_t>::max()};
   std::size_t max_conversation_bytes_{};
   std::size_t pending_events_{};
+  std::optional<std::uint32_t> max_tool_calls_{};
+  // Calls this route has taken charge of, and the subset it refused. Both are
+  // route-owned: the machine counts what the model asked for, not what ran.
+  std::uint32_t dispatched_count_{};
+  std::uint32_t rejected_count_{};
   bool attached_{true};
   bool disconnected_{false};
   bool invoking_{false};

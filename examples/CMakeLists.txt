@@ -14,3 +14,9 @@ if(SCRY_BUILD_TESTING_SUPPORT)
     PRIVATE scry::testing scry_project_options
   )
 endif()
+
+add_executable(scry_tool_policy_example tool_policy.cpp)
+target_link_libraries(
+  scry_tool_policy_example
+  PRIVATE scry::scry scry_project_options
+)

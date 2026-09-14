@@ -185,3 +185,72 @@ TEST_CASE("Anthropic request encoding reports boundary errors without secrets") 
   CHECK(result.error().category == ErrorCategory::invalid_config);
   CHECK(result.error().message.find("sanitized-test-key") == std::string::npos);
 }
+
+namespace {
+
+// The history a turn leaves behind when it stopped at the tool-round limit: the
+// last committed message is the user message carrying that round's results, and
+// the next send appends its own user message straight after it.
+[[nodiscard]] ModelRequest tool_result_history_request() {
+  auto model_request = request();
+  model_request.history =
+      std::make_shared<const std::vector<Message>>(
+          std::vector<Message>{
+              Message{.role = Role::user,
+                      .content = {TextBlock{.text = "first question"}}},
+              Message{.role = Role::assistant,
+                      .content =
+                          {
+                              ToolCallBlock{
+                                  .id = "tool_1",
+                                  .name = "lookup",
+                                  .arguments = Json{.text = R"({"key":"value"})"},
+                              },
+                          }},
+              Message{.role = Role::user,
+                      .content =
+                          {
+                              ToolResultBlock{
+                                  .tool_call_id = "tool_1",
+                                  .result = Json{.text = R"({"answer":42})"},
+                              },
+                          }},
+          });
+  model_request.messages = {
+      Message{.role = Role::user, .content = {TextBlock{.text = "second question"}}},
+  };
+  return model_request;
+}
+
+[[nodiscard]] std::string block_type(const JsonValue& block) {
+  const auto type = required_json_string(block, "type");
+  REQUIRE(type);
+  return std::string{*type};
+}
+
+} // namespace
+
+TEST_CASE("Anthropic request merges consecutive same-role messages") {
+  const auto adapter = make_provider_adapter(ProviderDialect::anthropic);
+  REQUIRE(adapter);
+
+  const auto encoded = adapter->make_request(config(), tool_result_history_request());
+  REQUIRE(encoded);
+  const auto body =
+      parse_json(encoded->body, ErrorCategory::protocol, "body is not valid JSON");
+  REQUIRE(body);
+  const auto messages = required_json_array(*body, "messages");
+  REQUIRE(messages);
+  // user, assistant, then the tool results and the next question as one message.
+  REQUIRE((*messages)->size() == 3);
+
+  const auto& merged = (**messages)[2];
+  const auto role = required_json_string(merged, "role");
+  REQUIRE(role);
+  CHECK(*role == "user");
+  const auto content = required_json_array(merged, "content");
+  REQUIRE(content);
+  REQUIRE((*content)->size() == 2);
+  CHECK(block_type((**content)[0]) == "tool_result");
+  CHECK(block_type((**content)[1]) == "text");
+}

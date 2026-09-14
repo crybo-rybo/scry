@@ -1,5 +1,6 @@
 #pragma once
 
+#include <concepts>
 #include <functional>
 #include <scry/detail/reflection_codec.hpp>
 #include <scry/detail/reflection_meta.hpp>
@@ -30,22 +31,28 @@ template <typename Return>
 
 template <ToolArguments Args, typename Handler>
   requires ToolHandlerFor<Handler, Args>
-[[nodiscard]] Result<Json> invoke_and_encode(Handler& handler, Args args) {
-  return encode_handler_result(std::invoke(handler, std::move(args)));
+[[nodiscard]] Result<Json>
+invoke_and_encode(Handler& handler, const ToolCallContext& context, Args args) {
+  if constexpr (std::invocable<Handler&, const ToolCallContext&, Args>) {
+    return encode_handler_result(std::invoke(handler, context, std::move(args)));
+  } else {
+    return encode_handler_result(std::invoke(handler, std::move(args)));
+  }
 }
 
 template <ToolArguments Args, typename Handler>
   requires ToolHandlerFor<Handler, Args>
-[[nodiscard]] ToolHandler make_tool_handler(Handler&& handler) {
+[[nodiscard]] ContextualToolHandler make_tool_handler(Handler&& handler) {
   using Callable = std::decay_t<Handler>;
-  return ToolHandler{[callable = Callable{std::forward<Handler>(handler)}](
-                         Json input) mutable -> Result<Json> {
-    auto arguments = decode_arguments<Args>(std::move(input));
-    if (!arguments) {
-      return std::unexpected(std::move(arguments.error()));
-    }
-    return invoke_and_encode<Args>(callable, std::move(*arguments));
-  }};
+  return ContextualToolHandler{
+      [callable = Callable{std::forward<Handler>(handler)}](
+          const ToolCallContext& context, Json input) mutable -> Result<Json> {
+        auto arguments = decode_arguments<Args>(std::move(input));
+        if (!arguments) {
+          return std::unexpected(std::move(arguments.error()));
+        }
+        return invoke_and_encode<Args>(callable, context, std::move(*arguments));
+      }};
 }
 
 } // namespace scry::reflection::detail
@@ -56,13 +63,16 @@ namespace scry::reflection {
 ///
 /// The argument schema is generated as input_schema_v<Args>, incoming JSON is decoded
 /// strictly, and the typed return is encoded back to JSON. The tool is stored in the
-/// same additive ToolRegistry that explicit-schema tools use.
+/// same additive ToolRegistry that explicit-schema tools use. A handler may take a
+/// leading const ToolCallContext& to learn which turn, round, and call it is running
+/// for; the context is borrowed for the invocation only.
 /// @tparam Args Complete reflected argument aggregate.
 /// @tparam Handler Move-constructible callable satisfying ToolHandlerFor<Handler,
 /// Args>.
 /// @param registry Harness-owned registry that receives the tool.
 /// @param metadata Provider-visible tool name and description.
-/// @param handler Callable invoked with Args moved by value.
+/// @param handler Callable invoked with Args moved by value, optionally preceded by
+/// a const ToolCallContext& naming the call being serviced.
 /// @return Success, or the explicit registry's immediate validation error.
 template <ToolArguments Args, typename Handler>
   requires ToolHandlerFor<Handler, Args>

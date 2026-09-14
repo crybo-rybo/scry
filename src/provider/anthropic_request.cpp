@@ -3,6 +3,8 @@
 #include "provider/anthropic.hpp"
 #include "provider/shared.hpp"
 
+#include <cstddef>
+#include <optional>
 #include <string>
 #include <utility>
 #include <variant>
@@ -70,49 +72,70 @@ parse_boundary_json(const Json& json, const std::string_view failure_message) {
   return encode_tool_result(std::get<ToolResultBlock>(block));
 }
 
-[[nodiscard]] Result<JsonValue> encode_message(const Message& message) {
-  JsonValue::array_t content{};
-  content.reserve(message.content.size());
-  for (const auto& block : message.content) {
-    auto encoded = encode_content(block);
-    if (!encoded) {
-      return std::unexpected(std::move(encoded.error()));
+// The Messages API takes one message per role turn, so consecutive same-role
+// messages are concatenated into a single content array rather than emitted as
+// separate entries. A turn stopped at the tool-round limit commits history
+// ending in the user message carrying that round's tool results, and the next
+// send appends another user message straight after it.
+class MessageArrayBuilder {
+public:
+  explicit MessageArrayBuilder(const std::size_t expected_messages) {
+    encoded_.reserve(expected_messages);
+  }
+
+  [[nodiscard]] Status append(const Message& message) {
+    if (role_ && *role_ != message.role) {
+      flush();
     }
-    content.push_back(std::move(*encoded));
+    role_ = message.role;
+    for (const auto& block : message.content) {
+      auto encoded = encode_content(block);
+      if (!encoded) {
+        return std::unexpected(std::move(encoded.error()));
+      }
+      content_.push_back(std::move(*encoded));
+    }
+    return {};
   }
 
-  JsonValue value{};
-  value["role"] = message.role == Role::user ? "user" : "assistant";
-  value["content"].data = std::move(content);
-  return value;
-}
-
-[[nodiscard]] Status encode_message_into(JsonValue::array_t& encoded,
-                                         const Message& message) {
-  auto value = encode_message(message);
-  if (!value) {
-    return std::unexpected(std::move(value.error()));
+  [[nodiscard]] JsonValue::array_t take() {
+    flush();
+    return std::move(encoded_);
   }
-  encoded.push_back(std::move(*value));
-  return {};
-}
+
+private:
+  void flush() {
+    if (!role_) {
+      return;
+    }
+    JsonValue value{};
+    value["role"] = *role_ == Role::user ? "user" : "assistant";
+    value["content"].data = std::move(content_);
+    content_.clear();
+    encoded_.push_back(std::move(value));
+    role_.reset();
+  }
+
+  JsonValue::array_t encoded_{};
+  JsonValue::array_t content_{};
+  std::optional<Role> role_{};
+};
 
 [[nodiscard]] Result<JsonValue::array_t> encode_messages(const ModelRequest& request) {
-  JsonValue::array_t encoded{};
-  encoded.reserve(request.message_count());
+  MessageArrayBuilder builder{request.message_count()};
   if (request.history) {
     for (const auto& message : *request.history) {
-      if (auto status = encode_message_into(encoded, message); !status) {
+      if (auto status = builder.append(message); !status) {
         return std::unexpected(std::move(status.error()));
       }
     }
   }
   for (const auto& message : request.messages) {
-    if (auto status = encode_message_into(encoded, message); !status) {
+    if (auto status = builder.append(message); !status) {
       return std::unexpected(std::move(status.error()));
     }
   }
-  return encoded;
+  return builder.take();
 }
 
 [[nodiscard]] Result<JsonValue> encode_tool(const ToolDefinition& tool) {

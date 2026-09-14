@@ -159,6 +159,9 @@ namespace {
   if (config.max_tool_rounds == 0) {
     return invalid("max_tool_rounds must be greater than 0");
   }
+  if (config.max_tool_calls_per_turn == 0) {
+    return invalid("max_tool_calls_per_turn must be greater than 0 when set");
+  }
   return {};
 }
 

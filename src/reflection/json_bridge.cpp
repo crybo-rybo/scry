@@ -13,6 +13,7 @@ Result<JsonView> parse_json(const Json& json) {
     return std::unexpected(Error{
         .category = ErrorCategory::tool,
         .message = "reflected tool arguments are not valid JSON",
+        .model_message = "tool arguments are not valid JSON",
     });
   }
   return std::move(*view);

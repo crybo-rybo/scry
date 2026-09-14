@@ -21,8 +21,18 @@ namespace {
 
 } // namespace
 
+ContextualToolHandler to_contextual_handler(ToolHandler handler) {
+  if (!handler) {
+    return {};
+  }
+  return ContextualToolHandler{
+      [inner = std::move(handler)](const ToolCallContext&, Json input) mutable {
+        return inner(std::move(input));
+      }};
+}
+
 Status add_tool_registration(ToolRegistryState& state, ToolDefinition definition,
-                             ToolHandler handler) {
+                             ContextualToolHandler handler) {
   if (definition.name.empty()) {
     return std::unexpected(invalid_registration("tool name must not be empty"));
   }
@@ -47,7 +57,7 @@ Status add_tool_registration(ToolRegistryState& state, ToolDefinition definition
   definition.input_schema = std::move(*schema);
   state.entries.push_back(std::make_shared<const RegisteredTool>(RegisteredTool{
       .definition = std::move(definition),
-      .handler = std::make_shared<ToolHandler>(std::move(handler)),
+      .handler = std::make_shared<ContextualToolHandler>(std::move(handler)),
   }));
   return {};
 }
@@ -88,7 +98,8 @@ constexpr std::uint64_t tool_manifest_version = 1;
 
 } // namespace
 
-Status ToolRegistry::Impl::add(ToolDefinition definition, ToolHandler handler) {
+Status ToolRegistry::Impl::add(ToolDefinition definition,
+                               ContextualToolHandler handler) {
   return detail::add_tool_registration(state, std::move(definition),
                                        std::move(handler));
 }
@@ -100,6 +111,10 @@ ToolRegistry::ToolRegistry(ToolRegistry&&) noexcept = default;
 ToolRegistry& ToolRegistry::operator=(ToolRegistry&&) noexcept = default;
 
 Status ToolRegistry::add(ToolDefinition definition, ToolHandler handler) {
+  return add(std::move(definition), detail::to_contextual_handler(std::move(handler)));
+}
+
+Status ToolRegistry::add(ToolDefinition definition, ContextualToolHandler handler) {
   if (impl_ == nullptr) {
     return std::unexpected(inactive_registry());
   }
