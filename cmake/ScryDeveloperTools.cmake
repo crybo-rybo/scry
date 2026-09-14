@@ -1,3 +1,4 @@
+# Include after ScryCompilerChecks.cmake and add_library(scry ...).
 add_library(scry_project_options INTERFACE)
 target_compile_options(
   scry_project_options
@@ -59,7 +60,7 @@ endif()
 # mutation past the fuzz entry point would be blind. The "-no-link" spelling adds
 # the instrumentation without libFuzzer's main, which ordinary test executables
 # must not link; the fuzz targets add plain -fsanitize=fuzzer themselves.
-if(SCRY_BUILD_FUZZERS AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+if(SCRY_BUILD_FUZZERS)
   target_compile_options(
     scry_project_options
     INTERFACE -fsanitize=fuzzer-no-link
