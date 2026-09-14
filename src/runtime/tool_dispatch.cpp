@@ -18,25 +18,6 @@ namespace {
   };
 }
 
-[[nodiscard]] Result<ToolResultBlock> error_result(const ToolCallBlock& call,
-                                                   const std::string_view message,
-                                                   const std::size_t max_result_bytes) {
-  auto payload = make_json_error_object(message);
-  if (payload.text.size() > max_result_bytes) {
-    payload = make_json_error_object("tool execution failed");
-  }
-  if (payload.text.size() > max_result_bytes) {
-    return std::unexpected(
-        dispatch_error(ErrorCategory::resource_limit,
-                       "tool error result exceeds the configured byte limit"));
-  }
-  return ToolResultBlock{
-      .tool_call_id = call.id,
-      .result = std::move(payload),
-      .is_error = true,
-  };
-}
-
 [[nodiscard]] Result<Json> invoke_handler(ContextualToolHandler& handler,
                                           const ToolCallBlock& call,
                                           const ToolCallContext& context) noexcept {
@@ -135,6 +116,30 @@ dispatch_tool_handler(ContextualToolHandler& handler, const ToolCallBlock& call,
 }
 
 } // namespace
+
+bool tool_is_registered(const ToolSnapshot& snapshot,
+                        const std::string_view name) noexcept {
+  return find_tool_registration(snapshot, name) != nullptr;
+}
+
+Result<ToolResultBlock> error_result(const ToolCallBlock& call,
+                                     const std::string_view message,
+                                     const std::size_t max_result_bytes) {
+  auto payload = make_json_error_object(message);
+  if (payload.text.size() > max_result_bytes) {
+    payload = make_json_error_object("tool execution failed");
+  }
+  if (payload.text.size() > max_result_bytes) {
+    return std::unexpected(
+        dispatch_error(ErrorCategory::resource_limit,
+                       "tool error result exceeds the configured byte limit"));
+  }
+  return ToolResultBlock{
+      .tool_call_id = call.id,
+      .result = std::move(payload),
+      .is_error = true,
+  };
+}
 
 Result<ToolResultBlock> dispatch_tool(const ToolSnapshot& snapshot,
                                       const ToolCallBlock& call,

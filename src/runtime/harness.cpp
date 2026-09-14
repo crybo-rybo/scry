@@ -180,6 +180,7 @@ public:
             .max_tool_result_bytes = config_.limits.max_tool_result_bytes,
             .max_exchange_bytes = max_exchange_bytes,
             .max_conversation_bytes = config_.limits.max_conversation_bytes,
+            .max_tool_calls = config_.max_tool_calls_per_turn,
             .callbacks = std::move(callbacks),
         });
     auto request = make_request(config_, *conversation, std::move(messages),
