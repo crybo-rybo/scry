@@ -25,7 +25,27 @@ TEST_CASE("tool dispatch turns an unknown tool into a model-visible error") {
   REQUIRE(result);
   CHECK(result->tool_call_id == "call-1");
   CHECK(result->is_error);
-  CHECK(result->result.text == R"({"error":"model requested an unknown tool"})");
+  CHECK(result->result.text ==
+        R"({"error":"unknown tool \"missing\"; no tools are registered"})");
+}
+
+TEST_CASE(
+    "tool dispatch names the registered tools in registration-independent order") {
+  const auto stub = [](scry::Json) -> scry::Result<scry::Json> {
+    return scry::Json{.text = "{}"};
+  };
+  const scry::detail::ToolSnapshot tools{
+      registered_tool("move", stub),
+      registered_tool("eat", stub),
+      registered_tool("look", stub),
+  };
+
+  const auto result = scry::detail::dispatch_tool(tools, tool_call("jump"), 1024);
+
+  REQUIRE(result);
+  CHECK(result->is_error);
+  CHECK(result->result.text ==
+        R"({"error":"unknown tool \"jump\"; registered tools: eat, look, move"})");
 }
 
 TEST_CASE("tool dispatch treats unavailable handlers as model-visible errors") {
@@ -70,6 +90,34 @@ TEST_CASE("tool dispatch does not disclose handler-returned Error details") {
   CHECK(result->is_error);
   CHECK(result->result.text == R"({"error":"tool handler returned an error"})");
   CHECK(result->result.text.find("secret") == std::string::npos);
+}
+
+TEST_CASE("tool dispatch forwards a handler's model_message unchanged") {
+  const scry::detail::ToolSnapshot tools{
+      registered_tool("forecast", [](scry::Json) -> scry::Result<scry::Json> {
+        return std::unexpected(scry::tool_error("north, south, east, or west only",
+                                                "secret application message"));
+      })};
+
+  const auto result = scry::detail::dispatch_tool(tools, tool_call(), 1024);
+
+  REQUIRE(result);
+  CHECK(result->is_error);
+  CHECK(result->result.text == R"({"error":"north, south, east, or west only"})");
+  CHECK(result->result.text.find("secret") == std::string::npos);
+}
+
+TEST_CASE("tool dispatch drops an oversized model_message for the fixed diagnostic") {
+  const scry::detail::ToolSnapshot tools{
+      registered_tool("forecast", [](scry::Json) -> scry::Result<scry::Json> {
+        return std::unexpected(scry::tool_error(std::string(4096, 'x')));
+      })};
+
+  const auto result = scry::detail::dispatch_tool(tools, tool_call(), 1024);
+
+  REQUIRE(result);
+  CHECK(result->is_error);
+  CHECK(result->result.text == R"({"error":"tool execution failed"})");
 }
 
 TEST_CASE("tool dispatch contains standard and non-standard handler exceptions") {

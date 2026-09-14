@@ -239,6 +239,16 @@ incorrect fixed-array lengths. A floating-point JSON value such as `1.0` does
 not decode into an integer member. Canonical parsing collapses duplicate object
 keys before dispatch, so handlers do not see the original lexical duplicates.
 
+A decode failure fills `Error::model_message` with the host `message` minus its
+`reflected JSON at ` prefix: the JSON path of the offending value and what the
+schema required there, plus the declared enumerator names when an enum value is
+unrecognized. Argument text that is not JSON at all reports `tool arguments are
+not valid JSON`. Every word of it is derived from the schema the model was
+already given, so the model can correct itself without learning anything new. A
+result-encoding failure fills no `model_message`: it describes the handler's own
+result type, whose schema the model never sees, so the model receives the fixed
+diagnostic.
+
 Handlers are invoked with moved arguments and return a supported value or
 `Result` of one. Raw `Json`, `void`, `Status`, references, futures, and awaitables
 are not reflected result types. The returned object is encoded without an
@@ -256,9 +266,17 @@ validation against its schema. It must synchronously return valid JSON or an
 error. Asynchronous or deferred tool results are not supported.
 
 Unknown tools, reflected decode failures, handler errors, exceptions, and invalid
-result JSON produce bounded model-visible error results. Handler-supplied error
-messages and exception text are not forwarded. An oversized result, or an error
-result that cannot fit its bound, fails the turn with `resource_limit`.
+result JSON produce bounded model-visible error results. A handler error's
+`model_message` is forwarded inside `{"error": ...}` subject to the result byte
+cap; its `message` and any exception text are not. `scry::tool_error(model_message,
+host_message)` builds such an error; an empty `model_message` keeps Scry's fixed
+diagnostic, and one too large for the cap falls back to it. Reflected decode
+failures and unknown-tool errors carry schema-derived `model_message` text: an
+unknown tool names the requested tool and the registered tool names, which the
+request's tool list already carried. Scry applies no redaction to
+`model_message`, so a host that puts a secret in one has published it. An
+oversized result, or an error result that cannot fit its bound, fails the turn
+with `resource_limit`.
 `on_tool_call` observes the canonical result and its `is_error` flag after the
 result is posted to the worker; it does not confirm that the server received it.
 Cancellation or a fatal framework failure can suppress this observer.

@@ -177,6 +177,47 @@ TEST_CASE("reflected decoding rejects unknown missing and mistyped members") {
   CHECK(decoded.error().message == "reflected JSON at $ must be an object");
 }
 
+TEST_CASE("reflected decode failures carry a schema-derived model message") {
+  const auto model_message = [](const std::string_view text) {
+    auto decoded = scry::reflection::detail::decode_arguments<AllTypesArguments>(
+        scry::Json{.text = std::string{text}});
+    REQUIRE_FALSE(decoded);
+    // The model copy is the host copy without the library-facing prefix.
+    CHECK(decoded.error().message ==
+          "reflected JSON at " + decoded.error().model_message);
+    return decoded.error().model_message;
+  };
+
+  CHECK(model_message("[]") == "$ must be an object");
+  CHECK(model_message(R"({"surprise":1})") ==
+        R"($ contains unknown member "surprise")");
+  CHECK(model_message(R"({"fixed":[1,2],"flag":1,"nested":{},"ratio":1,)"
+                      R"("unit":"celsius","values":[]})") ==
+        "$.flag must be a boolean");
+  CHECK(model_message(R"({"fixed":[1],"flag":true,"nested":{},"ratio":1,)"
+                      R"("unit":"celsius","values":[]})") ==
+        "$.fixed must be an array of the declared fixed size");
+  CHECK(model_message(R"({"fixed":[1,2],"flag":true,"nested":{},"ratio":1,)"
+                      R"("unit":"celsius","values":[4294967296]})") ==
+        "$.values[0] is outside the integer range");
+  CHECK(model_message(R"({"fixed":[1,2],"flag":true,"nested":{"label":1},"ratio":1,)"
+                      R"("unit":"celsius","values":[]})") ==
+        "$.nested.label must be a string");
+  CHECK(model_message(R"({"fixed":[1,2],"flag":true,"nested":{},"ratio":1,)"
+                      R"("unit":"kelvin","values":[]})") ==
+        "$.unit is not a declared enumerator; must be one of: celsius, fahrenheit");
+
+  auto required = scry::reflection::detail::decode_arguments<PresenceArguments>(
+      scry::Json{.text = R"({"required":"Detroit"})"});
+  REQUIRE_FALSE(required);
+  CHECK(required.error().model_message == "$.nullable is a required member");
+
+  auto malformed = scry::reflection::detail::decode_arguments<PresenceArguments>(
+      scry::Json{.text = "{"});
+  REQUIRE_FALSE(malformed);
+  CHECK(malformed.error().model_message == "tool arguments are not valid JSON");
+}
+
 TEST_CASE("reflected codec round trips every supported composite family") {
   auto decoded = scry::reflection::detail::decode_arguments<
       AllTypesArguments>(scry::Json{
@@ -212,7 +253,8 @@ TEST_CASE("reflected codec enforces numeric enum and fixed-array bounds") {
           R"({"fixed":[1,2],"flag":true,"nested":{"label":"x"},"ratio":1,"unit":"kelvin","values":[]})"});
   REQUIRE_FALSE(decoded);
   CHECK(decoded.error().message ==
-        "reflected JSON at $.unit is not a declared enumerator");
+        "reflected JSON at $.unit is not a declared enumerator; must be one of: "
+        "celsius, fahrenheit");
 
   auto narrow = scry::reflection::detail::decode_arguments<PresenceArguments>(
       scry::Json{.text = R"({"nullable":32768,"required":"x"})"});
@@ -379,6 +421,9 @@ TEST_CASE("reflected encoding rejects non-finite and unnamed values") {
   REQUIRE_FALSE(encoded);
   CHECK(encoded.error().category == scry::ErrorCategory::tool);
   CHECK(encoded.error().message == "reflected JSON at $.ratio must be finite");
+  // A result type's schema never reaches the model, so an encoding failure
+  // carries nothing for it to act on.
+  CHECK(encoded.error().model_message.empty());
 
   value.ratio = 1.0;
   value.unit = static_cast<TemperatureUnit>(99);
@@ -387,6 +432,43 @@ TEST_CASE("reflected encoding rejects non-finite and unnamed values") {
   CHECK(encoded.error().category == scry::ErrorCategory::tool);
   CHECK(encoded.error().message ==
         "reflected JSON at $.unit is not a declared enumerator value");
+  CHECK(encoded.error().model_message.empty());
+}
+
+TEST_CASE("reflected result-encoding failures reach the model as the fixed text") {
+  auto handler = scry::reflection::detail::make_tool_handler<PresenceArguments>(
+      [](PresenceArguments) {
+        return AllTypesArguments{
+            .fixed = {1, 2},
+            .flag = true,
+            .ratio = std::numeric_limits<double>::infinity(),
+            .unit = TemperatureUnit::celsius,
+        };
+      });
+  const scry::detail::ToolSnapshot tools{
+      std::make_shared<const scry::detail::RegisteredTool>(scry::detail::RegisteredTool{
+          .definition =
+              {
+                  .name = "private_calculation",
+                  .description = "Return a result the host cannot encode",
+                  .input_schema = {.text = "{}"},
+              },
+          .handler = std::make_shared<scry::ToolHandler>(std::move(handler)),
+      })};
+
+  const auto result = scry::detail::dispatch_tool(
+      tools,
+      scry::detail::ToolCallBlock{
+          .id = "call-1",
+          .name = "private_calculation",
+          .arguments = {.text = R"({"nullable":null,"required":"value"})"},
+      },
+      1024);
+
+  REQUIRE(result);
+  CHECK(result->is_error);
+  CHECK(result->result.text == R"({"error":"tool handler returned an error"})");
+  CHECK(result->result.text.find("ratio") == std::string::npos);
 }
 
 TEST_CASE("public encoding matches reflected tool dispatch output") {
