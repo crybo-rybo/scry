@@ -1,6 +1,10 @@
 #include "tool_loop_test_support.hpp"
 
+#include <cstddef>
+#include <cstdint>
 #include <optional>
+#include <string>
+#include <vector>
 
 using namespace scry::test_support;
 
@@ -17,13 +21,30 @@ TEST_CASE("two-tool turn snapshots tools, resends results, and commits atomicall
   std::vector<scry::ToolCall> observed;
   std::string first_arguments;
   std::string second_arguments;
+  scry::TurnId first_context_turn{};
+  std::string first_context_call_id;
+  std::string first_context_tool_name;
+  std::uint32_t first_context_round{};
+  std::uint32_t first_context_index{};
   bool reentrant_registration_succeeded = false;
 
+  // The contextual overload: the handler learns which call it is servicing
+  // before the observer is told anything about it.
   REQUIRE(harness.tools().add(ordinal_tool_definition("first_tool"),
-                              [&](scry::Json arguments) -> scry::Result<scry::Json> {
+                              [&](const scry::ToolCallContext& context,
+                                  scry::Json arguments) -> scry::Result<scry::Json> {
                                 timeline.emplace_back("handler:first");
                                 callback_threads.push_back(std::this_thread::get_id());
                                 first_arguments = std::move(arguments.text);
+                                // The context's views borrow from the call block being
+                                // dispatched, so only owning copies survive past this
+                                // frame.
+                                first_context_turn = context.turn_id;
+                                first_context_call_id = std::string{context.call_id};
+                                first_context_tool_name =
+                                    std::string{context.tool_name};
+                                first_context_round = context.round;
+                                first_context_index = context.index;
                                 reentrant_registration_succeeded =
                                     static_cast<bool>(harness.tools().add(
                                         ordinal_tool_definition("reentrant_tool"),
@@ -53,6 +74,8 @@ TEST_CASE("two-tool turn snapshots tools, resends results, and commits atomicall
                                  .arguments = call.arguments,
                                  .result = call.result,
                                  .is_error = call.is_error,
+                                 .round = call.round,
+                                 .index = call.index,
                              });
                            },
                        .on_finished =
@@ -89,11 +112,21 @@ TEST_CASE("two-tool turn snapshots tools, resends results, and commits atomicall
   CHECK(observed[0].arguments.text == R"({"ordinal":1})");
   CHECK(observed[0].result.text == R"({"handled":"first"})");
   CHECK_FALSE(observed[0].is_error);
+  CHECK(observed[0].round == 1);
+  CHECK(observed[0].index == 0);
+  // The handler and the observer describe the same call.
+  CHECK(first_context_call_id == observed[0].id);
+  CHECK(first_context_tool_name == observed[0].name);
+  CHECK(first_context_turn == observed[0].turn_id);
+  CHECK(first_context_round == observed[0].round);
+  CHECK(first_context_index == observed[0].index);
   CHECK(observed[1].id == "call-b");
   CHECK(observed[1].name == "second_tool");
   CHECK(observed[1].arguments.text == R"({"ordinal":2})");
   CHECK(observed[1].result.text == R"({"handled":"second"})");
   CHECK_FALSE(observed[1].is_error);
+  CHECK(observed[1].round == 1);
+  CHECK(observed[1].index == 1);
   CHECK(reentrant_registration_succeeded);
   CHECK(harness.tools().size() == 4);
   for (const auto callback_thread : callback_threads) {
@@ -105,6 +138,9 @@ TEST_CASE("two-tool turn snapshots tools, resends results, and commits atomicall
   CHECK(completion->usage.input_tokens == 10);
   CHECK(completion->usage.output_tokens == 7);
   CHECK(completion->attempt_count == 2);
+  CHECK(completion->finish_reason == scry::FinishReason::completed);
+  CHECK(completion->tool_round_count == 1);
+  CHECK(completion->tool_call_count == 2);
   CHECK(conversation.message_count() == 4);
   auto serialized = conversation.to_json();
   REQUIRE(serialized);
@@ -379,4 +415,316 @@ TEST_CASE("a tool handler that disconnects suppresses its own observer") {
   CHECK(observer_calls == 0);
   // Disconnecting stops delivery only; the tool loop still ran to completion.
   CHECK(conversation.message_count() == 4);
+}
+
+TEST_CASE(
+    "the per-turn call limit refuses the rest of a batch and the turn completes") {
+  auto config = test_config();
+  config.max_tool_calls_per_turn = 1;
+  auto fixture =
+      make_harness_fixture(config, {scripted_exchange(two_tool_stream, "tool-request"),
+                                    scripted_exchange(final_stream, "final-request")});
+  auto* requests = fixture.transport;
+  auto& harness = fixture.harness;
+  auto& conversation = fixture.conversation;
+
+  std::size_t first_calls = 0;
+  std::size_t second_calls = 0;
+  REQUIRE(harness.tools().add(ordinal_tool_definition("first_tool"),
+                              [&first_calls](scry::Json) -> scry::Result<scry::Json> {
+                                ++first_calls;
+                                return scry::Json{.text = R"({"handled":"first"})"};
+                              }));
+  REQUIRE(harness.tools().add(ordinal_tool_definition("second_tool"),
+                              [&second_calls](scry::Json) -> scry::Result<scry::Json> {
+                                ++second_calls;
+                                return scry::Json{.text = R"({"handled":"second"})"};
+                              }));
+
+  std::vector<bool> observed_errors;
+  std::optional<scry::Completion> completion;
+  REQUIRE(harness.send(conversation, "Run both tools",
+                       {
+                           .on_tool_call =
+                               [&observed_errors](const scry::ToolCall& call) {
+                                 observed_errors.push_back(call.is_error);
+                               },
+                           .on_finished =
+                               [&completion](scry::Result<scry::Completion> finished) {
+                                 REQUIRE(finished);
+                                 completion = std::move(*finished);
+                               },
+                       }));
+  REQUIRE(pump_until(harness, [&completion] { return completion.has_value(); }));
+
+  CHECK(first_calls == 1);
+  CHECK(second_calls == 0);
+  CHECK(observed_errors == std::vector<bool>{false, true});
+  REQUIRE(completion);
+  CHECK(completion->text == "all done");
+  // The model asked for two calls, so both are counted; only one was refused.
+  CHECK(completion->tool_call_count == 2);
+  CHECK(completion->rejected_tool_call_count == 1);
+
+  const auto recorded = requests->requests();
+  REQUIRE(recorded.size() == 2);
+  const auto& resend_body = recorded[1].body;
+  require_order(
+      resend_body, R"({\"handled\":\"first\"})",
+      R"({\"error\":\"tool call limit for this turn reached; respond without calling tools\"})");
+  CHECK(resend_body.find(R"({\"handled\":\"second\"})") == std::string::npos);
+}
+
+TEST_CASE("an admission hook's refusal text reaches the model on the wire") {
+  auto fixture = make_harness_fixture(
+      test_config(), {scripted_exchange(two_tool_stream, "tool-request"),
+                      scripted_exchange(final_stream, "final-request")});
+  auto* requests = fixture.transport;
+  auto& harness = fixture.harness;
+  auto& conversation = fixture.conversation;
+
+  std::size_t second_calls = 0;
+  REQUIRE(harness.tools().add(ordinal_tool_definition("first_tool"),
+                              static_handler(R"({"handled":"first"})")));
+  REQUIRE(harness.tools().add(ordinal_tool_definition("second_tool"),
+                              [&second_calls](scry::Json) -> scry::Result<scry::Json> {
+                                ++second_calls;
+                                return scry::Json{.text = R"({"handled":"second"})"};
+                              }));
+
+  // The "accept this result, then stop" pattern: a host flag the hook consults,
+  // so the turn completes and commits instead of rolling back.
+  bool stop_dispatching = false;
+  std::optional<scry::Completion> completion;
+  REQUIRE(harness.send(
+      conversation, "Run both tools",
+      {
+          .on_tool_request = [&stop_dispatching](const scry::ToolRequest& request)
+              -> std::optional<scry::ToolRejection> {
+            if (!stop_dispatching) {
+              return std::nullopt;
+            }
+            return scry::ToolRejection{
+                .model_message =
+                    "budget spent before " + std::string{request.context.tool_name},
+            };
+          },
+          .on_tool_call =
+              [&stop_dispatching](const scry::ToolCall&) { stop_dispatching = true; },
+          .on_finished =
+              [&completion](scry::Result<scry::Completion> finished) {
+                REQUIRE(finished);
+                completion = std::move(*finished);
+              },
+      }));
+  REQUIRE(pump_until(harness, [&completion] { return completion.has_value(); }));
+
+  CHECK(second_calls == 0);
+  REQUIRE(completion);
+  CHECK(completion->tool_call_count == 2);
+  CHECK(completion->rejected_tool_call_count == 1);
+  CHECK(conversation.message_count() == 4);
+
+  const auto recorded = requests->requests();
+  REQUIRE(recorded.size() == 2);
+  CHECK(recorded[1].body.find(R"({\"error\":\"budget spent before second_tool\"})") !=
+        std::string::npos);
+}
+
+TEST_CASE("cancelling from the admission hook runs no handler and commits nothing") {
+  // Only the tool round is scripted: a cancelled turn never asks for a final
+  // response, so a second exchange would go unused.
+  auto fixture = make_harness_fixture(
+      test_config(), {scripted_exchange(two_tool_stream, "tool-request")});
+  auto& harness = fixture.harness;
+  auto& conversation = fixture.conversation;
+
+  std::size_t handler_calls = 0;
+  REQUIRE(harness.tools().add(ordinal_tool_definition("first_tool"),
+                              [&handler_calls](scry::Json) -> scry::Result<scry::Json> {
+                                ++handler_calls;
+                                return scry::Json{.text = R"({"handled":"first"})"};
+                              }));
+  REQUIRE(harness.tools().add(ordinal_tool_definition("second_tool"),
+                              static_handler(R"({"handled":"second"})")));
+
+  const auto messages_before = conversation.message_count();
+  std::size_t admissions = 0;
+  std::size_t observed_calls = 0;
+  std::optional<scry::Error> outcome;
+  REQUIRE(
+      harness.send(conversation, "Run both tools",
+                   {
+                       .on_tool_request = [&](const scry::ToolRequest& request)
+                           -> std::optional<scry::ToolRejection> {
+                         ++admissions;
+                         // Admitting and cancelling at once: the host changed its mind
+                         // about the whole turn, not about this one call.
+                         harness.cancel(request.context.turn_id);
+                         return std::nullopt;
+                       },
+                       .on_tool_call = [&observed_calls](
+                                           const scry::ToolCall&) { ++observed_calls; },
+                       .on_finished =
+                           [&outcome](scry::Result<scry::Completion> finished) {
+                             REQUIRE_FALSE(finished);
+                             outcome = finished.error();
+                           },
+                   }));
+  REQUIRE(pump_until(harness, [&outcome] { return outcome.has_value(); }));
+
+  CHECK(admissions == 1);
+  CHECK(handler_calls == 0);
+  CHECK(observed_calls == 0);
+  REQUIRE(outcome);
+  CHECK(outcome->category == scry::ErrorCategory::cancelled);
+  CHECK(conversation.message_count() == messages_before);
+  CHECK_FALSE(conversation.busy());
+}
+
+TEST_CASE("the soft round limit commits one round and keeps the history sendable") {
+  auto config = test_config();
+  config.max_tool_rounds = 1;
+  config.tool_round_limit = scry::ToolRoundLimitPolicy::complete;
+
+  const auto first_round = anthropic_tool_stream({
+      {.id = "call-a", .name = "first_tool", .arguments = R"({"ordinal":1})"},
+  });
+  // The round the limit refuses: tool calls and nothing else, so the turn commits
+  // no assistant message and history ends with the first round's results.
+  const auto excess_round = anthropic_tool_stream(
+      {
+          {.id = "call-b", .name = "second_tool", .arguments = R"({"ordinal":2})"},
+      },
+      "msg_excess");
+  auto fixture = make_harness_fixture(
+      std::move(config),
+      {
+          scripted_exchange(first_round, "tool-request"),
+          scripted_exchange(excess_round, "stop-request"),
+          scripted_exchange(anthropic_text_stream("second answer", "msg_second"),
+                            "second-request"),
+      });
+  auto* requests = fixture.transport;
+  auto& harness = fixture.harness;
+  auto& conversation = fixture.conversation;
+
+  std::size_t first_calls = 0;
+  std::size_t second_calls = 0;
+  REQUIRE(harness.tools().add(ordinal_tool_definition("first_tool"),
+                              [&first_calls](scry::Json) -> scry::Result<scry::Json> {
+                                ++first_calls;
+                                return scry::Json{.text = R"({"handled":"first"})"};
+                              }));
+  REQUIRE(harness.tools().add(ordinal_tool_definition("second_tool"),
+                              [&second_calls](scry::Json) -> scry::Result<scry::Json> {
+                                ++second_calls;
+                                return scry::Json{.text = R"({"handled":"second"})"};
+                              }));
+
+  std::optional<scry::Completion> completion;
+  REQUIRE(harness.send(conversation, "Run the tool",
+                       {
+                           .on_finished =
+                               [&completion](scry::Result<scry::Completion> finished) {
+                                 REQUIRE(finished);
+                                 completion = std::move(*finished);
+                               },
+                       }));
+  REQUIRE(pump_until(harness, [&] { return completion.has_value(); }));
+
+  REQUIRE(completion);
+  CHECK(completion->finish_reason == scry::FinishReason::tool_round_limit);
+  CHECK(completion->tool_round_count == 1);
+  CHECK(completion->tool_call_count == 1);
+  CHECK(completion->text.empty());
+  REQUIRE(completion->unexecuted_tool_calls.size() == 1);
+  CHECK(completion->unexecuted_tool_calls.front().id == "call-b");
+  CHECK(completion->unexecuted_tool_calls.front().name == "second_tool");
+  CHECK(completion->unexecuted_tool_calls.front().arguments.text == R"({"ordinal":2})");
+  // The refused call never ran, so host state and committed history agree.
+  CHECK(first_calls == 1);
+  CHECK(second_calls == 0);
+  REQUIRE(conversation.message_count() == 3);
+  CHECK(conversation.messages().back().role == scry::Role::user);
+  CHECK_FALSE(conversation.busy());
+
+  std::optional<scry::Completion> second;
+  REQUIRE(harness.send(conversation, "Anything else?",
+                       {
+                           .on_finished =
+                               [&second](scry::Result<scry::Completion> finished) {
+                                 REQUIRE(finished);
+                                 second = std::move(*finished);
+                               },
+                       }));
+  REQUIRE(pump_until(harness, [&] { return second.has_value(); }));
+  REQUIRE(second);
+  CHECK(second->text == "second answer");
+
+  const auto recorded = requests->requests();
+  REQUIRE(recorded.size() == 3);
+  const auto& resumed_body = recorded[2].body;
+  // The Messages API takes one message per role turn, so the tool results and the
+  // new question travel as one user message rather than two in a row.
+  CHECK(count_occurrences(resumed_body, R"("role":"user")") == 2);
+  CHECK(count_occurrences(resumed_body, R"("role":"assistant")") == 1);
+  require_order(resumed_body, R"("tool_use_id":"call-a")", "Anything else?");
+  CHECK(resumed_body.find(R"("type":"tool_result"},{"text":"Anything else?")") !=
+        std::string::npos);
+}
+
+TEST_CASE("large dropped calls reach the host intact") {
+  auto config = test_config();
+  config.max_tool_rounds = 1;
+  config.tool_round_limit = scry::ToolRoundLimitPolicy::complete;
+
+  const auto first_round = anthropic_tool_stream({
+      {.id = "call-a", .name = "first_tool", .arguments = R"({"ordinal":1})"},
+  });
+  // Two calls whose arguments together dwarf the worker's terminal event reserve.
+  // They are reserved against the Conversation budget, not the event queue, so
+  // they arrive whole rather than being shed to keep the completion deliverable.
+  const std::string first_padding(600, 'p');
+  const std::string second_padding(600, 'q');
+  const std::string first_arguments =
+      R"({"ordinal":2,"pad":")" + first_padding + R"("})";
+  const std::string second_arguments =
+      R"({"ordinal":3,"pad":")" + second_padding + R"("})";
+  const auto excess_round = anthropic_tool_stream(
+      {
+          {.id = "call-b", .name = "second_tool", .arguments = first_arguments},
+          {.id = "call-c", .name = "second_tool", .arguments = second_arguments},
+      },
+      "msg_excess");
+  auto fixture = make_harness_fixture(
+      std::move(config), {
+                             scripted_exchange(first_round, "tool-request"),
+                             scripted_exchange(excess_round, "stop-request"),
+                         });
+  auto& harness = fixture.harness;
+  auto& conversation = fixture.conversation;
+  REQUIRE(harness.tools().add(ordinal_tool_definition("first_tool"),
+                              static_handler(R"({"handled":"first"})")));
+
+  std::optional<scry::Completion> completion;
+  REQUIRE(harness.send(conversation, "Run the tool",
+                       {
+                           .on_finished =
+                               [&completion](scry::Result<scry::Completion> finished) {
+                                 REQUIRE(finished);
+                                 completion = std::move(*finished);
+                               },
+                       }));
+  REQUIRE(pump_until(harness, [&] { return completion.has_value(); }));
+
+  REQUIRE(completion);
+  CHECK(completion->finish_reason == scry::FinishReason::tool_round_limit);
+  CHECK(completion->tool_round_count == 1);
+  REQUIRE(completion->unexecuted_tool_calls.size() == 2);
+  CHECK(completion->unexecuted_tool_calls[0].id == "call-b");
+  CHECK(completion->unexecuted_tool_calls[0].arguments.text == first_arguments);
+  CHECK(completion->unexecuted_tool_calls[1].id == "call-c");
+  CHECK(completion->unexecuted_tool_calls[1].arguments.text == second_arguments);
+  CHECK(conversation.message_count() == 3);
 }

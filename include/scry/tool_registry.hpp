@@ -1,9 +1,11 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <scry/error.hpp>
 #include <scry/json.hpp>
+#include <scry/turn_id.hpp>
 #include <scry/unique_function.hpp>
 #include <string>
 #include <string_view>
@@ -25,12 +27,38 @@ struct ToolDefinition {
   Json input_schema{};
 };
 
+/// Identity of the tool call a handler is servicing.
+///
+/// A handler that needs to know which turn, round, or call it is running for takes
+/// one of these as its leading parameter. Both string views are borrowed from the
+/// live call block and are valid only for the duration of the invocation; a handler
+/// that keeps either beyond its return must copy it.
+struct ToolCallContext {
+  /// Turn the call belongs to.
+  TurnId turn_id{};
+  /// Provider-assigned identifier of this call, matching ToolCall::id.
+  std::string_view call_id{};
+  /// Registered name of the tool being invoked.
+  std::string_view tool_name{};
+  /// One-based tool round within the turn.
+  std::uint32_t round{};
+  /// Zero-based position of this call in its round's batch.
+  std::uint32_t index{};
+};
+
 /// Move-only type-erased explicit tool handler.
 ///
 /// The input is a canonical JSON object. The handler validates it against its schema;
 /// Scry does not perform general JSON Schema validation. A successful return must
 /// contain valid JSON. Typed C++ handlers can instead use scry::reflection.
 using ToolHandler = UniqueFunction<Result<Json>(Json)>;
+
+/// Move-only type-erased explicit tool handler that also receives its call identity.
+///
+/// Identical to ToolHandler apart from the leading ToolCallContext, whose string
+/// views are borrowed for the invocation only.
+using ContextualToolHandler =
+    UniqueFunction<Result<Json>(const ToolCallContext&, Json)>;
 
 /// Additive registry of model-callable tools.
 ///
@@ -73,6 +101,18 @@ public:
   /// @return Success, an immediate validation/duplicate-name error, or
   /// ErrorCategory::invalid_state for an inactive registry.
   [[nodiscard]] Status add(ToolDefinition definition, ToolHandler handler);
+
+  /// Registers an explicit-schema tool whose handler also receives its call identity.
+  ///
+  /// Behaves exactly like the ToolHandler overload; the handler additionally learns
+  /// which turn, round, and call it is servicing. The context is borrowed for the
+  /// invocation only.
+  /// @param definition Valid provider-visible name, description, and object schema.
+  /// @param handler Move-only callable that receives the call context and canonical
+  /// argument JSON.
+  /// @return Success, an immediate validation/duplicate-name error, or
+  /// ErrorCategory::invalid_state for an inactive registry.
+  [[nodiscard]] Status add(ToolDefinition definition, ContextualToolHandler handler);
 
   /// Returns the number of registrations currently available to future turns.
   /// @return Registration count, or 0 for an inactive registry.

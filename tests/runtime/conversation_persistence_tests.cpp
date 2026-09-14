@@ -278,3 +278,33 @@ TEST_CASE("Conversation::from_json rejects a document truncated after a token") 
   require_invalid_document(complete.substr(0, complete.size() - 1));
   require_invalid_document(R"({"messages":[],"system_prompt":"","version":1)");
 }
+
+TEST_CASE("a history ending in tool results round-trips through persistence") {
+  // The shape ToolRoundLimitPolicy::complete commits when the stopping response
+  // carried no text: the last committed message is the user message holding the
+  // previous round's results.
+  const std::string input = R"({
+    "version": 1,
+    "system_prompt": "",
+    "messages": [
+      {"role":"user","content":[{"type":"text","text":"Question"}]},
+      {"role":"assistant","content":[{"type":"tool_call","id":"call-1",
+                                      "name":"lookup","arguments":{"a":1}}]},
+      {"role":"user","content":[{"type":"tool_result","tool_call_id":"call-1",
+                                 "result":{"ok":true},"is_error":false}]}
+    ]
+  })";
+  auto restored = scry::Conversation::from_json({.text = input});
+  REQUIRE(restored);
+  CHECK(restored->message_count() == 3);
+  CHECK(restored->messages().back().role == scry::Role::user);
+
+  const auto encoded = restored->to_json();
+  REQUIRE(encoded);
+  auto round_trip = scry::Conversation::from_json(*encoded);
+  REQUIRE(round_trip);
+  const auto reencoded = round_trip->to_json();
+  REQUIRE(reencoded);
+  CHECK(reencoded->text == encoded->text);
+  CHECK(round_trip->messages().back().role == scry::Role::user);
+}

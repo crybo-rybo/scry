@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <scry/error.hpp>
 #include <scry/events.hpp>
 #include <scry/json.hpp>
@@ -27,12 +28,20 @@ namespace scry::test_support {
 }
 
 [[nodiscard]] inline scry::detail::ToolRegistrationPtr
-registered_tool(std::string name, scry::ToolHandler handler) {
+registered_tool(std::string name, scry::ContextualToolHandler handler) {
   return std::make_shared<const scry::detail::RegisteredTool>(
       scry::detail::RegisteredTool{
           .definition = tool_definition(std::move(name)),
-          .handler = std::make_shared<scry::ToolHandler>(std::move(handler)),
+          .handler = std::make_shared<scry::ContextualToolHandler>(std::move(handler)),
       });
+}
+
+// A snapshot assembled by hand stores the same adapted handler a registration
+// would, so the two paths cannot drift.
+[[nodiscard]] inline scry::detail::ToolRegistrationPtr
+registered_tool(std::string name, scry::ToolHandler handler) {
+  return registered_tool(std::move(name),
+                         scry::detail::to_contextual_handler(std::move(handler)));
 }
 
 [[nodiscard]] inline scry::detail::FrozenToolEntries
@@ -99,6 +108,7 @@ struct RouteOptions {
   std::size_t max_tool_result_bytes{1024};
   std::size_t max_exchange_bytes{std::numeric_limits<std::size_t>::max()};
   std::size_t max_conversation_bytes{1024};
+  std::optional<std::uint32_t> max_tool_calls{};
   scry::TurnCallbacks callbacks{};
 };
 
@@ -120,6 +130,7 @@ struct PumpFixture {
             .max_tool_result_bytes = options.max_tool_result_bytes,
             .max_exchange_bytes = options.max_exchange_bytes,
             .max_conversation_bytes = options.max_conversation_bytes,
+            .max_tool_calls = options.max_tool_calls,
             .callbacks = std::move(options.callbacks),
         });
   }

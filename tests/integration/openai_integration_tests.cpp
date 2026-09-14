@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <memory>
 #include <optional>
+#include <scry/reflection.hpp>
 #include <scry/scry.hpp>
 #include <string>
 #include <string_view>
@@ -16,7 +17,7 @@ using namespace scry::test_support;
 
 namespace {
 
-constexpr std::string_view openai_tool_stream =
+constexpr std::string_view openai_tool_call_fixture =
     R"(data: {"id":"chatcmpl-tools","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call-a","type":"function","function":{"name":"lookup","arguments":"{\"city\":"}}]},"finish_reason":null}]}
 
 data: {"id":"chatcmpl-tools","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"Boston\"}"}}]},"finish_reason":null}]}
@@ -98,12 +99,94 @@ byte_chunked_exchange(const std::string_view stream, std::string request_id) {
   };
 }
 
+enum class Direction {
+  north,
+  south,
+};
+
+struct MoveArguments {
+  Direction direction{};
+};
+
+struct MoveResult {
+  std::string outcome{};
+};
+
+// One scripted tool round followed by a plain text turn, which is the shortest
+// script that puts a tool result on the wire.
+[[nodiscard]] scry::test_support::HarnessFixture move_fixture(std::string_view call) {
+  return scry::test_support::make_harness_fixture(
+      openai_config(),
+      {
+          scripted_exchange(
+              openai_tool_stream({{.id = "call-a", .name = "move", .arguments = call}}),
+              "openai-tool-request"),
+          scripted_exchange(openai_text_stream("done"), "openai-final-request"),
+      },
+      scry::ProviderDialect::openai_compatible);
+}
+
+[[nodiscard]] std::string run_move_turn(scry::test_support::HarnessFixture& fixture) {
+  std::optional<scry::Completion> completion;
+  const auto turn = fixture.harness.send(
+      fixture.conversation, "Move north.",
+      {
+          .on_finished =
+              [&completion](scry::Result<scry::Completion> finished) {
+                REQUIRE(finished);
+                completion = std::move(*finished);
+              },
+      });
+  REQUIRE(turn);
+  REQUIRE(pump_until(fixture.harness, [&] { return completion.has_value(); }));
+  const auto recorded = fixture.transport->requests();
+  REQUIRE(recorded.size() == 2);
+  return recorded.back().body;
+}
+
 } // namespace
+
+TEST_CASE("a handler refusal reaches the model in the OpenAI tool message") {
+  auto fixture = move_fixture(R"({"direction":"north"})");
+  REQUIRE(scry::reflection::add<MoveArguments>(
+      fixture.harness.tools(),
+      {.name = "move", .description = "Move the player one square"},
+      [](MoveArguments) -> scry::Result<MoveResult> {
+        return std::unexpected(scry::tool_error("a wall blocks the way north",
+                                                "secret application message"));
+      }));
+
+  const auto resend = run_move_turn(fixture);
+
+  CHECK(resend.find(R"("role":"tool")") != std::string::npos);
+  CHECK(resend.find(R"({\"error\":\"a wall blocks the way north\"})") !=
+        std::string::npos);
+  CHECK(resend.find("secret") == std::string::npos);
+}
+
+TEST_CASE("an invalid enum argument round-trips into the OpenAI tool message") {
+  auto fixture = move_fixture(R"({"direction":"up"})");
+  REQUIRE(scry::reflection::add<MoveArguments>(
+      fixture.harness.tools(),
+      {.name = "move", .description = "Move the player one square"},
+      [](MoveArguments) -> scry::Result<MoveResult> {
+        FAIL("the handler must not run when arguments do not decode");
+        return MoveResult{};
+      }));
+
+  const auto resend = run_move_turn(fixture);
+
+  CHECK(
+      resend.find(
+          R"($.direction is not a declared enumerator; must be one of: north, south)") !=
+      std::string::npos);
+  CHECK(resend.find("reflected JSON at") == std::string::npos);
+}
 
 TEST_CASE("OpenAI-compatible config drives a fragmented transactional tool round") {
   auto fake = std::make_unique<scry::test::FakeTransport>();
   auto* requests = fake.get();
-  fake->enqueue(byte_chunked_exchange(openai_tool_stream, "openai-tool-request"));
+  fake->enqueue(byte_chunked_exchange(openai_tool_call_fixture, "openai-tool-request"));
   fake->enqueue(byte_chunked_exchange(openai_final_stream, "openai-final-request"));
   auto created = scry::detail::HarnessTestAccess::create(
       openai_config(), provider(scry::ProviderDialect::openai_compatible),

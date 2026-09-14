@@ -1,6 +1,8 @@
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <iostream>
+#include <optional>
 #include <scry/reflection.hpp>
 #include <scry/scry.hpp>
 #include <string>
@@ -97,7 +99,11 @@ struct StatusResult {
               .description =
                   "Report whether the host application's main loop is running",
           },
-          [&app](StatusArguments arguments) {
+          // A reflected handler may take the call's identity as an optional
+          // leading parameter; its string views are borrowed for this call only.
+          [&app](const scry::ToolCallContext& context, StatusArguments arguments) {
+            std::cout << "tool " << context.tool_name << " in round " << context.round
+                      << '\n';
             const bool running = app.running();
             const auto* label = running ? "main loop running" : "main loop stopped";
             return StatusResult{
@@ -136,6 +142,18 @@ struct StatusResult {
   return 0;
 }
 
+// Result schemas never reach the model; exporting one lets a host publish the full
+// tool contract next to the manifest.
+[[nodiscard]] int print_result_schema() {
+  std::cout << scry::reflection::schema_v<StatusResult> << '\n';
+  std::cout.flush();
+  if (!std::cout) {
+    std::cerr << "Failed to write result schema to stdout\n";
+    return 1;
+  }
+  return 0;
+}
+
 void print_block(const scry::ContentBlock& block) {
   std::visit(
       [](const auto& value) {
@@ -162,10 +180,43 @@ void print_history(const scry::Conversation& conversation) {
   }
 }
 
+// Admission runs before every handler, after Config::max_tool_calls_per_turn has
+// had its say. Refusing costs the model an answer, not the turn: it sees
+// {"error": model_message} and keeps going. The same shape gives "accept this
+// result, then stop": set a flag from on_tool_call or from a handler and refuse
+// everything afterwards. Cancelling cannot do that, because it rolls the turn
+// back and discards the results the executed tools produced; whatever those
+// handlers already changed outside the conversation is left for the host to
+// reconcile.
+[[nodiscard]] scry::ToolAdmissionCallback echo_once_per_turn() {
+  using Verdict = std::optional<scry::ToolRejection>;
+  return [echo_calls = 0](const scry::ToolRequest& request) mutable -> Verdict {
+    if (request.context.tool_name != "echo" || echo_calls++ == 0) {
+      return std::nullopt;
+    }
+    return scry::ToolRejection{
+        .model_message =
+            "echo may be called once per turn; answer with what you already have",
+    };
+  };
+}
+
+// Under ToolRoundLimitPolicy::complete the round limit ends the turn rather than
+// failing it, so the answer is real and what is missing is only whatever the
+// dropped calls would have added.
+void print_completion(const scry::Completion& completion) {
+  std::cout << "tools used: " << completion.tool_call_count << '\n';
+  if (completion.finish_reason == scry::FinishReason::tool_round_limit) {
+    std::cout << "tool rounds exhausted; " << completion.unexecuted_tool_calls.size()
+              << " requested calls never ran\n";
+  }
+}
+
 // on_finished runs exactly once: with the completion, or with the terminal error
 // (including a cancelled one), unless harness destruction begins first.
 [[nodiscard]] scry::TurnCallbacks loop_callbacks(Application& app) {
   return {
+      .on_tool_request = echo_once_per_turn(),
       .on_tool_call =
           [](const scry::ToolCall& call) {
             std::cout << "tool " << call.name
@@ -175,6 +226,7 @@ void print_history(const scry::Conversation& conversation) {
       .on_finished =
           [&app](scry::Result<scry::Completion> finished) {
             if (finished) {
+              print_completion(*finished);
               app.show_answer(finished->text);
             } else {
               app.show_error(finished.error().message);
@@ -183,13 +235,36 @@ void print_history(const scry::Conversation& conversation) {
   };
 }
 
+// The two export modes build only the registry, so they exit before any
+// provider configuration or worker exists.
+enum class Mode : std::uint8_t {
+  run,
+  tool_manifest,
+  result_schema,
+  usage,
+};
+
+[[nodiscard]] Mode parse_mode(const int argc, char* argv[]) {
+  if (argc == 1) {
+    return Mode::run;
+  }
+  const auto flag = argc == 2 ? std::string_view{argv[1]} : std::string_view{};
+  if (flag == "--tool-manifest") {
+    return Mode::tool_manifest;
+  }
+  if (flag == "--result-schema") {
+    return Mode::result_schema;
+  }
+  return Mode::usage;
+}
+
 } // namespace
 
 int main(int argc, char* argv[]) {
-  const bool export_tools = argc == 2 && std::string_view{argv[1]} == "--tool-manifest";
-  if (argc != 1 && !export_tools) {
+  const auto mode = parse_mode(argc, argv);
+  if (mode == Mode::usage) {
     std::cerr << "Usage: " << (argc > 0 ? argv[0] : "scry_canonical_example")
-              << " [--tool-manifest]\n";
+              << " [--tool-manifest | --result-schema]\n";
     return 1;
   }
   // Declared before the harness on purpose: the tool handlers and turn callbacks
@@ -205,8 +280,11 @@ int main(int argc, char* argv[]) {
     return 1;
   }
 
-  if (export_tools) {
+  if (mode == Mode::tool_manifest) {
     return print_tool_manifest(tools);
+  }
+  if (mode == Mode::result_schema) {
+    return print_result_schema();
   }
 
   // Assumes `ollama serve` is running and `ollama pull qwen3:8b` has completed.
@@ -214,6 +292,10 @@ int main(int argc, char* argv[]) {
       .base_url = "http://127.0.0.1:11434/v1",
       .model = "qwen3:8b",
       .dialect = scry::ProviderDialect::openai_compatible,
+      // Stop at the round limit instead of failing: the tools that ran already
+      // changed this application's state, and rolling the turn back would not undo
+      // them.
+      .tool_round_limit = scry::ToolRoundLimitPolicy::complete,
       // A corporate deployment would also set `.proxy` and `.ca_bundle_path`.
       .extra_headers = {{.name = "x-scry-example", .value = "main-loop"}},
   };

@@ -42,6 +42,31 @@ foreach(
   target_sources(scry_header_checks PRIVATE "${SCRY_HEADER_CHECK_SOURCE}")
 endforeach()
 
+if(SCRY_BUILD_TESTING_SUPPORT)
+  # The testing component's headers get the same lone-translation-unit check,
+  # on a target of their own because they link scry::testing.
+  add_library(scry_testing_header_checks OBJECT)
+  set_target_properties(scry_testing_header_checks PROPERTIES UNITY_BUILD OFF)
+  target_link_libraries(
+    scry_testing_header_checks
+    PRIVATE scry::testing scry_project_options
+  )
+  foreach(SCRY_HEADER IN LISTS SCRY_TESTING_PUBLIC_HEADERS)
+    get_filename_component(SCRY_HEADER_NAME "${SCRY_HEADER}" NAME_WE)
+    string(REGEX REPLACE "^.*include/" "" SCRY_HEADER_INCLUDE "${SCRY_HEADER}")
+    set(
+      SCRY_HEADER_CHECK_SOURCE
+      "${PROJECT_BINARY_DIR}/generated/header_checks/testing_${SCRY_HEADER_NAME}.cpp"
+    )
+    file(
+      GENERATE
+      OUTPUT "${SCRY_HEADER_CHECK_SOURCE}"
+      CONTENT "#include <${SCRY_HEADER_INCLUDE}>\n"
+    )
+    target_sources(scry_testing_header_checks PRIVATE "${SCRY_HEADER_CHECK_SOURCE}")
+  endforeach()
+endif()
+
 add_executable(scry_public_api_contract public_api_contract.cpp)
 target_link_libraries(
   scry_public_api_contract
@@ -93,6 +118,9 @@ target_link_libraries(
 )
 catch_discover_tests(scry_runtime_tests TEST_PREFIX "runtime.")
 
+if(SCRY_BUILD_TESTING_SUPPORT)
+  add_subdirectory(testing)
+endif()
 add_subdirectory(machine)
 add_subdirectory(nightly)
 add_subdirectory(protocol)
@@ -159,7 +187,17 @@ scry_add_reflection_compile_fail_test(
   "ToolHandlerFor"
 )
 scry_add_reflection_compile_fail_test(
+  wrong-context-order
+  wrong_context_order.cpp
+  "ToolHandlerFor"
+)
+scry_add_reflection_compile_fail_test(
   duplicate-description
   duplicate_description.cpp
   "a reflected member may have at most one scry::reflection::description annotation"
+)
+scry_add_reflection_compile_fail_test(
+  unsupported-schema-root
+  unsupported_schema_root.cpp
+  "SupportedValue"
 )

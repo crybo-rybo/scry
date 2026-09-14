@@ -2,8 +2,10 @@
 #include <array>
 #include <chrono>
 #include <concepts>
+#include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <scry/scry.hpp>
 #include <string>
 #include <string_view>
@@ -13,9 +15,18 @@
 #include <vector>
 
 static_assert(std::is_aggregate_v<scry::Config>);
+static_assert(std::same_as<decltype(scry::Config::max_tool_calls_per_turn),
+                           std::optional<std::uint32_t>>);
+static_assert(
+    std::same_as<decltype(scry::Config::tool_round_limit), scry::ToolRoundLimitPolicy>);
+static_assert(std::is_enum_v<scry::ToolRoundLimitPolicy>);
+static_assert(
+    std::same_as<std::underlying_type_t<scry::ToolRoundLimitPolicy>, std::uint8_t>);
 static_assert(std::is_aggregate_v<scry::HttpHeader>);
 static_assert(std::is_enum_v<scry::ReasoningMode>);
 static_assert(std::is_aggregate_v<scry::Error>);
+static_assert(std::same_as<decltype(scry::Error::model_message), std::string>);
+static_assert(std::same_as<decltype(scry::tool_error(std::string{})), scry::Error>);
 static_assert(std::is_aggregate_v<scry::Json>);
 static_assert(std::is_enum_v<scry::JsonKind>);
 static_assert(std::is_default_constructible_v<scry::JsonView>);
@@ -37,6 +48,8 @@ static_assert(std::is_aggregate_v<scry::TurnCallbacks>);
 static_assert(std::is_enum_v<scry::FinishReason>);
 static_assert(std::is_aggregate_v<scry::Usage>);
 static_assert(std::is_aggregate_v<scry::ToolCall>);
+static_assert(std::is_aggregate_v<scry::ToolRequest>);
+static_assert(std::is_aggregate_v<scry::ToolRejection>);
 static_assert(std::is_aggregate_v<scry::Completion>);
 static_assert(std::is_aggregate_v<scry::UpdateStats>);
 static_assert(std::is_aggregate_v<scry::ConversationConfig>);
@@ -47,10 +60,26 @@ static_assert(std::same_as<decltype(scry::ToolCall::turn_id), scry::TurnId>);
 static_assert(std::same_as<decltype(scry::ToolCall::arguments), scry::Json>);
 static_assert(std::same_as<decltype(scry::ToolCall::result), scry::Json>);
 static_assert(std::same_as<decltype(scry::ToolCall::is_error), bool>);
+static_assert(std::same_as<decltype(scry::ToolCall::round), std::uint32_t>);
+static_assert(std::same_as<decltype(scry::ToolCall::index), std::uint32_t>);
 static_assert(std::same_as<decltype(scry::Completion::turn_id), scry::TurnId>);
 static_assert(
     std::same_as<decltype(scry::Completion::finish_reason), scry::FinishReason>);
 static_assert(std::same_as<decltype(scry::Completion::usage), scry::Usage>);
+static_assert(
+    std::same_as<decltype(scry::Completion::tool_round_count), std::uint32_t>);
+static_assert(std::same_as<decltype(scry::Completion::tool_call_count), std::uint32_t>);
+static_assert(
+    std::same_as<decltype(scry::Completion::rejected_tool_call_count), std::uint32_t>);
+static_assert(std::same_as<decltype(scry::Completion::unexecuted_tool_calls),
+                           std::vector<scry::ToolCallBlock>>);
+// The soft stop appends its finish reason; the existing enumerators keep the
+// values a host may already have persisted.
+static_assert(std::to_underlying(scry::FinishReason::completed) == 0);
+static_assert(std::to_underlying(scry::FinishReason::length) == 1);
+static_assert(std::to_underlying(scry::FinishReason::tool_use) == 2);
+static_assert(std::to_underlying(scry::FinishReason::unknown) == 3);
+static_assert(std::to_underlying(scry::FinishReason::tool_round_limit) == 4);
 static_assert(
     std::same_as<decltype(scry::UpdateStats::callbacks_delivered), std::size_t>);
 static_assert(std::same_as<decltype(scry::UpdateStats::events_remaining), std::size_t>);
@@ -82,6 +111,19 @@ static_assert(!std::is_copy_constructible_v<scry::Harness>);
 static_assert(std::is_move_constructible_v<scry::UniqueFunction<void()>>);
 static_assert(!std::is_copy_constructible_v<scry::UniqueFunction<void()>>);
 
+// schema_v is the general schema root; input_schema_v is the argument-only spelling of
+// the same text, so a host can export a result contract without a second generator.
+namespace contract {
+struct SchemaArguments {
+  std::string city;
+};
+} // namespace contract
+static_assert(
+    std::same_as<decltype(scry::reflection::schema_v<contract::SchemaArguments>),
+                 const std::string_view>);
+static_assert(scry::reflection::schema_v<contract::SchemaArguments> ==
+              scry::reflection::input_schema_v<contract::SchemaArguments>);
+
 // A void-returning callback signature accepts a callable that returns something:
 // the result is discarded rather than rejected at compile time.
 using AppendingDelta = decltype([](std::string_view chunk) -> std::string& {
@@ -99,6 +141,8 @@ static_assert(std::is_move_constructible_v<scry::TurnCallbacks>);
 static_assert(!std::is_copy_constructible_v<scry::TurnCallbacks>);
 static_assert(std::same_as<decltype(scry::TurnCallbacks::on_text_delta),
                            scry::TextDeltaCallback>);
+static_assert(std::same_as<decltype(scry::TurnCallbacks::on_tool_request),
+                           scry::ToolAdmissionCallback>);
 static_assert(
     std::same_as<decltype(scry::TurnCallbacks::on_tool_call), scry::ToolCallCallback>);
 static_assert(std::same_as<decltype(scry::TurnCallbacks::on_finished),
@@ -157,6 +201,73 @@ static_assert(requires(const scry::ToolRegistry& registry) {
   { registry.contains(std::string_view{}) } -> std::same_as<bool>;
   { registry.names() } -> std::same_as<std::vector<std::string>>;
   { registry.to_json() } -> std::same_as<scry::Result<scry::Json>>;
+});
+
+// A tool handler's call identity: a borrowed value the handler reads and does not
+// own, so the views are string_view and the whole thing stays an aggregate.
+static_assert(std::is_aggregate_v<scry::ToolCallContext>);
+static_assert(std::same_as<decltype(scry::ToolCallContext::turn_id), scry::TurnId>);
+static_assert(std::same_as<decltype(scry::ToolCallContext::call_id), std::string_view>);
+static_assert(
+    std::same_as<decltype(scry::ToolCallContext::tool_name), std::string_view>);
+static_assert(std::same_as<decltype(scry::ToolCallContext::round), std::uint32_t>);
+static_assert(std::same_as<decltype(scry::ToolCallContext::index), std::uint32_t>);
+// A tool request is a borrowed view of the call being admitted: it names the same
+// identity the handler sees and cannot outlive the dispatch, so it carries a
+// reference and is not default-constructible.
+static_assert(
+    std::same_as<decltype(scry::ToolRequest::context), scry::ToolCallContext>);
+static_assert(std::same_as<decltype(scry::ToolRequest::arguments), const scry::Json&>);
+static_assert(!std::is_default_constructible_v<scry::ToolRequest>);
+static_assert(std::is_copy_constructible_v<scry::ToolRequest>);
+static_assert(std::same_as<decltype(scry::ToolRejection::model_message), std::string>);
+static_assert(std::is_default_constructible_v<scry::ToolRejection>);
+
+// The hook's return says admit or refuse, so a lambda spelling either answer has
+// to convert, and an empty callback is the "admit everything" default.
+using AdmissionLambda = decltype([](const scry::ToolRequest& request)
+                                     -> std::optional<scry::ToolRejection> {
+  if (request.arguments.text.empty()) {
+    return scry::ToolRejection{.model_message = "no arguments"};
+  }
+  return std::nullopt;
+});
+static_assert(std::is_constructible_v<scry::ToolAdmissionCallback, AdmissionLambda>);
+static_assert(std::is_default_constructible_v<scry::ToolAdmissionCallback>);
+static_assert(std::is_move_constructible_v<scry::ToolAdmissionCallback>);
+static_assert(!std::is_copy_constructible_v<scry::ToolAdmissionCallback>);
+
+static_assert(std::is_move_constructible_v<scry::ToolHandler>);
+static_assert(!std::is_copy_constructible_v<scry::ToolHandler>);
+static_assert(std::is_move_constructible_v<scry::ContextualToolHandler>);
+static_assert(!std::is_copy_constructible_v<scry::ContextualToolHandler>);
+
+// The two add() overloads are separated by the handler's arity alone, so each
+// lambda shape has to reach exactly one of them. A converting constructor that
+// did not constrain on invocability would make both of these ambiguous.
+using PlainToolLambda =
+    decltype([](scry::Json input) -> scry::Result<scry::Json> { return input; });
+using ContextualToolLambda =
+    decltype([](const scry::ToolCallContext&,
+                scry::Json input) -> scry::Result<scry::Json> { return input; });
+static_assert(std::is_constructible_v<scry::ToolHandler, PlainToolLambda>);
+static_assert(!std::is_constructible_v<scry::ToolHandler, ContextualToolLambda>);
+static_assert(
+    std::is_constructible_v<scry::ContextualToolHandler, ContextualToolLambda>);
+static_assert(!std::is_constructible_v<scry::ContextualToolHandler, PlainToolLambda>);
+static_assert(requires(scry::ToolRegistry& registry) {
+  {
+    registry.add(scry::ToolDefinition{}, PlainToolLambda{})
+  } -> std::same_as<scry::Status>;
+  {
+    registry.add(scry::ToolDefinition{}, ContextualToolLambda{})
+  } -> std::same_as<scry::Status>;
+  {
+    registry.add(scry::ToolDefinition{}, scry::ToolHandler{})
+  } -> std::same_as<scry::Status>;
+  {
+    registry.add(scry::ToolDefinition{}, scry::ContextualToolHandler{})
+  } -> std::same_as<scry::Status>;
 });
 static_assert(requires(const scry::Conversation& conversation) {
   { conversation.messages() } -> std::same_as<const std::vector<scry::Message>&>;
@@ -305,6 +416,8 @@ int main() {
       config.limits.max_queued_event_bytes_per_turn == 2 * kibibyte * kibibyte,
       config.limits.max_conversation_bytes == 16 * kibibyte * kibibyte,
       config.max_tool_rounds == 8,
+      config.tool_round_limit == scry::ToolRoundLimitPolicy::fail,
+      !config.max_tool_calls_per_turn.has_value(),
       config.sampling.max_tokens == 1024,
       config.reasoning_mode == scry::ReasoningMode::provider_default,
       config.retry.max_attempts == 3,
@@ -331,7 +444,19 @@ int main() {
       .attempt = 2,
       .message = "bounded",
   };
-  if (!error.retryable || error.attempt != 2) {
+  if (!error.retryable || error.attempt != 2 || !error.model_message.empty()) {
+    return 1;
+  }
+
+  const auto refusal = scry::tool_error("north or south only");
+  if (refusal.category != scry::ErrorCategory::tool ||
+      refusal.model_message != "north or south only" ||
+      refusal.message != "north or south only") {
+    return 1;
+  }
+  const auto split = scry::tool_error("north or south only", "rejected move west");
+  if (split.model_message != "north or south only" ||
+      split.message != "rejected move west") {
     return 1;
   }
 

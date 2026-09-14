@@ -35,7 +35,12 @@ include(FetchContent)
 include(GNUInstallDirs)
 
 option(SCRY_BUILD_TESTS "Build Scry's tests" ${PROJECT_IS_TOP_LEVEL})
-option(SCRY_BUILD_EXAMPLES "Compile Scry's canonical example" ${PROJECT_IS_TOP_LEVEL})
+option(SCRY_BUILD_EXAMPLES "Compile Scry's examples" ${PROJECT_IS_TOP_LEVEL})
+option(
+  SCRY_BUILD_TESTING_SUPPORT
+  "Build and install scry::testing, the scripted-transport package component"
+  ON
+)
 option(SCRY_ENABLE_CLANG_TIDY "Run clang-tidy while compiling" OFF)
 option(SCRY_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ${PROJECT_IS_TOP_LEVEL})
 option(
@@ -204,6 +209,15 @@ target_sources(
     BASE_DIRS "${SCRY_GENERATED_INCLUDE_DIR}"
     FILES "${SCRY_GENERATED_VERSION_HEADER}"
 )
+
+set(
+  SCRY_TESTING_PUBLIC_HEADERS
+  "${PROJECT_SOURCE_DIR}/include/scry/testing/scripted_transport.hpp"
+  "${PROJECT_SOURCE_DIR}/include/scry/testing/streams.hpp"
+)
+if(SCRY_BUILD_TESTING_SUPPORT)
+  add_subdirectory(testing)
+endif()
 
 if(SCRY_BUILD_EXAMPLES)
   add_subdirectory(examples)

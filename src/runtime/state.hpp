@@ -24,8 +24,13 @@ struct ConversationState {
 
 struct RegisteredTool final {
   ToolDefinition definition{};
-  std::shared_ptr<ToolHandler> handler{};
+  std::shared_ptr<ContextualToolHandler> handler{};
 };
+
+// Registrations store one handler shape so dispatch has one call path. A plain
+// handler is adapted here rather than at every call site; an empty one stays
+// empty so registration still rejects it.
+[[nodiscard]] ContextualToolHandler to_contextual_handler(ToolHandler handler);
 
 using ToolRegistrationPtr = std::shared_ptr<const RegisteredTool>;
 using ToolSnapshot = std::vector<ToolRegistrationPtr>;
