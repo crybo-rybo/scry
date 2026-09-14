@@ -26,6 +26,18 @@ template <typename> inline constexpr bool unhandled_worker_event = false;
   return tools ? *tools : empty;
 }
 
+// The context borrows from the event, which outlives the dispatch that uses it.
+[[nodiscard]] ToolCallContext call_context(const TurnId turn_id,
+                                           const ToolCallEvent& event) noexcept {
+  return {
+      .turn_id = turn_id,
+      .call_id = event.call.id,
+      .tool_name = event.call.name,
+      .round = event.round,
+      .index = event.index,
+  };
+}
+
 // Marks a route as running a callback, and on the way out performs the clear
 // that a disconnect made from inside that callback had to defer. It is a guard
 // rather than a statement after the call because a host callback may throw, and
@@ -202,7 +214,8 @@ void TurnRoute::dispatch(const ToolCallEvent& event) {
   }
   remaining_exchange_bytes_ =
       std::min(remaining_exchange_bytes_, event.remaining_exchange_bytes);
-  auto result = dispatch_tool(route_tools(tools_), event.call, max_tool_result_bytes_);
+  auto result = dispatch_tool(route_tools(tools_), event.call,
+                              call_context(turn_id_, event), max_tool_result_bytes_);
   if (result) {
     const auto result_bytes = content_payload_bytes(*result);
     if (result_bytes > remaining_exchange_bytes_) {

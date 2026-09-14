@@ -10,6 +10,7 @@
 #include <optional>
 #include <scry/error.hpp>
 #include <scry/json.hpp>
+#include <scry/tool_registry.hpp>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -275,12 +276,20 @@ template <typename Result> consteval bool supported_handler_result_impl() {
 
 template <typename Handler, typename Args> consteval bool tool_handler_impl() {
   using Callable = std::decay_t<Handler>;
+  using Context = const scry::ToolCallContext&;
   if constexpr (!std::constructible_from<Callable, Handler> ||
-                !std::move_constructible<Callable> ||
-                !std::invocable<Callable&, Args>) {
+                !std::move_constructible<Callable>) {
     return false;
-  } else {
+  } else if constexpr (std::invocable<Callable&, Context, Args>) {
+    // A handler that accepts the context is invoked that way, so its result type
+    // is the one that has to be encodable. Checking the plain form as well would
+    // accept a callable whose two arities disagree about their return.
+    return supported_handler_result_impl<
+        std::invoke_result_t<Callable&, Context, Args>>();
+  } else if constexpr (std::invocable<Callable&, Args>) {
     return supported_handler_result_impl<std::invoke_result_t<Callable&, Args>>();
+  } else {
+    return false;
   }
 }
 

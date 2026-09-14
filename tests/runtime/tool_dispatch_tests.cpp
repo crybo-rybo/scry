@@ -11,7 +11,7 @@ TEST_CASE("tool dispatch canonicalizes successful handler results") {
         return scry::Json{.text = R"( { "z": [2, 1], "a": {"y":true,"x":null} } )"};
       })};
 
-  const auto result = scry::detail::dispatch_tool(tools, tool_call(), 1024);
+  const auto result = scry::detail::dispatch_tool(tools, tool_call(), {}, 1024);
 
   REQUIRE(result);
   CHECK(result->tool_call_id == "call-1");
@@ -20,7 +20,7 @@ TEST_CASE("tool dispatch canonicalizes successful handler results") {
 }
 
 TEST_CASE("tool dispatch turns an unknown tool into a model-visible error") {
-  const auto result = scry::detail::dispatch_tool({}, tool_call("missing"), 1024);
+  const auto result = scry::detail::dispatch_tool({}, tool_call("missing"), {}, 1024);
 
   REQUIRE(result);
   CHECK(result->tool_call_id == "call-1");
@@ -40,7 +40,7 @@ TEST_CASE(
       registered_tool("look", stub),
   };
 
-  const auto result = scry::detail::dispatch_tool(tools, tool_call("jump"), 1024);
+  const auto result = scry::detail::dispatch_tool(tools, tool_call("jump"), {}, 1024);
 
   REQUIRE(result);
   CHECK(result->is_error);
@@ -51,7 +51,7 @@ TEST_CASE(
 TEST_CASE("tool dispatch treats unavailable handlers as model-visible errors") {
   const auto check_unavailable = [](scry::detail::ToolRegistrationPtr tool) {
     const auto result =
-        scry::detail::dispatch_tool({std::move(tool)}, tool_call(), 1024);
+        scry::detail::dispatch_tool({std::move(tool)}, tool_call(), {}, 1024);
     REQUIRE(result);
     CHECK(result->tool_call_id == "call-1");
     CHECK(result->is_error);
@@ -69,7 +69,7 @@ TEST_CASE("tool dispatch treats unavailable handlers as model-visible errors") {
     check_unavailable(std::make_shared<const scry::detail::RegisteredTool>(
         scry::detail::RegisteredTool{
             .definition = tool_definition("forecast"),
-            .handler = std::make_shared<scry::ToolHandler>(),
+            .handler = std::make_shared<scry::ContextualToolHandler>(),
         }));
   }
 }
@@ -84,7 +84,7 @@ TEST_CASE("tool dispatch does not disclose handler-returned Error details") {
         });
       })};
 
-  const auto result = scry::detail::dispatch_tool(tools, tool_call(), 1024);
+  const auto result = scry::detail::dispatch_tool(tools, tool_call(), {}, 1024);
 
   REQUIRE(result);
   CHECK(result->is_error);
@@ -99,7 +99,7 @@ TEST_CASE("tool dispatch forwards a handler's model_message unchanged") {
                                                 "secret application message"));
       })};
 
-  const auto result = scry::detail::dispatch_tool(tools, tool_call(), 1024);
+  const auto result = scry::detail::dispatch_tool(tools, tool_call(), {}, 1024);
 
   REQUIRE(result);
   CHECK(result->is_error);
@@ -113,7 +113,7 @@ TEST_CASE("tool dispatch drops an oversized model_message for the fixed diagnost
         return std::unexpected(scry::tool_error(std::string(4096, 'x')));
       })};
 
-  const auto result = scry::detail::dispatch_tool(tools, tool_call(), 1024);
+  const auto result = scry::detail::dispatch_tool(tools, tool_call(), {}, 1024);
 
   REQUIRE(result);
   CHECK(result->is_error);
@@ -124,7 +124,7 @@ TEST_CASE("tool dispatch contains standard and non-standard handler exceptions")
   const auto check_exception = [](scry::ToolHandler handler) {
     const scry::detail::ToolSnapshot tools{
         registered_tool("forecast", std::move(handler))};
-    const auto result = scry::detail::dispatch_tool(tools, tool_call(), 1024);
+    const auto result = scry::detail::dispatch_tool(tools, tool_call(), {}, 1024);
     REQUIRE(result);
     CHECK(result->is_error);
     CHECK(result->result.text == R"({"error":"tool handler returned an error"})");
@@ -146,7 +146,7 @@ TEST_CASE("tool dispatch turns invalid handler JSON into a bounded tool error") 
         return scry::Json{.text = "{"};
       })};
 
-  const auto result = scry::detail::dispatch_tool(tools, tool_call(), 1024);
+  const auto result = scry::detail::dispatch_tool(tools, tool_call(), {}, 1024);
 
   REQUIRE(result);
   CHECK(result->is_error);
@@ -160,12 +160,13 @@ TEST_CASE("tool dispatch enforces the canonical result byte limit exactly") {
         return scry::Json{.text = R"({"a":1})"};
       })};
 
-  const auto exact = scry::detail::dispatch_tool(tools, tool_call(), canonical.size());
+  const auto exact =
+      scry::detail::dispatch_tool(tools, tool_call(), {}, canonical.size());
   REQUIRE(exact);
   CHECK(exact->result.text == canonical);
 
   const auto over =
-      scry::detail::dispatch_tool(tools, tool_call(), canonical.size() - 1);
+      scry::detail::dispatch_tool(tools, tool_call(), {}, canonical.size() - 1);
   REQUIRE_FALSE(over);
   CHECK(over.error().category == scry::ErrorCategory::resource_limit);
 }
@@ -173,9 +174,55 @@ TEST_CASE("tool dispatch enforces the canonical result byte limit exactly") {
 TEST_CASE("tool dispatch fails when even its generic error exceeds the limit") {
   constexpr std::string_view generic_error = R"({"error":"tool execution failed"})";
 
-  const auto result =
-      scry::detail::dispatch_tool({}, tool_call("missing"), generic_error.size() - 1);
+  const auto result = scry::detail::dispatch_tool({}, tool_call("missing"), {},
+                                                  generic_error.size() - 1);
 
   REQUIRE_FALSE(result);
   CHECK(result.error().category == scry::ErrorCategory::resource_limit);
+}
+
+TEST_CASE("tool dispatch hands the handler the identity of the call it is servicing") {
+  scry::ToolCallContext observed{};
+  const scry::detail::ToolSnapshot tools{
+      registered_tool("forecast",
+                      [&observed](const scry::ToolCallContext& context,
+                                  scry::Json) -> scry::Result<scry::Json> {
+                        // Copying the views here is the point: they borrow from the
+                        // live call block, so a handler that keeps them must own the
+                        // text itself.
+                        observed = context;
+                        return scry::Json{.text = "{}"};
+                      })};
+  const auto call = tool_call("forecast", "call-7");
+  const scry::ToolCallContext context{
+      .turn_id = scry::TurnId{.value = 9},
+      .call_id = call.id,
+      .tool_name = call.name,
+      .round = 2,
+      .index = 3,
+  };
+
+  const auto result = scry::detail::dispatch_tool(tools, call, context, 1024);
+
+  REQUIRE(result);
+  CHECK(observed.turn_id == scry::TurnId{.value = 9});
+  CHECK(observed.call_id == "call-7");
+  CHECK(observed.tool_name == "forecast");
+  CHECK(observed.round == 2);
+  CHECK(observed.index == 3);
+}
+
+TEST_CASE("a plain handler is adapted without disturbing its arguments") {
+  scry::Json seen{};
+  const scry::detail::ToolSnapshot tools{
+      registered_tool("forecast", [&seen](scry::Json arguments) {
+        seen = arguments;
+        return scry::Result<scry::Json>{std::move(arguments)};
+      })};
+
+  const auto result = scry::detail::dispatch_tool(tools, tool_call(), {}, 1024);
+
+  REQUIRE(result);
+  CHECK(seen.text == R"({"z":2,"a":1})");
+  CHECK(result->result.text == R"({"a":1,"z":2})");
 }

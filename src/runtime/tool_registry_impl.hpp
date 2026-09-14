@@ -8,7 +8,7 @@ namespace scry::detail {
 
 [[nodiscard]] Status add_tool_registration(ToolRegistryState& state,
                                            ToolDefinition definition,
-                                           ToolHandler handler);
+                                           ContextualToolHandler handler);
 
 } // namespace scry::detail
 
@@ -16,7 +16,7 @@ namespace scry {
 
 class ToolRegistry::Impl final {
 public:
-  [[nodiscard]] Status add(ToolDefinition definition, ToolHandler handler);
+  [[nodiscard]] Status add(ToolDefinition definition, ContextualToolHandler handler);
 
   [[nodiscard]] detail::FrozenToolSnapshot snapshot() {
     return detail::snapshot_tools(state);

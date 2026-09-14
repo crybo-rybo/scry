@@ -27,12 +27,20 @@ namespace scry::test_support {
 }
 
 [[nodiscard]] inline scry::detail::ToolRegistrationPtr
-registered_tool(std::string name, scry::ToolHandler handler) {
+registered_tool(std::string name, scry::ContextualToolHandler handler) {
   return std::make_shared<const scry::detail::RegisteredTool>(
       scry::detail::RegisteredTool{
           .definition = tool_definition(std::move(name)),
-          .handler = std::make_shared<scry::ToolHandler>(std::move(handler)),
+          .handler = std::make_shared<scry::ContextualToolHandler>(std::move(handler)),
       });
+}
+
+// A snapshot assembled by hand stores the same adapted handler a registration
+// would, so the two paths cannot drift.
+[[nodiscard]] inline scry::detail::ToolRegistrationPtr
+registered_tool(std::string name, scry::ToolHandler handler) {
+  return registered_tool(std::move(name),
+                         scry::detail::to_contextual_handler(std::move(handler)));
 }
 
 [[nodiscard]] inline scry::detail::FrozenToolEntries

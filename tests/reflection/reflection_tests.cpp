@@ -1,4 +1,5 @@
 #include "runtime/tool_dispatch.hpp"
+#include "runtime/tool_registry_impl.hpp"
 #include "support/harness_test_support.hpp"
 
 #include <array>
@@ -105,6 +106,24 @@ struct VoidHandler {
   void operator()(PresenceArguments) const {}
 };
 
+struct ContextHandler {
+  NestedResult operator()(const scry::ToolCallContext&, PresenceArguments) const {
+    return {};
+  }
+};
+
+// The context is a leading parameter, never a trailing one: the wrong order has
+// to stay a compile error rather than silently binding.
+struct ReversedContextHandler {
+  NestedResult operator()(PresenceArguments, const scry::ToolCallContext&) const {
+    return {};
+  }
+};
+
+struct VoidContextHandler {
+  void operator()(const scry::ToolCallContext&, PresenceArguments) const {}
+};
+
 template <scry::reflection::SupportedValue Type>
 [[nodiscard]] scry::Result<Type> decode_value(const std::string_view text) {
   auto parsed =
@@ -127,6 +146,10 @@ static_assert(scry::reflection::ToolHandlerFor<ExpectedHandler, PresenceArgument
 static_assert(!scry::reflection::ToolHandlerFor<ReferenceHandler, PresenceArguments>);
 static_assert(!scry::reflection::ToolHandlerFor<RawJsonHandler, PresenceArguments>);
 static_assert(!scry::reflection::ToolHandlerFor<VoidHandler, PresenceArguments>);
+static_assert(scry::reflection::ToolHandlerFor<ContextHandler, PresenceArguments>);
+static_assert(
+    !scry::reflection::ToolHandlerFor<ReversedContextHandler, PresenceArguments>);
+static_assert(!scry::reflection::ToolHandlerFor<VoidContextHandler, PresenceArguments>);
 static_assert(!scry::reflection::ToolArguments<CharacterArguments>);
 static_assert(!scry::reflection::ToolArguments<NestedOptionalArguments>);
 static_assert(!scry::reflection::ToolArguments<PackedBooleanArguments>);
@@ -453,7 +476,7 @@ TEST_CASE("reflected result-encoding failures reach the model as the fixed text"
                   .description = "Return a result the host cannot encode",
                   .input_schema = {.text = "{}"},
               },
-          .handler = std::make_shared<scry::ToolHandler>(std::move(handler)),
+          .handler = std::make_shared<scry::ContextualToolHandler>(std::move(handler)),
       })};
 
   const auto result = scry::detail::dispatch_tool(
@@ -463,7 +486,7 @@ TEST_CASE("reflected result-encoding failures reach the model as the fixed text"
           .name = "private_calculation",
           .arguments = {.text = R"({"nullable":null,"required":"value"})"},
       },
-      1024);
+      {}, 1024);
 
   REQUIRE(result);
   CHECK(result->is_error);
@@ -490,7 +513,7 @@ TEST_CASE("public encoding matches reflected tool dispatch output") {
                   .description = "Return the snapshot",
                   .input_schema = {.text = "{}"},
               },
-          .handler = std::make_shared<scry::ToolHandler>(std::move(handler)),
+          .handler = std::make_shared<scry::ContextualToolHandler>(std::move(handler)),
       })};
 
   const auto direct = scry::reflection::encode(value);
@@ -504,7 +527,7 @@ TEST_CASE("public encoding matches reflected tool dispatch output") {
                   .text = R"({"nullable":null,"required":"value"})",
               },
       },
-      1024);
+      {}, 1024);
 
   REQUIRE(direct);
   REQUIRE(through_dispatch);
@@ -520,7 +543,7 @@ TEST_CASE("reflected erased handlers encode copy-only results without extra copi
       [](PresenceArguments) { return CopyOnlyResult{.values = {1, 2, 3}}; });
 
   const auto result =
-      handler(scry::Json{.text = R"({"nullable":null,"required":"ok"})"});
+      handler({}, scry::Json{.text = R"({"nullable":null,"required":"ok"})"});
 
   REQUIRE(result);
   CHECK(result->text == R"({"values":[1,2,3]})");
@@ -536,7 +559,7 @@ TEST_CASE(
       });
 
   const auto result =
-      handler(scry::Json{.text = R"({"nullable":null,"required":"ok"})"});
+      handler({}, scry::Json{.text = R"({"nullable":null,"required":"ok"})"});
 
   REQUIRE(result);
   CHECK(result->text == R"({"values":[1,2,3]})");
@@ -588,15 +611,15 @@ TEST_CASE("reflected erased handlers retain move-only captures and typed errors"
         return NestedResult{.label = *owned + ":" + arguments.required};
       });
 
-  auto result = handler(scry::Json{.text = R"({"nullable":null,"required":"ok"})"});
+  auto result = handler({}, scry::Json{.text = R"({"nullable":null,"required":"ok"})"});
   REQUIRE(result);
   CHECK(result->text == R"({"label":"handled:ok"})");
 
-  result = handler(scry::Json{.text = R"({"nullable":null,"required":"reject"})"});
+  result = handler({}, scry::Json{.text = R"({"nullable":null,"required":"reject"})"});
   REQUIRE_FALSE(result);
   CHECK(result.error().message == "application rejected arguments");
 
-  result = handler(scry::Json{.text = R"({"required":"missing nullable"})"});
+  result = handler({}, scry::Json{.text = R"({"required":"missing nullable"})"});
   REQUIRE_FALSE(result);
   CHECK(result.error().category == scry::ErrorCategory::tool);
 }
@@ -656,4 +679,62 @@ TEST_CASE("tool manifests include reflected and explicit contracts together") {
       std::string{R"({"tools":[{"description":"Reflected arguments","input_schema":)"} +
           std::string{scry::reflection::input_schema_v<PresenceArguments>} +
           R"(,"name":"presence"},{"description":"Explicit arguments","input_schema":{"type":"object"},"name":"explicit"}],"version":1})");
+}
+
+TEST_CASE("reflected handlers may take the call context as a leading parameter") {
+  auto created = scry::Harness::create(scry::test_support::test_config());
+  REQUIRE(created);
+  auto harness = std::move(*created);
+
+  std::string observed_call_id;
+  std::string observed_tool_name;
+  REQUIRE(scry::reflection::add<PresenceArguments>(
+      harness.tools(),
+      {
+          .name = "contextual",
+          .description = "Record the call it was invoked for",
+      },
+      [&](const scry::ToolCallContext& context, PresenceArguments arguments) {
+        // The views borrow from the live call block, so the test owns copies.
+        observed_call_id = std::string{context.call_id};
+        observed_tool_name = std::string{context.tool_name};
+        return NestedResult{.label = std::move(arguments.required)};
+      }));
+  REQUIRE(scry::reflection::add<PresenceArguments>(harness.tools(),
+                                                   {
+                                                       .name = "plain",
+                                                       .description = "Ignore the call",
+                                                   },
+                                                   DirectHandler{}));
+  CHECK(harness.tools().size() == 2);
+
+  const auto snapshot =
+      scry::detail::ToolRegistryAccess::snapshot(harness.tools()).entries;
+  REQUIRE(snapshot);
+  const auto arguments = scry::Json{.text = R"({"nullable":null,"required":"value"})"};
+
+  const auto contextual = scry::detail::dispatch_tool(
+      *snapshot,
+      scry::detail::ToolCallBlock{
+          .id = "call-9", .name = "contextual", .arguments = arguments},
+      scry::ToolCallContext{
+          .turn_id = scry::TurnId{.value = 3},
+          .call_id = "call-9",
+          .tool_name = "contextual",
+          .round = 1,
+          .index = 0,
+      },
+      1024);
+  REQUIRE(contextual);
+  CHECK(contextual->result.text == R"({"label":"value"})");
+  CHECK(observed_call_id == "call-9");
+  CHECK(observed_tool_name == "contextual");
+
+  const auto plain = scry::detail::dispatch_tool(
+      *snapshot,
+      scry::detail::ToolCallBlock{
+          .id = "call-10", .name = "plain", .arguments = arguments},
+      {}, 1024);
+  REQUIRE(plain);
+  CHECK(plain->result.text == R"({"label":""})");
 }
