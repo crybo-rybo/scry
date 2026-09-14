@@ -1,12 +1,12 @@
 # Standalone project for Scry's opt-in showcase: a Dear ImGui chat panel and a
-# grid-NPC example, with their tests. Deliberately outside the root build — the
-# library is the deliverable, and nothing here is built, tested, or installed by
-# it. Configure this directory directly:
+# grid-NPC example. Deliberately outside the root build — the library is the
+# deliverable, and nothing here is built or installed by it. Configure this
+# directory directly:
 #
 #   cmake -S extras/showcase -B build/showcase -G Ninja -DCMAKE_BUILD_TYPE=Debug
 #
-# ./scripts/ci-showcase.sh does exactly that and audits that no showcase artifact
-# reaches the installed package.
+# ./scripts/ci-showcase.sh builds this project; the core CI script audits the
+# installed package.
 
 cmake_minimum_required(VERSION 3.28)
 
@@ -16,7 +16,6 @@ project(scry_showcase LANGUAGES CXX)
 # must be off for GCC on macOS.
 set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 
-include(CTest)
 include(FetchContent)
 
 get_filename_component(
@@ -40,20 +39,6 @@ FetchContent_Declare(
   SYSTEM
 )
 FetchContent_MakeAvailable(imgui)
-
-FetchContent_Declare(
-  Catch2
-  GIT_REPOSITORY https://github.com/catchorg/Catch2.git
-  GIT_TAG 317ac1ed4c0bb6e6b91eafc817e05c488feffcb3
-  SYSTEM
-  EXCLUDE_FROM_ALL
-)
-FetchContent_MakeAvailable(Catch2)
-foreach(SCRY_CATCH_TARGET IN ITEMS Catch2 Catch2WithMain)
-  target_compile_features("${SCRY_CATCH_TARGET}" PRIVATE cxx_std_23)
-endforeach()
-list(APPEND CMAKE_MODULE_PATH "${catch2_SOURCE_DIR}/extras")
-include(Catch)
 
 add_library(
   scry_imgui_vendor
@@ -92,54 +77,4 @@ target_include_directories(
 target_link_libraries(
   scry_npc_showcase
   PRIVATE scry::scry scry_project_options
-)
-
-add_executable(
-  scry_showcase_tests
-  tests/chat_panel_tests.cpp
-  tests/npc_completion_tests.cpp
-  tests/npc_dispatch_tests.cpp
-  tests/npc_world_tests.cpp
-  npc/world.cpp
-)
-# The one concession this project makes: its tests reach through the library's
-# internal test seam (runtime/test_access.hpp, support/harness_test_support.hpp)
-# so an NPC tool round can run against an injected transport.
-target_include_directories(
-  scry_showcase_tests
-  PRIVATE
-    "${CMAKE_CURRENT_SOURCE_DIR}/imgui"
-    "${CMAKE_CURRENT_SOURCE_DIR}/npc"
-    "${SCRY_REPOSITORY_ROOT}/src"
-    "${SCRY_REPOSITORY_ROOT}/tests"
-)
-target_link_libraries(
-  scry_showcase_tests
-  PRIVATE
-    Catch2::Catch2WithMain
-    scry_imgui_chat_panel
-    scry_project_options
-)
-catch_discover_tests(
-  scry_showcase_tests
-  TEST_PREFIX "showcase."
-  PROPERTIES LABELS showcase
-)
-
-add_executable(scry_imgui_headless_smoke tests/imgui_headless_smoke.cpp)
-target_include_directories(
-  scry_imgui_headless_smoke
-  PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/imgui"
-)
-target_link_libraries(
-  scry_imgui_headless_smoke
-  PRIVATE
-    scry_imgui_chat_panel
-    scry_imgui_vendor
-    scry_project_options
-)
-add_test(NAME showcase.imgui-headless-frame COMMAND scry_imgui_headless_smoke)
-set_tests_properties(
-  showcase.imgui-headless-frame
-  PROPERTIES LABELS showcase
 )

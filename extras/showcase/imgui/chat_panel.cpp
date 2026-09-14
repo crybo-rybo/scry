@@ -1,6 +1,7 @@
 #include "chat_panel.hpp"
 
 #include <array>
+#include <cstdint>
 #include <imgui.h>
 #include <memory>
 #include <optional>
@@ -10,41 +11,20 @@
 namespace scry_showcase {
 namespace {
 
+enum class ChatPhase : std::uint8_t {
+  idle,
+  streaming,
+  cancelling,
+  completed,
+  failed,
+  cancelled,
+};
+
 struct PanelState {
   ChatPhase phase{ChatPhase::idle};
   std::string user_message{};
   std::string assistant_text{};
   std::string error_message{};
-};
-
-class HarnessPanelController final : public PanelController {
-public:
-  HarnessPanelController(scry::Harness& harness, scry::Conversation& conversation)
-      : harness_(harness), conversation_(conversation) {}
-
-  [[nodiscard]] SubmitStatus submit(std::string user_message,
-                                    scry::TurnCallbacks callbacks) override {
-    auto result =
-        harness_.send(conversation_, std::move(user_message), std::move(callbacks));
-    if (!result) {
-      return std::unexpected(result.error().message);
-    }
-    turn_.emplace(std::move(*result));
-    return {};
-  }
-
-  [[nodiscard]] bool cancel() noexcept override {
-    return turn_.has_value() && turn_->cancel();
-  }
-
-  [[nodiscard]] bool disconnect() noexcept override {
-    return turn_.has_value() && turn_->disconnect();
-  }
-
-private:
-  scry::Harness& harness_;
-  scry::Conversation& conversation_;
-  std::optional<scry::Turn> turn_{};
 };
 
 // The callbacks hold the panel state directly. Nothing here has to ask whether
@@ -93,20 +73,17 @@ private:
 
 class ChatPanel::Impl final {
 public:
-  explicit Impl(std::unique_ptr<PanelController> owned_controller)
-      : owned_controller_(std::move(owned_controller)), controller_(*owned_controller_),
+  Impl(scry::Harness& harness, scry::Conversation& conversation)
+      : harness_(harness), conversation_(conversation),
         state_(std::make_shared<PanelState>()) {}
-
-  explicit Impl(PanelController& controller)
-      : controller_(controller), state_(std::make_shared<PanelState>()) {}
 
   ~Impl() {
     if (can_cancel()) {
-      static_cast<void>(controller_.cancel());
+      static_cast<void>(cancel());
     }
     // The panel is going away; the turn may not be. Disconnecting releases the
     // callbacks holding the panel state, so nothing keeps writing into it.
-    static_cast<void>(controller_.disconnect());
+    disconnect();
   }
 
   [[nodiscard]] SubmitStatus submit(std::string user_message) {
@@ -119,40 +96,31 @@ public:
 
     // Whatever a previous turn is still doing, it stops reporting here: the
     // library releases its callbacks, so no stale delivery can reach the panel.
-    static_cast<void>(controller_.disconnect());
+    disconnect();
     state_->phase = ChatPhase::streaming;
     state_->user_message = user_message;
     state_->assistant_text.clear();
     state_->error_message.clear();
-    auto status = controller_.submit(std::move(user_message), make_callbacks(state_));
-    if (!status) {
-      static_cast<void>(controller_.disconnect());
+    auto result =
+        harness_.send(conversation_, std::move(user_message), make_callbacks(state_));
+    if (!result) {
       state_->phase = ChatPhase::failed;
-      state_->error_message = status.error();
+      state_->error_message = result.error().message;
+      return std::unexpected(state_->error_message);
     }
-    return status;
+    turn_.emplace(std::move(*result));
+    return {};
   }
 
   [[nodiscard]] bool cancel() noexcept {
     if (!can_cancel()) {
       return false;
     }
-    const bool requested = controller_.cancel();
+    const bool requested = turn_ && turn_->cancel();
     if (requested && state_->phase == ChatPhase::streaming) {
       state_->phase = ChatPhase::cancelling;
     }
     return requested;
-  }
-
-  [[nodiscard]] ChatSnapshot snapshot() const {
-    return ChatSnapshot{
-        .phase = state_->phase,
-        .user_message = state_->user_message,
-        .assistant_text = state_->assistant_text,
-        .error_message = state_->error_message,
-        .can_submit = can_submit(),
-        .can_cancel = can_cancel(),
-    };
   }
 
   void draw() {
@@ -166,6 +134,12 @@ public:
   }
 
 private:
+  void disconnect() noexcept {
+    if (turn_) {
+      static_cast<void>(turn_->disconnect());
+    }
+  }
+
   [[nodiscard]] bool can_submit() const noexcept {
     return state_->phase != ChatPhase::streaming &&
            state_->phase != ChatPhase::cancelling;
@@ -210,18 +184,15 @@ private:
     ImGui::EndDisabled();
   }
 
-  std::unique_ptr<PanelController> owned_controller_{};
-  PanelController& controller_;
+  scry::Harness& harness_;
+  scry::Conversation& conversation_;
+  std::optional<scry::Turn> turn_{};
   std::shared_ptr<PanelState> state_;
   std::array<char, 4096> input_{};
 };
 
 ChatPanel::ChatPanel(scry::Harness& harness, scry::Conversation& conversation)
-    : impl_(std::make_unique<Impl>(
-          std::make_unique<HarnessPanelController>(harness, conversation))) {}
-
-ChatPanel::ChatPanel(PanelController& controller)
-    : impl_(std::make_unique<Impl>(controller)) {}
+    : impl_(std::make_unique<Impl>(harness, conversation)) {}
 
 ChatPanel::~ChatPanel() = default;
 ChatPanel::ChatPanel(ChatPanel&&) noexcept = default;
@@ -234,7 +205,5 @@ SubmitStatus ChatPanel::submit(std::string user_message) {
 }
 
 bool ChatPanel::cancel() noexcept { return impl_->cancel(); }
-
-ChatSnapshot ChatPanel::snapshot() const { return impl_->snapshot(); }
 
 } // namespace scry_showcase

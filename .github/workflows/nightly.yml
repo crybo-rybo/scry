@@ -40,8 +40,7 @@ jobs:
       - name: Build analyzed C++
         run: |
           cmake --preset ci \
-            -B build/codeql \
-            -DSCRY_ENABLE_FORMAT_CHECK=OFF
+            -B build/codeql
           cmake --build build/codeql
       - name: Analyze
         uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
@@ -99,7 +98,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install the GCC 16 environment
         uses: ./.github/actions/gcc16-env
-      - name: Build, test, render a headless frame, and audit packaging
+      - name: Build showcase
         run: ./scripts/ci-showcase.sh
 
   local-model:

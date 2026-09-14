@@ -26,17 +26,29 @@ if [[ -n "${unlinked_todos}" ]]; then
   exit 1
 fi
 if [[ "${format_check}" == "1" ]]; then
-  cmake --preset ci "$@"
-  cmake --build "${build_dir}" --target all format-check
-else
-  cmake --preset ci -DSCRY_ENABLE_FORMAT_CHECK=OFF "$@"
-  cmake --build "${build_dir}" --target all
+  ./scripts/format.sh --check
 fi
+cmake --preset ci "$@"
+cmake --build "${build_dir}"
+
 ctest \
   --test-dir "${build_dir}" \
   --output-on-failure
 cmake -E remove_directory "${stage_dir}"
 cmake --install "${build_dir}" --prefix "${stage_dir}"
+# Showcase code and dependencies must stay out of the installed library.
+if find "${stage_dir}" -type f \
+  \( -iname '*imgui*' -o -iname '*showcase*' -o -iname '*npc*' \) \
+  -print -quit | grep -q .; then
+  echo "Showcase artifact leaked into the installed package" >&2
+  exit 1
+fi
+if grep -R -E -i 'imgui|scry_showcase|scry_npc' \
+  "${stage_dir}/lib/cmake/scry" >/dev/null; then
+  echo "Showcase dependency leaked into the installed CMake package" >&2
+  exit 1
+fi
+
 # The installed package must be usable by a downstream project: the consumer
 # exercises the explicit-schema surface and the reflected surface through
 # scry::scry alone, so the reflected API cannot silently stop being installed.

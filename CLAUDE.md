@@ -20,7 +20,7 @@ what a change needs before it lands), and the public headers under
 cmake --preset dev && cmake --build build/dev   # presets: dev ci asan tsan fuzz
 ctest --test-dir build/dev --output-on-failure
 ctest --test-dir build/dev -R 'runtime\.'       # one suite, or one case by name
-cmake --build build/dev --target format         # format-check to verify only
+./scripts/format.sh --fix                       # --check to verify only
 ./scripts/preflight.sh                          # the full local ring before a PR
 ```
 

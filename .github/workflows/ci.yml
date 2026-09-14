@@ -51,9 +51,9 @@ jobs:
           if-no-files-found: error
           retention-days: 14
       - name: Check formatting
-        run: git ls-files '*.cpp' '*.hpp' |
-          grep -E '^(examples|extras|include|src|tests)/' |
-          xargs clang-format-18 --dry-run --Werror
+        env:
+          CLANG_FORMAT: clang-format-18
+        run: ./scripts/format.sh --check
 
   core:
     name: Core (${{ matrix.name }})
