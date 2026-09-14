@@ -25,9 +25,11 @@ std::size_t event_payload_bytes(const WorkerEvent& event) noexcept {
           return value.provider_request_id.size();
         } else if constexpr (std::is_same_v<Event, ErrorEvent>) {
           return saturating_payload_add(
-              saturating_payload_add(value.error.message.size(),
-                                     value.error.provider_detail.size()),
-              value.error.provider_request_id.size());
+              saturating_payload_add(
+                  saturating_payload_add(value.error.message.size(),
+                                         value.error.provider_detail.size()),
+                  value.error.provider_request_id.size()),
+              value.error.model_message.size());
         } else {
           return 0;
         }

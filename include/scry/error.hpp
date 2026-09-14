@@ -41,6 +41,9 @@ enum class ErrorCategory : std::uint8_t {
 ///
 /// Provider-supplied fields are sanitized before they reach this boundary. API keys,
 /// auth headers, prompt content, and tool content are never intentionally included.
+/// `model_message` is the one field a host fills itself, and Scry forwards it
+/// verbatim to the provider; the worker's API-key redaction runs on attempt errors,
+/// not on tool results, so the host owns secret hygiene there.
 struct Error {
   // Keep the scalar header together: Error is carried by value through expected
   // and event queues, so separating these fields adds padding to every instance.
@@ -64,7 +67,24 @@ struct Error {
   std::optional<TurnId> turn_id{};
   /// Sanitized provider request identifier, when available.
   std::string provider_request_id{};
+  /// Text a tool handler wants the model to see. Empty means the model receives
+  /// Scry's fixed diagnostic. Bounded by ResourceLimits::max_tool_result_bytes; an
+  /// oversized value falls back to the fixed diagnostic. The reflected codec fills
+  /// it for schema-derived decode failures; Scry never fills it from exception text
+  /// or from `message`.
+  std::string model_message{};
 };
+
+/// Builds an ErrorCategory::tool error whose message reaches the model.
+///
+/// An empty `host_message` copies `model_message` into `Error::message`, so a
+/// handler that wants one diagnostic writes it once.
+/// @param model_message Text forwarded to the model inside the tool error result.
+/// @param host_message Host-side diagnostic kept in Error::message; empty copies
+/// model_message.
+/// @return An ErrorCategory::tool error carrying both texts.
+[[nodiscard]] Error tool_error(std::string model_message,
+                               std::string host_message = {});
 
 /// Result of a fallible Scry operation.
 template <typename T> using Result = std::expected<T, Error>;

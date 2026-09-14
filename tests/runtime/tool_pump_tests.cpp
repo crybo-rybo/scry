@@ -97,7 +97,8 @@ TEST_CASE("an unknown tool reaches the observer as an error result") {
 
   CHECK(observer_calls == 1);
   CHECK(observed_is_error);
-  CHECK(observed_result.text == R"({"error":"model requested an unknown tool"})");
+  CHECK(observed_result.text ==
+        R"({"error":"unknown tool \"absent_tool\"; no tools are registered"})");
   auto command = fixture.commands->try_pop();
   REQUIRE(command);
   const auto* result = std::get_if<scry::detail::ToolResultCommand>(&*command);

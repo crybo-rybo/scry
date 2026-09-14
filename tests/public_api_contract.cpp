@@ -16,6 +16,8 @@ static_assert(std::is_aggregate_v<scry::Config>);
 static_assert(std::is_aggregate_v<scry::HttpHeader>);
 static_assert(std::is_enum_v<scry::ReasoningMode>);
 static_assert(std::is_aggregate_v<scry::Error>);
+static_assert(std::same_as<decltype(scry::Error::model_message), std::string>);
+static_assert(std::same_as<decltype(scry::tool_error(std::string{})), scry::Error>);
 static_assert(std::is_aggregate_v<scry::Json>);
 static_assert(std::is_enum_v<scry::JsonKind>);
 static_assert(std::is_default_constructible_v<scry::JsonView>);
@@ -331,7 +333,19 @@ int main() {
       .attempt = 2,
       .message = "bounded",
   };
-  if (!error.retryable || error.attempt != 2) {
+  if (!error.retryable || error.attempt != 2 || !error.model_message.empty()) {
+    return 1;
+  }
+
+  const auto refusal = scry::tool_error("north or south only");
+  if (refusal.category != scry::ErrorCategory::tool ||
+      refusal.model_message != "north or south only" ||
+      refusal.message != "north or south only") {
+    return 1;
+  }
+  const auto split = scry::tool_error("north or south only", "rejected move west");
+  if (split.model_message != "north or south only" ||
+      split.message != "rejected move west") {
     return 1;
   }
 
