@@ -105,6 +105,20 @@ struct VoidHandler {
   void operator()(PresenceArguments) const {}
 };
 
+// A text catalog: the shape description_of exists for. The views need static storage
+// because each one is bound as a reference template parameter.
+namespace catalog {
+inline constexpr std::string_view direction = "Direction of travel";
+} // namespace catalog
+
+struct CatalogArguments {
+  [[= scry::reflection::description_of<catalog::direction>()]] std::string heading;
+};
+
+struct LiteralArguments {
+  [[= scry::reflection::description{"Direction of travel"}]] std::string heading;
+};
+
 template <scry::reflection::SupportedValue Type>
 [[nodiscard]] scry::Result<Type> decode_value(const std::string_view text) {
   auto parsed =
@@ -142,6 +156,30 @@ static_assert(
 static_assert(
     scry::reflection::input_schema_v<NumericArguments> ==
     R"({"additionalProperties":false,"properties":{"floating":{"type":"number"},"signed_value":{"maximum":32767,"minimum":-32768,"type":"integer"},"unsigned_value":{"maximum":65535,"minimum":0,"type":"integer"}},"required":["floating","signed_value","unsigned_value"],"type":"object"})");
+
+// A catalog-sourced description must be indistinguishable from the literal form.
+static_assert(scry::reflection::input_schema_v<CatalogArguments> ==
+              scry::reflection::input_schema_v<LiteralArguments>);
+static_assert(
+    scry::reflection::input_schema_v<CatalogArguments> ==
+    R"({"additionalProperties":false,"properties":{"heading":{"description":"Direction of travel","type":"string"}},"required":["heading"],"type":"object"})");
+static_assert(scry::reflection::description_of<catalog::direction>().view() ==
+              catalog::direction);
+
+// Result types and bare enums are schema roots too, even though Scry never sends
+// either to a model.
+static_assert(std::same_as<decltype(scry::reflection::schema_v<NestedResult>),
+                           const std::string_view>);
+static_assert(scry::reflection::schema_v<NestedResult> ==
+              scry::reflection::input_schema_v<NestedResult>);
+static_assert(
+    scry::reflection::schema_v<NestedResult> ==
+    R"({"additionalProperties":false,"properties":{"label":{"type":"string"}},"required":[],"type":"object"})");
+static_assert(scry::reflection::schema_v<TemperatureUnit> ==
+              R"({"enum":["celsius","fahrenheit"],"type":"string"})");
+static_assert(
+    scry::reflection::schema_v<std::vector<TemperatureUnit>> ==
+    R"({"items":{"enum":["celsius","fahrenheit"],"type":"string"},"type":"array"})");
 
 TEST_CASE("reflected decoding preserves defaults and required nullability") {
   auto decoded = scry::reflection::detail::decode_arguments<PresenceArguments>(

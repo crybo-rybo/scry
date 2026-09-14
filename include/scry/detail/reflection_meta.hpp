@@ -26,6 +26,17 @@ struct ToolMetadata {
   std::string description{};
 };
 
+template <std::size_t Size> struct description;
+
+/// Builds a description annotation from a string_view naming a text catalog entry.
+///
+/// The view must have static storage duration, because it is bound as a reference
+/// template parameter. Usage:
+/// `[[= scry::reflection::description_of<catalog::direction>()]]`.
+/// @tparam View Annotation text to copy into the annotation payload.
+/// @return Annotation equal to the one the literal form would build.
+template <const std::string_view& View> [[nodiscard]] consteval auto description_of();
+
 /// Fixed-string payload for Scry's P3394 parameter-description annotation.
 /// @tparam Size Character-array extent including the null terminator.
 template <std::size_t Size> struct description {
@@ -42,11 +53,28 @@ template <std::size_t Size> struct description {
     static_assert(Size > 0);
     return {text, Size - 1};
   }
+
+private:
+  struct view_tag {};
+
+  // The copy happens inside the type so a catalog-built annotation is still a
+  // description<Size>, which is what the schema generator detects and what the
+  // annotation NTTP rules require.
+  consteval description(view_tag, const std::string_view value) {
+    std::ranges::copy(value, text);
+  }
+
+  template <const std::string_view& View> friend consteval auto description_of();
 };
 
 /// Deduces a description extent from a string literal.
 /// @param value Annotation text whose extent is deduced.
 template <std::size_t Size> description(const char (&value)[Size]) -> description<Size>;
+
+template <const std::string_view& View> [[nodiscard]] consteval auto description_of() {
+  using annotation = description<View.size() + 1>;
+  return annotation{typename annotation::view_tag{}, View};
+}
 
 namespace detail {
 

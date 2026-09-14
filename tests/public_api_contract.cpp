@@ -82,6 +82,19 @@ static_assert(!std::is_copy_constructible_v<scry::Harness>);
 static_assert(std::is_move_constructible_v<scry::UniqueFunction<void()>>);
 static_assert(!std::is_copy_constructible_v<scry::UniqueFunction<void()>>);
 
+// schema_v is the general schema root; input_schema_v is the argument-only spelling of
+// the same text, so a host can export a result contract without a second generator.
+namespace contract {
+struct SchemaArguments {
+  std::string city;
+};
+} // namespace contract
+static_assert(
+    std::same_as<decltype(scry::reflection::schema_v<contract::SchemaArguments>),
+                 const std::string_view>);
+static_assert(scry::reflection::schema_v<contract::SchemaArguments> ==
+              scry::reflection::input_schema_v<contract::SchemaArguments>);
+
 // A void-returning callback signature accepts a callable that returns something:
 // the result is discarded rather than rejected at compile time.
 using AppendingDelta = decltype([](std::string_view chunk) -> std::string& {
