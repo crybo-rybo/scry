@@ -4,67 +4,107 @@
 #include "provider/shared.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
 
 namespace scry::detail {
+
+// The Messages API request, described as plain aggregates instead of a JSON
+// tree. Glaze reflects each one member by member in declaration order, so the
+// members are declared alphabetically and the body still leaves the encoder in
+// the codec's canonical key order. Every std::string_view borrows from the
+// Config or the ModelRequest, both of which outlive the encode, and every
+// JsonText splices stored canonical JSON verbatim rather than re-parsing it.
+//
+// The names are dialect-qualified and the types deliberately sit outside the
+// unnamed namespace. Glaze derives each member's name from a pointer into an
+// `extern` object of the type, which a type with no linkage cannot have, and
+// GCC mangles every translation unit's unnamed namespace identically, so two
+// same-named wire structs here and in openai_request.cpp would have their key
+// tables merged by the linker and each dialect would serialize with the
+// other's keys.
+struct AnthropicText {
+  std::string_view text{};
+  std::string_view type{"text"};
+};
+
+struct AnthropicToolUse {
+  std::string_view id{};
+  JsonText input{};
+  std::string_view name{};
+  std::string_view type{"tool_use"};
+};
+
+// `content` is a JSON string holding the result document, not the document
+// itself, which is why it is a string_view and `input` above is JsonText.
+struct AnthropicToolResult {
+  std::string_view content{};
+  bool is_error{};
+  std::string_view tool_use_id{};
+  std::string_view type{"tool_result"};
+};
+
+using AnthropicBlock =
+    std::variant<AnthropicText, AnthropicToolUse, AnthropicToolResult>;
+
+struct AnthropicMessage {
+  std::vector<AnthropicBlock> content{};
+  std::string_view role{};
+};
+
+struct AnthropicTool {
+  std::string_view description{};
+  JsonText input_schema{};
+  std::string_view name{};
+};
+
+struct AnthropicBody {
+  std::optional<std::uint32_t> max_tokens{};
+  std::vector<AnthropicMessage> messages{};
+  std::string_view model{};
+  bool stream{true};
+  std::optional<std::string_view> system{};
+  double temperature{};
+  std::optional<std::vector<AnthropicTool>> tools{};
+  std::optional<double> top_p{};
+};
+
 namespace {
 
-// Host-supplied JSON reaches the adapter as text; parsing it here is what lets
-// it be embedded as a value in the request body instead of a quoted string.
-[[nodiscard]] Result<JsonValue>
-parse_boundary_json(const Json& json, const std::string_view failure_message) {
-  return parse_json(json.text, ErrorCategory::invalid_config, failure_message);
+[[nodiscard]] Error invalid_request(std::string message) {
+  return make_error(ErrorCategory::invalid_config, std::move(message));
 }
 
-[[nodiscard]] Result<JsonValue> encode_text(const TextBlock& block) {
-  JsonValue value{};
-  value["type"] = "text";
-  value["text"] = block.text;
-  return value;
-}
-
-[[nodiscard]] Result<JsonValue> encode_tool_call(const ToolCallBlock& block) {
-  auto input = parse_boundary_json(block.arguments, "Tool input is not valid JSON");
-  if (!input) {
-    return std::unexpected(std::move(input.error()));
+[[nodiscard]] Result<AnthropicBlock> encode_tool_call(const ToolCallBlock& block) {
+  if (!embeds_as_json_object(block.arguments.text)) {
+    return std::unexpected(invalid_request("Tool input must be a JSON object"));
   }
-
-  JsonValue value{};
-  value["type"] = "tool_use";
-  value["id"] = block.id;
-  value["name"] = block.name;
-  value["input"] = std::move(*input);
-  return value;
+  return AnthropicToolUse{
+      .id = block.id,
+      .input = JsonText{block.arguments.text},
+      .name = block.name,
+  };
 }
 
-[[nodiscard]] Result<JsonValue> encode_tool_result(const ToolResultBlock& block) {
-  auto result = parse_boundary_json(block.result, "Tool result is not valid JSON");
-  if (!result) {
-    return std::unexpected(std::move(result.error()));
+[[nodiscard]] Result<AnthropicBlock> encode_tool_result(const ToolResultBlock& block) {
+  if (!embeds_as_json_value(block.result.text)) {
+    return std::unexpected(invalid_request("Tool result must be valid JSON"));
   }
-  auto encoded = write_json_text(*result, ErrorCategory::invalid_config,
-                                 "Tool result could not be encoded");
-  if (!encoded) {
-    return std::unexpected(std::move(encoded.error()));
-  }
-
-  JsonValue value{};
-  value["type"] = "tool_result";
-  value["tool_use_id"] = block.tool_call_id;
-  // Glaze's assignment operators bind const&, so moving into the node's
-  // variant is what transfers the payload instead of duplicating it.
-  value["content"].data = std::move(*encoded);
-  value["is_error"] = block.is_error;
-  return value;
+  return AnthropicToolResult{
+      .content = block.result.text,
+      .is_error = block.is_error,
+      .tool_use_id = block.tool_call_id,
+  };
 }
 
-[[nodiscard]] Result<JsonValue> encode_content(const ContentBlock& block) {
+[[nodiscard]] Result<AnthropicBlock> encode_content(const ContentBlock& block) {
   if (const auto* text = std::get_if<TextBlock>(&block)) {
-    return encode_text(*text);
+    return AnthropicText{.text = text->text};
   }
   if (const auto* call = std::get_if<ToolCallBlock>(&block)) {
     return encode_tool_call(*call);
@@ -93,12 +133,14 @@ public:
       if (!encoded) {
         return std::unexpected(std::move(encoded.error()));
       }
-      content_.push_back(std::move(*encoded));
+      // A wire block borrows every byte it carries, so it is trivially
+      // copyable and there is nothing for a move to steal.
+      content_.push_back(*encoded);
     }
     return {};
   }
 
-  [[nodiscard]] JsonValue::array_t take() {
+  [[nodiscard]] std::vector<AnthropicMessage> take() {
     flush();
     return std::move(encoded_);
   }
@@ -108,20 +150,21 @@ private:
     if (!role_) {
       return;
     }
-    JsonValue value{};
-    value["role"] = *role_ == Role::user ? "user" : "assistant";
-    value["content"].data = std::move(content_);
+    encoded_.push_back(AnthropicMessage{
+        .content = std::move(content_),
+        .role = *role_ == Role::user ? "user" : "assistant",
+    });
     content_.clear();
-    encoded_.push_back(std::move(value));
     role_.reset();
   }
 
-  JsonValue::array_t encoded_{};
-  JsonValue::array_t content_{};
+  std::vector<AnthropicMessage> encoded_{};
+  std::vector<AnthropicBlock> content_{};
   std::optional<Role> role_{};
 };
 
-[[nodiscard]] Result<JsonValue::array_t> encode_messages(const ModelRequest& request) {
+[[nodiscard]] Result<std::vector<AnthropicMessage>>
+encode_messages(const ModelRequest& request) {
   MessageArrayBuilder builder{request.message_count()};
   if (request.history) {
     for (const auto& message : *request.history) {
@@ -138,30 +181,20 @@ private:
   return builder.take();
 }
 
-[[nodiscard]] Result<JsonValue> encode_tool(const ToolDefinition& tool) {
-  auto schema =
-      parse_boundary_json(tool.input_schema, "Tool input schema is not valid JSON");
-  if (!schema) {
-    return std::unexpected(std::move(schema.error()));
-  }
-
-  JsonValue value{};
-  value["name"] = tool.name;
-  value["description"] = tool.description;
-  value["input_schema"] = std::move(*schema);
-  return value;
-}
-
-[[nodiscard]] Result<JsonValue::array_t>
+[[nodiscard]] Result<std::vector<AnthropicTool>>
 encode_tools(const std::vector<ToolDefinition>& tools) {
-  JsonValue::array_t encoded{};
+  std::vector<AnthropicTool> encoded{};
   encoded.reserve(tools.size());
   for (const auto& tool : tools) {
-    auto value = encode_tool(tool);
-    if (!value) {
-      return std::unexpected(std::move(value.error()));
+    if (!embeds_as_json_object(tool.input_schema.text)) {
+      return std::unexpected(
+          invalid_request("Tool input schema must be a JSON object"));
     }
-    encoded.push_back(std::move(*value));
+    encoded.push_back(AnthropicTool{
+        .description = tool.description,
+        .input_schema = JsonText{tool.input_schema.text},
+        .name = tool.name,
+    });
   }
   return encoded;
 }
@@ -177,36 +210,42 @@ encode_tools(const std::vector<ToolDefinition>& tools) {
   return base_url;
 }
 
-[[nodiscard]] Result<JsonValue> make_request_body(const Config& config,
-                                                  const ModelRequest& request) {
+[[nodiscard]] std::optional<std::string_view> optional_text(const std::string& value) {
+  if (value.empty()) {
+    return std::nullopt;
+  }
+  return std::string_view{value};
+}
+
+[[nodiscard]] Result<std::string> make_request_body(const Config& config,
+                                                    const ModelRequest& request) {
   auto messages = encode_messages(request);
   if (!messages) {
     return std::unexpected(std::move(messages.error()));
   }
-
-  JsonValue root{};
-  root["model"] = config.model;
-  // Validation rejects an unset max_tokens for this dialect, so the optional is
-  // always engaged here.
-  // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
-  root["max_tokens"] = *request.sampling.max_tokens;
-  root["temperature"] = request.sampling.temperature;
-  root["stream"] = true;
-  root["messages"].data = std::move(*messages);
-  if (!request.system_prompt.empty()) {
-    root["system"] = request.system_prompt;
-  }
-  if (request.sampling.top_p) {
-    root["top_p"] = *request.sampling.top_p;
-  }
+  std::optional<std::vector<AnthropicTool>> tools{};
   if (request.tools && !request.tools->empty()) {
-    auto tools = encode_tools(*request.tools);
-    if (!tools) {
-      return std::unexpected(std::move(tools.error()));
+    auto encoded = encode_tools(*request.tools);
+    if (!encoded) {
+      return std::unexpected(std::move(encoded.error()));
     }
-    root["tools"].data = std::move(*tools);
+    tools = std::move(*encoded);
   }
-  return root;
+
+  // Validation rejects an unset max_tokens for this dialect, so the optional is
+  // always engaged here; carrying it through keeps the encoder from reading an
+  // empty one when a request is assembled by hand.
+  const AnthropicBody body{
+      .max_tokens = request.sampling.max_tokens,
+      .messages = std::move(*messages),
+      .model = config.model,
+      .system = optional_text(request.system_prompt),
+      .temperature = request.sampling.temperature,
+      .tools = std::move(tools),
+      .top_p = request.sampling.top_p,
+  };
+  return write_wire_json(body, ErrorCategory::invalid_config,
+                         "Anthropic request body could not be encoded");
 }
 
 } // namespace
@@ -217,12 +256,7 @@ encode_tools(const std::vector<ToolDefinition>& tools) {
 Result<TransportRequest>
 AnthropicAdapter::make_request(const Config& config,
                                const ModelRequest& request) const {
-  auto body = make_request_body(config, request);
-  if (!body) {
-    return std::unexpected(std::move(body.error()));
-  }
-  auto encoded = write_json_text(*body, ErrorCategory::invalid_config,
-                                 "Anthropic request body could not be encoded");
+  auto encoded = make_request_body(config, request);
   if (!encoded) {
     return std::unexpected(std::move(encoded.error()));
   }

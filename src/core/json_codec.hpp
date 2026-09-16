@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/error.hpp"
+
 #include <cstdint>
 #include <glaze/glaze.hpp>
 #include <optional>
@@ -14,6 +16,27 @@ namespace scry::detail {
 // re-serialized document in a single canonical key order, so equal documents
 // always produce equal bytes no matter which layer parsed them.
 using JsonValue = glz::generic_sorted_u64;
+
+// Stored JSON text spliced into a larger document as a nested value rather than
+// re-parsed into a JsonValue first. A member of this type writes its bytes
+// verbatim; a std::string_view member next to it writes the same bytes as a
+// quoted, escaped JSON string.
+using JsonText = glz::raw_json_view;
+
+// Encodes a typed wire aggregate straight to JSON text. Glaze reflects a plain
+// aggregate member by member in declaration order, so a wire struct whose
+// members are declared alphabetically leaves the encoder in the same canonical
+// key order a JsonValue would have produced - without building the tree.
+template <class Wire>
+[[nodiscard]] Result<std::string>
+write_wire_json(const Wire& wire, const ErrorCategory category,
+                const std::string_view failure_message) {
+  std::string text{};
+  if (glz::write_json(wire, text)) {
+    return std::unexpected(make_error(category, std::string{failure_message}));
+  }
+  return text;
+}
 
 // Reads into an existing value rather than returning one, so a caller that
 // already owns storage for the document never moves or copies a JsonValue.

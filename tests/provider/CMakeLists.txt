@@ -5,6 +5,7 @@ add_executable(
   openai_request_tests.cpp
   openai_stream_tests.cpp
   provider_tests.cpp
+  request_encoding_tests.cpp
   stream_tests.cpp
   tool_boundary_tests.cpp
 )

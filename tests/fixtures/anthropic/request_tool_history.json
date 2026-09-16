@@ -1,0 +1,124 @@
+{
+  "max_tokens": 64,
+  "messages": [
+    {
+      "content": [
+        {
+          "text": "Weather in Paris?",
+          "type": "text"
+        }
+      ],
+      "role": "user"
+    },
+    {
+      "content": [
+        {
+          "text": "Checking.",
+          "type": "text"
+        },
+        {
+          "id": "call-a",
+          "input": {
+            "city": "Paris",
+            "options": {
+              "units": "metric",
+              "verbose": true
+            }
+          },
+          "name": "weather",
+          "type": "tool_use"
+        },
+        {
+          "id": "call-b",
+          "input": {
+            "query": {
+              "city": "Berlin",
+              "days": [
+                1,
+                2,
+                3
+              ]
+            }
+          },
+          "name": "almanac",
+          "type": "tool_use"
+        }
+      ],
+      "role": "assistant"
+    },
+    {
+      "content": [
+        {
+          "content": "{\"city\":\"Paris\",\"forecast\":{\"high\":21,\"low\":11}}",
+          "is_error": false,
+          "tool_use_id": "call-a",
+          "type": "tool_result"
+        },
+        {
+          "content": "{\"error\":\"almanac unavailable\"}",
+          "is_error": true,
+          "tool_use_id": "call-b",
+          "type": "tool_result"
+        },
+        {
+          "text": "And tomorrow?",
+          "type": "text"
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "model": "claude-test",
+  "stream": true,
+  "system": "Be concise",
+  "temperature": 0.25,
+  "tools": [
+    {
+      "description": "Get weather",
+      "input_schema": {
+        "properties": {
+          "city": {
+            "type": "string"
+          },
+          "options": {
+            "properties": {
+              "units": {
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        },
+        "required": [
+          "city"
+        ],
+        "type": "object"
+      },
+      "name": "weather"
+    },
+    {
+      "description": "Get almanac",
+      "input_schema": {
+        "properties": {
+          "query": {
+            "properties": {
+              "days": {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              }
+            },
+            "type": "object"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      },
+      "name": "almanac"
+    }
+  ],
+  "top_p": 0.9
+}
