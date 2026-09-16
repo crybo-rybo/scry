@@ -201,15 +201,16 @@ void TurnRoute::invoke(WorkerEvent& event) {
           dispatch(value);
         } else if constexpr (std::is_same_v<Event, CompletionEvent>) {
           // commit_completion captured the text before moving the exchange
-          // into the Conversation.
+          // into the Conversation. The event is consumed by this delivery, so
+          // every payload it still owns moves into the Completion.
           terminal_delivered_ = true;
           callbacks_.on_finished(Completion{
               .turn_id = value.turn_id,
-              .text = value.text,
+              .text = std::move(value.text),
               .finish_reason = value.finish_reason,
               .usage = value.usage,
               .attempt_count = value.attempt_count,
-              .provider_request_id = value.provider_request_id,
+              .provider_request_id = std::move(value.provider_request_id),
               .tool_round_count = value.tool_round_count,
               .tool_call_count = value.tool_call_count,
               .rejected_tool_call_count = rejected_count_,
@@ -217,7 +218,7 @@ void TurnRoute::invoke(WorkerEvent& event) {
           });
         } else if constexpr (std::is_same_v<Event, ErrorEvent>) {
           terminal_delivered_ = true;
-          callbacks_.on_finished(std::unexpected(value.error));
+          callbacks_.on_finished(std::unexpected(std::move(value.error)));
         } else if constexpr (std::is_same_v<Event, CancelledEvent>) {
           terminal_delivered_ = true;
           callbacks_.on_finished(std::unexpected(cancellation_error(value.turn_id)));
@@ -269,7 +270,7 @@ std::optional<Result<ToolResultBlock>> TurnRoute::produce(const ToolCallEvent& e
                        max_tool_result_bytes_);
 }
 
-void TurnRoute::dispatch(const ToolCallEvent& event) {
+void TurnRoute::dispatch(ToolCallEvent& event) {
   if (cancelled_->load(std::memory_order_acquire)) {
     return;
   }
@@ -297,16 +298,7 @@ void TurnRoute::dispatch(const ToolCallEvent& event) {
   if (cancelled_->load(std::memory_order_acquire)) {
     return;
   }
-  // The observer sees the same result block the model receives, so it is copied
-  // out before the command queue takes ownership. A framework failure leaves the
-  // result empty and fails the turn instead, and the observer does not fire.
-  // A handler or admission hook that disconnected from inside this dispatch is
-  // checked explicitly:
-  // InvocationGuard defers clearing the callbacks until the frame returns, so
-  // on_tool_call is still set here even though delivery is no longer wanted.
-  auto observed = result.has_value() && callbacks_.on_tool_call && !disconnected_
-                      ? std::optional<ToolResultBlock>{*result}
-                      : std::nullopt;
+  auto observed = observation(event, result);
   if (const auto commands = commands_.lock()) {
     commands->push(ToolResultCommand{
         .turn_id = turn_id_,
@@ -318,18 +310,39 @@ void TurnRoute::dispatch(const ToolCallEvent& event) {
   }
 }
 
-void TurnRoute::notify_tool_observer(const ToolCallEvent& event,
-                                     const ToolResultBlock& result) {
-  callbacks_.on_tool_call(ToolCall{
+// The observer sees the same result the model receives, and the command queue
+// takes that block, so the result JSON is copied out here beforehand. That copy
+// is the only one an observation costs: the call's own id, name, and arguments
+// stay in the event until notify_tool_observer moves them in.
+// A framework failure leaves the result empty and fails the turn instead, and the
+// observer does not fire. A handler or admission hook that disconnected from
+// inside this dispatch is checked explicitly:
+// InvocationGuard defers clearing the callbacks until the frame returns, so
+// on_tool_call is still set here even though delivery is no longer wanted.
+std::optional<ToolCall>
+TurnRoute::observation(const ToolCallEvent& event,
+                       const Result<ToolResultBlock>& result) const {
+  if (!result.has_value() || !callbacks_.on_tool_call || disconnected_) {
+    return std::nullopt;
+  }
+  return ToolCall{
       .turn_id = turn_id_,
-      .id = event.call.id,
-      .name = event.call.name,
-      .arguments = event.call.arguments,
-      .result = result.result,
-      .is_error = result.is_error,
+      .result = result->result,
+      .is_error = result->is_error,
       .round = event.round,
       .index = event.index,
-  });
+  };
+}
+
+// Runs after the result has been posted, which is the last thing that borrows
+// the call: call_context() and ToolRequest::arguments name event.call's strings
+// and both die with produce(). Nothing reads the event after this delivery, so
+// the strings move rather than copy.
+void TurnRoute::notify_tool_observer(ToolCallEvent& event, ToolCall& observed) {
+  observed.id = std::move(event.call.id);
+  observed.name = std::move(event.call.name);
+  observed.arguments = std::move(event.call.arguments);
+  callbacks_.on_tool_call(observed);
 }
 
 const std::shared_ptr<ConversationState>& TurnRoute::conversation() const noexcept {

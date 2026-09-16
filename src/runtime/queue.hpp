@@ -94,6 +94,12 @@ public:
 private:
   [[nodiscard]] bool coalesce_delta(const TextDeltaEvent& event,
                                     std::size_t max_bytes_per_turn);
+  // Charges one turn's ledger when its queued bytes can still take the payload,
+  // under the caller's lock. A refusal leaves the map exactly as it found it, so
+  // a rejected push never creates the entry that release()'s erase-at-zero
+  // invariant would then have to clear.
+  [[nodiscard]] bool charge(TurnId turn_id, std::size_t payload_bytes,
+                            std::size_t max_bytes_per_turn);
 
   mutable std::mutex mutex_{};
   std::condition_variable ready_{};

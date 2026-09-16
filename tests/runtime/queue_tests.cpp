@@ -148,6 +148,31 @@ TEST_CASE("event queue rejects a coalesced delta beyond remaining capacity") {
       queue.push(scry::detail::TextDeltaEvent{.turn_id = turn_id, .text = "xy"}, 4));
 }
 
+TEST_CASE("a rejected push charges the turn nothing") {
+  scry::detail::EventQueue queue;
+  const auto turn_id = scry::TurnId{.value = 210};
+  // Nothing has ever been queued for this turn, so a refusal must leave the
+  // ledger exactly as it found it and a push of the whole budget must still fit.
+  CHECK_FALSE(queue.push(
+      scry::detail::TextDeltaEvent{.turn_id = turn_id, .text = std::string(9, 'x')},
+      8));
+  REQUIRE(queue.push(
+      scry::detail::TextDeltaEvent{.turn_id = turn_id, .text = std::string(8, 'x')},
+      8));
+  CHECK(queue.size() == 1);
+
+  // A refusal against a turn that has queued bytes leaves that charge alone: the
+  // exact remainder still fits afterwards.
+  const auto other = scry::TurnId{.value = 211};
+  REQUIRE(queue.push_terminal(
+      scry::detail::ErrorEvent{.turn_id = other, .error = {.message = "123"}}, 8));
+  CHECK_FALSE(queue.push_terminal(
+      scry::detail::ErrorEvent{.turn_id = other, .error = {.message = "123456"}}, 8));
+  REQUIRE(queue.push_terminal(
+      scry::detail::ErrorEvent{.turn_id = other, .error = {.message = "12345"}}, 8));
+  CHECK(queue.size() == 3);
+}
+
 TEST_CASE("event queue release retains and then clears remaining accounting") {
   scry::detail::EventQueue queue;
   const auto turn_id = scry::TurnId{.value = 209};

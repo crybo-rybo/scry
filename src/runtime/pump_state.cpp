@@ -84,6 +84,16 @@ std::shared_ptr<TurnRoute> PumpState::find_route(const TurnId turn_id) const {
   return found == routes_.end() ? nullptr : found->second;
 }
 
+// The scan loops look a route up once per pending event, so they take the raw
+// pointer rather than paying a refcount pair each time. The pointer stays valid
+// for as long as they use it: only clean_routes() erases from routes_, update()
+// is non-reentrant, and the host callbacks a delivery runs - disconnect(),
+// cancel(), send() - never erase a route.
+TurnRoute* PumpState::route_for(const TurnId turn_id) const noexcept {
+  const auto found = routes_.find(turn_id);
+  return found == routes_.end() ? nullptr : found->second.get();
+}
+
 std::size_t PumpState::live_route_count() const noexcept {
   return static_cast<std::size_t>(std::ranges::count_if(
       routes_, [](const auto& entry) { return !entry.second->terminal(); }));
@@ -103,13 +113,17 @@ UpdateStats PumpState::update(const UpdateOptions options) {
   const auto deadline = update_deadline(started, options.time_budget);
   std::size_t delivered = 0;
   bool out_of_time = ingest_events(deadline);
-  while (delivered < options.max_callbacks && has_deliverable()) {
+  while (delivered < options.max_callbacks) {
     // The first deliverable callback goes out without consulting the deadline,
     // for the same reason the first event is ingested without one.
     if (delivered > 0 && clock_() >= deadline) {
-      out_of_time = true;
+      // Only work the pump could still have delivered counts as time lost, and
+      // that question is asked once, here, instead of before every delivery.
+      out_of_time = out_of_time || has_deliverable();
       break;
     }
+    // deliver_one drops every entry it walks past that can never be delivered,
+    // so a false return means nothing is left to deliver at all.
     if (!deliver_one(delivered)) {
       break;
     }
@@ -149,11 +163,15 @@ void PumpState::shutdown() noexcept {
 bool PumpState::ingest_events(const std::chrono::steady_clock::time_point deadline) {
   // Every call ingests at least one queued event: the deadline is consulted
   // only before the second and later pops, so a small or already-expired
-  // budget can never starve the pump.
+  // budget can never starve the pump. One try_pop per iteration both asks
+  // whether an event is there and takes it, so draining the queue costs one
+  // lock per event rather than two.
   bool ingested = false;
-  while (events_->size() != 0) {
+  while (true) {
     if (ingested && clock_() >= deadline) {
-      return true;
+      // A queue the loop drained exactly is not an exhausted budget: only
+      // events left behind for the next update() are time lost.
+      return events_->size() != 0;
     }
     auto event = events_->try_pop();
     if (!event) {
@@ -162,7 +180,6 @@ bool PumpState::ingest_events(const std::chrono::steady_clock::time_point deadli
     ingested = true;
     accept_event(std::move(*event));
   }
-  return false;
 }
 
 void PumpState::accept_event(WorkerEvent event) {
@@ -172,7 +189,7 @@ void PumpState::accept_event(WorkerEvent event) {
   // per-turn byte ledger.
   const auto turn_id = event_turn_id(event);
   const auto accounted_bytes = event_payload_bytes(event);
-  const auto route = find_route(turn_id);
+  auto* const route = route_for(turn_id);
   if (!route || route->terminal()) {
     events_->release(turn_id, accounted_bytes);
     return;
@@ -274,7 +291,13 @@ bool PumpState::deliver_one(std::size_t& callbacks_delivered) {
   auto entry = pending_callbacks_.begin();
   while (entry != pending_callbacks_.end()) {
     const auto turn_id = event_turn_id(entry->event);
-    const auto route = find_route(turn_id);
+    // The route outlives the invoke below: only clean_routes() erases from
+    // routes_, it runs after this loop, and update() is non-reentrant, so a host
+    // callback that disconnects or cancels from inside invoke() cannot take the
+    // route out of the map. A send() from there adds an entry, which the map
+    // owns through a shared pointer, so the route this pointer names does not
+    // move either.
+    auto* const route = route_for(turn_id);
     if (route && route->has_callback(entry->event)) {
       auto pending = std::move(*entry);
       pending_callbacks_.erase(entry);
@@ -300,7 +323,7 @@ bool PumpState::deliver_one(std::size_t& callbacks_delivered) {
 
 bool PumpState::has_deliverable() const noexcept {
   return std::ranges::any_of(pending_callbacks_, [this](const auto& event) {
-    const auto route = find_route(event_turn_id(event.event));
+    const auto* const route = route_for(event_turn_id(event.event));
     return route && route->has_callback(event.event);
   });
 }
@@ -312,7 +335,7 @@ void PumpState::release_discarded() {
   // disconnected.
   std::erase_if(pending_callbacks_, [this](const auto& event) {
     const auto turn_id = event_turn_id(event.event);
-    const auto route = find_route(turn_id);
+    auto* const route = route_for(turn_id);
     const auto discard = !route || !route->has_callback(event.event);
     if (discard) {
       events_->release(turn_id, event.accounted_bytes);
