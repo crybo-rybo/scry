@@ -104,25 +104,31 @@ namespace {
   return {};
 }
 
-[[nodiscard]] Status record_header(ResponseState& response, const std::string_view name,
-                                   const std::string_view value) {
-  if (is_content_length_header(name)) {
-    if (auto status = validate_content_length(response, value); !status) {
+// One parsed header line. The two views travel together so the name can never
+// be handed in as the value; both borrow from the line being accepted.
+struct HeaderField {
+  std::string_view name{};
+  std::string_view value{};
+};
+
+[[nodiscard]] Status record_header(ResponseState& response, const HeaderField field) {
+  if (is_content_length_header(field.name)) {
+    if (auto status = validate_content_length(response, field.value); !status) {
       return status;
     }
   }
-  if (header_name_equal(name, "retry-after")) {
-    response.retry_after_values.emplace_back(value);
+  if (header_name_equal(field.name, "retry-after")) {
+    response.retry_after_values.emplace_back(field.value);
   }
-  if (!is_request_id_header(name)) {
+  if (!is_request_id_header(field.name)) {
     return {};
   }
   constexpr std::size_t maximum_request_id_bytes = 256;
-  if (value.size() > maximum_request_id_bytes) {
+  if (field.value.size() > maximum_request_id_bytes) {
     return std::unexpected(make_error(ErrorCategory::protocol,
                                       "provider request identifier is too large"));
   }
-  response.provider_request_id = value;
+  response.provider_request_id = field.value;
   return {};
 }
 
@@ -166,7 +172,7 @@ Status ResponseState::accept_header(std::string_view line) {
     return std::unexpected(
         make_error(ErrorCategory::protocol, "malformed response header"));
   }
-  return record_header(*this, name, value);
+  return record_header(*this, HeaderField{.name = name, .value = value});
 }
 
 Status ResponseState::account_body(const std::size_t bytes) {
