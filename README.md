@@ -40,7 +40,7 @@ Configure the consuming project with GCC 16 and
 `-DCMAKE_PREFIX_PATH=/your/prefix`, then link the exported target:
 
 ```cmake
-find_package(scry 0.3.0 CONFIG REQUIRED)
+find_package(scry 0.4.0 CONFIG REQUIRED)
 target_link_libraries(app PRIVATE scry::scry)
 ```
 
@@ -52,7 +52,7 @@ include(FetchContent)
 FetchContent_Declare(
   scry
   GIT_REPOSITORY https://github.com/crybo-rybo/scry.git
-  GIT_TAG v0.3.0
+  GIT_TAG v0.4.0
 )
 FetchContent_MakeAvailable(scry)
 target_link_libraries(app PRIVATE scry::scry)
@@ -192,6 +192,10 @@ I/O.
   `build/docs/html/index.html`.
 - [examples/main_loop.cpp](examples/main_loop.cpp) — the canonical example, with
   both registration paths and a rendered history.
+- [Testing downstream](docs/contributing.md#testing-downstream-with-scrytesting) —
+  `scry::testing`, the scripted transport Scry's own suites run on, published as an
+  optional package component so a consumer can test its integration without a
+  provider.
 - [extras/showcase](extras/showcase) — a standalone Dear ImGui chat panel and a
   grid world where the model drives an NPC through tools.
 

@@ -110,3 +110,7 @@ borrowed only for the callback invocation and must be copied if retained;
 `on_finished` receives its result by value.
 
 For complete working code, see `examples/main_loop.cpp` in the source repository.
+The optional `scry::testing` package component substitutes a scripted transport for
+the HTTP transfer and nothing else, so a host can drive whole turns — streaming,
+retries, tool rounds, and history — without a provider;
+`examples/testing_scripted.cpp` is a complete test in that shape.
