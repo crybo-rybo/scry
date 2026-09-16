@@ -85,7 +85,7 @@ namespace {
   }
   response.deliver_body = *status >= 200 && *status < 300;
   response.status_code = *status;
-  response.headers.clear();
+  response.retry_after_values.clear();
   response.provider_request_id.clear();
   return {};
 }
@@ -111,8 +111,9 @@ namespace {
       return status;
     }
   }
-  response.headers.push_back(
-      HttpHeader{.name = std::string{name}, .value = std::string{value}});
+  if (header_name_equal(name, "retry-after")) {
+    response.retry_after_values.emplace_back(value);
+  }
   if (!is_request_id_header(name)) {
     return {};
   }

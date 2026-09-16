@@ -21,7 +21,11 @@ using namespace scry::detail;
                                                        ProviderDecodeState& state,
                                                        const std::string_view name,
                                                        const std::string_view data) {
-  return adapter.parse_stream_event(name, data, state);
+  std::vector<ProviderEvent> events{};
+  if (auto status = adapter.parse_stream_event(name, data, state, events); !status) {
+    return std::unexpected(std::move(status.error()));
+  }
+  return events;
 }
 
 void start_message(AnthropicAdapter& adapter, ProviderDecodeState& state) {

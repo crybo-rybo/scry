@@ -54,19 +54,16 @@ Error classify(const int code_value, const std::optional<Error>& callback_error,
 }
 
 std::optional<std::chrono::milliseconds>
-retry_after(const std::vector<HttpHeader>& headers) {
-  for (const auto& header : headers) {
-    if (!transport_policy::header_name_equal(header.name, "retry-after")) {
-      continue;
-    }
-    if (const auto seconds = transport_policy::parse_size(header.value)) {
+retry_after(const std::vector<std::string>& values) {
+  for (const auto& value : values) {
+    if (const auto seconds = transport_policy::parse_size(value)) {
       constexpr auto maximum =
           std::numeric_limits<std::chrono::milliseconds::rep>::max();
       const auto bounded = std::min(*seconds, static_cast<std::size_t>(maximum / 1000));
       return std::chrono::milliseconds{
           static_cast<std::chrono::milliseconds::rep>(bounded * 1000)};
     }
-    const auto parsed_date = curl_getdate(header.value.c_str(), nullptr);
+    const auto parsed_date = curl_getdate(value.c_str(), nullptr);
     const auto current_time = std::time(nullptr);
     if (parsed_date >= 0 && current_time >= 0) {
       const auto seconds = std::max(parsed_date - current_time, std::time_t{0});

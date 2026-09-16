@@ -41,6 +41,20 @@ parse_chunks(const std::vector<std::string_view>& chunks) {
   return result;
 }
 
+// The worker hands the parser one vector for a whole response and clears it
+// per chunk, so the appending overloads have to yield exactly what the owning
+// overloads do, wherever the byte stream is split.
+[[nodiscard]] std::vector<SseEvent>
+parse_chunks_into_sink(const std::vector<std::string_view>& chunks) {
+  SseParser parser{1024};
+  std::vector<SseEvent> result{};
+  for (const auto chunk : chunks) {
+    REQUIRE(parser.push(chunk, result).has_value());
+  }
+  REQUIRE(parser.finish(result).has_value());
+  return result;
+}
+
 [[nodiscard]] std::vector<SseEvent> expected_events() {
   return {
       SseEvent{.name = "alpha", .data = "first\nsecond"},
@@ -64,7 +78,9 @@ TEST_CASE("SSE parser is invariant at every single split point") {
   const auto expected = expected_events();
   for (std::size_t split = 0; split <= stream.size(); ++split) {
     INFO("split at byte " << split);
-    CHECK(parse_chunks({stream.substr(0, split), stream.substr(split)}) == expected);
+    const std::vector chunks{stream.substr(0, split), stream.substr(split)};
+    CHECK(parse_chunks(chunks) == expected);
+    CHECK(parse_chunks_into_sink(chunks) == expected);
   }
 }
 
@@ -75,6 +91,7 @@ TEST_CASE("SSE parser is invariant when delivered one byte at a time") {
     chunks.push_back(stream.substr(offset, 1));
   }
   CHECK(parse_chunks(chunks) == expected_events());
+  CHECK(parse_chunks_into_sink(chunks) == expected_events());
 }
 
 TEST_CASE("SSE parser is invariant across fixed-seed random partitions") {

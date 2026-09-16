@@ -110,6 +110,11 @@ struct WorkerActor::AttemptState {
   SseParser parser;
   ProviderDecodeState decode{};
   std::optional<ModelResponse> completed{};
+  // Both sinks live for the whole attempt and are cleared, never reallocated,
+  // per chunk and per event, so the streaming path allocates once instead of
+  // once per received event.
+  std::vector<SseEvent> sse_events{};
+  std::vector<ProviderEvent> provider_events{};
 };
 
 void WorkerActor::run(const std::stop_token& stopped) noexcept {
@@ -284,24 +289,23 @@ WorkerActor::perform_attempt(TurnMachine& machine, IssueModelRequest issue,
 
 Status WorkerActor::consume_stream_chunk(TurnMachine& machine, AttemptState& state,
                                          const std::string_view chunk) {
-  auto parsed = state.parser.push(chunk);
-  if (!parsed) {
-    return std::unexpected(std::move(parsed.error()));
+  state.sse_events.clear();
+  if (auto status = state.parser.push(chunk, state.sse_events); !status) {
+    return status;
   }
-  return consume_sse_events(machine, state, *parsed);
+  return consume_sse_events(machine, state);
 }
 
-Status WorkerActor::consume_sse_events(TurnMachine& machine, AttemptState& state,
-                                       const std::vector<SseEvent>& events) {
-  for (const auto& event : events) {
-    auto provider_events =
-        provider_->parse_stream_event(event.name, event.data, state.decode);
-    if (!provider_events) {
-      return std::unexpected(std::move(provider_events.error()));
+Status WorkerActor::consume_sse_events(TurnMachine& machine, AttemptState& state) {
+  for (const auto& event : state.sse_events) {
+    state.provider_events.clear();
+    if (auto status = provider_->parse_stream_event(
+            event.name, event.data, state.decode, state.provider_events);
+        !status) {
+      return status;
     }
-    auto status =
-        publish_stream_events(machine, std::move(*provider_events), state.completed,
-                              state.decode.semantic_output_consumed);
+    auto status = publish_stream_events(machine, state.provider_events, state.completed,
+                                        state.decode.semantic_output_consumed);
     if (!status) {
       return status;
     }
@@ -311,11 +315,11 @@ Status WorkerActor::consume_sse_events(TurnMachine& machine, AttemptState& state
 
 Result<ModelResponse> WorkerActor::finish_stream(TurnMachine& machine,
                                                  AttemptState& state) {
-  auto trailing = state.parser.finish();
-  if (!trailing) {
-    return std::unexpected(std::move(trailing.error()));
+  state.sse_events.clear();
+  if (auto status = state.parser.finish(state.sse_events); !status) {
+    return std::unexpected(std::move(status.error()));
   }
-  if (auto status = consume_sse_events(machine, state, *trailing); !status) {
+  if (auto status = consume_sse_events(machine, state); !status) {
     return std::unexpected(std::move(status.error()));
   }
   if (!state.completed) {
@@ -406,7 +410,7 @@ WorkerActor::handle_tool_wait_command(TurnMachine& machine, WorkerCommand comman
 
 Status
 WorkerActor::publish_stream_events(TurnMachine& machine,
-                                   std::vector<ProviderEvent> provider_events,
+                                   std::vector<ProviderEvent>& provider_events,
                                    std::optional<ModelResponse>& completed_response,
                                    const bool semantic_output_consumed) {
   if (semantic_output_consumed && machine.phase() == MachinePhase::awaiting_model) {

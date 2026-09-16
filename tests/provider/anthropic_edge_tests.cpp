@@ -20,7 +20,11 @@ using StreamResult = Result<std::vector<ProviderEvent>>;
 [[nodiscard]] StreamResult event(AnthropicAdapter& adapter, const std::string_view name,
                                  const std::string_view data,
                                  ProviderDecodeState& state) {
-  return adapter.parse_stream_event(name, data, state);
+  std::vector<ProviderEvent> events{};
+  if (auto status = adapter.parse_stream_event(name, data, state, events); !status) {
+    return std::unexpected(std::move(status.error()));
+  }
+  return events;
 }
 [[nodiscard]] JsonValue json_value(const std::string_view text) {
   auto value = parse_json(text, ErrorCategory::protocol, "invalid test JSON");

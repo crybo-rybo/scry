@@ -9,9 +9,10 @@ public:
   [[nodiscard]] Result<TransportRequest>
   make_request(const Config& config, const ModelRequest& request) const override;
 
-  [[nodiscard]] Result<std::vector<ProviderEvent>>
+  [[nodiscard]] Status
   parse_stream_event(std::string_view event_name, std::string_view data,
-                     ProviderDecodeState& state) const override;
+                     ProviderDecodeState& state,
+                     std::vector<ProviderEvent>& out) const override;
 };
 
 } // namespace scry::detail

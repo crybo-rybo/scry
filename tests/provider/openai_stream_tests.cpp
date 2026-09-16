@@ -17,7 +17,11 @@ using namespace scry::detail;
 [[nodiscard]] Result<std::vector<ProviderEvent>>
 event(OpenAiAdapter& adapter, ProviderDecodeState& state, const std::string_view data,
       const std::string_view name = "message") {
-  return adapter.parse_stream_event(name, data, state);
+  std::vector<ProviderEvent> events{};
+  if (auto status = adapter.parse_stream_event(name, data, state, events); !status) {
+    return std::unexpected(std::move(status.error()));
+  }
+  return events;
 }
 
 void require_protocol(const Result<std::vector<ProviderEvent>>& result) {

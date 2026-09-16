@@ -35,7 +35,6 @@ struct TransportRequest {
 
 struct TransportResult {
   std::int32_t status_code{};
-  std::vector<HttpHeader> headers{};
   std::string provider_request_id{};
 };
 

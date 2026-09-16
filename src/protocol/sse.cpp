@@ -1,7 +1,5 @@
 #include "protocol/sse.hpp"
 
-#include <algorithm>
-#include <iterator>
 #include <utility>
 
 namespace scry::detail {
@@ -21,9 +19,7 @@ namespace {
 
 [[nodiscard]] std::size_t line_ending_at(const std::string& input,
                                          const std::size_t offset) noexcept {
-  const auto newline = input.find('\n', offset);
-  const auto carriage_return = input.find('\r', offset);
-  return std::min(newline, carriage_return);
+  return input.find_first_of("\r\n", offset);
 }
 
 [[nodiscard]] std::size_t terminator_size(const std::string& input,
@@ -36,26 +32,20 @@ namespace {
   return 1;
 }
 
-void append_events(std::vector<SseEvent>& destination, std::vector<SseEvent> parsed) {
-  destination.insert(destination.end(), std::make_move_iterator(parsed.begin()),
-                     std::make_move_iterator(parsed.end()));
-}
-
 } // namespace
 
 SseParser::SseParser(const std::size_t max_event_bytes)
     : max_event_bytes_(max_event_bytes) {}
 
-Result<std::vector<SseEvent>> SseParser::push(const std::string_view bytes) {
+Status SseParser::push(const std::string_view bytes, std::vector<SseEvent>& events) {
   auto remaining = bytes;
-  std::vector<SseEvent> events{};
   while (!remaining.empty()) {
     if (!input_buffer_.empty() && input_buffer_.back() == '\r') {
       if (remaining.front() == '\n') {
         input_buffer_.push_back('\n');
         remaining.remove_prefix(1);
       }
-      append_events(events, process_complete_lines(true));
+      process_complete_lines(events, true);
       continue;
     }
 
@@ -67,13 +57,13 @@ Result<std::vector<SseEvent>> SseParser::push(const std::string_view bytes) {
     input_buffer_.append(remaining.substr(0, count));
     remaining.remove_prefix(count);
 
-    append_events(events, process_complete_lines());
+    process_complete_lines(events);
   }
-  return events;
+  return {};
 }
 
-Result<std::vector<SseEvent>> SseParser::finish() {
-  auto events = process_complete_lines(true);
+Status SseParser::finish(std::vector<SseEvent>& events) {
+  process_complete_lines(events, true);
 
   if (!input_buffer_.empty()) {
     auto status = account_for_line(input_buffer_.size());
@@ -84,6 +74,22 @@ Result<std::vector<SseEvent>> SseParser::finish() {
     input_buffer_.clear();
   }
   dispatch(events);
+  return {};
+}
+
+Result<std::vector<SseEvent>> SseParser::push(const std::string_view bytes) {
+  std::vector<SseEvent> events{};
+  if (auto status = push(bytes, events); !status) {
+    return std::unexpected(std::move(status.error()));
+  }
+  return events;
+}
+
+Result<std::vector<SseEvent>> SseParser::finish() {
+  std::vector<SseEvent> events{};
+  if (auto status = finish(events); !status) {
+    return std::unexpected(std::move(status.error()));
+  }
   return events;
 }
 
@@ -141,9 +147,8 @@ void SseParser::dispatch(std::vector<SseEvent>& events) {
   reset_event();
 }
 
-std::vector<SseEvent>
-SseParser::process_complete_lines(const bool accept_trailing_carriage_return) {
-  std::vector<SseEvent> events{};
+void SseParser::process_complete_lines(std::vector<SseEvent>& events,
+                                       const bool accept_trailing_carriage_return) {
   std::size_t consumed{};
   while (true) {
     const auto ending = line_ending_at(input_buffer_, consumed);
@@ -164,7 +169,6 @@ SseParser::process_complete_lines(const bool accept_trailing_carriage_return) {
     consumed = ending + terminator_size(input_buffer_, ending);
   }
   input_buffer_.erase(0, consumed);
-  return events;
 }
 
 void SseParser::reset_event() noexcept {

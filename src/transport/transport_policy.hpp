@@ -7,13 +7,18 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace scry::detail::transport_policy {
 
 struct ResponseState {
   std::size_t limit{};
   std::size_t received_bytes{};
-  std::vector<HttpHeader> headers{};
+  // Only the response headers something later reads are retained; every other
+  // one is dropped as it arrives rather than owned for a reader that never
+  // comes. Retry-After values are kept in arrival order because the first that
+  // parses wins, and are reset with the fields below on a new status line.
+  std::vector<std::string> retry_after_values{};
   std::string provider_request_id{};
   // Status of the most recent status line, reset with the other per-response
   // fields whenever a new one arrives. Zero until the first status line.
