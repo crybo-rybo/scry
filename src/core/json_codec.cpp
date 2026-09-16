@@ -7,17 +7,31 @@
 namespace scry::detail {
 namespace {
 
-constexpr glz::opts json_read_options{.null_terminated = false};
-
-// Input always arrives as a string_view, and Glaze treats the end of a buffer it
-// is told is not NUL-terminated as an implicit terminator, so a plain read accepts
-// a document that stops mid-value. Skipping the input once with both validations
-// on is what rejects truncation, trailing garbage, and a second document.
-struct JsonValidateOptions : glz::opts {
-  bool validate_skipped = true;
+// Input always arrives as a string_view, so Glaze reads it without a NUL sentinel
+// and reports a value that ended with the buffer as the non-error code
+// `end_reached`. validate_trailing_whitespace is what rejects trailing garbage and
+// a second document; the read itself rejects a truncated scalar.
+struct JsonReadOptions : glz::opts {
   bool validate_trailing_whitespace = true;
 };
-constexpr JsonValidateOptions json_validate_options{{.null_terminated = false}};
+constexpr JsonReadOptions json_read_options{{.null_terminated = false}};
+
+// Whitespace per RFC 8259. A buffer holding only these never held a document, but
+// Glaze parses it as a bare null, so it is rejected before the read.
+constexpr std::string_view json_whitespace = " \t\n\r";
+
+// Truncation is the one failure the read does not report by itself. Glaze settles
+// `end_reached` into success or truncation by whether nesting closed -- ctx.depth
+// back at zero -- but the variant reader behind glz::generic clears the code as
+// soon as a parse consumed anything, before the top level ever settles it, so a
+// buffer that stops inside a container (`{"a":1`, `[1,2`, `{"a"`) reads as a whole
+// document. Reading depth directly applies Glaze's own completion rule, which is
+// what the second validation pass used to buy.
+[[nodiscard]] bool document_is_complete(const std::string_view input,
+                                        const glz::context& context) noexcept {
+  return context.depth == 0 &&
+         input.find_first_not_of(json_whitespace) != std::string_view::npos;
+}
 
 [[nodiscard]] Error field_error(const std::string_view name,
                                 const std::string_view expected) {
@@ -30,12 +44,9 @@ constexpr JsonValidateOptions json_validate_options{{.null_terminated = false}};
 Status parse_json_into(JsonValue& destination, const std::string_view input,
                        const ErrorCategory category,
                        const std::string_view failure_message) {
-  glz::skip skipped{};
-  glz::context validate_context{};
-  if (glz::read<json_validate_options>(skipped, input, validate_context)) {
-    return std::unexpected(make_error(category, std::string{failure_message}));
-  }
-  if (glz::read<json_read_options>(destination, input)) {
+  glz::context context{};
+  if (glz::read<json_read_options>(destination, input, context) ||
+      !document_is_complete(input, context)) {
     return std::unexpected(make_error(category, std::string{failure_message}));
   }
   return {};
