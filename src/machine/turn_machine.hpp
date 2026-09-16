@@ -199,8 +199,11 @@ private:
     Error last_error{};
   };
 
+  // The dispatched call's identity and the result that answers it. The block
+  // itself is not held here: the committed assistant message already owns every
+  // block of the round, and matching a result needs nothing but the ID.
   struct PendingToolCall {
-    ToolCallBlock call{};
+    std::string id{};
     std::optional<ToolResultBlock> result{};
   };
 
@@ -228,8 +231,11 @@ private:
 
   [[nodiscard]] TransitionResult start_request(MachineTimePoint observed_at);
   [[nodiscard]] TransitionResult issue_attempt();
+  // Commits the response as the round's assistant message and publishes one
+  // dispatch per tool call it carries; call_count is what validate_response
+  // counted in that same response.
   [[nodiscard]] TransitionResult begin_tool_round(ModelResponse response,
-                                                  std::vector<ToolCallBlock> calls);
+                                                  std::size_t call_count);
   [[nodiscard]] TransitionResult
   complete_turn(ModelResponse response, std::vector<ToolCallBlock> unexecuted = {});
   // Ends the turn at the round limit instead of failing it: the response's text
@@ -245,9 +251,9 @@ private:
                                       MachineTimePoint observed_at) const noexcept;
   // Validates the model response and rewrites each tool call in place with its
   // canonical arguments, so the committed assistant message and the dispatched
-  // call carry the same bytes.
-  [[nodiscard]] Result<std::vector<ToolCallBlock>>
-  validate_response(ModelResponse& response) const;
+  // call carry the same bytes. Returns how many tool calls the response carries;
+  // the blocks stay in the response rather than being copied out.
+  [[nodiscard]] Result<std::size_t> validate_response(ModelResponse& response) const;
   [[nodiscard]] ModelRequest& mutable_request();
   [[nodiscard]] bool usage_would_overflow(const Usage& usage) const noexcept;
   [[nodiscard]] bool reserve_exchange_bytes(std::size_t bytes) noexcept;

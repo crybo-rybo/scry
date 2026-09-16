@@ -68,10 +68,13 @@ saturating_deadline(const MachineTimePoint started,
   return std::ranges::find(ids, id) != ids.end();
 }
 
-[[nodiscard]] Result<ToolCallBlock>
-validated_call(const ToolCallBlock& call, const std::vector<std::string>& response_ids,
-               const std::vector<std::string>& dispatched_ids,
-               const std::size_t max_argument_bytes) {
+// Validates one call and canonicalizes its arguments in place. The block is
+// rewritten where the response already holds it, so a round's arguments - up to
+// max_argument_bytes each - are never copied to be checked.
+[[nodiscard]] Status validate_call(ToolCallBlock& call,
+                                   const std::vector<std::string>& response_ids,
+                                   const std::vector<std::string>& dispatched_ids,
+                                   const std::size_t max_argument_bytes) {
   if (call.id.empty() || call.name.empty()) {
     return std::unexpected(response_error(
         ErrorCategory::protocol, "tool calls require non-empty IDs and names"));
@@ -91,9 +94,8 @@ validated_call(const ToolCallBlock& call, const std::vector<std::string>& respon
   if (!arguments) {
     return std::unexpected(std::move(arguments.error()));
   }
-  auto normalized = call;
-  normalized.arguments = std::move(*arguments);
-  return normalized;
+  call.arguments = std::move(*arguments);
+  return {};
 }
 
 // An empty text block is representable on the wire - an Anthropic content block
@@ -178,14 +180,14 @@ TransitionResult TurnMachine::on_event(ModelCompleted event) {
                    TransitionDiagnosticReason::event_not_allowed);
   }
 
-  auto calls = validate_response(event.response);
-  if (!calls) {
-    auto error = std::move(calls.error());
+  auto call_count = validate_response(event.response);
+  if (!call_count) {
+    auto error = std::move(call_count.error());
     error.provider_request_id = std::move(event.response.provider_request_id);
     return finish_error(correlate(std::move(error)));
   }
   const auto at_round_limit =
-      !calls->empty() && tool_round_count_ >= tool_policy_.max_rounds;
+      *call_count > 0 && tool_round_count_ >= tool_policy_.max_rounds;
   if (at_round_limit && tool_policy_.limit_policy == ToolRoundLimitPolicy::fail) {
     return fail_response(ErrorCategory::max_tool_rounds,
                          "model exceeded the configured tool-round limit",
@@ -201,8 +203,8 @@ TransitionResult TurnMachine::on_event(ModelCompleted event) {
   if (at_round_limit) {
     return complete_at_round_limit(std::move(event.response));
   }
-  if (!calls->empty()) {
-    return begin_tool_round(std::move(event.response), std::move(*calls));
+  if (*call_count > 0) {
+    return begin_tool_round(std::move(event.response), *call_count);
   }
   return complete_turn(std::move(event.response));
 }
@@ -269,9 +271,8 @@ TransitionResult TurnMachine::on_event(ToolResultReady event) {
     return illegal(MachineEventKind::tool_result_ready,
                    TransitionDiagnosticReason::event_not_allowed);
   }
-  const auto found =
-      std::ranges::find(awaiting->calls, event.result.tool_call_id,
-                        [](const PendingToolCall& pending) { return pending.call.id; });
+  const auto found = std::ranges::find(awaiting->calls, event.result.tool_call_id,
+                                       &PendingToolCall::id);
   if (found == awaiting->calls.end()) {
     return illegal(MachineEventKind::tool_result_ready,
                    TransitionDiagnosticReason::unknown_tool_call);
@@ -358,8 +359,11 @@ ModelRequest& TurnMachine::mutable_request() {
   return *request_;
 }
 
+// The round's blocks live in the assistant message that the turn commits. Each
+// dispatch carries the one copy the host needs; the pending entries keep only the
+// IDs a result is matched against.
 TransitionResult TurnMachine::begin_tool_round(ModelResponse response,
-                                               std::vector<ToolCallBlock> calls) {
+                                               const std::size_t call_count) {
   Message assistant{
       .role = Role::assistant,
       .content = std::move(response.content),
@@ -370,34 +374,32 @@ TransitionResult TurnMachine::begin_tool_round(ModelResponse response,
                          std::move(response.provider_request_id));
   }
   ++tool_round_count_;
-  for (const auto& call : calls) {
-    dispatched_tool_ids_.push_back(call.id);
-  }
 
-  AwaitingToolState awaiting{
-      .assistant = std::move(assistant),
-      .provider_request_id = std::move(response.provider_request_id),
-  };
-  awaiting.calls.reserve(calls.size());
-  for (auto& call : calls) {
-    awaiting.calls.push_back(PendingToolCall{.call = std::move(call)});
-  }
-  state_.emplace<AwaitingToolState>(std::move(awaiting));
-
+  AwaitingToolState awaiting{.provider_request_id =
+                                 std::move(response.provider_request_id)};
+  awaiting.calls.reserve(call_count);
   TransitionResult result{};
-  const auto& pending = std::get<AwaitingToolState>(state_);
-  result.commands.reserve(pending.calls.size());
+  result.commands.reserve(call_count);
+  const auto remaining = remaining_exchange_bytes();
   std::uint32_t index = 0;
-  for (const auto& call : pending.calls) {
+  for (const auto& block : assistant.content) {
+    const auto* call = std::get_if<ToolCallBlock>(&block);
+    if (call == nullptr) {
+      continue;
+    }
+    dispatched_tool_ids_.push_back(call->id);
+    awaiting.calls.push_back(PendingToolCall{.id = call->id});
     result.commands.emplace_back(PublishToolCall{
         .turn_id = turn_id_,
-        .call = call.call,
-        .remaining_exchange_bytes = remaining_exchange_bytes(),
+        .call = *call,
+        .remaining_exchange_bytes = remaining,
         .round = tool_round_count_,
         .index = index,
     });
     ++index;
   }
+  awaiting.assistant = std::move(assistant);
+  state_.emplace<AwaitingToolState>(std::move(awaiting));
   return result;
 }
 
@@ -503,10 +505,9 @@ bool TurnMachine::retry_is_allowed(const Error& error,
   return observed_at <= deadline;
 }
 
-Result<std::vector<ToolCallBlock>>
-TurnMachine::validate_response(ModelResponse& response) const {
+Result<std::size_t> TurnMachine::validate_response(ModelResponse& response) const {
   drop_empty_text_blocks(response.content);
-  std::vector<ToolCallBlock> calls;
+  std::size_t call_count = 0;
   std::vector<std::string> response_ids;
   for (auto& block : response.content) {
     if (std::holds_alternative<TextBlock>(block)) {
@@ -517,28 +518,27 @@ TurnMachine::validate_response(ModelResponse& response) const {
       return std::unexpected(response_error(
           ErrorCategory::protocol, "assistant response contains a tool-result block"));
     }
-    auto validated = validated_call(*call, response_ids, dispatched_tool_ids_,
-                                    tool_policy_.max_argument_bytes);
+    auto validated = validate_call(*call, response_ids, dispatched_tool_ids_,
+                                   tool_policy_.max_argument_bytes);
     if (!validated) {
       return std::unexpected(std::move(validated.error()));
     }
     response_ids.push_back(call->id);
-    *call = std::move(*validated);
-    calls.push_back(*call);
+    ++call_count;
   }
 
-  if (calls.empty() && response.content.empty()) {
+  if (call_count == 0 && response.content.empty()) {
     return std::unexpected(
         response_error(ErrorCategory::protocol, "model response contained no content"));
   }
 
   const auto declares_tools = response.finish_reason == FinishReason::tool_use;
-  if (declares_tools != !calls.empty()) {
+  if (declares_tools != (call_count > 0)) {
     return std::unexpected(response_error(
         ErrorCategory::protocol,
         "tool-use finish reason and tool-call content are inconsistent"));
   }
-  return calls;
+  return call_count;
 }
 
 bool TurnMachine::usage_would_overflow(const Usage& usage) const noexcept {
