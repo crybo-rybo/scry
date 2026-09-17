@@ -35,8 +35,11 @@ private:
   [[nodiscard]] Status account_for_line(std::size_t line_bytes);
   void process_line(std::string_view line, std::vector<SseEvent>& events);
   void dispatch(std::vector<SseEvent>& events);
+  // search_from names a buffer offset before which no line terminator exists,
+  // so the first scan can skip the prefix an earlier chunk already covered.
   void process_complete_lines(std::vector<SseEvent>& events,
-                              bool accept_trailing_carriage_return = false);
+                              bool accept_trailing_carriage_return = false,
+                              std::size_t search_from = 0);
   void reset_event() noexcept;
 
   std::size_t max_event_bytes_{};

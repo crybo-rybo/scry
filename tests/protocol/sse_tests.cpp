@@ -253,3 +253,38 @@ TEST_CASE("SSE parser rejects zero and cumulative event limits") {
   CHECK(finished->empty());
   CHECK(trailing_carriage_return.buffered_bytes() == 0);
 }
+
+// A data line far longer than a transport chunk arrives in many pieces. Each
+// push may scan only the bytes it added rather than the whole unfinished line,
+// and that shortcut must not change what is parsed, including when the chunk
+// boundary falls between a carriage return and its line feed.
+TEST_CASE("SSE parser reassembles a long line delivered across many chunks") {
+  constexpr std::size_t data_bytes = 256U * 1024U;
+  constexpr std::size_t chunk_bytes = 16U * 1024U;
+  const std::string payload(data_bytes, 'x');
+  const std::string text =
+      "event: big\r\ndata: " + payload + "\r\n\r\n" + "data: tail\n\n";
+  const std::vector<SseEvent> expected{
+      SseEvent{.name = "big", .data = payload},
+      SseEvent{.name = "message", .data = "tail"},
+  };
+
+  // The payload's CRLF starts at byte 262162. With 16 KiB chunks, phase 19 puts
+  // a chunk edge between that carriage return and its line feed, and phase 20
+  // puts the edge immediately after the pair.
+  for (const std::size_t phase : {std::size_t{0}, std::size_t{19}, std::size_t{20}}) {
+    SseParser parser{2U * data_bytes};
+    std::vector<SseEvent> result{};
+    std::size_t offset = 0;
+    if (phase != 0) {
+      REQUIRE(parser.push(std::string_view{text}.substr(0, phase), result));
+      offset = phase;
+    }
+    while (offset < text.size()) {
+      REQUIRE(parser.push(std::string_view{text}.substr(offset, chunk_bytes), result));
+      offset += chunk_bytes;
+    }
+    REQUIRE(parser.finish(result));
+    CHECK(result == expected);
+  }
+}
