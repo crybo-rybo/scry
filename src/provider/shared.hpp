@@ -30,27 +30,21 @@ inline void append_extra_headers(std::vector<HttpHeader>& headers,
 // Every JSON payload a request encoder embeds is canonical text Scry's own
 // codec produced: TurnMachine canonicalizes tool-call arguments, tool dispatch
 // canonicalizes results, registration canonicalizes input schemas, and
-// Conversation::from_json re-encodes every restored block. Re-parsing them once
-// per model attempt would spend O(history bytes) reproducing bytes the request
-// already holds, so the encoders splice the stored text instead. These two
-// checks are the O(1) backstop that keeps the adapters' rejection contract for
-// a ModelRequest assembled by hand rather than by those paths: they prove the
-// root delimiter, not the whole document.
-[[nodiscard]] inline bool embeds_as_json_object(const std::string_view text) noexcept {
-  return text.size() >= 2 && text.front() == '{' && text.back() == '}';
+// Conversation::from_json re-encodes every restored block. Re-parsing them into
+// a document once per model attempt would spend O(history bytes) of allocation
+// reproducing bytes the request already holds, so the encoders splice the stored
+// text after one allocation-free validation scan. That scan is a real check of
+// every byte, not a delimiter heuristic: it is what keeps the adapters' rejection
+// contract for a ModelRequest assembled by hand, where the bytes could be
+// anything.
+[[nodiscard]] inline Status embedded_json_object(const std::string_view text,
+                                                 const std::string_view message) {
+  return validate_json_object(text, ErrorCategory::invalid_config, message);
 }
 
-[[nodiscard]] inline bool embeds_as_json_value(const std::string_view text) noexcept {
-  if (text.empty()) {
-    return false;
-  }
-  if (text.front() == '{') {
-    return text.back() == '}';
-  }
-  if (text.front() == '[') {
-    return text.back() == ']';
-  }
-  return true;
+[[nodiscard]] inline Status embedded_json_value(const std::string_view text,
+                                                const std::string_view message) {
+  return validate_json(text, ErrorCategory::invalid_config, message);
 }
 
 // Provider error identifiers reach Error::provider_detail, so only a bounded

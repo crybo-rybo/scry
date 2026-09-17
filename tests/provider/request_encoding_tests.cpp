@@ -226,3 +226,91 @@ TEST_CASE("Tool results keep their stored text as the wire string") {
   CHECK(anthropic.find(std::string{R"("content":)"} + quoted) != std::string::npos);
   CHECK(openai.find(std::string{R"("content":)"} + quoted) != std::string::npos);
 }
+
+namespace {
+
+// A payload placed where each adapter embeds one, so the rejection contract can
+// be asserted per field: schemas and arguments must be objects, results any JSON.
+enum class Embedded { schema, arguments, result };
+
+[[nodiscard]] ModelRequest request_embedding(const Embedded where,
+                                             const std::string_view text) {
+  ModelRequest request{.sampling = SamplingConfig{.max_tokens = 64}};
+  auto schema = std::string{R"({"type":"object"})"};
+  auto arguments = std::string{R"({"a":1})"};
+  auto result = std::string{R"({"ok":true})"};
+  (where == Embedded::schema      ? schema
+   : where == Embedded::arguments ? arguments
+                                  : result) = std::string{text};
+  request.tools = std::make_shared<const std::vector<ToolDefinition>>(
+      std::vector<ToolDefinition>{ToolDefinition{
+          .name = "lookup",
+          .description = "Look a value up",
+          .input_schema = Json{.text = std::move(schema)},
+      }});
+  request.messages = {
+      Message{.role = Role::user, .content = {TextBlock{.text = "go"}}},
+      Message{
+          .role = Role::assistant,
+          .content = {ToolCallBlock{.id = "call-a",
+                                    .name = "lookup",
+                                    .arguments = Json{.text = std::move(arguments)}}}},
+      Message{.role = Role::user,
+              .content = {ToolResultBlock{.tool_call_id = "call-a",
+                                          .result = Json{.text = std::move(result)}}}},
+  };
+  return request;
+}
+
+[[nodiscard]] bool encodes(const Config& config, const ModelRequest& request) {
+  const auto adapter = make_provider_adapter(config.dialect);
+  REQUIRE(adapter);
+  const auto encoded = adapter->make_request(config, request);
+  if (!encoded) {
+    CHECK(encoded.error().category == ErrorCategory::invalid_config);
+    return false;
+  }
+  // Whatever was spliced, the body itself must still be one JSON document.
+  CHECK(parse_json(encoded->body, ErrorCategory::protocol, "body is not valid JSON"));
+  return true;
+}
+
+struct EmbeddedCase {
+  std::string_view name{};
+  std::string_view text{};
+  bool object_accepted{};
+  bool value_accepted{};
+};
+
+} // namespace
+
+// The encoders are the last check in front of the wire for a ModelRequest
+// assembled by hand, so the splice is preceded by a validation of every byte of
+// each embedded payload, not a look at its first and last characters.
+TEST_CASE("request encoders validate embedded JSON before splicing it") {
+  static constexpr EmbeddedCase cases[] = {
+      {"malformed interior", R"({"x":})", false, false},
+      {"not JSON at all", "not-json", false, false},
+      {"sibling injection", R"({} , "injected": true, "unused": {})", false, false},
+      {"truncated object", R"({"a":1)", false, false},
+      {"trailing garbage", R"({"a":1} x)", false, false},
+      {"second document", R"({"a":1}{"b":2})", false, false},
+      {"empty", "", false, false},
+      {"whitespace only", "  \n", false, false},
+      {"array root", "[1]", false, true},
+      {"scalar root", R"("abc")", false, true},
+      {"object with surrounding whitespace", " {\"a\":1} \n", true, true},
+      {"canonical object", R"({"a":1})", true, true},
+  };
+  for (const auto& config : {anthropic_config(), openai_config()}) {
+    for (const auto& item : cases) {
+      INFO(config.model << ": " << item.name);
+      CHECK(encodes(config, request_embedding(Embedded::schema, item.text)) ==
+            item.object_accepted);
+      CHECK(encodes(config, request_embedding(Embedded::arguments, item.text)) ==
+            item.object_accepted);
+      CHECK(encodes(config, request_embedding(Embedded::result, item.text)) ==
+            item.value_accepted);
+    }
+  }
+}

@@ -38,6 +38,17 @@ write_wire_json(const Wire& wire, const ErrorCategory category,
   return text;
 }
 
+// Validates JSON text without materializing a document: one allocation-free
+// skip pass over every byte that rejects malformed interiors, truncation,
+// trailing garbage, and a second document. The object variant also requires the
+// root to be an object. Surrounding whitespace is accepted, as any parser would.
+[[nodiscard]] Status validate_json(std::string_view input, ErrorCategory category,
+                                   std::string_view failure_message);
+
+[[nodiscard]] Status validate_json_object(std::string_view input,
+                                          ErrorCategory category,
+                                          std::string_view failure_message);
+
 // Reads into an existing value rather than returning one, so a caller that
 // already owns storage for the document never moves or copies a JsonValue.
 [[nodiscard]] Status parse_json_into(JsonValue& destination, std::string_view input,

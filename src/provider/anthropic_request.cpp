@@ -76,13 +76,11 @@ struct AnthropicBody {
 
 namespace {
 
-[[nodiscard]] Error invalid_request(std::string message) {
-  return make_error(ErrorCategory::invalid_config, std::move(message));
-}
-
 [[nodiscard]] Result<AnthropicBlock> encode_tool_call(const ToolCallBlock& block) {
-  if (!embeds_as_json_object(block.arguments.text)) {
-    return std::unexpected(invalid_request("Tool input must be a JSON object"));
+  if (auto status = embedded_json_object(block.arguments.text,
+                                         "Tool input must be a JSON object");
+      !status) {
+    return std::unexpected(std::move(status.error()));
   }
   return AnthropicToolUse{
       .id = block.id,
@@ -92,8 +90,10 @@ namespace {
 }
 
 [[nodiscard]] Result<AnthropicBlock> encode_tool_result(const ToolResultBlock& block) {
-  if (!embeds_as_json_value(block.result.text)) {
-    return std::unexpected(invalid_request("Tool result must be valid JSON"));
+  if (auto status =
+          embedded_json_value(block.result.text, "Tool result must be valid JSON");
+      !status) {
+    return std::unexpected(std::move(status.error()));
   }
   return AnthropicToolResult{
       .content = block.result.text,
@@ -186,9 +186,10 @@ encode_tools(const std::vector<ToolDefinition>& tools) {
   std::vector<AnthropicTool> encoded{};
   encoded.reserve(tools.size());
   for (const auto& tool : tools) {
-    if (!embeds_as_json_object(tool.input_schema.text)) {
-      return std::unexpected(
-          invalid_request("Tool input schema must be a JSON object"));
+    if (auto status = embedded_json_object(tool.input_schema.text,
+                                           "Tool input schema must be a JSON object");
+        !status) {
+      return std::unexpected(std::move(status.error()));
     }
     encoded.push_back(AnthropicTool{
         .description = tool.description,

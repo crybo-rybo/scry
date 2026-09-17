@@ -130,9 +130,10 @@ namespace {
     return std::unexpected(
         invalid_request("OpenAI assistant tool calls require nonempty IDs and names"));
   }
-  if (!embeds_as_json_object(call.arguments.text)) {
-    return std::unexpected(
-        invalid_request("OpenAI tool arguments must be a JSON object"));
+  if (auto status = embedded_json_object(call.arguments.text,
+                                         "OpenAI tool arguments must be a JSON object");
+      !status) {
+    return std::unexpected(std::move(status.error()));
   }
   return OpenAiToolCall{
       .function =
@@ -146,8 +147,10 @@ namespace {
     return std::unexpected(
         invalid_request("OpenAI tool results require a nonempty call ID"));
   }
-  if (!embeds_as_json_value(result.result.text)) {
-    return std::unexpected(invalid_request("OpenAI tool result must be valid JSON"));
+  if (auto status = embedded_json_value(result.result.text,
+                                        "OpenAI tool result must be valid JSON");
+      !status) {
+    return std::unexpected(std::move(status.error()));
   }
   return OpenAiMessage{
       .content = std::string_view{result.result.text},
@@ -267,9 +270,10 @@ encode_tools(const std::vector<ToolDefinition>& tools) {
     if (tool.name.empty()) {
       return std::unexpected(invalid_request("OpenAI tools require a nonempty name"));
     }
-    if (!embeds_as_json_object(tool.input_schema.text)) {
-      return std::unexpected(
-          invalid_request("OpenAI tool schema must be a JSON object"));
+    if (auto status = embedded_json_object(tool.input_schema.text,
+                                           "OpenAI tool schema must be a JSON object");
+        !status) {
+      return std::unexpected(std::move(status.error()));
     }
     encoded.push_back(OpenAiTool{
         .function =

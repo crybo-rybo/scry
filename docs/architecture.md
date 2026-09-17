@@ -393,9 +393,11 @@ state is separate from the adapter.
 
 Request encoding writes typed wire structs straight to JSON text rather than
 building a document tree. Each embedded payload — tool-call arguments, tool
-results, and tool input schemas — is spliced in as the canonical text the turn
-machine, tool dispatch, and registration already produced, so a retry or a tool
-round re-encodes only the request's own frame and never re-parses history.
+results, and tool input schemas — is checked by one allocation-free validation
+scan and spliced in as the canonical text the turn machine, tool dispatch, and
+registration already produced, so a retry or a tool round re-encodes only the
+request's own frame and never rebuilds history as a document tree. Malformed
+embedded text is still rejected with `invalid_config`.
 
 | Setting | Anthropic Messages | OpenAI-compatible Chat Completions |
 |---|---|---|
