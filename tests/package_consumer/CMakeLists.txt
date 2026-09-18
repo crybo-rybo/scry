@@ -15,9 +15,9 @@ option(
 )
 
 if(SCRY_CONSUMER_TESTING_COMPONENT)
-  find_package(scry 0.4.0 CONFIG REQUIRED COMPONENTS testing)
+  find_package(scry 0.4.1 CONFIG REQUIRED COMPONENTS testing)
 else()
-  find_package(scry 0.4.0 CONFIG REQUIRED)
+  find_package(scry 0.4.1 CONFIG REQUIRED)
 endif()
 
 add_executable(scry_package_consumer main.cpp)

@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.28)
 
 project(
   scry
-  VERSION 0.4.0
+  VERSION 0.4.1
   DESCRIPTION "A main-loop-friendly C++ LLM harness"
   LANGUAGES CXX
 )
