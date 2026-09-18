@@ -4,6 +4,27 @@
 
 namespace scry::detail {
 
+// One lookup decides and applies the charge. Nothing is inserted on the refusal
+// path: a turn whose push is rejected must keep no ledger entry, because release()
+// erases an entry the moment it reaches zero and a zero entry left behind by a
+// rejection would outlive every event the turn ever queued.
+bool EventQueue::charge(const TurnId turn_id, const std::size_t payload_bytes,
+                        const std::size_t max_bytes_per_turn) {
+  const auto found = bytes_by_turn_.find(turn_id);
+  const auto queued_bytes =
+      found == bytes_by_turn_.end() ? std::size_t{0} : found->second;
+  if (queued_bytes > max_bytes_per_turn ||
+      payload_bytes > max_bytes_per_turn - queued_bytes) {
+    return false;
+  }
+  if (found == bytes_by_turn_.end()) {
+    bytes_by_turn_.emplace(turn_id, payload_bytes);
+  } else {
+    found->second = queued_bytes + payload_bytes;
+  }
+  return true;
+}
+
 bool EventQueue::coalesce_delta(const TextDeltaEvent& event,
                                 const std::size_t max_bytes_per_turn) {
   if (values_.empty()) {
@@ -13,13 +34,10 @@ bool EventQueue::coalesce_delta(const TextDeltaEvent& event,
   if (previous == nullptr || previous->turn_id != event.turn_id) {
     return false;
   }
-  auto& queued_bytes = bytes_by_turn_[event.turn_id];
-  if (queued_bytes > max_bytes_per_turn ||
-      event.text.size() > max_bytes_per_turn - queued_bytes) {
+  if (!charge(event.turn_id, event.text.size(), max_bytes_per_turn)) {
     return false;
   }
   previous->text += event.text;
-  queued_bytes += event.text.size();
   return true;
 }
 
@@ -32,14 +50,10 @@ bool EventQueue::push(WorkerEvent event, const std::size_t max_bytes_per_turn) {
     }
 
     const auto turn_id = event_turn_id(event);
-    const auto payload_bytes = event_payload_bytes(event);
-    const auto queued_bytes = bytes_by_turn_[turn_id];
-    if (queued_bytes > max_bytes_per_turn ||
-        payload_bytes > max_bytes_per_turn - queued_bytes) {
+    if (!charge(turn_id, event_payload_bytes(event), max_bytes_per_turn)) {
       return false;
     }
     values_.push_back(std::move(event));
-    bytes_by_turn_[turn_id] = queued_bytes + payload_bytes;
   }
   ready_.notify_one();
   return true;
@@ -62,15 +76,12 @@ bool EventQueue::push_batch(std::vector<WorkerEvent> events,
       }
       payload_bytes += event_bytes;
     }
-    const auto queued_bytes = bytes_by_turn_[turn_id];
-    if (queued_bytes > max_bytes_per_turn ||
-        payload_bytes > max_bytes_per_turn - queued_bytes) {
+    if (!charge(turn_id, payload_bytes, max_bytes_per_turn)) {
       return false;
     }
     for (auto& event : events) {
       values_.push_back(std::move(event));
     }
-    bytes_by_turn_[turn_id] = queued_bytes + payload_bytes;
   }
   ready_.notify_one();
   return true;
@@ -81,13 +92,9 @@ bool EventQueue::push_terminal(WorkerEvent event,
   {
     const std::scoped_lock lock{mutex_};
     const auto turn_id = event_turn_id(event);
-    const auto queued_bytes = bytes_by_turn_[turn_id];
-    const auto payload_bytes = event_payload_bytes(event);
-    if (queued_bytes > max_bytes_per_turn ||
-        payload_bytes > max_bytes_per_turn - queued_bytes) {
+    if (!charge(turn_id, event_payload_bytes(event), max_bytes_per_turn)) {
       return false;
     }
-    bytes_by_turn_[turn_id] = queued_bytes + payload_bytes;
     values_.push_back(std::move(event));
   }
   ready_.notify_one();

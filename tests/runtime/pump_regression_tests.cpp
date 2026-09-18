@@ -307,6 +307,161 @@ TEST_CASE("completion callback text concatenates only the final message text blo
                        }}) == "first second");
 }
 
+TEST_CASE("a delivered terminal carries its whole payload to on_finished") {
+  PumpFixture fixture;
+  scry::detail::PumpState pump{fixture.events};
+  std::optional<scry::Completion> completed;
+  const auto completing = fixture.route(
+      406, {
+               .callbacks =
+                   scry::TurnCallbacks{
+                       .on_finished =
+                           [&completed](scry::Result<scry::Completion> outcome) {
+                             REQUIRE(outcome);
+                             completed = std::move(*outcome);
+                           },
+                   },
+           });
+  pump.add_route(completing);
+  REQUIRE(fixture.events->push_terminal(
+      completion_event(completing->id(), {.text = "final answer",
+                                          .attempt_count = 3,
+                                          .provider_request_id = "req-4242"}),
+      1024));
+
+  CHECK(pump.update({}).callbacks_delivered == 1);
+
+  REQUIRE(completed);
+  CHECK(completed->turn_id == completing->id());
+  CHECK(completed->text == "final answer");
+  CHECK(completed->provider_request_id == "req-4242");
+  CHECK(completed->attempt_count == 3);
+  CHECK(completed->finish_reason == scry::FinishReason::completed);
+
+  std::optional<scry::Error> failed;
+  const auto failing = fixture.route(
+      407, {
+               .callbacks =
+                   scry::TurnCallbacks{
+                       .on_finished =
+                           [&failed](scry::Result<scry::Completion> outcome) {
+                             REQUIRE_FALSE(outcome);
+                             failed = std::move(outcome.error());
+                           },
+                   },
+           });
+  pump.add_route(failing);
+  REQUIRE(fixture.events->push_terminal(
+      scry::detail::ErrorEvent{
+          .turn_id = failing->id(),
+          .error =
+              {
+                  .category = scry::ErrorCategory::rate_limit,
+                  .attempt = 2,
+                  .message = "upstream refused",
+                  .provider_detail = "overloaded_error",
+                  .turn_id = failing->id(),
+                  .provider_request_id = "req-9",
+                  .model_message = "try again later",
+              },
+      },
+      1024));
+
+  CHECK(pump.update({}).callbacks_delivered == 1);
+
+  REQUIRE(failed);
+  CHECK(failed->category == scry::ErrorCategory::rate_limit);
+  CHECK(failed->attempt == 2);
+  CHECK(failed->message == "upstream refused");
+  CHECK(failed->provider_detail == "overloaded_error");
+  CHECK(failed->turn_id == failing->id());
+  CHECK(failed->provider_request_id == "req-9");
+  CHECK(failed->model_message == "try again later");
+}
+
+TEST_CASE("a callback limit reports an exhausted budget only when work remains") {
+  PumpFixture fixture;
+  scry::detail::PumpState pump{fixture.events};
+  std::shared_ptr<scry::detail::TurnRoute> second;
+  std::string first_text;
+  std::string second_text;
+  const auto first = fixture.route(
+      408, {
+               .callbacks =
+                   scry::TurnCallbacks{
+                       .on_text_delta =
+                           [&](const std::string_view delta) { first_text += delta; },
+                   },
+           });
+  second = fixture.route(
+      409, {
+               .callbacks =
+                   scry::TurnCallbacks{
+                       .on_text_delta =
+                           [&](const std::string_view delta) { second_text += delta; },
+                   },
+           });
+  pump.add_route(first);
+  pump.add_route(second);
+  REQUIRE(fixture.events->push(
+      scry::detail::TextDeltaEvent{.turn_id = first->id(), .text = "first"}, 1024));
+  REQUIRE(fixture.events->push(
+      scry::detail::TextDeltaEvent{.turn_id = second->id(), .text = "second"}, 1024));
+
+  // One delivery of two: the second entry is still deliverable, so the limit
+  // was what stopped the call.
+  const auto limited = pump.update({.max_callbacks = 1});
+  CHECK(limited.callbacks_delivered == 1);
+  CHECK(limited.events_remaining == 1);
+  CHECK(limited.budget_exhausted);
+  CHECK(first_text == "first");
+
+  // One delivery of one: nothing is left over, so the limit is not reported as
+  // exhausted even though it was reached exactly.
+  const auto drained = pump.update({.max_callbacks = 1});
+  CHECK(drained.callbacks_delivered == 1);
+  CHECK(drained.events_remaining == 0);
+  CHECK_FALSE(drained.budget_exhausted);
+  CHECK(second_text == "second");
+}
+
+TEST_CASE("a callback limit ignores an entry no route can consume any more") {
+  PumpFixture fixture;
+  scry::detail::PumpState pump{fixture.events};
+  std::shared_ptr<scry::detail::TurnRoute> second;
+  bool disconnected = false;
+  const auto first = fixture.route(
+      410,
+      {
+          .callbacks =
+              scry::TurnCallbacks{
+                  .on_text_delta =
+                      [&](std::string_view) { disconnected = second->disconnect(); },
+              },
+      });
+  second = fixture.route(
+      411, {
+               .callbacks =
+                   scry::TurnCallbacks{
+                       .on_text_delta = [](std::string_view) { FAIL("delivered"); },
+                   },
+           });
+  pump.add_route(first);
+  pump.add_route(second);
+  REQUIRE(fixture.events->push(
+      scry::detail::TextDeltaEvent{.turn_id = first->id(), .text = "first"}, 1024));
+  REQUIRE(fixture.events->push(
+      scry::detail::TextDeltaEvent{.turn_id = second->id(), .text = "second"}, 1024));
+
+  // The only delivery disconnects the other route, so the entry left pending is
+  // dead rather than owed: reaching the limit exactly is not an exhausted budget.
+  const auto stats = pump.update({.max_callbacks = 1});
+  CHECK(disconnected);
+  CHECK(stats.callbacks_delivered == 1);
+  CHECK(stats.events_remaining == 0);
+  CHECK_FALSE(stats.budget_exhausted);
+}
+
 TEST_CASE("committing a completion moves its transcript into the Conversation") {
   PumpFixture fixture;
   scry::detail::PumpState pump{fixture.events};

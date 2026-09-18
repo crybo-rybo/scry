@@ -74,6 +74,71 @@ TEST_CASE("pump queues a tool result before notifying the ToolCall observer") {
   CHECK(result->result->result.text == R"({"ok":true})");
 }
 
+TEST_CASE("the observed ToolCall carries every field of the call it answers") {
+  PumpFixture fixture;
+  std::string handler_call_id;
+  std::string handler_tool_name;
+  std::string handler_arguments;
+  const scry::detail::ToolSnapshot tools{
+      registered_tool("forecast",
+                      [&](const scry::ToolCallContext& context,
+                          scry::Json arguments) -> scry::Result<scry::Json> {
+                        handler_call_id = context.call_id;
+                        handler_tool_name = context.tool_name;
+                        handler_arguments = arguments.text;
+                        return scry::Json{.text = R"({"ok":true})"};
+                      })};
+  std::string admitted_call_id;
+  std::string admitted_arguments;
+  std::optional<scry::ToolCall> observed;
+  const auto route = fixture.route(
+      312, {
+               .tools = frozen_tools(tools),
+               .callbacks = scry::TurnCallbacks{
+                   .on_tool_request = [&](const scry::ToolRequest& request)
+                       -> std::optional<scry::ToolRejection> {
+                     admitted_call_id = request.context.call_id;
+                     admitted_arguments = request.arguments.text;
+                     return std::nullopt;
+                   },
+                   .on_tool_call =
+                       [&observed](const scry::ToolCall& call) { observed = call; },
+               },
+           });
+  scry::detail::PumpState pump{fixture.events};
+  pump.add_route(route);
+  auto event = tool_event(route->id(), "forecast", "call-77");
+  event.round = 3;
+  event.index = 2;
+  REQUIRE(fixture.events->push(event, 1024));
+
+  CHECK(pump.update({}).callbacks_delivered == 1);
+
+  // The admission hook and the handler borrow the live call, so both still see
+  // it whole; the observation owns what the event no longer needs.
+  CHECK(admitted_call_id == "call-77");
+  CHECK(admitted_arguments == R"({"z":2,"a":1})");
+  CHECK(handler_call_id == "call-77");
+  CHECK(handler_tool_name == "forecast");
+  CHECK(handler_arguments == R"({"z":2,"a":1})");
+  REQUIRE(observed);
+  CHECK(observed->turn_id == route->id());
+  CHECK(observed->id == "call-77");
+  CHECK(observed->name == "forecast");
+  CHECK(observed->arguments.text == R"({"z":2,"a":1})");
+  CHECK(observed->result.text == R"({"ok":true})");
+  CHECK_FALSE(observed->is_error);
+  CHECK(observed->round == 3);
+  CHECK(observed->index == 2);
+  auto command = fixture.commands->try_pop();
+  REQUIRE(command);
+  const auto* result = std::get_if<scry::detail::ToolResultCommand>(&*command);
+  REQUIRE(result);
+  REQUIRE(result->result);
+  CHECK(result->result->tool_call_id == "call-77");
+  CHECK(result->result->result.text == R"({"ok":true})");
+}
+
 TEST_CASE("an unknown tool reaches the observer as an error result") {
   PumpFixture fixture;
   const scry::detail::ToolSnapshot tools{};

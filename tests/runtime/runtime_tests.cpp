@@ -207,8 +207,10 @@ TEST_CASE("pump budget bounds ingestion and delivery after one guaranteed unit")
   // The clock advances 1 ms per sample. The first pop is unconditional, so it
   // costs no sample; the deadline is then checked before the second pop (at
   // 1 ms, still inside the 2 ms budget) and both events are ingested and
-  // committed. The first delivery is likewise unconditional; the check before
-  // the second (at 2 ms) stops the call.
+  // committed. The check before the third pop (at 2 ms) has expired, but the
+  // queue is already empty, so nothing was left behind and the budget is not yet
+  // spent. The first delivery is likewise unconditional; the check before the
+  // second (at 3 ms) stops the call with an event still owed.
   const auto bounded = pump.update({.time_budget = 2ms});
   CHECK(bounded.callbacks_delivered == 1);
   CHECK(bounded.events_remaining == 1);

@@ -73,8 +73,15 @@ private:
   // all. Only a framework failure leaves it with a result that holds no block.
   [[nodiscard]] std::optional<Result<ToolResultBlock>>
   produce(const ToolCallEvent& event);
-  void dispatch(const ToolCallEvent& event);
-  void notify_tool_observer(const ToolCallEvent& event, const ToolResultBlock& result);
+  // Takes the consumed event by mutable reference: once produce() has returned
+  // and the result is posted, the call's own strings move into the observation
+  // instead of being copied into it.
+  void dispatch(ToolCallEvent& event);
+  // What on_tool_call is handed, or nothing when no observation is wanted. Built
+  // before the result is posted, because the queue takes the result block.
+  [[nodiscard]] std::optional<ToolCall>
+  observation(const ToolCallEvent& event, const Result<ToolResultBlock>& result) const;
+  void notify_tool_observer(ToolCallEvent& event, ToolCall& observed);
 
   TurnId turn_id_{};
   std::shared_ptr<std::atomic<bool>> cancelled_{};
@@ -118,6 +125,12 @@ private:
     WorkerEvent event{};
     std::size_t accounted_bytes{};
   };
+
+  // Ownership-free lookup for the scan loops, which touch a route only for the
+  // length of one update(). Nothing but clean_routes() erases from routes_ and
+  // update() is non-reentrant, so no host callback a scan runs can invalidate
+  // the pointer; find_route stays for callers that outlive one update.
+  [[nodiscard]] TurnRoute* route_for(TurnId turn_id) const noexcept;
 
   [[nodiscard]] bool ingest_events(std::chrono::steady_clock::time_point deadline);
   void accept_event(WorkerEvent event);
