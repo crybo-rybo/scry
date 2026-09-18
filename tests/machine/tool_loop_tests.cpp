@@ -3,6 +3,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <cstddef>
 #include <string>
+#include <string_view>
 #include <variant>
 #include <vector>
 
@@ -43,6 +44,18 @@ message_at(const std::vector<scry::detail::Message>& messages, const std::size_t
   REQUIRE(index < messages.size());
   CHECK(messages[index].role == role);
   return messages[index];
+}
+
+[[nodiscard]] const scry::detail::ToolCallBlock*
+find_call(const std::vector<scry::detail::ContentBlock>& content,
+          const std::string_view id) {
+  for (const auto& block : content) {
+    const auto* call = std::get_if<scry::detail::ToolCallBlock>(&block);
+    if (call != nullptr && call->id == id) {
+      return call;
+    }
+  }
+  return nullptr;
 }
 
 void check_rejected_response(scry::detail::ModelResponse response,
@@ -557,4 +570,92 @@ TEST_CASE("a completed transcript is the last issued request plus the final repl
       message_at(commit.transcript, sent.size(), scry::detail::Role::assistant);
   REQUIRE(reply.content.size() == 1);
   CHECK(std::get<scry::detail::TextBlock>(reply.content.front()).text == "finished");
+}
+
+// The machine keeps one canonicalized copy of each call in the assistant message
+// it commits and hands the dispatch its own copy of the same block. Nothing may
+// drift between the two: a handler and the history must see identical arguments.
+TEST_CASE("dispatched tool calls and the committed transcript carry the same bytes") {
+  auto machine = make_machine();
+  begin(machine);
+
+  const auto published = machine.apply(scry::detail::ModelCompleted{
+      .response = tool_response({
+          scry::detail::TextBlock{.text = "Looking twice."},
+          tool_call("call-a", "first", R"({ "b" : 2, "a" : 1 })"),
+          tool_call("call-b", "second", R"({"outer":{ "k" : [1, 2] }})"),
+      }),
+  });
+  REQUIRE(published.commands.size() == 2);
+  std::vector<scry::detail::ToolCallBlock> dispatched;
+  for (const auto& command : published.commands) {
+    dispatched.push_back(std::get<scry::detail::PublishToolCall>(command).call);
+  }
+  CHECK(dispatched[0].id == "call-a");
+  CHECK(dispatched[0].arguments.text == R"({"a":1,"b":2})");
+  CHECK(dispatched[1].id == "call-b");
+
+  static_cast<void>(machine.apply(result("call-a", R"({"ok":1})", at(1ms))));
+  const auto issued = machine.apply(result("call-b", R"({"ok":2})", at(2ms)));
+  static_cast<void>(only_command<scry::detail::IssueModelRequest>(issued));
+  const auto completed =
+      machine.apply(scry::detail::ModelCompleted{.response = final_response()});
+  const auto& commit = only_command<scry::detail::CommitCompletion>(completed);
+
+  const auto& assistant =
+      message_at(commit.transcript, 1, scry::detail::Role::assistant);
+  REQUIRE(assistant.content.size() == 3);
+  for (const auto& call : dispatched) {
+    const auto* committed = find_call(assistant.content, call.id);
+    REQUIRE(committed != nullptr);
+    CHECK(committed->name == call.name);
+    CHECK(committed->arguments.text == call.arguments.text);
+  }
+}
+
+// The pending round holds call IDs, not the blocks themselves, so matching a
+// result must depend on the ID alone: two calls that differ only by ID stay
+// distinct, and an ID from a finished round is unknown to the current one.
+TEST_CASE("tool results are matched by call ID alone") {
+  auto machine = make_machine();
+  begin(machine);
+  const auto published = machine.apply(scry::detail::ModelCompleted{
+      .response = tool_response({
+          tool_call("call-a", "lookup", R"({"x":1})"),
+          tool_call("call-b", "lookup", R"({"x":1})"),
+      }),
+  });
+  REQUIRE(published.commands.size() == 2);
+
+  const auto unknown = machine.apply(result("call-c", "{}", at(1ms)));
+  REQUIRE(unknown.diagnostic.has_value());
+  CHECK(unknown.diagnostic->reason ==
+        scry::detail::TransitionDiagnosticReason::unknown_tool_call);
+
+  const auto accepted = machine.apply(result("call-b", R"({"got":"b"})", at(1ms)));
+  CHECK(accepted.commands.empty());
+  const auto duplicate = machine.apply(result("call-b", R"({"got":"again"})", at(2ms)));
+  REQUIRE(duplicate.diagnostic.has_value());
+  CHECK(duplicate.diagnostic->reason ==
+        scry::detail::TransitionDiagnosticReason::duplicate_tool_result);
+
+  const auto issued = machine.apply(result("call-a", R"({"got":"a"})", at(2ms)));
+  const auto& issue = only_command<scry::detail::IssueModelRequest>(issued);
+  const auto& results =
+      message_at(issue.request->messages, 2, scry::detail::Role::user);
+  REQUIRE(results.content.size() == 2);
+  CHECK(std::get<scry::detail::ToolResultBlock>(results.content[0]).result.text ==
+        R"({"got":"a"})");
+  CHECK(std::get<scry::detail::ToolResultBlock>(results.content[1]).result.text ==
+        R"({"got":"b"})");
+
+  const auto round_two = machine.apply(scry::detail::ModelCompleted{
+      .response = tool_response({tool_call("call-d", "lookup")}),
+  });
+  static_cast<void>(only_command<scry::detail::PublishToolCall>(round_two));
+  const auto stale = machine.apply(result("call-a", "{}", at(3ms)));
+  REQUIRE(stale.diagnostic.has_value());
+  CHECK(stale.diagnostic->reason ==
+        scry::detail::TransitionDiagnosticReason::unknown_tool_call);
+  CHECK(machine.phase() == scry::detail::MachinePhase::awaiting_tool);
 }
