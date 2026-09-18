@@ -1,0 +1,110 @@
+{
+  "max_tokens": 64,
+  "messages": [
+    {
+      "content": "Be concise",
+      "role": "system"
+    },
+    {
+      "content": "Weather in Paris?",
+      "role": "user"
+    },
+    {
+      "content": "Checking.",
+      "role": "assistant",
+      "tool_calls": [
+        {
+          "function": {
+            "arguments": "{\"city\":\"Paris\",\"options\":{\"units\":\"metric\",\"verbose\":true}}",
+            "name": "weather"
+          },
+          "id": "call-a",
+          "type": "function"
+        },
+        {
+          "function": {
+            "arguments": "{\"query\":{\"city\":\"Berlin\",\"days\":[1,2,3]}}",
+            "name": "almanac"
+          },
+          "id": "call-b",
+          "type": "function"
+        }
+      ]
+    },
+    {
+      "content": "{\"city\":\"Paris\",\"forecast\":{\"high\":21,\"low\":11}}",
+      "role": "tool",
+      "tool_call_id": "call-a"
+    },
+    {
+      "content": "{\"error\":\"almanac unavailable\"}",
+      "role": "tool",
+      "tool_call_id": "call-b"
+    },
+    {
+      "content": "And tomorrow?",
+      "role": "user"
+    }
+  ],
+  "model": "chat-model",
+  "stream": true,
+  "stream_options": {
+    "include_usage": true
+  },
+  "temperature": 0.25,
+  "tools": [
+    {
+      "function": {
+        "description": "Get weather",
+        "name": "weather",
+        "parameters": {
+          "properties": {
+            "city": {
+              "type": "string"
+            },
+            "options": {
+              "properties": {
+                "units": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "required": [
+            "city"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    },
+    {
+      "function": {
+        "description": "Get almanac",
+        "name": "almanac",
+        "parameters": {
+          "properties": {
+            "query": {
+              "properties": {
+                "days": {
+                  "items": {
+                    "type": "integer"
+                  },
+                  "type": "array"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "required": [
+            "query"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    }
+  ],
+  "top_p": 0.9
+}

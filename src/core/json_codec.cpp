@@ -172,4 +172,41 @@ Result<std::optional<std::uint64_t>> optional_json_uint(const JsonValue& value,
   return std::optional<std::uint64_t>{field->get<std::uint64_t>()};
 }
 
+namespace {
+
+// Glaze's validating reader with no destination: it checks every byte of the
+// document and allocates nothing, which is what lets a request encoder splice
+// stored text after one pass instead of rebuilding it as a tree.
+struct JsonSkipOptions : glz::opts {
+  bool validate_skipped = true;
+  bool validate_trailing_whitespace = true;
+};
+constexpr JsonSkipOptions json_skip_options{{.null_terminated = false}};
+
+constexpr std::string_view json_validation_whitespace = " \t\n\r";
+
+} // namespace
+
+Status validate_json(const std::string_view input, const ErrorCategory category,
+                     const std::string_view failure_message) {
+  glz::skip skipped{};
+  glz::context context{};
+  if (glz::read<json_skip_options>(skipped, input, context)) {
+    return std::unexpected(make_error(category, std::string{failure_message}));
+  }
+  return {};
+}
+
+Status validate_json_object(const std::string_view input, const ErrorCategory category,
+                            const std::string_view failure_message) {
+  if (auto status = validate_json(input, category, failure_message); !status) {
+    return status;
+  }
+  const auto first = input.find_first_not_of(json_validation_whitespace);
+  if (first == std::string_view::npos || input[first] != '{') {
+    return std::unexpected(make_error(category, std::string{failure_message}));
+  }
+  return {};
+}
+
 } // namespace scry::detail

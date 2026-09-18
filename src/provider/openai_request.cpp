@@ -3,99 +3,171 @@
 #include "provider/openai.hpp"
 #include "provider/shared.hpp"
 
+#include <cstddef>
+#include <cstdint>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
 
 namespace scry::detail {
+
+// The Chat Completions request, described as plain aggregates instead of a JSON
+// tree. Glaze reflects each one member by member in declaration order, so the
+// members are declared alphabetically and the body still leaves the encoder in
+// the codec's canonical key order. Every std::string_view borrows from the
+// Config or the ModelRequest, both of which outlive the encode, and every
+// JsonText splices stored canonical JSON verbatim rather than re-parsing it.
+//
+// The names are dialect-qualified and the types deliberately sit outside the
+// unnamed namespace. Glaze derives each member's name from a pointer into an
+// `extern` object of the type, which a type with no linkage cannot have, and
+// GCC mangles every translation unit's unnamed namespace identically, so two
+// same-named wire structs here and in anthropic_request.cpp would have their key
+// tables merged by the linker and each dialect would serialize with the
+// other's keys.
+
+// An assistant message with tool calls and no text sends `"content": null`, a
+// distinct wire value from an omitted member, so the null is an alternative
+// here rather than a disengaged optional. One text block is borrowed; several
+// are joined into the owned alternative.
+using OpenAiContent = std::variant<std::string_view, std::string, std::monostate>;
+
+// `arguments` is a JSON string holding the argument document, not the document
+// itself, which is why it is a string_view and `parameters` below is JsonText.
+struct OpenAiCallFunction {
+  std::string_view arguments{};
+  std::string_view name{};
+};
+
+struct OpenAiToolCall {
+  OpenAiCallFunction function{};
+  std::string_view id{};
+  std::string_view type{"function"};
+};
+
+struct OpenAiMessage {
+  OpenAiContent content{};
+  std::string_view role{};
+  std::optional<std::string_view> tool_call_id{};
+  std::optional<std::vector<OpenAiToolCall>> tool_calls{};
+};
+
+struct OpenAiToolFunction {
+  std::string_view description{};
+  std::string_view name{};
+  JsonText parameters{};
+};
+
+struct OpenAiTool {
+  OpenAiToolFunction function{};
+  std::string_view type{"function"};
+};
+
+struct OpenAiStreamOptions {
+  bool include_usage{true};
+};
+
+struct OpenAiBody {
+  std::optional<std::uint32_t> max_tokens{};
+  std::vector<OpenAiMessage> messages{};
+  std::string_view model{};
+  std::optional<std::string_view> reasoning_effort{};
+  bool stream{true};
+  OpenAiStreamOptions stream_options{};
+  double temperature{};
+  std::optional<std::vector<OpenAiTool>> tools{};
+  std::optional<double> top_p{};
+};
+
 namespace {
 
 [[nodiscard]] Error invalid_request(std::string message) {
   return make_error(ErrorCategory::invalid_config, std::move(message));
 }
 
-[[nodiscard]] Result<JsonValue> boundary_json_object(const Json& json,
-                                                     const std::string_view name) {
-  auto parsed = parse_json(json.text, ErrorCategory::invalid_config,
-                           "OpenAI " + std::string{name} + " is not valid JSON");
-  if (!parsed) {
-    return std::unexpected(std::move(parsed.error()));
+// Concatenates the message's text blocks. The single-block case - what a turn
+// actually commits - borrows the block's bytes; anything else is joined once
+// into a string the wire message owns.
+[[nodiscard]] OpenAiContent message_text(const Message& message) {
+  const TextBlock* single = nullptr;
+  std::size_t blocks = 0;
+  std::size_t bytes = 0;
+  for (const auto& block : message.content) {
+    if (const auto* text = std::get_if<TextBlock>(&block)) {
+      single = text;
+      ++blocks;
+      bytes += text->text.size();
+    }
   }
-  if (!parsed->is_object()) {
-    return std::unexpected(
-        invalid_request("OpenAI " + std::string{name} + " must be a JSON object"));
+  if (blocks == 1) {
+    return std::string_view{single->text};
   }
-  return parsed;
+  std::string joined{};
+  joined.reserve(bytes);
+  for (const auto& block : message.content) {
+    if (const auto* text = std::get_if<TextBlock>(&block)) {
+      joined.append(text->text);
+    }
+  }
+  return joined;
 }
 
-// Re-serialises host-supplied JSON text so the value that goes on the wire as a
-// JSON string is the parser's own rendering rather than the caller's bytes.
-[[nodiscard]] Result<std::string>
-canonicalize_boundary_json(const Json& json, const std::string_view name) {
-  auto parsed = parse_json(json.text, ErrorCategory::invalid_config,
-                           "OpenAI " + std::string{name} + " is not valid JSON");
-  if (!parsed) {
-    return std::unexpected(std::move(parsed.error()));
+[[nodiscard]] bool text_is_empty(const OpenAiContent& content) noexcept {
+  if (const auto* borrowed = std::get_if<std::string_view>(&content)) {
+    return borrowed->empty();
   }
-  return write_json_text(*parsed, ErrorCategory::invalid_config,
-                         "OpenAI " + std::string{name} + " could not be encoded");
+  if (const auto* owned = std::get_if<std::string>(&content)) {
+    return owned->empty();
+  }
+  return true;
 }
 
-[[nodiscard]] Result<JsonValue> encode_tool_call(const ToolCallBlock& call) {
+[[nodiscard]] Result<OpenAiToolCall> encode_tool_call(const ToolCallBlock& call) {
   if (call.id.empty() || call.name.empty()) {
     return std::unexpected(
         invalid_request("OpenAI assistant tool calls require nonempty IDs and names"));
   }
-  auto arguments = boundary_json_object(call.arguments, "tool arguments");
-  if (!arguments) {
-    return std::unexpected(std::move(arguments.error()));
+  if (auto status = embedded_json_object(call.arguments.text,
+                                         "OpenAI tool arguments must be a JSON object");
+      !status) {
+    return std::unexpected(std::move(status.error()));
   }
-  auto encoded = write_json_text(*arguments, ErrorCategory::invalid_config,
-                                 "OpenAI tool arguments could not be encoded");
-  if (!encoded) {
-    return std::unexpected(std::move(encoded.error()));
-  }
-
-  JsonValue function{};
-  function["name"] = call.name;
-  // Glaze's assignment operators bind const&, so moving into the node's
-  // variant is what transfers the payload instead of duplicating it.
-  function["arguments"].data = std::move(*encoded);
-  JsonValue value{};
-  value["id"] = call.id;
-  value["type"] = "function";
-  value["function"] = std::move(function);
-  return value;
+  return OpenAiToolCall{
+      .function =
+          OpenAiCallFunction{.arguments = call.arguments.text, .name = call.name},
+      .id = call.id,
+  };
 }
 
-[[nodiscard]] Result<JsonValue> encode_tool_result(const ToolResultBlock& result) {
+[[nodiscard]] Result<OpenAiMessage> encode_tool_result(const ToolResultBlock& result) {
   if (result.tool_call_id.empty()) {
     return std::unexpected(
         invalid_request("OpenAI tool results require a nonempty call ID"));
   }
-  auto content = canonicalize_boundary_json(result.result, "tool result");
-  if (!content) {
-    return std::unexpected(std::move(content.error()));
+  if (auto status = embedded_json_value(result.result.text,
+                                        "OpenAI tool result must be valid JSON");
+      !status) {
+    return std::unexpected(std::move(status.error()));
   }
-  JsonValue value{};
-  value["role"] = "tool";
-  value["tool_call_id"] = result.tool_call_id;
-  value["content"].data = std::move(*content);
-  return value;
+  return OpenAiMessage{
+      .content = std::string_view{result.result.text},
+      .role = "tool",
+      .tool_call_id = std::string_view{result.tool_call_id},
+  };
 }
 
-[[nodiscard]] Result<std::vector<JsonValue>>
+[[nodiscard]] Result<std::vector<OpenAiMessage>>
 encode_user_message(const Message& message) {
-  std::string text{};
   std::vector<const ToolResultBlock*> results{};
   bool saw_text = false;
   for (const auto& block : message.content) {
-    if (const auto* text_block = std::get_if<TextBlock>(&block)) {
+    if (std::holds_alternative<TextBlock>(block)) {
       saw_text = true;
-      text.append(text_block->text);
-    } else if (const auto* result_block = std::get_if<ToolResultBlock>(&block)) {
-      results.push_back(result_block);
+    } else if (const auto* result = std::get_if<ToolResultBlock>(&block)) {
+      results.push_back(result);
     } else {
       return std::unexpected(
           invalid_request("OpenAI user messages cannot contain tool calls"));
@@ -105,12 +177,9 @@ encode_user_message(const Message& message) {
     return std::unexpected(
         invalid_request("OpenAI user messages cannot mix text and tool results"));
   }
-  std::vector<JsonValue> encoded{};
+  std::vector<OpenAiMessage> encoded{};
   if (results.empty()) {
-    JsonValue value{};
-    value["role"] = "user";
-    value["content"].data = std::move(text);
-    encoded.push_back(std::move(value));
+    encoded.push_back(OpenAiMessage{.content = message_text(message), .role = "user"});
     return encoded;
   }
   encoded.reserve(results.size());
@@ -124,13 +193,11 @@ encode_user_message(const Message& message) {
   return encoded;
 }
 
-[[nodiscard]] Result<std::vector<JsonValue>>
+[[nodiscard]] Result<std::vector<OpenAiMessage>>
 encode_assistant_message(const Message& message) {
-  std::string text{};
-  JsonValue::array_t calls{};
+  std::vector<OpenAiToolCall> calls{};
   for (const auto& block : message.content) {
-    if (const auto* text_block = std::get_if<TextBlock>(&block)) {
-      text.append(text_block->text);
+    if (std::holds_alternative<TextBlock>(block)) {
       continue;
     }
     const auto* call = std::get_if<ToolCallBlock>(&block);
@@ -142,23 +209,22 @@ encode_assistant_message(const Message& message) {
     if (!encoded) {
       return std::unexpected(std::move(encoded.error()));
     }
-    calls.push_back(std::move(*encoded));
+    // A wire tool call borrows every byte it carries, so it is trivially
+    // copyable and there is nothing for a move to steal.
+    calls.push_back(*encoded);
   }
 
-  JsonValue value{};
-  value["role"] = "assistant";
-  if (text.empty() && !calls.empty()) {
-    value["content"] = nullptr;
-  } else {
-    value["content"].data = std::move(text);
-  }
+  OpenAiMessage value{.content = message_text(message), .role = "assistant"};
   if (!calls.empty()) {
-    value["tool_calls"].data = std::move(calls);
+    if (text_is_empty(value.content)) {
+      value.content = std::monostate{};
+    }
+    value.tool_calls = std::move(calls);
   }
-  return std::vector<JsonValue>{std::move(value)};
+  return std::vector<OpenAiMessage>{std::move(value)};
 }
 
-[[nodiscard]] Status encode_message_into(JsonValue::array_t& encoded,
+[[nodiscard]] Status encode_message_into(std::vector<OpenAiMessage>& encoded,
                                          const Message& message) {
   auto values = message.role == Role::user ? encode_user_message(message)
                                            : encode_assistant_message(message);
@@ -171,15 +237,16 @@ encode_assistant_message(const Message& message) {
   return {};
 }
 
-[[nodiscard]] Result<JsonValue::array_t> encode_messages(const ModelRequest& request) {
-  JsonValue::array_t encoded{};
+[[nodiscard]] Result<std::vector<OpenAiMessage>>
+encode_messages(const ModelRequest& request) {
+  std::vector<OpenAiMessage> encoded{};
+  encoded.reserve(request.message_count() + 1U);
   if (!request.system_prompt.empty()) {
-    JsonValue system{};
-    system["role"] = "system";
-    system["content"] = request.system_prompt;
-    encoded.push_back(std::move(system));
+    encoded.push_back(OpenAiMessage{
+        .content = std::string_view{request.system_prompt},
+        .role = "system",
+    });
   }
-  encoded.reserve(encoded.size() + request.message_count());
   if (request.history) {
     for (const auto& message : *request.history) {
       if (auto status = encode_message_into(encoded, message); !status) {
@@ -195,34 +262,27 @@ encode_assistant_message(const Message& message) {
   return encoded;
 }
 
-[[nodiscard]] Result<JsonValue> encode_tool(const ToolDefinition& tool) {
-  if (tool.name.empty()) {
-    return std::unexpected(invalid_request("OpenAI tools require a nonempty name"));
-  }
-  auto parameters = boundary_json_object(tool.input_schema, "tool schema");
-  if (!parameters) {
-    return std::unexpected(std::move(parameters.error()));
-  }
-  JsonValue function{};
-  function["name"] = tool.name;
-  function["description"] = tool.description;
-  function["parameters"] = std::move(*parameters);
-  JsonValue value{};
-  value["type"] = "function";
-  value["function"] = std::move(function);
-  return value;
-}
-
-[[nodiscard]] Result<JsonValue::array_t>
+[[nodiscard]] Result<std::vector<OpenAiTool>>
 encode_tools(const std::vector<ToolDefinition>& tools) {
-  JsonValue::array_t encoded{};
+  std::vector<OpenAiTool> encoded{};
   encoded.reserve(tools.size());
   for (const auto& tool : tools) {
-    auto value = encode_tool(tool);
-    if (!value) {
-      return std::unexpected(std::move(value.error()));
+    if (tool.name.empty()) {
+      return std::unexpected(invalid_request("OpenAI tools require a nonempty name"));
     }
-    encoded.push_back(std::move(*value));
+    if (auto status = embedded_json_object(tool.input_schema.text,
+                                           "OpenAI tool schema must be a JSON object");
+        !status) {
+      return std::unexpected(std::move(status.error()));
+    }
+    encoded.push_back(OpenAiTool{
+        .function =
+            OpenAiToolFunction{
+                .description = tool.description,
+                .name = tool.name,
+                .parameters = JsonText{tool.input_schema.text},
+            },
+    });
   }
   return encoded;
 }
@@ -241,37 +301,34 @@ encode_tools(const std::vector<ToolDefinition>& tools) {
   return base_url;
 }
 
-[[nodiscard]] Result<JsonValue> make_request_body(const Config& config,
-                                                  const ModelRequest& request) {
+[[nodiscard]] Result<std::string> make_request_body(const Config& config,
+                                                    const ModelRequest& request) {
   auto messages = encode_messages(request);
   if (!messages) {
     return std::unexpected(std::move(messages.error()));
   }
-  JsonValue root{};
-  root["model"] = config.model;
-  root["messages"].data = std::move(*messages);
-  root["temperature"] = request.sampling.temperature;
-  if (request.sampling.max_tokens) {
-    root["max_tokens"] = *request.sampling.max_tokens;
-  }
-  root["stream"] = true;
-  if (request.sampling.top_p) {
-    root["top_p"] = *request.sampling.top_p;
-  }
-  if (config.reasoning_mode == ReasoningMode::disabled) {
-    root["reasoning_effort"] = "none";
-  }
-  JsonValue stream_options{};
-  stream_options["include_usage"] = true;
-  root["stream_options"] = std::move(stream_options);
+  std::optional<std::vector<OpenAiTool>> tools{};
   if (request.tools && !request.tools->empty()) {
-    auto tools = encode_tools(*request.tools);
-    if (!tools) {
-      return std::unexpected(std::move(tools.error()));
+    auto encoded = encode_tools(*request.tools);
+    if (!encoded) {
+      return std::unexpected(std::move(encoded.error()));
     }
-    root["tools"].data = std::move(*tools);
+    tools = std::move(*encoded);
   }
-  return root;
+
+  const OpenAiBody body{
+      .max_tokens = request.sampling.max_tokens,
+      .messages = std::move(*messages),
+      .model = config.model,
+      .reasoning_effort = config.reasoning_mode == ReasoningMode::disabled
+                              ? std::optional<std::string_view>{"none"}
+                              : std::nullopt,
+      .temperature = request.sampling.temperature,
+      .tools = std::move(tools),
+      .top_p = request.sampling.top_p,
+  };
+  return write_wire_json(body, ErrorCategory::invalid_config,
+                         "OpenAI request body could not be encoded");
 }
 
 [[nodiscard]] std::vector<HttpHeader> request_headers(const Config& config) {
@@ -296,12 +353,7 @@ encode_tools(const std::vector<ToolDefinition>& tools) {
 // sampling bounds.
 Result<TransportRequest>
 OpenAiAdapter::make_request(const Config& config, const ModelRequest& request) const {
-  auto body = make_request_body(config, request);
-  if (!body) {
-    return std::unexpected(std::move(body.error()));
-  }
-  auto encoded = write_json_text(*body, ErrorCategory::invalid_config,
-                                 "OpenAI request body could not be encoded");
+  auto encoded = make_request_body(config, request);
   if (!encoded) {
     return std::unexpected(std::move(encoded.error()));
   }
