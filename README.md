@@ -40,7 +40,7 @@ Configure the consuming project with GCC 16 and
 `-DCMAKE_PREFIX_PATH=/your/prefix`, then link the exported target:
 
 ```cmake
-find_package(scry 0.4.0 CONFIG REQUIRED)
+find_package(scry 0.4.1 CONFIG REQUIRED)
 target_link_libraries(app PRIVATE scry::scry)
 ```
 
@@ -52,7 +52,7 @@ include(FetchContent)
 FetchContent_Declare(
   scry
   GIT_REPOSITORY https://github.com/crybo-rybo/scry.git
-  GIT_TAG v0.4.0
+  GIT_TAG v0.4.1
 )
 FetchContent_MakeAvailable(scry)
 target_link_libraries(app PRIVATE scry::scry)
