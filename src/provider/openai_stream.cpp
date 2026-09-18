@@ -238,12 +238,13 @@ struct StreamEventView {
   return {};
 }
 
-[[nodiscard]] Result<std::vector<ProviderEvent>>
-apply_text_delta(const JsonValue& delta, ProviderDecodeState& state,
-                 OpenAiProviderDecodeState& decode) {
+[[nodiscard]] Status apply_text_delta(const JsonValue& delta,
+                                      ProviderDecodeState& state,
+                                      OpenAiProviderDecodeState& decode,
+                                      std::vector<ProviderEvent>& out) {
   const auto* content = json_field(delta, "content");
   if (content == nullptr || content->is_null()) {
-    return std::vector<ProviderEvent>{};
+    return {};
   }
   if (!content->is_string()) {
     return std::unexpected(make_error(
@@ -251,7 +252,7 @@ apply_text_delta(const JsonValue& delta, ProviderDecodeState& state,
   }
   const auto text = content->get_string();
   if (text.empty()) {
-    return std::vector<ProviderEvent>{};
+    return {};
   }
   if (decode.text_content_index == OpenAiProviderDecodeState::no_text_content) {
     decode.text_content_index = state.response.content.size();
@@ -266,9 +267,8 @@ apply_text_delta(const JsonValue& delta, ProviderDecodeState& state,
   }
   destination->text.append(text);
   state.semantic_output_consumed = true;
-  return std::vector<ProviderEvent>{
-      ProviderTextDelta{.text = std::string{text}},
-  };
+  out.push_back(ProviderTextDelta{.text = std::string{text}});
+  return {};
 }
 
 [[nodiscard]] Status validate_delta_role(const JsonValue& delta) {
@@ -378,14 +378,15 @@ validated_choice_delta(const JsonValue& choice,
   return {};
 }
 
-[[nodiscard]] Result<std::vector<ProviderEvent>>
-apply_choice(const JsonValue& choice, ProviderDecodeState& state, const JsonValue& root,
-             OpenAiProviderDecodeState& decode) {
+[[nodiscard]] Status apply_choice(const JsonValue& choice, ProviderDecodeState& state,
+                                  const JsonValue& root,
+                                  OpenAiProviderDecodeState& decode,
+                                  std::vector<ProviderEvent>& out) {
   auto delta = validated_choice_delta(choice, decode);
   if (!delta) {
     return std::unexpected(std::move(delta.error()));
   }
-  auto events = apply_text_delta(**delta, state, decode);
+  auto events = apply_text_delta(**delta, state, decode, out);
   if (!events) {
     return std::unexpected(std::move(events.error()));
   }
@@ -401,12 +402,12 @@ apply_choice(const JsonValue& choice, ProviderDecodeState& state, const JsonValu
   if (!finish) {
     return std::unexpected(std::move(finish.error()));
   }
-  return events;
+  return {};
 }
 
-[[nodiscard]] Result<std::vector<ProviderEvent>>
-apply_usage_chunk(const JsonValue& root, ProviderDecodeState& state,
-                  const OpenAiProviderDecodeState& decode) {
+[[nodiscard]] Status apply_usage_chunk(const JsonValue& root,
+                                       ProviderDecodeState& state,
+                                       const OpenAiProviderDecodeState& decode) {
   const auto* usage = json_field(root, "usage");
   if (!decode.finish_observed || usage == nullptr || !usage->is_object()) {
     return std::unexpected(
@@ -417,12 +418,12 @@ apply_usage_chunk(const JsonValue& root, ProviderDecodeState& state,
   if (!applied) {
     return std::unexpected(std::move(applied.error()));
   }
-  return std::vector<ProviderEvent>{};
+  return {};
 }
 
-[[nodiscard]] Result<std::vector<ProviderEvent>>
-apply_chunk(const JsonValue& root, ProviderDecodeState& state,
-            OpenAiProviderDecodeState& decode) {
+[[nodiscard]] Status apply_chunk(const JsonValue& root, ProviderDecodeState& state,
+                                 OpenAiProviderDecodeState& decode,
+                                 std::vector<ProviderEvent>& out) {
   auto envelope = validate_chunk_envelope(root, decode);
   if (!envelope) {
     return std::unexpected(std::move(envelope.error()));
@@ -439,11 +440,12 @@ apply_chunk(const JsonValue& root, ProviderDecodeState& state,
         make_error(ErrorCategory::protocol,
                    "OpenAI stream chunk must contain at most one choice"));
   }
-  return apply_choice((*choices)->front(), state, root, decode);
+  return apply_choice((*choices)->front(), state, root, decode, out);
 }
 
-[[nodiscard]] Result<std::vector<ProviderEvent>>
-complete_stream(ProviderDecodeState& state, const OpenAiProviderDecodeState& decode) {
+[[nodiscard]] Status complete_stream(ProviderDecodeState& state,
+                                     const OpenAiProviderDecodeState& decode,
+                                     std::vector<ProviderEvent>& out) {
   if (!decode.finish_observed || !decode.tools_finalized) {
     return std::unexpected(
         make_error(ErrorCategory::protocol,
@@ -452,9 +454,8 @@ complete_stream(ProviderDecodeState& state, const OpenAiProviderDecodeState& dec
   state.completed = true;
   // parse_stream_event rejects every later event once completed is set, so the
   // accumulated response has no reader left and transfers to the terminal event.
-  return std::vector<ProviderEvent>{
-      ProviderCompleted{.response = std::move(state.response)},
-  };
+  out.push_back(ProviderCompleted{.response = std::move(state.response)});
+  return {};
 }
 
 [[nodiscard]] std::optional<Error> optional_root_error(const std::string_view data,
@@ -468,9 +469,10 @@ complete_stream(ProviderDecodeState& state, const OpenAiProviderDecodeState& dec
                              request_id);
 }
 
-[[nodiscard]] Result<std::vector<ProviderEvent>>
-decode_stream_event(const StreamEventView event, ProviderDecodeState& state,
-                    OpenAiProviderDecodeState& decode) {
+[[nodiscard]] Status decode_stream_event(const StreamEventView event,
+                                         ProviderDecodeState& state,
+                                         OpenAiProviderDecodeState& decode,
+                                         std::vector<ProviderEvent>& out) {
   if (event.name != "message" && event.name != "error") {
     if (auto error =
             optional_root_error(event.data, state.response.provider_request_id)) {
@@ -481,9 +483,8 @@ decode_stream_event(const StreamEventView event, ProviderDecodeState& state,
           ErrorCategory::protocol,
           "OpenAI stream emitted an optional event after its finish reason"));
     }
-    return std::vector<ProviderEvent>{
-        ProviderIgnoredEvent{.name = std::string{event.name}},
-    };
+    out.push_back(ProviderIgnoredEvent{.name = std::string{event.name}});
+    return {};
   }
   if (event.data == "[DONE]") {
     if (event.name != "message") {
@@ -491,7 +492,7 @@ decode_stream_event(const StreamEventView event, ProviderDecodeState& state,
           make_error(ErrorCategory::protocol,
                      "OpenAI named error event cannot contain the terminal marker"));
     }
-    return complete_stream(state, decode);
+    return complete_stream(state, decode, out);
   }
   auto root = parse_json(event.data, ErrorCategory::protocol,
                          "OpenAI SSE data is not valid JSON");
@@ -503,17 +504,17 @@ decode_stream_event(const StreamEventView event, ProviderDecodeState& state,
         decode_openai_error(*root, "OpenAI-compatible stream returned an error",
                             state.response.provider_request_id));
   }
-  return apply_chunk(*root, state, decode);
+  return apply_chunk(*root, state, decode, out);
 }
 
 } // namespace
 
 // The two adjacent string views are the shape ProviderAdapter declares.
 // NOLINTBEGIN(bugprone-easily-swappable-parameters)
-Result<std::vector<ProviderEvent>>
-OpenAiAdapter::parse_stream_event(const std::string_view event_name,
-                                  const std::string_view data,
-                                  ProviderDecodeState& state) const {
+Status OpenAiAdapter::parse_stream_event(const std::string_view event_name,
+                                         const std::string_view data,
+                                         ProviderDecodeState& state,
+                                         std::vector<ProviderEvent>& out) const {
   // NOLINTEND(bugprone-easily-swappable-parameters)
   if (auto status = reject_event_after_terminal(
           state, "OpenAI stream emitted data after its terminal event");
@@ -526,7 +527,7 @@ OpenAiAdapter::parse_stream_event(const std::string_view event_name,
     return std::unexpected(std::move(decode.error()));
   }
   return decode_stream_event(StreamEventView{.name = event_name, .data = data}, state,
-                             **decode);
+                             **decode, out);
 }
 
 } // namespace scry::detail

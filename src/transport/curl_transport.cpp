@@ -376,14 +376,13 @@ drive_transfer(MultiTransfer& multi, TransferContext& context,
   if (status < 200 || status >= 300) {
     auto error =
         transport_policy::http_error(status, context.response.provider_request_id);
-    error.retry_after = curl_error::retry_after(context.response.headers);
+    error.retry_after = curl_error::retry_after(context.response.retry_after_values);
     error.provider_detail = transport_policy::http_error_detail(
         context.error_body, request.provider_namespace);
     return std::unexpected(std::move(error));
   }
   return TransportResult{
       .status_code = status,
-      .headers = std::move(context.response.headers),
       .provider_request_id = std::move(context.response.provider_request_id),
   };
 }

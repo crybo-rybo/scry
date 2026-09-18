@@ -12,6 +12,7 @@
 #include <scry/turn_id.hpp>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace {
 
@@ -313,12 +314,15 @@ TEST_CASE("response policy resets metadata when a new status line arrives") {
   const std::string identifier(256, 'r');
   REQUIRE(response.accept_header(" X-ReQuEsT-Id : " + identifier + " \r\n"));
   REQUIRE(response.accept_header("Content-Length: 2048\r\n"));
+  REQUIRE(response.accept_header("ReTrY-AfTeR: 7\r\n"));
   CHECK(response.provider_request_id == identifier);
-  REQUIRE(response.headers.size() == 2);
+  // Only the consumed headers are retained: the request id and every
+  // Retry-After value. Content-Length is validated and dropped.
+  REQUIRE(response.retry_after_values == std::vector<std::string>{"7"});
 
   REQUIRE(response.accept_header("HTTP/1.1 101 Switching Protocols\r\n"));
   CHECK_FALSE(response.deliver_body);
-  CHECK(response.headers.empty());
+  CHECK(response.retry_after_values.empty());
   CHECK(response.provider_request_id.empty());
   REQUIRE(response.accept_header(" \t\r\n"));
 }
@@ -423,38 +427,29 @@ TEST_CASE("curl error classification maps transfer codes onto error categories")
 TEST_CASE("Retry-After accepts numeric values and saturates large delays") {
   using scry::detail::curl_error::retry_after;
 
-  const auto fallback = retry_after({
-      HttpHeader{.name = "Retry-After", .value = "not-a-date"},
-      HttpHeader{.name = "ReTrY-AfTeR", .value = "7"},
-  });
+  const auto fallback = retry_after({"not-a-date", "7"});
   REQUIRE(fallback);
   CHECK(*fallback == std::chrono::seconds{7});
-  CHECK(retry_after({HttpHeader{.name = "retry-after", .value = "0"}}) ==
-        std::chrono::milliseconds::zero());
+  CHECK(retry_after({"0"}) == std::chrono::milliseconds::zero());
 
-  const auto saturated = retry_after(
-      {HttpHeader{.name = "retry-after",
-                  .value = std::to_string(std::numeric_limits<std::size_t>::max())}});
+  const auto saturated =
+      retry_after({std::to_string(std::numeric_limits<std::size_t>::max())});
   REQUIRE(saturated);
   constexpr auto maximum = std::numeric_limits<std::chrono::milliseconds::rep>::max();
   CHECK(saturated->count() == (maximum / 1000) * 1000);
 
   CHECK_FALSE(retry_after({}));
-  CHECK_FALSE(
-      retry_after({HttpHeader{.name = "content-type", .value = "text/event-stream"},
-                   HttpHeader{.name = "retry-after", .value = "still-not-a-date"}}));
+  CHECK_FALSE(retry_after({"still-not-a-date"}));
 }
 
 TEST_CASE("Retry-After clamps past dates and accepts future HTTP dates") {
   using scry::detail::curl_error::retry_after;
 
-  const auto past = retry_after(
-      {HttpHeader{.name = "retry-after", .value = "Thu, 01 Jan 1970 00:00:00 GMT"}});
+  const auto past = retry_after({"Thu, 01 Jan 1970 00:00:00 GMT"});
   REQUIRE(past);
   CHECK(*past == std::chrono::milliseconds::zero());
 
-  const auto future = retry_after(
-      {HttpHeader{.name = "retry-after", .value = "Wed, 21 Oct 2099 07:28:00 GMT"}});
+  const auto future = retry_after({"Wed, 21 Oct 2099 07:28:00 GMT"});
   REQUIRE(future);
   CHECK(*future > std::chrono::hours{24});
 }

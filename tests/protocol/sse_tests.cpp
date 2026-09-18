@@ -41,6 +41,20 @@ parse_chunks(const std::vector<std::string_view>& chunks) {
   return result;
 }
 
+// The worker hands the parser one vector for a whole response and clears it
+// per chunk, so the appending overloads have to yield exactly what the owning
+// overloads do, wherever the byte stream is split.
+[[nodiscard]] std::vector<SseEvent>
+parse_chunks_into_sink(const std::vector<std::string_view>& chunks) {
+  SseParser parser{1024};
+  std::vector<SseEvent> result{};
+  for (const auto chunk : chunks) {
+    REQUIRE(parser.push(chunk, result).has_value());
+  }
+  REQUIRE(parser.finish(result).has_value());
+  return result;
+}
+
 [[nodiscard]] std::vector<SseEvent> expected_events() {
   return {
       SseEvent{.name = "alpha", .data = "first\nsecond"},
@@ -64,7 +78,9 @@ TEST_CASE("SSE parser is invariant at every single split point") {
   const auto expected = expected_events();
   for (std::size_t split = 0; split <= stream.size(); ++split) {
     INFO("split at byte " << split);
-    CHECK(parse_chunks({stream.substr(0, split), stream.substr(split)}) == expected);
+    const std::vector chunks{stream.substr(0, split), stream.substr(split)};
+    CHECK(parse_chunks(chunks) == expected);
+    CHECK(parse_chunks_into_sink(chunks) == expected);
   }
 }
 
@@ -75,6 +91,7 @@ TEST_CASE("SSE parser is invariant when delivered one byte at a time") {
     chunks.push_back(stream.substr(offset, 1));
   }
   CHECK(parse_chunks(chunks) == expected_events());
+  CHECK(parse_chunks_into_sink(chunks) == expected_events());
 }
 
 TEST_CASE("SSE parser is invariant across fixed-seed random partitions") {
@@ -235,4 +252,39 @@ TEST_CASE("SSE parser rejects zero and cumulative event limits") {
   REQUIRE(finished);
   CHECK(finished->empty());
   CHECK(trailing_carriage_return.buffered_bytes() == 0);
+}
+
+// A data line far longer than a transport chunk arrives in many pieces. Each
+// push may scan only the bytes it added rather than the whole unfinished line,
+// and that shortcut must not change what is parsed, including when the chunk
+// boundary falls between a carriage return and its line feed.
+TEST_CASE("SSE parser reassembles a long line delivered across many chunks") {
+  constexpr std::size_t data_bytes = 256U * 1024U;
+  constexpr std::size_t chunk_bytes = 16U * 1024U;
+  const std::string payload(data_bytes, 'x');
+  const std::string text =
+      "event: big\r\ndata: " + payload + "\r\n\r\n" + "data: tail\n\n";
+  const std::vector<SseEvent> expected{
+      SseEvent{.name = "big", .data = payload},
+      SseEvent{.name = "message", .data = "tail"},
+  };
+
+  // The payload's CRLF starts at byte 262162. With 16 KiB chunks, phase 19 puts
+  // a chunk edge between that carriage return and its line feed, and phase 20
+  // puts the edge immediately after the pair.
+  for (const std::size_t phase : {std::size_t{0}, std::size_t{19}, std::size_t{20}}) {
+    SseParser parser{2U * data_bytes};
+    std::vector<SseEvent> result{};
+    std::size_t offset = 0;
+    if (phase != 0) {
+      REQUIRE(parser.push(std::string_view{text}.substr(0, phase), result));
+      offset = phase;
+    }
+    while (offset < text.size()) {
+      REQUIRE(parser.push(std::string_view{text}.substr(offset, chunk_bytes), result));
+      offset += chunk_bytes;
+    }
+    REQUIRE(parser.finish(result));
+    CHECK(result == expected);
+  }
 }

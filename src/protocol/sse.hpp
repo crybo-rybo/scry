@@ -19,6 +19,13 @@ class SseParser {
 public:
   explicit SseParser(std::size_t max_event_bytes);
 
+  // Appending overloads: the caller owns the destination, so a streaming
+  // consumer reuses one vector across every chunk instead of allocating a
+  // fresh one per push. A failed call leaves whatever it already appended in
+  // place; the caller discards the chunk with the error.
+  [[nodiscard]] Status push(std::string_view bytes, std::vector<SseEvent>& events);
+  [[nodiscard]] Status finish(std::vector<SseEvent>& events);
+
   [[nodiscard]] Result<std::vector<SseEvent>> push(std::string_view bytes);
   [[nodiscard]] Result<std::vector<SseEvent>> finish();
 
@@ -28,8 +35,11 @@ private:
   [[nodiscard]] Status account_for_line(std::size_t line_bytes);
   void process_line(std::string_view line, std::vector<SseEvent>& events);
   void dispatch(std::vector<SseEvent>& events);
-  [[nodiscard]] std::vector<SseEvent>
-  process_complete_lines(bool accept_trailing_carriage_return = false);
+  // search_from names a buffer offset before which no line terminator exists,
+  // so the first scan can skip the prefix an earlier chunk already covered.
+  void process_complete_lines(std::vector<SseEvent>& events,
+                              bool accept_trailing_carriage_return = false,
+                              std::size_t search_from = 0);
   void reset_event() noexcept;
 
   std::size_t max_event_bytes_{};

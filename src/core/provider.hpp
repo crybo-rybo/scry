@@ -80,9 +80,14 @@ public:
   [[nodiscard]] virtual Result<TransportRequest>
   make_request(const Config& config, const ModelRequest& request) const = 0;
 
-  [[nodiscard]] virtual Result<std::vector<ProviderEvent>>
+  // Appends this event's decoded events to `out`. The sink is the caller's,
+  // so the streaming path keeps one vector for the whole response instead of
+  // allocating a fresh one per event; a failed call's partial appends are
+  // discarded with the attempt.
+  [[nodiscard]] virtual Status
   parse_stream_event(std::string_view event_name, std::string_view data,
-                     ProviderDecodeState& state) const = 0;
+                     ProviderDecodeState& state,
+                     std::vector<ProviderEvent>& out) const = 0;
 };
 
 [[nodiscard]] std::unique_ptr<ProviderAdapter>

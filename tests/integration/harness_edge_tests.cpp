@@ -62,9 +62,10 @@ public:
     });
   }
 
-  [[nodiscard]] scry::Result<std::vector<scry::detail::ProviderEvent>>
+  [[nodiscard]] scry::Status
   parse_stream_event(std::string_view, std::string_view,
-                     scry::detail::ProviderDecodeState&) const override {
+                     scry::detail::ProviderDecodeState&,
+                     std::vector<scry::detail::ProviderEvent>&) const override {
     return {};
   }
 };
@@ -82,16 +83,19 @@ public:
     };
   }
 
-  [[nodiscard]] scry::Result<std::vector<scry::detail::ProviderEvent>>
+  [[nodiscard]] scry::Status
   parse_stream_event(std::string_view, std::string_view,
-                     scry::detail::ProviderDecodeState&) const override {
+                     scry::detail::ProviderDecodeState&,
+                     std::vector<scry::detail::ProviderEvent>& out) const override {
     const auto completed = scry::detail::ProviderCompleted{
         .response =
             scry::detail::ModelResponse{
                 .finish_reason = scry::FinishReason::completed,
             },
     };
-    return std::vector<scry::detail::ProviderEvent>{completed, completed};
+    out.push_back(completed);
+    out.push_back(completed);
+    return {};
   }
 };
 

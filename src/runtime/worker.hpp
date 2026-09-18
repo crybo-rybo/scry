@@ -80,18 +80,18 @@ private:
                            const SendTurnCommand& turn);
   [[nodiscard]] Status consume_stream_chunk(TurnMachine& machine, AttemptState& state,
                                             std::string_view chunk);
-  [[nodiscard]] Status consume_sse_events(TurnMachine& machine, AttemptState& state,
-                                          const std::vector<SseEvent>& events);
+  [[nodiscard]] Status consume_sse_events(TurnMachine& machine, AttemptState& state);
   [[nodiscard]] Result<ModelResponse> finish_stream(TurnMachine& machine,
                                                     AttemptState& state);
   [[nodiscard]] TransitionResult complete_attempt(TurnMachine& machine,
                                                   ModelResponse response,
                                                   const TransportResult& result);
   // Provider events and machine commands are consumed exactly once, so both
-  // take ownership: streamed text moves through to the event queue instead of
-  // being copied at each hop.
+  // take ownership of their payloads: streamed text moves through to the event
+  // queue instead of being copied at each hop. The event sink itself is the
+  // attempt's, so its elements are moved from and the vector is reused.
   [[nodiscard]] Status publish_stream_events(
-      TurnMachine& machine, std::vector<ProviderEvent> provider_events,
+      TurnMachine& machine, std::vector<ProviderEvent>& provider_events,
       std::optional<ModelResponse>& completed_response, bool semantic_output_consumed);
   [[nodiscard]] Status
   publish_provider_event(TurnMachine& machine, ProviderEvent event,

@@ -2,7 +2,6 @@
 #include "transport/curl_global.hpp"
 #include "transport/curl_transport.hpp"
 
-#include <algorithm>
 #include <array>
 #include <atomic>
 #include <catch2/catch_test_macros.hpp>
@@ -457,6 +456,32 @@ TEST_CASE("curl transport never forwards redirect bodies to the response sink") 
   CHECK(body.empty());
 }
 
+// Response headers are no longer retained wholesale, so the Retry-After value a
+// retryable failure depends on has to survive on its own all the way to the
+// error the worker schedules the next attempt from.
+TEST_CASE("curl transport reports Retry-After on a retryable server error") {
+  scry::test::LoopbackServer server{http_response(
+      "503 Service Unavailable",
+      "content-type: application/json\r\nRetry-After: 3\r\nx-trace: ignored\r\n",
+      "unavailable")};
+  CurlTransport transport;
+  std::string body;
+  auto sink = append_to(body);
+  std::stop_source shutdown;
+  const std::atomic cancelled{false};
+
+  const auto result =
+      transport.perform(request(server.url()), shutdown.get_token(), cancelled, sink);
+
+  REQUIRE_FALSE(result);
+  CHECK(result.error().category == ErrorCategory::network);
+  CHECK(result.error().retryable);
+  CHECK(result.error().http_status == 503);
+  REQUIRE(result.error().retry_after);
+  CHECK(*result.error().retry_after == std::chrono::seconds{3});
+  CHECK(body.empty());
+}
+
 TEST_CASE("curl transport parses HTTP-date Retry-After values") {
   scry::test::LoopbackServer server{
       http_response("429 Too Many Requests",
@@ -609,13 +634,10 @@ TEST_CASE("curl transport discards interim metadata and honors disabled TLS chec
 
   REQUIRE(result);
   CHECK(result->status_code == 200);
+  // The final status line resets the metadata the interim response recorded, so
+  // the interim request id never reaches the caller.
   CHECK(result->provider_request_id == "final-request");
   CHECK(body == "ok");
-  CHECK(result->headers.size() == 3);
-  CHECK(
-      std::ranges::none_of(result->headers, [](const scry::detail::HttpHeader& header) {
-        return header.value == "interim-request";
-      }));
 }
 
 TEST_CASE("curl transport classifies malformed and unsupported URLs locally") {

@@ -12,10 +12,10 @@
 namespace scry::detail {
 namespace {
 
-[[nodiscard]] std::vector<ProviderEvent> ignored_event(const std::string_view name) {
-  return std::vector<ProviderEvent>{ProviderIgnoredEvent{
+void append_ignored(std::vector<ProviderEvent>& out, const std::string_view name) {
+  out.push_back(ProviderIgnoredEvent{
       .name = std::string{name},
-  }};
+  });
 }
 
 [[nodiscard]] bool known_event(const std::string_view name) noexcept {
@@ -48,14 +48,14 @@ namespace {
   return id ? std::string{*id} : std::string{};
 }
 
-[[nodiscard]] Result<std::vector<ProviderEvent>>
-decode_initial_content(const JsonValue& message, ProviderDecodeState& state) {
+[[nodiscard]] Status decode_initial_content(const JsonValue& message,
+                                            ProviderDecodeState& state,
+                                            std::vector<ProviderEvent>& out) {
   auto values = required_json_array(message, "content");
   if (!values) {
     return std::unexpected(std::move(values.error()));
   }
 
-  std::vector<ProviderEvent> events{};
   for (const auto& value : **values) {
     auto block = decode_anthropic_content(value, false);
     if (!block) {
@@ -63,12 +63,12 @@ decode_initial_content(const JsonValue& message, ProviderDecodeState& state) {
     }
     if (const auto* text = std::get_if<TextBlock>(&*block);
         text != nullptr && !text->text.empty()) {
-      events.push_back(ProviderTextDelta{.text = text->text});
+      out.push_back(ProviderTextDelta{.text = text->text});
     }
     state.response.content.push_back(std::move(*block));
     state.semantic_output_consumed = true;
   }
-  return events;
+  return {};
 }
 
 [[nodiscard]] Status apply_initial_finish(const JsonValue& message,
@@ -87,9 +87,10 @@ decode_initial_content(const JsonValue& message, ProviderDecodeState& state) {
   return {};
 }
 
-[[nodiscard]] Result<std::vector<ProviderEvent>>
-handle_message_start(const JsonValue& root, ProviderDecodeState& state,
-                     AnthropicProviderDecodeState& decode) {
+[[nodiscard]] Status handle_message_start(const JsonValue& root,
+                                          ProviderDecodeState& state,
+                                          AnthropicProviderDecodeState& decode,
+                                          std::vector<ProviderEvent>& out) {
   if (decode.message_started) {
     return std::unexpected(
         make_error(ErrorCategory::protocol,
@@ -117,12 +118,13 @@ handle_message_start(const JsonValue& root, ProviderDecodeState& state,
     return std::unexpected(std::move(finish.error()));
   }
   decode.message_started = true;
-  return decode_initial_content(**message, state);
+  return decode_initial_content(**message, state, out);
 }
 
-[[nodiscard]] Result<std::vector<ProviderEvent>>
-handle_content_start(const JsonValue& root, ProviderDecodeState& state,
-                     AnthropicProviderDecodeState& decode) {
+[[nodiscard]] Status handle_content_start(const JsonValue& root,
+                                          ProviderDecodeState& state,
+                                          AnthropicProviderDecodeState& decode,
+                                          std::vector<ProviderEvent>& out) {
   if (!decode.message_started || decode.active_content_index ||
       decode.finish_observed) {
     return std::unexpected(
@@ -148,14 +150,13 @@ handle_content_start(const JsonValue& root, ProviderDecodeState& state,
   }
 
   state.semantic_output_consumed = true;
-  std::vector<ProviderEvent> events{};
   if (const auto* text = std::get_if<TextBlock>(&*block);
       text != nullptr && !text->text.empty()) {
-    events.push_back(ProviderTextDelta{.text = text->text});
+    out.push_back(ProviderTextDelta{.text = text->text});
   }
   state.response.content.push_back(std::move(*block));
   decode.active_content_index = *index;
-  return events;
+  return {};
 }
 
 [[nodiscard]] Result<ContentBlock*>
@@ -178,9 +179,9 @@ indexed_block(const JsonValue& root, ProviderDecodeState& state,
   return &state.response.content[*index];
 }
 
-[[nodiscard]] Result<std::vector<ProviderEvent>>
-handle_text_delta(const JsonValue& delta, ContentBlock& block,
-                  ProviderDecodeState& state) {
+[[nodiscard]] Status handle_text_delta(const JsonValue& delta, ContentBlock& block,
+                                       ProviderDecodeState& state,
+                                       std::vector<ProviderEvent>& out) {
   auto text = required_json_string(delta, "text");
   if (!text) {
     return std::unexpected(std::move(text.error()));
@@ -192,14 +193,14 @@ handle_text_delta(const JsonValue& delta, ContentBlock& block,
   }
   destination->text.append(*text);
   state.semantic_output_consumed = true;
-  return std::vector<ProviderEvent>{ProviderTextDelta{
+  out.push_back(ProviderTextDelta{
       .text = std::string{*text},
-  }};
+  });
+  return {};
 }
 
-[[nodiscard]] Result<std::vector<ProviderEvent>>
-handle_json_delta(const JsonValue& delta, ContentBlock& block,
-                  ProviderDecodeState& state) {
+[[nodiscard]] Status handle_json_delta(const JsonValue& delta, ContentBlock& block,
+                                       ProviderDecodeState& state) {
   auto partial = required_json_string(delta, "partial_json");
   if (!partial) {
     return std::unexpected(std::move(partial.error()));
@@ -219,12 +220,13 @@ handle_json_delta(const JsonValue& delta, ContentBlock& block,
   }
   destination->arguments.text.append(*partial);
   state.semantic_output_consumed = true;
-  return std::vector<ProviderEvent>{};
+  return {};
 }
 
-[[nodiscard]] Result<std::vector<ProviderEvent>>
-handle_content_delta(const JsonValue& root, ProviderDecodeState& state,
-                     AnthropicProviderDecodeState& decode) {
+[[nodiscard]] Status handle_content_delta(const JsonValue& root,
+                                          ProviderDecodeState& state,
+                                          AnthropicProviderDecodeState& decode,
+                                          std::vector<ProviderEvent>& out) {
   auto block = indexed_block(root, state, decode);
   if (!block) {
     return std::unexpected(std::move(block.error()));
@@ -238,7 +240,7 @@ handle_content_delta(const JsonValue& root, ProviderDecodeState& state,
     return std::unexpected(std::move(type.error()));
   }
   if (*type == "text_delta") {
-    return handle_text_delta(**delta, **block, state);
+    return handle_text_delta(**delta, **block, state, out);
   }
   if (*type == "input_json_delta") {
     return handle_json_delta(**delta, **block, state);
@@ -248,9 +250,9 @@ handle_content_delta(const JsonValue& root, ProviderDecodeState& state,
                  "Anthropic returned an unsupported required content delta"));
 }
 
-[[nodiscard]] Result<std::vector<ProviderEvent>>
-handle_content_stop(const JsonValue& root, ProviderDecodeState& state,
-                    AnthropicProviderDecodeState& decode) {
+[[nodiscard]] Status handle_content_stop(const JsonValue& root,
+                                         ProviderDecodeState& state,
+                                         AnthropicProviderDecodeState& decode) {
   auto block = indexed_block(root, state, decode);
   if (!block) {
     return std::unexpected(std::move(block.error()));
@@ -258,7 +260,7 @@ handle_content_stop(const JsonValue& root, ProviderDecodeState& state,
   auto* tool = std::get_if<ToolCallBlock>(*block);
   if (tool == nullptr) {
     decode.active_content_index.reset();
-    return std::vector<ProviderEvent>{};
+    return {};
   }
   if (tool->arguments.text.empty()) {
     tool->arguments.text = "{}";
@@ -276,12 +278,12 @@ handle_content_stop(const JsonValue& root, ProviderDecodeState& state,
                    "Anthropic streamed tool input must be a JSON object"));
   }
   decode.active_content_index.reset();
-  return std::vector<ProviderEvent>{};
+  return {};
 }
 
-[[nodiscard]] Result<std::vector<ProviderEvent>>
-handle_message_delta(const JsonValue& root, ProviderDecodeState& state,
-                     AnthropicProviderDecodeState& decode) {
+[[nodiscard]] Status handle_message_delta(const JsonValue& root,
+                                          ProviderDecodeState& state,
+                                          AnthropicProviderDecodeState& decode) {
   if (!decode.message_started || decode.active_content_index ||
       decode.finish_observed) {
     return std::unexpected(
@@ -306,12 +308,12 @@ handle_message_delta(const JsonValue& root, ProviderDecodeState& state,
   if (!usage) {
     return std::unexpected(std::move(usage.error()));
   }
-  return std::vector<ProviderEvent>{};
+  return {};
 }
 
-[[nodiscard]] Result<std::vector<ProviderEvent>>
-handle_message_stop(ProviderDecodeState& state,
-                    const AnthropicProviderDecodeState& decode) {
+[[nodiscard]] Status handle_message_stop(ProviderDecodeState& state,
+                                         const AnthropicProviderDecodeState& decode,
+                                         std::vector<ProviderEvent>& out) {
   if (!decode.message_started || decode.active_content_index ||
       !decode.finish_observed || state.completed) {
     return std::unexpected(
@@ -321,9 +323,8 @@ handle_message_stop(ProviderDecodeState& state,
   state.completed = true;
   // parse_stream_event rejects every later event once completed is set, so the
   // accumulated response has no reader left and transfers to the terminal event.
-  return std::vector<ProviderEvent>{
-      ProviderCompleted{.response = std::move(state.response)},
-  };
+  out.push_back(ProviderCompleted{.response = std::move(state.response)});
+  return {};
 }
 
 [[nodiscard]] std::string stream_error_type(const JsonValue& root) {
@@ -358,17 +359,18 @@ handle_message_stop(ProviderDecodeState& state,
   return error;
 }
 
-[[nodiscard]] Result<std::vector<ProviderEvent>>
-dispatch_event(const std::string_view type, const JsonValue& root,
-               ProviderDecodeState& state, AnthropicProviderDecodeState& decode) {
+[[nodiscard]] Status dispatch_event(const std::string_view type, const JsonValue& root,
+                                    ProviderDecodeState& state,
+                                    AnthropicProviderDecodeState& decode,
+                                    std::vector<ProviderEvent>& out) {
   if (type == "message_start") {
-    return handle_message_start(root, state, decode);
+    return handle_message_start(root, state, decode, out);
   }
   if (type == "content_block_start") {
-    return handle_content_start(root, state, decode);
+    return handle_content_start(root, state, decode, out);
   }
   if (type == "content_block_delta") {
-    return handle_content_delta(root, state, decode);
+    return handle_content_delta(root, state, decode, out);
   }
   if (type == "content_block_stop") {
     return handle_content_stop(root, state, decode);
@@ -377,22 +379,23 @@ dispatch_event(const std::string_view type, const JsonValue& root,
     return handle_message_delta(root, state, decode);
   }
   if (type == "message_stop") {
-    return handle_message_stop(state, decode);
+    return handle_message_stop(state, decode, out);
   }
   if (type == "error") {
     return std::unexpected(stream_error(root));
   }
-  return ignored_event(type);
+  append_ignored(out, type);
+  return {};
 }
 
 } // namespace
 
 // The two adjacent string views are the shape ProviderAdapter declares.
 // NOLINTBEGIN(bugprone-easily-swappable-parameters)
-Result<std::vector<ProviderEvent>>
-AnthropicAdapter::parse_stream_event(const std::string_view event_name,
-                                     const std::string_view data,
-                                     ProviderDecodeState& state) const {
+Status AnthropicAdapter::parse_stream_event(const std::string_view event_name,
+                                            const std::string_view data,
+                                            ProviderDecodeState& state,
+                                            std::vector<ProviderEvent>& out) const {
   // NOLINTEND(bugprone-easily-swappable-parameters)
   if (auto status = reject_event_after_terminal(
           state, "Anthropic stream emitted data after its terminal event");
@@ -409,7 +412,8 @@ AnthropicAdapter::parse_stream_event(const std::string_view event_name,
   // payload instead. Either way an unrecognized name is ignored, not rejected.
   const auto typed_by_payload = event_name == "message";
   if (!typed_by_payload && !known_event(event_name)) {
-    return ignored_event(event_name);
+    append_ignored(out, event_name);
+    return {};
   }
 
   auto root =
@@ -423,14 +427,15 @@ AnthropicAdapter::parse_stream_event(const std::string_view event_name,
   }
   if (typed_by_payload) {
     if (!known_event(*type)) {
-      return ignored_event(*type);
+      append_ignored(out, *type);
+      return {};
     }
   } else if (event_name != *type) {
     return std::unexpected(
         make_error(ErrorCategory::protocol,
                    "Anthropic SSE event name and payload type do not match"));
   }
-  return dispatch_event(*type, *root, state, **decode);
+  return dispatch_event(*type, *root, state, **decode, out);
 }
 
 } // namespace scry::detail

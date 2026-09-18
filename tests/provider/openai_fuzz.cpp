@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <span>
 #include <string_view>
+#include <vector>
 
 namespace {
 
@@ -11,7 +12,8 @@ void parse_stream_payload(scry::detail::ProviderAdapter& adapter,
                           const std::string_view event_name,
                           const std::string_view input,
                           scry::detail::ProviderDecodeState state) {
-  static_cast<void>(adapter.parse_stream_event(event_name, input, state));
+  std::vector<scry::detail::ProviderEvent> events{};
+  static_cast<void>(adapter.parse_stream_event(event_name, input, state, events));
 }
 
 } // namespace
