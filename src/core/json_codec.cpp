@@ -172,7 +172,7 @@ struct JsonSkipOptions : glz::opts {
 };
 constexpr JsonSkipOptions json_skip_options{{.null_terminated = false}};
 
-constexpr std::string_view json_whitespace = " \t\n\r";
+constexpr std::string_view json_validation_whitespace = " \t\n\r";
 
 } // namespace
 
@@ -191,7 +191,7 @@ Status validate_json_object(const std::string_view input, const ErrorCategory ca
   if (auto status = validate_json(input, category, failure_message); !status) {
     return status;
   }
-  const auto first = input.find_first_not_of(json_whitespace);
+  const auto first = input.find_first_not_of(json_validation_whitespace);
   if (first == std::string_view::npos || input[first] != '{') {
     return std::unexpected(make_error(category, std::string{failure_message}));
   }
