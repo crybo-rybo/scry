@@ -113,7 +113,6 @@ add_library(
     src/provider/anthropic_content.cpp
     src/provider/anthropic_request.cpp
     src/provider/anthropic_stream.cpp
-    src/provider/openai_content.cpp
     src/provider/openai_request.cpp
     src/provider/openai_stream.cpp
     src/provider/provider.cpp
@@ -123,13 +122,12 @@ add_library(
     src/runtime/conversation_persistence.cpp
     src/runtime/harness.cpp
     src/runtime/pump.cpp
-    src/runtime/pump_state.cpp
     src/runtime/queue.cpp
     src/runtime/tool_dispatch.cpp
     src/runtime/tool_registry.cpp
     src/runtime/turn.cpp
+    src/runtime/turn_route.cpp
     src/runtime/worker.cpp
-    src/runtime/worker_messages.cpp
     src/transport/curl_error.cpp
     src/transport/curl_global.cpp
     src/transport/curl_transport.cpp
@@ -147,13 +145,7 @@ if(SCRY_CLANG_TOOLING)
 else()
   target_compile_features(scry PUBLIC cxx_std_26)
   target_compile_options(scry PUBLIC -freflection)
-  set_target_properties(
-    scry
-    PROPERTIES
-      CXX_EXTENSIONS OFF
-      CXX_STANDARD 26
-      CXX_STANDARD_REQUIRED ON
-  )
+  set_target_properties(scry PROPERTIES CXX_EXTENSIONS OFF)
 endif()
 target_include_directories(
   scry

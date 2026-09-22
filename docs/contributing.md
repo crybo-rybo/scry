@@ -36,10 +36,9 @@ with `-DCMAKE_CXX_COMPILER=...`. Select a versioned formatter with
 `CLANG_FORMAT=clang-format-18 ./scripts/format.sh --check`. Doxygen and Graphviz
 are needed for the documentation gate; Doxygen 1.9.8 is the minimum.
 
-The optional clang-tidy gate needs Clang and clang-tidy. CI uses version 18;
-preflight probes Homebrew's keg-only `llvm@18` before `llvm` when clang-tidy is
-absent from `PATH`. Fuzzing needs a Clang installation with libFuzzer; the hosted
-fuzz legs use Clang 21.
+The optional clang-tidy gate needs Clang and clang-tidy on `PATH`. CI uses
+version 18; on macOS that is the `llvm@18` export above. Fuzzing needs a Clang
+installation with libFuzzer; the hosted fuzz legs use Clang 21.
 
 ## Presets
 
@@ -135,7 +134,7 @@ commands. CodeQL and release publication have workflow-specific steps.
 |---|---|
 | Doxygen API site + clang-format | `./scripts/ci-docs.sh`, then `CLANG_FORMAT=clang-format-18 ./scripts/format.sh --check` |
 | Core, Linux GCC 16 and macOS GCC 16 | `./scripts/ci-local.sh` |
-| clang-tidy | `./scripts/ci-tidy.sh` with `SCRY_TIDY_LIBCXX=1`, because Ubuntu 24.04's libstdc++ `<expected>` is newer than clang 18 can parse |
+| clang-tidy | `./scripts/ci-tidy.sh -DSCRY_CLANG_TOOLING_LIBCXX=ON`, because Ubuntu 24.04's libstdc++ `<expected>` is newer than clang 18 can parse |
 | ASan + UBSan, TSan | `./scripts/ci-sanitizer.sh asan` and `... tsan` |
 | Fuzz corpus replay | `./scripts/ci-fuzz-replay.sh` |
 
@@ -154,21 +153,20 @@ Run the whole per-commit ring locally before every pull request:
 ./scripts/preflight.sh    # just ci
 ```
 
-It runs documentation, core, clang-tidy, sanitizers, and fuzz replay, and
-continues after failures. Missing documentation, tidy, sanitizer, or fuzz
-capabilities are reported as `SKIP` and listed in the closing summary. The core
-gate is always attempted: a missing compiler, formatter, or complexity checker
-fails that gate. Each sanitizer leg probes its own flag with
-`g++-16` first, because GCC ships no thread-sanitizer runtime on Apple Silicon,
-so TSan skips there while ASan still runs. `./scripts/ci-local.sh` (`just
-ci-fast`) is the faster inner loop: diff check, complexity, unlinked TODOs,
-format, build, tests, a staged install, and a downstream `find_package(scry)`
+It runs documentation, format, core, clang-tidy, sanitizers, and fuzz replay,
+and continues after failures. Missing documentation, tidy, sanitizer, or fuzz
+capabilities are reported as `SKIP` and listed in the closing summary. The format
+and core gates are always attempted: a missing formatter fails the format gate,
+and a missing compiler or complexity checker fails the core gate. Each sanitizer
+leg probes its own flag with `g++-16` first, because GCC ships no
+thread-sanitizer runtime on Apple Silicon, so TSan skips there while ASan still
+runs. `./scripts/ci-local.sh` (`just ci-fast`) is the faster inner loop: a
+whitespace check over the branch against `origin/main`, complexity, unlinked
+TODOs, build, tests, a staged install, and a downstream `find_package(scry)`
 consumer.
 
 The showcase is a standalone project under `extras/showcase/` that the root build
 never configures; `./scripts/ci-showcase.sh` (`just showcase`) only builds it.
-The existing staged-install check in `ci-local.sh` also audits that no showcase
-artifact or dependency reaches the installed package.
 
 The live-model smoke executable is excluded from default builds;
 `ci-local-model.sh` explicitly builds its target when requested.
@@ -203,9 +201,7 @@ SCRY_NIGHTLY_FUZZ_SECONDS=1200 ./scripts/ci-nightly-fuzz.sh sse
 
 `scry::testing` is an optional package component that hands a consumer the same
 scripted-transport seam Scry's own suites use. It replaces the HTTP transfer and
-nothing else: a turn run against it still goes through the worker thread, the
-dialect's request encoder and stream decoder, retry scheduling, tool dispatch,
-transactional history, and the pump.
+nothing else.
 
 ```cmake
 find_package(scry CONFIG REQUIRED COMPONENTS testing)
@@ -222,33 +218,10 @@ transport.enqueue({.body_chunks = {scry::testing::anthropic_text_stream("hi")}})
 auto harness = scry::testing::create_harness(my_config(), transport);
 ```
 
-`<scry/testing/streams.hpp>` builds the response bodies each dialect decodes:
-`anthropic_text_stream`, `anthropic_tool_stream`, `openai_text_stream`, and
-`openai_tool_stream`. Every string they embed — assistant text, identifiers, and
-a tool-argument document — is encoded as a JSON string literal, so text with
-newlines, tabs, quotes, or backslashes and pretty-printed tool arguments survive
-the round trip through the real decoder.
-
-`ScriptedResponse::status` is classified exactly as a real HTTP status is: a
-non-2xx status never reaches the stream decoder and becomes an error whose
-category, retryability, and `http_status` match what `CurlTransport` would
-report, with the body mined only for the provider's sanitized error token. Pair
-a non-2xx status with `openai_error_body` or `anthropic_error_body`, which build
-each provider's plain JSON error body. `ScriptedResponse` also scripts a
-transfer that fails outright (`failure`) or one that blocks until `release()`
-(`hold`); a held transfer also ends when the turn is cancelled, so retry and
-cancellation paths are reachable without a server. The handle stays usable for
-inspection after `create_harness` — `requests()` returns the bytes Scry actually
-sent.
-
-Retry waits are real time bounded by the `Config`'s retry policy, so a test that
-scripts a retried failure should shrink `initial_backoff` and `max_backoff`
-rather than pay production backoff.
-
+`<scry/testing/scripted_transport.hpp>` and `<scry/testing/streams.hpp>` document
+the scripted statuses, failures, held transfers, and stream builders.
 `examples/testing_scripted.cpp` is a complete framework-free test in this shape;
-`tests/testing/scripted_transport_tests.cpp` is the Catch2 equivalent. Configure
-with `-DSCRY_BUILD_TESTING_SUPPORT=OFF` to build and install nothing of it, in
-which case a consumer must not request the component.
+`tests/testing/scripted_transport_tests.cpp` is the Catch2 equivalent.
 
 ## Mechanical limits
 

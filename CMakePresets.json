@@ -59,13 +59,12 @@
     },
     {
       "name": "fuzz",
-      "displayName": "Short protocol fuzz run",
+      "displayName": "Fuzz corpus replay",
       "inherits": "base",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
         "SCRY_BUILD_FUZZERS": true,
         "SCRY_CLANG_TOOLING": true,
-        "SCRY_FUZZ_RUNS": "1000",
         "SCRY_SANITIZER": "address-undefined"
       }
     }

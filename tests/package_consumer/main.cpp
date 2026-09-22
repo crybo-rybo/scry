@@ -1,15 +1,8 @@
 // Downstream smoke for the installed package: the explicit-schema surface and
 // the reflected surface must both be usable through scry::scry alone.
-#include <scry/config.hpp>
-#include <scry/error.hpp>
-#include <scry/harness.hpp>
-#include <scry/reflection.hpp>
 #include <scry/scry.hpp>
-#include <scry/version.hpp>
-#if defined(SCRY_CONSUMER_HAS_TESTING)
 #include <scry/testing/scripted_transport.hpp>
 #include <scry/testing/streams.hpp>
-#endif
 #include <string_view>
 #include <utility>
 
@@ -24,7 +17,6 @@ struct PackageArguments {
   return encoded && encoded->text == R"({"ready":true})";
 }
 
-#if defined(SCRY_CONSUMER_HAS_TESTING)
 // The optional testing component must drive a whole turn from the installed
 // package alone: headers, library, and the runtime underneath all of it.
 [[nodiscard]] bool scripted_turn_smoke() {
@@ -50,7 +42,6 @@ struct PackageArguments {
   const auto completion = created->send_and_wait(*conversation, "Question");
   return completion && completion->text == "installed" && transport.calls() == 1;
 }
-#endif
 
 } // namespace
 
@@ -100,11 +91,9 @@ int main() {
     return 4;
   }
 
-#if defined(SCRY_CONSUMER_HAS_TESTING)
   if (!scripted_turn_smoke()) {
     return 5;
   }
-#endif
 
   return 0;
 }

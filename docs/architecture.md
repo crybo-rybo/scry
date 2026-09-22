@@ -215,16 +215,13 @@ effects on host state outlive the transcript the turn discards. The counts are
 unchanged by it: the call still spent the per-turn limit, but a call cancellation
 suppressed is not a refusal and is not counted as one.
 
-A refused call and a call dropped at the round limit share the same guarantee: the
-handler never ran, so nothing it would have changed happened. Under
-`ToolRoundLimitPolicy::complete`, host state and history agree because the dropped
-calls never ran; the host learns what the model asked for from
-`Completion::unexecuted_tool_calls` and can put it in the next send.
-
-Cancelling from inside a handler is a different thing and rarely what a host
-wants: it discards the pending transcript, so the results the executed tools
-produced are thrown away and the whole turn rolls back, while the side effects
-those handlers already had on host state remain and are the host's to reconcile.
+Tool side effects are not transactional. A failed or cancelled turn leaves
+Conversation history unchanged even if a handler already changed host state.
+Hosts own rollback, idempotency, and reconciliation for such effects. That is why
+cancelling from inside a handler is rarely what a host wants: it discards the
+pending transcript, so the results the executed tools produced are thrown away
+and the whole turn rolls back, while the side effects those handlers already had
+on host state remain.
 A host that wants the turn to finish but no further tools to run sets its own
 flag, from the handler or from `on_tool_call`, and refuses every later request
 from `on_tool_request`. The model is told why, the turn completes, and history
@@ -379,10 +376,6 @@ child views can outlive their parent. Invalid input returns `invalid_argument`.
 The internal JSON codec uses Glaze and canonicalizes object keys in lexical order.
 No Glaze type or header is exposed to consumers.
 
-Tool side effects are not transactional. A failed or cancelled turn leaves
-Conversation history unchanged even if a handler already changed host state.
-Hosts own rollback, idempotency, and reconciliation for such effects.
-
 ## Providers and transport
 
 The public `Message` model contains user and assistant roles with text, tool-call,
@@ -430,7 +423,9 @@ allowed before `[DONE]`. Missing, duplicate, or early terminal markers and
 semantic content after finish are protocol errors. Anthropic streams decode
 Messages content blocks, usage, stop reasons, and tool-use arguments.
 
-The incremental SSE parser handles arbitrary byte splits. Unknown optional events
+The incremental SSE parser handles arbitrary byte splits. A CR, LF, or CRLF ends
+a line as soon as it arrives; a blank line ended by a lone CR dispatches its event
+without waiting for the next byte. Unknown optional events
 can be ignored; malformed required content fails with `protocol`. There is no
 non-streaming response path or public logging API.
 

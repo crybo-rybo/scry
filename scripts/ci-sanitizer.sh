@@ -22,10 +22,11 @@ esac
 
 cd "${root_dir}"
 
+ctest_args=(--test-dir "build/${preset}" --output-on-failure)
+if [[ "${preset}" == "tsan" ]]; then
+  ctest_args+=(--repeat until-fail:3)
+fi
+
 cmake --preset "${preset}"
 cmake --build "build/${preset}"
-if [[ "${preset}" == "tsan" ]]; then
-  ctest --test-dir build/tsan --output-on-failure --repeat until-fail:3
-else
-  ctest --test-dir build/asan --output-on-failure
-fi
+ctest "${ctest_args[@]}"
