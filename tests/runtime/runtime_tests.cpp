@@ -40,13 +40,11 @@ TEST_CASE("event byte accounting spans worker queue and pump ownership") {
 
 TEST_CASE("a turn with empty callbacks still commits its history") {
   PumpFixture fixture;
-  scry::detail::PumpState pump{fixture.events};
-  const auto route = fixture.route(9);
-  pump.add_route(route);
+  const auto route = fixture.add(9);
 
   REQUIRE(
       fixture.events->push(completion_event(route->id(), {.text = "answer"}), 1024));
-  const auto stats = pump.update({});
+  const auto stats = fixture.pump.update({});
   CHECK(stats.callbacks_delivered == 0);
   // No callback can ever consume the completion, so the pump releases its bytes
   // on arrival rather than holding them for a registration that cannot happen.
@@ -60,14 +58,13 @@ TEST_CASE("text deltas arrive in order and coalesce within each pump") {
   constexpr auto deltas = std::array<std::string_view, 4>{"one", "-", "two", "-three"};
   for (std::size_t split = 0; split <= deltas.size(); ++split) {
     PumpFixture fixture;
-    scry::detail::PumpState pump{fixture.events};
     std::string received;
     std::size_t callback_count = 0;
-    const auto route = fixture.route(
+    const auto route = fixture.add(
         100 + split,
         {
             .callbacks =
-                scry::TurnCallbacks{
+                {
                     .on_text_delta =
                         [&received, &callback_count](const std::string_view delta) {
                           received.append(delta);
@@ -75,7 +72,6 @@ TEST_CASE("text deltas arrive in order and coalesce within each pump") {
                         },
                 },
         });
-    pump.add_route(route);
 
     for (std::size_t index = 0; index < split; ++index) {
       REQUIRE(fixture.events->push(
@@ -85,7 +81,7 @@ TEST_CASE("text deltas arrive in order and coalesce within each pump") {
           },
           1024));
     }
-    static_cast<void>(pump.update({}));
+    static_cast<void>(fixture.pump.update({}));
     for (std::size_t index = split; index < deltas.size(); ++index) {
       REQUIRE(fixture.events->push(
           scry::detail::TextDeltaEvent{
@@ -94,7 +90,7 @@ TEST_CASE("text deltas arrive in order and coalesce within each pump") {
           },
           1024));
     }
-    static_cast<void>(pump.update({}));
+    static_cast<void>(fixture.pump.update({}));
 
     CHECK(received == "one-two-three");
     // Each pump coalesces everything the queue held for the turn into one call,
@@ -107,99 +103,85 @@ TEST_CASE("text deltas arrive in order and coalesce within each pump") {
 
 TEST_CASE("callback exceptions consume the event and leave the pump valid") {
   PumpFixture fixture;
-  scry::detail::PumpState pump{fixture.events};
   const auto route =
-      fixture.route(10, {
-                            .callbacks =
-                                scry::TurnCallbacks{
-                                    .on_finished =
-                                        [](scry::Result<scry::Completion>) {
-                                          throw std::runtime_error{"app callback"};
-                                        },
-                                },
-                        });
-  pump.add_route(route);
-  REQUIRE(fixture.events->push_terminal(
+      fixture.add(10, {
+                          .callbacks =
+                              {
+                                  .on_finished =
+                                      [](scry::Result<scry::Completion>) {
+                                        throw std::runtime_error{"app callback"};
+                                      },
+                              },
+                      });
+  REQUIRE(fixture.events->push(
       scry::detail::ErrorEvent{
           .turn_id = route->id(),
           .error = {.category = scry::ErrorCategory::network},
       },
       1024));
 
-  CHECK_THROWS_AS(pump.update({}), std::runtime_error);
-  CHECK(pump.update({}).callbacks_delivered == 0);
+  CHECK_THROWS_AS(fixture.pump.update({}), std::runtime_error);
+  CHECK(fixture.pump.update({}).callbacks_delivered == 0);
 }
 
 TEST_CASE("pump budget is a soft deadline between callbacks") {
-  PumpFixture fixture;
   auto now = std::chrono::steady_clock::time_point{};
-  scry::detail::PumpState pump{
-      fixture.events,
-      [&now] { return now; },
-  };
-  const auto first = fixture.route(
+  PumpFixture fixture{[&now] { return now; }};
+  const auto first = fixture.add(
       11,
       {
           .callbacks =
-              scry::TurnCallbacks{
+              {
                   .on_finished = [&now](scry::Result<scry::Completion>) { now += 2ms; },
               },
       });
-  const auto second = fixture.route(
-      12, {
-              .callbacks =
-                  scry::TurnCallbacks{
-                      .on_finished = [](scry::Result<scry::Completion>) {},
-                  },
-          });
-  pump.add_route(first);
-  pump.add_route(second);
+  const auto second =
+      fixture.add(12, {
+                          .callbacks =
+                              {
+                                  .on_finished = [](scry::Result<scry::Completion>) {},
+                              },
+                      });
   REQUIRE(fixture.events->push(completion_event(first->id(), {.text = "first"}), 1024));
   REQUIRE(
       fixture.events->push(completion_event(second->id(), {.text = "second"}), 1024));
 
-  const auto stats = pump.update({.time_budget = 1ms});
+  const auto stats = fixture.pump.update({.time_budget = 1ms});
   CHECK(stats.callbacks_delivered == 1);
   CHECK(stats.events_remaining == 1);
   CHECK(stats.budget_exhausted);
-  CHECK(pump.update({}).callbacks_delivered == 1);
+  CHECK(fixture.pump.update({}).callbacks_delivered == 1);
 }
 
 TEST_CASE("pump budget bounds ingestion and delivery after one guaranteed unit") {
-  PumpFixture fixture;
   auto now = std::chrono::steady_clock::time_point{};
-  scry::detail::PumpState pump{
-      fixture.events,
-      [&now] {
-        const auto sampled = now;
-        now += 1ms;
-        return sampled;
-      },
-  };
+  PumpFixture fixture{[&now] {
+    const auto sampled = now;
+    now += 1ms;
+    return sampled;
+  }};
   bool first_completed = false;
   bool second_completed = false;
-  const auto first = fixture.route(
+  const auto first = fixture.add(
       15, {
               .callbacks =
-                  scry::TurnCallbacks{
+                  {
                       .on_finished =
                           [&first_completed](scry::Result<scry::Completion> done) {
                             first_completed = done.has_value();
                           },
                   },
           });
-  const auto second = fixture.route(
+  const auto second = fixture.add(
       16, {
               .callbacks =
-                  scry::TurnCallbacks{
+                  {
                       .on_finished =
                           [&second_completed](scry::Result<scry::Completion> done) {
                             second_completed = done.has_value();
                           },
                   },
           });
-  pump.add_route(first);
-  pump.add_route(second);
   REQUIRE(fixture.events->push(completion_event(first->id(), {.text = "first"}), 1024));
   REQUIRE(
       fixture.events->push(completion_event(second->id(), {.text = "second"}), 1024));
@@ -211,7 +193,7 @@ TEST_CASE("pump budget bounds ingestion and delivery after one guaranteed unit")
   // queue is already empty, so nothing was left behind and the budget is not yet
   // spent. The first delivery is likewise unconditional; the check before the
   // second (at 3 ms) stops the call with an event still owed.
-  const auto bounded = pump.update({.time_budget = 2ms});
+  const auto bounded = fixture.pump.update({.time_budget = 2ms});
   CHECK(bounded.callbacks_delivered == 1);
   CHECK(bounded.events_remaining == 1);
   CHECK(bounded.budget_exhausted);
@@ -219,7 +201,7 @@ TEST_CASE("pump budget bounds ingestion and delivery after one guaranteed unit")
   CHECK(first_completed);
   CHECK_FALSE(second_completed);
 
-  const auto drained = pump.update({});
+  const auto drained = fixture.pump.update({});
   CHECK(drained.callbacks_delivered == 1);
   CHECK(drained.events_remaining == 0);
   CHECK(second_completed);
@@ -228,46 +210,41 @@ TEST_CASE("pump budget bounds ingestion and delivery after one guaranteed unit")
 
 TEST_CASE("an already-expired positive budget still makes one unit of progress per "
           "call") {
-  PumpFixture fixture;
   auto now = std::chrono::steady_clock::time_point{};
-  scry::detail::PumpState pump{
-      fixture.events,
-      [&now] {
-        const auto sampled = now;
-        now += std::chrono::hours{1};
-        return sampled;
-      },
-  };
+  PumpFixture fixture{[&now] {
+    const auto sampled = now;
+    now += std::chrono::hours{1};
+    return sampled;
+  }};
   std::size_t completed = 0;
   constexpr std::array turn_values{21U, 22U, 23U};
   for (const auto value : turn_values) {
-    const auto route = fixture.route(
+    const auto route = fixture.add(
         value,
         {
             .callbacks =
-                scry::TurnCallbacks{
+                {
                     .on_finished =
                         [&completed](scry::Result<scry::Completion>) { ++completed; },
                 },
         });
-    pump.add_route(route);
     REQUIRE(
         fixture.events->push(completion_event(route->id(), {.text = "done"}), 1024));
   }
 
   // The budget expires on the very first clock sample, yet each call still
   // ingests one event and delivers one callback.
-  const auto first = pump.update({.time_budget = 1us});
+  const auto first = fixture.pump.update({.time_budget = 1us});
   CHECK(first.callbacks_delivered == 1);
   CHECK(first.events_remaining == 2);
   CHECK(first.budget_exhausted);
 
-  const auto second = pump.update({.time_budget = 1us});
+  const auto second = fixture.pump.update({.time_budget = 1us});
   CHECK(second.callbacks_delivered == 1);
   CHECK(second.events_remaining == 1);
   CHECK(second.budget_exhausted);
 
-  const auto third = pump.update({.time_budget = 1us});
+  const auto third = fixture.pump.update({.time_budget = 1us});
   CHECK(third.callbacks_delivered == 1);
   CHECK(third.events_remaining == 0);
   CHECK(completed == 3);
@@ -275,22 +252,20 @@ TEST_CASE("an already-expired positive budget still makes one unit of progress p
 
 TEST_CASE("detaching retains the callbacks supplied at send") {
   PumpFixture fixture;
-  scry::detail::PumpState pump{fixture.events};
   std::string text;
-  const auto route = fixture.route(
+  const auto route = fixture.add(
       13, {
               .callbacks =
-                  scry::TurnCallbacks{
+                  {
                       .on_text_delta =
                           [&text](const std::string_view delta) { text += delta; },
                   },
           });
-  pump.add_route(route);
   route->detach();
   REQUIRE(fixture.events->push(
       scry::detail::TextDeltaEvent{.turn_id = route->id(), .text = "delta"}, 1024));
 
-  CHECK(pump.update({}).callbacks_delivered == 1);
+  CHECK(fixture.pump.update({}).callbacks_delivered == 1);
   CHECK(text == "delta");
 }
 
@@ -347,7 +322,7 @@ TEST_CASE("a turn route reports completion, failure, and cancellation as one fin
   const auto route = fixture.route(
       213,
       {
-          .callbacks = scry::TurnCallbacks{
+          .callbacks = {
               .on_text_delta = [&text](const std::string_view value) { text = value; },
               .on_finished =
                   [&finished](scry::Result<scry::Completion> result) {

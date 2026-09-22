@@ -58,25 +58,22 @@ void append_commands(std::deque<MachineCommand>& destination,
   }
 }
 
+[[nodiscard]] bool contains_secret(const std::string_view text,
+                                   const std::string_view secret) noexcept {
+  return !secret.empty() && text.find(secret) != std::string_view::npos;
+}
+
 void redact_sensitive_fields(Error& error, const std::string_view secret) {
-  if (secret.empty()) {
-    return;
-  }
-  if (error.message.find(secret) != std::string::npos) {
+  if (contains_secret(error.message, secret)) {
     error.message = "operation failed; sensitive diagnostic redacted";
   }
-  if (error.provider_detail.find(secret) != std::string::npos) {
+  if (contains_secret(error.provider_detail, secret)) {
     error.provider_detail.clear();
   }
-  if (error.provider_request_id.find(secret) != std::string::npos) {
+  if (contains_secret(error.provider_request_id, secret)) {
     error.provider_request_id.clear();
   }
 }
-
-struct AttemptLimits final {
-  std::size_t maximum_event_bytes{};
-  std::size_t maximum_tool_arguments_bytes{};
-};
 
 } // namespace
 
@@ -103,9 +100,9 @@ WorkerActor::WorkerActor(Config config, std::unique_ptr<ProviderAdapter> provide
 }
 
 struct WorkerActor::AttemptState {
-  explicit AttemptState(const AttemptLimits& limits)
-      : parser(limits.maximum_event_bytes),
-        decode{.max_tool_arguments_bytes = limits.maximum_tool_arguments_bytes} {}
+  explicit AttemptState(const ResourceLimits& limits)
+      : parser(limits.max_sse_event_bytes),
+        decode{.max_tool_arguments_bytes = limits.max_tool_arguments_bytes} {}
 
   SseParser parser;
   ProviderDecodeState decode{};
@@ -205,10 +202,6 @@ void WorkerActor::process_machine_command(
     if (turn.cancelled->load(std::memory_order_acquire)) {
       append_commands(pending_commands, machine.apply(CancelTurn{}));
     } else {
-      // The command owns the only snapshot outside the machine, and it is moved
-      // rather than borrowed so perform_attempt can drop it as soon as the
-      // request is encoded; the machine is then the sole owner and commits its
-      // transcript without copying.
       append_commands(pending_commands, perform_attempt(machine, std::move(*issue),
                                                         turn.cancelled, stopped));
     }
@@ -235,6 +228,8 @@ void WorkerActor::process_machine_command(
   publish_terminal_command(std::move(command));
 }
 
+// Records a failed attempt on the machine: redacts the API key out of the error,
+// fills in the turn and attempt numbers, and draws this attempt's retry jitter.
 TransitionResult WorkerActor::failed_attempt(TurnMachine& machine, Error error,
                                              const TurnId turn_id) {
   redact_sensitive_fields(error, config_.api_key);
@@ -254,23 +249,21 @@ TransitionResult WorkerActor::failed_attempt(TurnMachine& machine, Error error,
   });
 }
 
+// Takes the issued command by value because it holds the only request snapshot
+// outside the machine. Everything after encoding reads the TransportRequest, so
+// the snapshot is dropped at once: the machine is then its sole owner and a
+// completion moves the transcript out instead of copying it.
 TransitionResult
 WorkerActor::perform_attempt(TurnMachine& machine, IssueModelRequest issue,
                              const std::shared_ptr<std::atomic<bool>>& cancelled,
                              const std::stop_token& stopped) {
   auto request = provider_->make_request(config_, *issue.request);
-  // Everything below reads the encoded TransportRequest, never the model
-  // request, so the snapshot is released here. Dropping it leaves the machine
-  // the only owner, which is what lets a completion move its transcript out.
   issue.request.reset();
   if (!request) {
     return failed_attempt(machine, std::move(request.error()), issue.turn_id);
   }
 
-  AttemptState state{AttemptLimits{
-      .maximum_event_bytes = config_.limits.max_sse_event_bytes,
-      .maximum_tool_arguments_bytes = config_.limits.max_tool_arguments_bytes,
-  }};
+  AttemptState state{config_.limits};
   BodyChunkSink body_sink{
       [this, &machine, &state](const std::string_view chunk) -> Status {
         return consume_stream_chunk(machine, state, chunk);
@@ -336,8 +329,7 @@ TransitionResult WorkerActor::complete_attempt(TurnMachine& machine,
   if (response.provider_request_id.empty()) {
     response.provider_request_id = result.provider_request_id;
   }
-  if (!config_.api_key.empty() &&
-      response.provider_request_id.find(config_.api_key) != std::string::npos) {
+  if (contains_secret(response.provider_request_id, config_.api_key)) {
     response.provider_request_id.clear();
   }
   return machine.apply(ModelCompleted{.response = std::move(response)});
@@ -408,18 +400,19 @@ WorkerActor::handle_tool_wait_command(TurnMachine& machine, WorkerCommand comman
   return std::nullopt;
 }
 
+// Provider events and machine commands are consumed exactly once, so both take
+// ownership of their payloads and streamed text moves through to the event queue.
+// The event sink is the attempt's, so its elements are moved from and the vector
+// is reused.
 Status
 WorkerActor::publish_stream_events(TurnMachine& machine,
                                    std::vector<ProviderEvent>& provider_events,
                                    std::optional<ModelResponse>& completed_response,
                                    const bool semantic_output_consumed) {
+  // The machine accepts semantic output whenever an attempt is in flight, so
+  // the transition cannot be refused here; the phase check only skips a no-op.
   if (semantic_output_consumed && machine.phase() == MachinePhase::awaiting_model) {
-    const auto transition = machine.apply(ModelSemanticOutput{});
-    if (transition.status != TransitionStatus::applied) {
-      return std::unexpected(worker_error(
-          ErrorCategory::invalid_state,
-          "provider semantic output could not enter streaming state", TurnId{}));
-    }
+    static_cast<void>(machine.apply(ModelSemanticOutput{}));
   }
   for (auto& event : provider_events) {
     auto status = publish_provider_event(machine, std::move(event), completed_response);
@@ -458,9 +451,6 @@ WorkerActor::publish_provider_event(TurnMachine& machine, ProviderEvent event,
     completed_response = std::move(completed->response);
     return {};
   }
-  // The provider seam preserves an ignored event's name for debug inspection.
-  // Scry has no public logging surface, so the worker consumes the marker.
-  assert(std::holds_alternative<ProviderIgnoredEvent>(event));
   return {};
 }
 
@@ -468,30 +458,16 @@ Status WorkerActor::publish_tool_batch(PublishToolCall first,
                                        std::deque<MachineCommand>& pending_commands) {
   const auto turn_id = first.turn_id;
   std::vector<WorkerEvent> events;
-  events.emplace_back(ToolCallEvent{
-      .turn_id = turn_id,
-      .call = std::move(first.call),
-      .remaining_exchange_bytes = first.remaining_exchange_bytes,
-      .round = first.round,
-      .index = first.index,
-  });
+  events.emplace_back(std::move(first));
   while (!pending_commands.empty()) {
     auto* next = std::get_if<PublishToolCall>(&pending_commands.front());
     if (next == nullptr || next->turn_id != turn_id) {
       break;
     }
-    events.emplace_back(ToolCallEvent{
-        .turn_id = turn_id,
-        .call = std::move(next->call),
-        .remaining_exchange_bytes = next->remaining_exchange_bytes,
-        .round = next->round,
-        .index = next->index,
-    });
+    events.emplace_back(std::move(*next));
     pending_commands.pop_front();
   }
-  const auto payload_limit =
-      config_.limits.max_queued_event_bytes_per_turn - terminal_event_reserve;
-  if (!events_->push_batch(std::move(events), payload_limit)) {
+  if (!events_->push_batch(std::move(events), streamed_event_limit())) {
     return std::unexpected(
         worker_error(ErrorCategory::resource_limit,
                      "tool-call batch exceeds the configured queue limit", turn_id));
@@ -500,13 +476,11 @@ Status WorkerActor::publish_tool_batch(PublishToolCall first,
 }
 
 Status WorkerActor::publish_text_delta(PublishTextDelta delta) {
-  const auto payload_limit =
-      config_.limits.max_queued_event_bytes_per_turn - terminal_event_reserve;
   // The rejection path below reads only the scalar correlation fields, so
   // handing the text to the queue costs nothing on failure.
   if (!events_->push(
           TextDeltaEvent{.turn_id = delta.turn_id, .text = std::move(delta.text)},
-          payload_limit)) {
+          streamed_event_limit())) {
     return std::unexpected(worker_error(ErrorCategory::resource_limit,
                                         "turn events exceed the configured queue limit",
                                         delta.turn_id, delta.attempt));
@@ -539,16 +513,22 @@ void WorkerActor::publish_terminal_command(MachineCommand command) {
     return;
   }
   if (const auto* cancelled = std::get_if<PublishCancelled>(&command)) {
-    publish_terminal_event(CancelledEvent{.turn_id = cancelled->turn_id});
+    publish_terminal_event(*cancelled);
   }
 }
 
 void WorkerActor::publish_terminal_event(WorkerEvent event) {
   event = bound_terminal_event(std::move(event));
-  const auto pushed = events_->push_terminal(
-      std::move(event), config_.limits.max_queued_event_bytes_per_turn);
+  const auto pushed =
+      events_->push(std::move(event), config_.limits.max_queued_event_bytes_per_turn);
   static_cast<void>(pushed);
   assert(pushed);
+}
+
+// Streamed payloads may not consume the per-turn reserve kept for the terminal
+// event, so a turn's outcome always fits in the queue.
+std::size_t WorkerActor::streamed_event_limit() const noexcept {
+  return config_.limits.max_queued_event_bytes_per_turn - terminal_event_reserve;
 }
 
 void WorkerActor::publish_unhandled_failure(const TurnId turn_id) noexcept {

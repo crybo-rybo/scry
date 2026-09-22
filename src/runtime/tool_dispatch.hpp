@@ -1,19 +1,13 @@
 #pragma once
 
 #include "core/model.hpp"
-#include "runtime/state.hpp"
+#include "runtime/tool_registry_impl.hpp"
 
 #include <cstddef>
 #include <scry/error.hpp>
 #include <string_view>
 
 namespace scry::detail {
-
-// Whether the snapshot a turn froze can service this name. The route asks before
-// consulting its admission hook, so a host is never offered a call no handler
-// could have run.
-[[nodiscard]] bool tool_is_registered(const ToolSnapshot& snapshot,
-                                      std::string_view name) noexcept;
 
 // The model-visible error result for a call that produced no handler value: a
 // refusal, a failed handler, or an unknown tool. Falls back to a fixed text and

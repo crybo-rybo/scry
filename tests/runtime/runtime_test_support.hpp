@@ -16,6 +16,7 @@
 #include <scry/tool_registry.hpp>
 #include <string>
 #include <utility>
+#include <variant>
 
 namespace scry::test_support {
 
@@ -32,7 +33,7 @@ registered_tool(std::string name, scry::ContextualToolHandler handler) {
   return std::make_shared<const scry::detail::RegisteredTool>(
       scry::detail::RegisteredTool{
           .definition = tool_definition(std::move(name)),
-          .handler = std::make_shared<scry::ContextualToolHandler>(std::move(handler)),
+          .handler = std::move(handler),
       });
 }
 
@@ -104,22 +105,28 @@ completion_event(const scry::TurnId turn_id, CompletionOptions options = {}) {
 // tool-dispatch, pump-delivery, and conversation-limit suites without each
 // growing its own positional overload.
 struct RouteOptions {
-  scry::detail::FrozenToolEntries tools{};
+  // A real turn always freezes a snapshot, even of an empty registry.
+  scry::detail::FrozenToolEntries tools{frozen_tools({})};
   std::size_t max_tool_result_bytes{1024};
-  std::size_t max_exchange_bytes{std::numeric_limits<std::size_t>::max()};
   std::size_t max_conversation_bytes{1024};
   std::optional<std::uint32_t> max_tool_calls{};
   scry::TurnCallbacks callbacks{};
 };
 
 struct PumpFixture {
+  PumpFixture() = default;
+  explicit PumpFixture(scry::detail::PumpClock clock)
+      : pump{events, std::move(clock)} {}
+
   std::shared_ptr<scry::detail::CommandQueue> commands{
       std::make_shared<scry::detail::CommandQueue>()};
   std::shared_ptr<scry::detail::EventQueue> events{
       std::make_shared<scry::detail::EventQueue>()};
   std::shared_ptr<scry::detail::ConversationState> conversation{
       std::make_shared<scry::detail::ConversationState>()};
+  scry::detail::PumpState pump{events};
 
+  // A route the pump does not know about, for driving it directly.
   [[nodiscard]] std::shared_ptr<scry::detail::TurnRoute>
   route(const std::uint64_t id, RouteOptions options = {}) const {
     return std::make_shared<scry::detail::TurnRoute>(
@@ -128,12 +135,29 @@ struct PumpFixture {
         scry::detail::TurnRouteOptions{
             .tools = std::move(options.tools),
             .max_tool_result_bytes = options.max_tool_result_bytes,
-            .max_exchange_bytes = options.max_exchange_bytes,
             .max_conversation_bytes = options.max_conversation_bytes,
             .max_tool_calls = options.max_tool_calls,
             .callbacks = std::move(options.callbacks),
         });
   }
+
+  // A route registered with the fixture's pump, as Harness::send registers one.
+  [[nodiscard]] std::shared_ptr<scry::detail::TurnRoute>
+  add(const std::uint64_t id, RouteOptions options = {}) {
+    auto added = route(id, std::move(options));
+    pump.add_route(added);
+    return added;
+  }
 };
+
+// The next command the pump posted, which has to be a tool result.
+[[nodiscard]] inline scry::Result<scry::detail::ToolResultBlock>
+pop_tool_result(PumpFixture& fixture) {
+  auto command = fixture.commands->try_pop();
+  REQUIRE(command);
+  auto* const posted = std::get_if<scry::detail::ToolResultCommand>(&*command);
+  REQUIRE(posted);
+  return std::move(posted->result);
+}
 
 } // namespace scry::test_support

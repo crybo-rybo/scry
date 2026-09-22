@@ -56,14 +56,8 @@ private:
                                const SendTurnCommand& turn,
                                const std::stop_token& stopped,
                                std::deque<MachineCommand>& pending_commands);
-  // Records a failed attempt on the machine: redacts the API key out of the
-  // error, fills in the turn and attempt numbers, and draws this attempt's
-  // retry jitter.
   [[nodiscard]] TransitionResult failed_attempt(TurnMachine& machine, Error error,
                                                 TurnId turn_id);
-  // Takes the issued command by value: the attempt releases its request
-  // snapshot the moment the provider has encoded it, so the machine is the
-  // request's only owner again while the response is still streaming in.
   [[nodiscard]] TransitionResult
   perform_attempt(TurnMachine& machine, IssueModelRequest issue,
                   const std::shared_ptr<std::atomic<bool>>& cancelled,
@@ -86,10 +80,6 @@ private:
   [[nodiscard]] TransitionResult complete_attempt(TurnMachine& machine,
                                                   ModelResponse response,
                                                   const TransportResult& result);
-  // Provider events and machine commands are consumed exactly once, so both
-  // take ownership of their payloads: streamed text moves through to the event
-  // queue instead of being copied at each hop. The event sink itself is the
-  // attempt's, so its elements are moved from and the vector is reused.
   [[nodiscard]] Status publish_stream_events(
       TurnMachine& machine, std::vector<ProviderEvent>& provider_events,
       std::optional<ModelResponse>& completed_response, bool semantic_output_consumed);
@@ -102,6 +92,7 @@ private:
   void publish_terminal_command(MachineCommand command);
   void publish_terminal_event(WorkerEvent event);
   void publish_unhandled_failure(TurnId turn_id) noexcept;
+  [[nodiscard]] std::size_t streamed_event_limit() const noexcept;
 
   Config config_{};
   std::unique_ptr<ProviderAdapter> provider_{};
