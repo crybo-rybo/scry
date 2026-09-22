@@ -1,11 +1,10 @@
 #include "core/error.hpp"
 #include "core/json_codec.hpp"
 #include "provider/openai.hpp"
-#include "provider/openai_content.hpp"
 #include "provider/shared.hpp"
 
 #include <algorithm>
-#include <limits>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <utility>
@@ -14,58 +13,103 @@
 namespace scry::detail {
 namespace {
 
-struct MetadataFragment {
-  std::string_view value;
-  std::string_view field;
-  std::uint8_t presence;
-};
-
-struct StreamEventView {
-  std::string_view name;
-  std::string_view data;
-};
-
-[[nodiscard]] Result<std::size_t> tool_index(const JsonValue& value) {
-  auto parsed = optional_json_uint(value, "index");
-  if (!parsed) {
-    return std::unexpected(std::move(parsed.error()));
+// Deliberately divergent from the Anthropic adapter: OpenAI usage objects
+// replace the running totals, so a missing field zeroes the count instead of
+// preserving the previous value.
+[[nodiscard]] Status assign_usage_count(const JsonValue& usage,
+                                        const std::string_view field,
+                                        std::uint64_t& destination) {
+  auto count = optional_json_uint(usage, field);
+  if (!count) {
+    return std::unexpected(std::move(count.error()));
   }
-  const auto index = *parsed;
-  if (!index ||
-      *index > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
-    return std::unexpected(make_error(
-        ErrorCategory::protocol, "OpenAI streamed tool call requires a usable index"));
-  }
-  return static_cast<std::size_t>(*index);
-}
-
-[[nodiscard]] bool has_metadata(const OpenAiToolDecodeState& tool,
-                                const std::uint8_t presence) {
-  return (tool.metadata & presence) != 0U;
-}
-
-[[nodiscard]] Status assign_metadata(std::string& destination, std::uint8_t& metadata,
-                                     const MetadataFragment fragment) {
-  if (fragment.value.empty()) {
-    return std::unexpected(make_error(
-        ErrorCategory::protocol,
-        "OpenAI streamed tool " + std::string{fragment.field} + " must not be empty"));
-  }
-  if ((metadata & fragment.presence) != 0U && destination != fragment.value) {
-    return std::unexpected(make_error(
-        ErrorCategory::protocol,
-        "OpenAI streamed tool " + std::string{fragment.field} + " changed mid-stream"));
-  }
-  destination = fragment.value;
-  metadata |= fragment.presence;
+  destination = count->value_or(0);
   return {};
 }
 
-[[nodiscard]] Status apply_optional_metadata(const JsonValue& owner,
-                                             const std::string_view field,
-                                             std::string& destination,
-                                             std::uint8_t& metadata,
-                                             const std::uint8_t presence) {
+[[nodiscard]] Status apply_usage(const JsonValue& owner, Usage& usage) {
+  const auto* value = json_field(owner, "usage");
+  if (value == nullptr || value->is_null()) {
+    return {};
+  }
+  if (!value->is_object()) {
+    return std::unexpected(
+        make_error(ErrorCategory::protocol, "OpenAI usage must be an object or null"));
+  }
+  auto input = assign_usage_count(*value, "prompt_tokens", usage.input_tokens);
+  if (!input) {
+    return input;
+  }
+  return assign_usage_count(*value, "completion_tokens", usage.output_tokens);
+}
+
+[[nodiscard]] Result<FinishReason> decode_finish(const std::string_view reason) {
+  if (reason == "stop") {
+    return FinishReason::completed;
+  }
+  if (reason == "length") {
+    return FinishReason::length;
+  }
+  if (reason == "tool_calls") {
+    return FinishReason::tool_use;
+  }
+  if (reason == "function_call") {
+    return std::unexpected(make_error(
+        ErrorCategory::protocol,
+        "OpenAI returned the unsupported deprecated function_call finish reason"));
+  }
+  return FinishReason::unknown;
+}
+
+// OpenAI's own aliases, then the error types both dialects share.
+[[nodiscard]] ErrorCategory
+openai_error_category(const std::string_view token) noexcept {
+  if (token == "invalid_api_key") {
+    return ErrorCategory::authentication;
+  }
+  if (token == "rate_limit_exceeded" || token == "insufficient_quota") {
+    return ErrorCategory::rate_limit;
+  }
+  if (token == "server_error") {
+    return ErrorCategory::network;
+  }
+  return error_category(token);
+}
+
+[[nodiscard]] bool is_error_root(const JsonValue& root) noexcept {
+  return json_field(root, "error") != nullptr;
+}
+
+// Picks the token that names the error. A "type" or "code" string that maps to a
+// specific category wins, type first; otherwise the first of the two that is
+// present labels a protocol error, and a numeric "code" is the last resort.
+[[nodiscard]] Error stream_error(const JsonValue& root) {
+  constexpr auto message =
+      std::string_view{"OpenAI-compatible stream returned an error"};
+  const auto type = error_token(root, "type");
+  const auto code = error_token(root, "code");
+  for (const auto* token : {&type, &code}) {
+    if (*token) {
+      const auto category = openai_error_category(**token);
+      if (category != ErrorCategory::protocol) {
+        return provider_error(category, message, "openai:" + **token);
+      }
+    }
+  }
+  std::string token = type ? *type : code.value_or("unknown_error");
+  const auto* error = json_field(root, "error");
+  const auto* numeric = error == nullptr ? nullptr : json_field(*error, "code");
+  if (!type && !code && numeric != nullptr && numeric->is_uint64()) {
+    token = std::to_string(numeric->get<std::uint64_t>());
+  }
+  return provider_error(ErrorCategory::protocol, message, "openai:" + token);
+}
+
+// Records a streamed tool id or name. Either may repeat across fragments, but
+// never empty and never changed.
+[[nodiscard]] Status apply_tool_string(const JsonValue& owner,
+                                       const std::string_view field,
+                                       std::string& destination) {
   auto parsed = optional_json_string(owner, field);
   if (!parsed) {
     return std::unexpected(std::move(parsed.error()));
@@ -74,9 +118,18 @@ struct StreamEventView {
   if (!value) {
     return {};
   }
-  return assign_metadata(
-      destination, metadata,
-      MetadataFragment{.value = *value, .field = field, .presence = presence});
+  if (value->empty()) {
+    return std::unexpected(make_error(ErrorCategory::protocol,
+                                      "OpenAI streamed tool " + std::string{field} +
+                                          " must not be empty"));
+  }
+  if (!destination.empty() && destination != *value) {
+    return std::unexpected(make_error(ErrorCategory::protocol,
+                                      "OpenAI streamed tool " + std::string{field} +
+                                          " changed mid-stream"));
+  }
+  destination = *value;
+  return {};
 }
 
 [[nodiscard]] Status apply_tool_type(const JsonValue& owner,
@@ -98,20 +151,7 @@ struct StreamEventView {
     return std::unexpected(make_error(
         ErrorCategory::protocol, "OpenAI streamed tool call type must be function"));
   }
-  tool.metadata |= OpenAiToolDecodeState::type_present;
-  return {};
-}
-
-[[nodiscard]] Status append_arguments(OpenAiToolDecodeState& tool,
-                                      const std::string_view fragment,
-                                      const std::size_t limit) {
-  if (auto status = accept_tool_argument_bytes(
-          tool.arguments.size(), fragment.size(), limit,
-          "OpenAI tool arguments exceed the configured byte limit");
-      !status) {
-    return status;
-  }
-  tool.arguments.append(fragment);
+  tool.typed = true;
   return {};
 }
 
@@ -126,8 +166,7 @@ struct StreamEventView {
     return std::unexpected(make_error(
         ErrorCategory::protocol, "OpenAI streamed tool function must be an object"));
   }
-  auto name = apply_optional_metadata(*function, "name", tool.name, tool.metadata,
-                                      OpenAiToolDecodeState::name_present);
+  auto name = apply_tool_string(*function, "name", tool.name);
   if (!name) {
     return name;
   }
@@ -139,7 +178,9 @@ struct StreamEventView {
   if (!fragment) {
     return {};
   }
-  return append_arguments(tool, *fragment, limit);
+  return append_tool_arguments(
+      tool.arguments, *fragment, limit,
+      "OpenAI tool arguments exceed the configured byte limit");
 }
 
 [[nodiscard]] OpenAiToolDecodeState& indexed_tool(OpenAiProviderDecodeState& decode,
@@ -164,13 +205,13 @@ struct StreamEventView {
         make_error(ErrorCategory::protocol,
                    "OpenAI streamed tool call fragment must be an object"));
   }
-  auto index = tool_index(value);
+  auto index =
+      required_index(value, "OpenAI streamed tool call requires a usable index");
   if (!index) {
     return std::unexpected(std::move(index.error()));
   }
   auto& tool = indexed_tool(decode, *index);
-  auto id = apply_optional_metadata(value, "id", tool.id, tool.metadata,
-                                    OpenAiToolDecodeState::id_present);
+  auto id = apply_tool_string(value, "id", tool.id);
   if (!id) {
     return id;
   }
@@ -210,10 +251,8 @@ struct StreamEventView {
                                     OpenAiProviderDecodeState& decode) {
   std::size_t expected_index = 0;
   for (auto& tool : decode.tool_calls) {
-    if (tool.index != expected_index ||
-        !has_metadata(tool, OpenAiToolDecodeState::id_present) ||
-        !has_metadata(tool, OpenAiToolDecodeState::name_present) ||
-        !has_metadata(tool, OpenAiToolDecodeState::type_present)) {
+    if (tool.index != expected_index || tool.id.empty() || tool.name.empty() ||
+        !tool.typed) {
       return std::unexpected(
           make_error(ErrorCategory::protocol,
                      "OpenAI streamed tool calls are incomplete or noncontiguous"));
@@ -224,8 +263,11 @@ struct StreamEventView {
     // The stream layer only proves the arguments are a JSON object and
     // forwards the bytes as received; TurnMachine owns the single
     // canonicalization pass.
-    if (auto status = validate_openai_arguments(tool.arguments); !status) {
-      return std::unexpected(std::move(status.error()));
+    if (auto status = validate_json_object(
+            tool.arguments, ErrorCategory::protocol,
+            "OpenAI streamed tool arguments must be a JSON object");
+        !status) {
+      return status;
     }
     state.response.content.push_back(ToolCallBlock{
         .id = std::move(tool.id),
@@ -234,13 +276,11 @@ struct StreamEventView {
     });
     ++expected_index;
   }
-  decode.tools_finalized = true;
   return {};
 }
 
 [[nodiscard]] Status apply_text_delta(const JsonValue& delta,
                                       ProviderDecodeState& state,
-                                      OpenAiProviderDecodeState& decode,
                                       std::vector<ProviderEvent>& out) {
   const auto* content = json_field(delta, "content");
   if (content == nullptr || content->is_null()) {
@@ -254,12 +294,12 @@ struct StreamEventView {
   if (text.empty()) {
     return {};
   }
-  if (decode.text_content_index == OpenAiProviderDecodeState::no_text_content) {
-    decode.text_content_index = state.response.content.size();
+  // Tool calls join the content only at the finish reason, after which every
+  // delta is refused, so until then the content is empty or one text block.
+  if (state.response.content.empty()) {
     state.response.content.push_back(TextBlock{});
   }
-  auto* destination =
-      std::get_if<TextBlock>(&state.response.content[decode.text_content_index]);
+  auto* destination = std::get_if<TextBlock>(&state.response.content.front());
   if (destination == nullptr) {
     return std::unexpected(
         make_error(ErrorCategory::protocol,
@@ -308,15 +348,18 @@ struct StreamEventView {
     return std::unexpected(make_error(ErrorCategory::protocol,
                                       "OpenAI stream chunk ID must not be empty"));
   }
-  if (!decode.chunk_id.empty() && decode.chunk_id != *id) {
+  if (decode.chunk_id.empty()) {
+    decode.chunk_id = *id;
+  } else if (decode.chunk_id != *id) {
     return std::unexpected(make_error(ErrorCategory::protocol,
                                       "OpenAI stream chunk ID changed mid-stream"));
   }
-  decode.chunk_id = *id;
   return {};
 }
 
-[[nodiscard]] Status validate_choice(const JsonValue& choice) {
+[[nodiscard]] Result<const JsonValue*>
+validated_choice_delta(const JsonValue& choice,
+                       const OpenAiProviderDecodeState& decode) {
   if (!choice.is_object()) {
     return std::unexpected(
         make_error(ErrorCategory::protocol, "OpenAI stream choice must be an object"));
@@ -328,16 +371,6 @@ struct StreamEventView {
   if (index->value_or(1) != 0) {
     return std::unexpected(
         make_error(ErrorCategory::protocol, "OpenAI stream choice index must be zero"));
-  }
-  return {};
-}
-
-[[nodiscard]] Result<const JsonValue*>
-validated_choice_delta(const JsonValue& choice,
-                       const OpenAiProviderDecodeState& decode) {
-  auto valid = validate_choice(choice);
-  if (!valid) {
-    return std::unexpected(std::move(valid.error()));
   }
   if (decode.finish_observed) {
     return std::unexpected(
@@ -365,7 +398,7 @@ validated_choice_delta(const JsonValue& choice,
   if (!*reason) {
     return {};
   }
-  auto finish = decode_openai_finish(*reason);
+  auto finish = decode_finish(**reason);
   if (!finish) {
     return std::unexpected(std::move(finish.error()));
   }
@@ -386,7 +419,7 @@ validated_choice_delta(const JsonValue& choice,
   if (!delta) {
     return std::unexpected(std::move(delta.error()));
   }
-  auto events = apply_text_delta(**delta, state, decode, out);
+  auto events = apply_text_delta(**delta, state, out);
   if (!events) {
     return std::unexpected(std::move(events.error()));
   }
@@ -394,7 +427,7 @@ validated_choice_delta(const JsonValue& choice,
   if (!tools) {
     return std::unexpected(std::move(tools.error()));
   }
-  auto usage = apply_openai_usage(root, state.response.usage);
+  auto usage = apply_usage(root, state.response.usage);
   if (!usage) {
     return std::unexpected(std::move(usage.error()));
   }
@@ -414,11 +447,7 @@ validated_choice_delta(const JsonValue& choice,
         make_error(ErrorCategory::protocol,
                    "OpenAI empty-choice chunk must carry post-finish usage"));
   }
-  auto applied = apply_openai_usage(root, state.response.usage);
-  if (!applied) {
-    return std::unexpected(std::move(applied.error()));
-  }
-  return {};
+  return apply_usage(root, state.response.usage);
 }
 
 [[nodiscard]] Status apply_chunk(const JsonValue& root, ProviderDecodeState& state,
@@ -446,65 +475,30 @@ validated_choice_delta(const JsonValue& choice,
 [[nodiscard]] Status complete_stream(ProviderDecodeState& state,
                                      const OpenAiProviderDecodeState& decode,
                                      std::vector<ProviderEvent>& out) {
-  if (!decode.finish_observed || !decode.tools_finalized) {
+  if (!decode.finish_observed) {
     return std::unexpected(
         make_error(ErrorCategory::protocol,
                    "OpenAI stream ended before a complete finish reason"));
   }
-  state.completed = true;
-  // parse_stream_event rejects every later event once completed is set, so the
-  // accumulated response has no reader left and transfers to the terminal event.
-  out.push_back(ProviderCompleted{.response = std::move(state.response)});
+  complete_response(state, out);
   return {};
 }
 
-[[nodiscard]] std::optional<Error> optional_root_error(const std::string_view data,
-                                                       const std::string& request_id) {
+// A named event other than `message` or `error` is optional and ignored, unless
+// its payload is an error root that a server mislabeled.
+[[nodiscard]] Status handle_optional_event(const std::string_view data,
+                                           const OpenAiProviderDecodeState& decode) {
   auto root =
       parse_json(data, ErrorCategory::protocol, "OpenAI SSE data is not valid JSON");
-  if (!root || !is_openai_error(*root)) {
-    return std::nullopt;
+  if (root && is_error_root(*root)) {
+    return std::unexpected(stream_error(*root));
   }
-  return decode_openai_error(*root, "OpenAI-compatible stream returned an error",
-                             request_id);
-}
-
-[[nodiscard]] Status decode_stream_event(const StreamEventView event,
-                                         ProviderDecodeState& state,
-                                         OpenAiProviderDecodeState& decode,
-                                         std::vector<ProviderEvent>& out) {
-  if (event.name != "message" && event.name != "error") {
-    if (auto error =
-            optional_root_error(event.data, state.response.provider_request_id)) {
-      return std::unexpected(std::move(*error));
-    }
-    if (decode.finish_observed) {
-      return std::unexpected(make_error(
-          ErrorCategory::protocol,
-          "OpenAI stream emitted an optional event after its finish reason"));
-    }
-    out.push_back(ProviderIgnoredEvent{.name = std::string{event.name}});
-    return {};
-  }
-  if (event.data == "[DONE]") {
-    if (event.name != "message") {
-      return std::unexpected(
-          make_error(ErrorCategory::protocol,
-                     "OpenAI named error event cannot contain the terminal marker"));
-    }
-    return complete_stream(state, decode, out);
-  }
-  auto root = parse_json(event.data, ErrorCategory::protocol,
-                         "OpenAI SSE data is not valid JSON");
-  if (!root) {
-    return std::unexpected(std::move(root.error()));
-  }
-  if (event.name == "error" || is_openai_error(*root)) {
+  if (decode.finish_observed) {
     return std::unexpected(
-        decode_openai_error(*root, "OpenAI-compatible stream returned an error",
-                            state.response.provider_request_id));
+        make_error(ErrorCategory::protocol,
+                   "OpenAI stream emitted an optional event after its finish reason"));
   }
-  return apply_chunk(*root, state, decode, out);
+  return {};
 }
 
 } // namespace
@@ -516,18 +510,30 @@ Status OpenAiAdapter::parse_stream_event(const std::string_view event_name,
                                          ProviderDecodeState& state,
                                          std::vector<ProviderEvent>& out) const {
   // NOLINTEND(bugprone-easily-swappable-parameters)
-  if (auto status = reject_event_after_terminal(
-          state, "OpenAI stream emitted data after its terminal event");
-      !status) {
-    return std::unexpected(std::move(status.error()));
-  }
-  auto decode = dialect_decode_state<OpenAiProviderDecodeState>(
-      state, "OpenAI stream received decode state owned by another dialect");
+  auto decode = begin_event<OpenAiProviderDecodeState>(state, "OpenAI");
   if (!decode) {
     return std::unexpected(std::move(decode.error()));
   }
-  return decode_stream_event(StreamEventView{.name = event_name, .data = data}, state,
-                             **decode, out);
+  if (event_name != "message" && event_name != "error") {
+    return handle_optional_event(data, **decode);
+  }
+  if (data == "[DONE]") {
+    if (event_name != "message") {
+      return std::unexpected(
+          make_error(ErrorCategory::protocol,
+                     "OpenAI named error event cannot contain the terminal marker"));
+    }
+    return complete_stream(state, **decode, out);
+  }
+  auto root =
+      parse_json(data, ErrorCategory::protocol, "OpenAI SSE data is not valid JSON");
+  if (!root) {
+    return std::unexpected(std::move(root.error()));
+  }
+  if (event_name == "error" || is_error_root(*root)) {
+    return std::unexpected(stream_error(*root));
+  }
+  return apply_chunk(*root, state, **decode, out);
 }
 
 } // namespace scry::detail

@@ -12,26 +12,7 @@ namespace {
 
 using namespace scry;
 using namespace scry::detail;
-
-[[nodiscard]] std::string canonical(const std::string_view json) {
-  // Request fixtures assert JSON meaning. They deliberately do not promise
-  // byte-for-byte wire spelling or member order.
-  auto parsed = parse_json(json, ErrorCategory::protocol, "Fixture is invalid");
-  REQUIRE(parsed.has_value());
-  auto encoded =
-      write_json_text(*parsed, ErrorCategory::protocol, "Fixture could not be encoded");
-  REQUIRE(encoded.has_value());
-  return *encoded;
-}
-
-[[nodiscard]] Config config() {
-  return Config{
-      .base_url = "https://api.anthropic.test/",
-      .api_key = "sanitized-test-key",
-      .model = "claude-test",
-      .dialect = ProviderDialect::anthropic,
-  };
-}
+using namespace scry::test_fixtures;
 
 [[nodiscard]] ModelRequest request() {
   return ModelRequest{
@@ -52,16 +33,6 @@ using namespace scry::detail;
   };
 }
 
-[[nodiscard]] std::string header(const TransportRequest& request,
-                                 const std::string_view name) {
-  for (const auto& value : request.headers) {
-    if (value.name == name) {
-      return value.value;
-    }
-  }
-  return {};
-}
-
 } // namespace
 
 TEST_CASE("provider factory exposes both supported dialects") {
@@ -73,7 +44,7 @@ TEST_CASE("Anthropic request is semantically equivalent to its sanitized fixture
   const auto adapter = make_provider_adapter(ProviderDialect::anthropic);
   REQUIRE(adapter);
 
-  const auto encoded = adapter->make_request(config(), request());
+  const auto encoded = adapter->make_request(anthropic_config(), request());
   REQUIRE(encoded.has_value());
   CHECK(encoded->url == "https://api.anthropic.test/v1/messages");
   CHECK(encoded->tls_verify_peer);
@@ -92,7 +63,7 @@ TEST_CASE("Anthropic request carries the configured network options") {
   const auto adapter = make_provider_adapter(ProviderDialect::anthropic);
   REQUIRE(adapter);
 
-  auto networked = config();
+  auto networked = anthropic_config();
   networked.extra_headers = {HttpHeader{.name = "x-scry-example", .value = "1"}};
   networked.ca_bundle_path = "/tmp/ca.pem";
   networked.proxy = "http://proxy.internal:3128";
@@ -105,85 +76,6 @@ TEST_CASE("Anthropic request carries the configured network options") {
   CHECK(encoded->headers.back().name == "x-scry-example");
   CHECK(encoded->headers.back().value == "1");
   CHECK(header(*encoded, "x-api-key") == "sanitized-test-key");
-}
-
-TEST_CASE("Anthropic request encodes committed history before the turn suffix") {
-  const auto adapter = make_provider_adapter(ProviderDialect::anthropic);
-  REQUIRE(adapter);
-  auto model_request = request();
-  model_request.history =
-      std::make_shared<const std::vector<Message>>(std::vector<Message>{
-          Message{.role = Role::assistant,
-                  .content = {TextBlock{.text = "committed-prefix"}}},
-      });
-  model_request.messages = {
-      Message{.role = Role::user, .content = {TextBlock{.text = "turn-suffix"}}},
-  };
-
-  const auto encoded = adapter->make_request(config(), model_request);
-  REQUIRE(encoded);
-  const auto history_position = encoded->body.find("committed-prefix");
-  const auto suffix_position = encoded->body.find("turn-suffix");
-  REQUIRE(history_position != std::string::npos);
-  REQUIRE(suffix_position != std::string::npos);
-  CHECK(history_position < suffix_position);
-}
-
-TEST_CASE("Anthropic request encoding preserves neutral tool shapes") {
-  const auto adapter = make_provider_adapter(ProviderDialect::anthropic);
-  REQUIRE(adapter);
-  auto model_request = request();
-  model_request.tools =
-      std::make_shared<const std::vector<ToolDefinition>>(std::vector<ToolDefinition>{
-          ToolDefinition{
-              .name = "lookup",
-              .description = "Lookup a value",
-              .input_schema = Json{.text = R"({"type":"object"})"},
-          },
-      });
-  model_request.messages.push_back(Message{
-      .role = Role::assistant,
-      .content =
-          {
-              ToolCallBlock{
-                  .id = "tool_1",
-                  .name = "lookup",
-                  .arguments = Json{.text = R"({"key":"value"})"},
-              },
-          },
-  });
-  model_request.messages.push_back(Message{
-      .role = Role::user,
-      .content =
-          {
-              ToolResultBlock{
-                  .tool_call_id = "tool_1",
-                  .result = Json{.text = R"({"answer":42})"},
-              },
-          },
-  });
-
-  const auto encoded = adapter->make_request(config(), model_request);
-  REQUIRE(encoded.has_value());
-  CHECK(encoded->body.find(R"("type":"tool_use")") != std::string::npos);
-  CHECK(encoded->body.find(R"("type":"tool_result")") != std::string::npos);
-  CHECK(encoded->body.find(R"("input_schema":{"type":"object"})") != std::string::npos);
-}
-
-TEST_CASE("Anthropic request encoding reports boundary errors without secrets") {
-  const auto adapter = make_provider_adapter(ProviderDialect::anthropic);
-  REQUIRE(adapter);
-  auto invalid = request();
-  invalid.messages.front().content = {ToolCallBlock{
-      .id = "tool_1",
-      .name = "lookup",
-      .arguments = Json{.text = "not-json"},
-  }};
-
-  const auto result = adapter->make_request(config(), invalid);
-  REQUIRE_FALSE(result.has_value());
-  CHECK(result.error().category == ErrorCategory::invalid_config);
-  CHECK(result.error().message.find("sanitized-test-key") == std::string::npos);
 }
 
 namespace {
@@ -234,7 +126,8 @@ TEST_CASE("Anthropic request merges consecutive same-role messages") {
   const auto adapter = make_provider_adapter(ProviderDialect::anthropic);
   REQUIRE(adapter);
 
-  const auto encoded = adapter->make_request(config(), tool_result_history_request());
+  const auto encoded =
+      adapter->make_request(anthropic_config(), tool_result_history_request());
   REQUIRE(encoded);
   const auto body =
       parse_json(encoded->body, ErrorCategory::protocol, "body is not valid JSON");

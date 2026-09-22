@@ -40,16 +40,13 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data,
       .index = 0,
       .id = "call",
       .name = "tool",
-      .metadata = scry::detail::OpenAiToolDecodeState::id_present |
-                  scry::detail::OpenAiToolDecodeState::name_present |
-                  scry::detail::OpenAiToolDecodeState::type_present,
+      .typed = true,
   });
   active.max_tool_arguments_bytes = 1024;
   parse_stream_payload(*adapter, "message", input, active);
 
   openai.tool_calls.clear();
   openai.finish_observed = true;
-  openai.tools_finalized = true;
   parse_stream_payload(*adapter, "message", input, active);
   parse_stream_payload(*adapter, "future_optional", input, active);
   return 0;

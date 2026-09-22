@@ -13,15 +13,7 @@ namespace {
 
 using namespace scry;
 using namespace scry::detail;
-
-[[nodiscard]] std::string canonical(const std::string_view json) {
-  auto parsed = parse_json(json, ErrorCategory::protocol, "test JSON is invalid");
-  REQUIRE(parsed);
-  auto encoded = write_json_text(*parsed, ErrorCategory::protocol,
-                                 "test JSON could not be encoded");
-  REQUIRE(encoded);
-  return *encoded;
-}
+using namespace scry::test_fixtures;
 
 // Every embedded payload below is spelled exactly as Scry's own codec would
 // have written it, because that is what reaches an adapter in production: the
@@ -145,24 +137,6 @@ constexpr auto unsorted_schema =
   };
 }
 
-[[nodiscard]] Config anthropic_config() {
-  return Config{
-      .base_url = "https://api.anthropic.test/",
-      .api_key = "sanitized-test-key",
-      .model = "claude-test",
-      .dialect = ProviderDialect::anthropic,
-  };
-}
-
-[[nodiscard]] Config openai_config() {
-  return Config{
-      .base_url = "https://api.openai.test/v1",
-      .api_key = "sanitized-key",
-      .model = "chat-model",
-      .dialect = ProviderDialect::openai_compatible,
-  };
-}
-
 [[nodiscard]] std::string encoded_body(const Config& config,
                                        const ModelRequest& request) {
   const auto adapter = make_provider_adapter(config.dialect);
@@ -268,6 +242,7 @@ enum class Embedded { schema, arguments, result };
   const auto encoded = adapter->make_request(config, request);
   if (!encoded) {
     CHECK(encoded.error().category == ErrorCategory::invalid_config);
+    CHECK(encoded.error().message.find(config.api_key) == std::string::npos);
     return false;
   }
   // Whatever was spliced, the body itself must still be one JSON document.

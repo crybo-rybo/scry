@@ -3,7 +3,6 @@
 #include "provider/anthropic.hpp"
 #include "provider/shared.hpp"
 
-#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -14,20 +13,8 @@
 
 namespace scry::detail {
 
-// The Messages API request, described as plain aggregates instead of a JSON
-// tree. Glaze reflects each one member by member in declaration order, so the
-// members are declared alphabetically and the body still leaves the encoder in
-// the codec's canonical key order. Every std::string_view borrows from the
-// Config or the ModelRequest, both of which outlive the encode, and every
-// JsonText splices stored canonical JSON verbatim rather than re-parsing it.
-//
-// The names are dialect-qualified and the types deliberately sit outside the
-// unnamed namespace. Glaze derives each member's name from a pointer into an
-// `extern` object of the type, which a type with no linkage cannot have, and
-// GCC mangles every translation unit's unnamed namespace identically, so two
-// same-named wire structs here and in openai_request.cpp would have their key
-// tables merged by the linker and each dialect would serialize with the
-// other's keys.
+// The Messages API request as wire structs; see the note in provider/shared.hpp
+// for why they are ordered, named, and placed the way they are.
 struct AnthropicText {
   std::string_view text{};
   std::string_view type{"text"};
@@ -117,75 +104,47 @@ namespace {
 // separate entries. A turn stopped at the tool-round limit commits history
 // ending in the user message carrying that round's tool results, and the next
 // send appends another user message straight after it.
-class MessageArrayBuilder {
-public:
-  explicit MessageArrayBuilder(const std::size_t expected_messages) {
-    encoded_.reserve(expected_messages);
+[[nodiscard]] Status append_message(std::vector<AnthropicMessage>& encoded,
+                                    const Message& message) {
+  const std::string_view role = message.role == Role::user ? "user" : "assistant";
+  if (encoded.empty() || encoded.back().role != role) {
+    encoded.push_back(AnthropicMessage{.role = role});
   }
-
-  [[nodiscard]] Status append(const Message& message) {
-    if (role_ && *role_ != message.role) {
-      flush();
+  auto& content = encoded.back().content;
+  for (const auto& block : message.content) {
+    auto wire = encode_content(block);
+    if (!wire) {
+      return std::unexpected(std::move(wire.error()));
     }
-    role_ = message.role;
-    for (const auto& block : message.content) {
-      auto encoded = encode_content(block);
-      if (!encoded) {
-        return std::unexpected(std::move(encoded.error()));
-      }
-      // A wire block borrows every byte it carries, so it is trivially
-      // copyable and there is nothing for a move to steal.
-      content_.push_back(*encoded);
-    }
-    return {};
+    // A wire block borrows every byte it carries, so it is trivially copyable
+    // and there is nothing for a move to steal.
+    content.push_back(*wire);
   }
-
-  [[nodiscard]] std::vector<AnthropicMessage> take() {
-    flush();
-    return std::move(encoded_);
-  }
-
-private:
-  void flush() {
-    if (!role_) {
-      return;
-    }
-    encoded_.push_back(AnthropicMessage{
-        .content = std::move(content_),
-        .role = *role_ == Role::user ? "user" : "assistant",
-    });
-    content_.clear();
-    role_.reset();
-  }
-
-  std::vector<AnthropicMessage> encoded_{};
-  std::vector<AnthropicBlock> content_{};
-  std::optional<Role> role_{};
-};
+  return {};
+}
 
 [[nodiscard]] Result<std::vector<AnthropicMessage>>
 encode_messages(const ModelRequest& request) {
-  MessageArrayBuilder builder{request.message_count()};
-  if (request.history) {
-    for (const auto& message : *request.history) {
-      if (auto status = builder.append(message); !status) {
-        return std::unexpected(std::move(status.error()));
-      }
-    }
+  std::vector<AnthropicMessage> encoded{};
+  encoded.reserve(request.message_count());
+  if (auto status = for_each_request_message(request,
+                                             [&encoded](const Message& message) {
+                                               return append_message(encoded, message);
+                                             });
+      !status) {
+    return std::unexpected(std::move(status.error()));
   }
-  for (const auto& message : request.messages) {
-    if (auto status = builder.append(message); !status) {
-      return std::unexpected(std::move(status.error()));
-    }
-  }
-  return builder.take();
+  return encoded;
 }
 
-[[nodiscard]] Result<std::vector<AnthropicTool>>
-encode_tools(const std::vector<ToolDefinition>& tools) {
+[[nodiscard]] Result<std::optional<std::vector<AnthropicTool>>>
+encode_tools(const ModelRequest& request) {
+  if (!request.tools || request.tools->empty()) {
+    return std::nullopt;
+  }
   std::vector<AnthropicTool> encoded{};
-  encoded.reserve(tools.size());
-  for (const auto& tool : tools) {
+  encoded.reserve(request.tools->size());
+  for (const auto& tool : *request.tools) {
     if (auto status = embedded_json_object(tool.input_schema.text,
                                            "Tool input schema must be a JSON object");
         !status) {
@@ -200,22 +159,13 @@ encode_tools(const std::vector<ToolDefinition>& tools) {
   return encoded;
 }
 
-[[nodiscard]] std::string endpoint(std::string base_url) {
-  while (!base_url.empty() && base_url.back() == '/') {
-    base_url.pop_back();
-  }
+[[nodiscard]] std::string endpoint(const std::string& configured) {
+  auto base_url = trim_trailing_slashes(configured);
   constexpr auto path = std::string_view{"/v1/messages"};
   if (!base_url.ends_with(path)) {
     base_url.append(path);
   }
   return base_url;
-}
-
-[[nodiscard]] std::optional<std::string_view> optional_text(const std::string& value) {
-  if (value.empty()) {
-    return std::nullopt;
-  }
-  return std::string_view{value};
 }
 
 [[nodiscard]] Result<std::string> make_request_body(const Config& config,
@@ -224,13 +174,9 @@ encode_tools(const std::vector<ToolDefinition>& tools) {
   if (!messages) {
     return std::unexpected(std::move(messages.error()));
   }
-  std::optional<std::vector<AnthropicTool>> tools{};
-  if (request.tools && !request.tools->empty()) {
-    auto encoded = encode_tools(*request.tools);
-    if (!encoded) {
-      return std::unexpected(std::move(encoded.error()));
-    }
-    tools = std::move(*encoded);
+  auto tools = encode_tools(request);
+  if (!tools) {
+    return std::unexpected(std::move(tools.error()));
   }
 
   // Validation rejects an unset max_tokens for this dialect, so the optional is
@@ -240,9 +186,11 @@ encode_tools(const std::vector<ToolDefinition>& tools) {
       .max_tokens = request.sampling.max_tokens,
       .messages = std::move(*messages),
       .model = config.model,
-      .system = optional_text(request.system_prompt),
+      .system = request.system_prompt.empty()
+                    ? std::nullopt
+                    : std::optional<std::string_view>{request.system_prompt},
       .temperature = request.sampling.temperature,
-      .tools = std::move(tools),
+      .tools = std::move(*tools),
       .top_p = request.sampling.top_p,
   };
   return write_wire_json(body, ErrorCategory::invalid_config,
@@ -251,9 +199,6 @@ encode_tools(const std::vector<ToolDefinition>& tools) {
 
 } // namespace
 
-// Config is immutable per Harness and validated once at Harness::create, so
-// this adapter encodes the request without re-checking endpoint, auth, or
-// sampling bounds.
 Result<TransportRequest>
 AnthropicAdapter::make_request(const Config& config,
                                const ModelRequest& request) const {
@@ -261,25 +206,15 @@ AnthropicAdapter::make_request(const Config& config,
   if (!encoded) {
     return std::unexpected(std::move(encoded.error()));
   }
-
-  std::vector<HttpHeader> headers{
-      HttpHeader{.name = "content-type", .value = "application/json"},
-      HttpHeader{.name = "x-api-key", .value = config.api_key},
-      HttpHeader{.name = "anthropic-version", .value = "2023-06-01"},
-      HttpHeader{.name = "accept", .value = "text/event-stream"},
-  };
-  append_extra_headers(headers, config);
-  return TransportRequest{
-      .url = endpoint(config.base_url),
-      .headers = std::move(headers),
-      .body = std::move(*encoded),
-      .provider_namespace = "anthropic",
-      .tls_verify_peer = config.tls_verify_peer,
-      .ca_bundle_path = config.ca_bundle_path,
-      .proxy = config.proxy,
-      .timeouts = config.timeouts,
-      .limits = config.limits,
-  };
+  return transport_request(
+      config, endpoint(config.base_url),
+      {
+          HttpHeader{.name = "content-type", .value = "application/json"},
+          HttpHeader{.name = "x-api-key", .value = config.api_key},
+          HttpHeader{.name = "anthropic-version", .value = "2023-06-01"},
+          HttpHeader{.name = "accept", .value = "text/event-stream"},
+      },
+      std::move(*encoded), "anthropic");
 }
 
 } // namespace scry::detail

@@ -1,23 +1,14 @@
 #include "core/json_codec.hpp"
+#include "fixture_support.hpp"
 
 #include <array>
 #include <catch2/catch_test_macros.hpp>
 #include <string>
 #include <string_view>
-#include <utility>
-
-namespace {
 
 using namespace scry;
 using namespace scry::detail;
-
-[[nodiscard]] JsonValue json_value(const std::string_view text) {
-  auto value = parse_json(text, ErrorCategory::protocol, "invalid test JSON");
-  REQUIRE(value);
-  return std::move(*value);
-}
-
-} // namespace
+using namespace scry::test_fixtures;
 
 TEST_CASE("JSON parsing bounds malformed non-null-terminated input") {
   constexpr std::array input{'{'};

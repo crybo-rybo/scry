@@ -16,36 +16,7 @@ namespace {
 
 using namespace scry;
 using namespace scry::detail;
-
-[[nodiscard]] std::string canonical(const std::string_view json) {
-  // Request fixtures assert JSON meaning. They deliberately do not promise
-  // byte-for-byte wire spelling or member order.
-  auto parsed = parse_json(json, ErrorCategory::protocol, "test JSON is invalid");
-  REQUIRE(parsed);
-  auto encoded = write_json_text(*parsed, ErrorCategory::protocol,
-                                 "test JSON could not be encoded");
-  REQUIRE(encoded);
-  return *encoded;
-}
-
-[[nodiscard]] std::string header(const TransportRequest& request,
-                                 const std::string_view name) {
-  for (const auto& value : request.headers) {
-    if (value.name == name) {
-      return value.value;
-    }
-  }
-  return {};
-}
-
-[[nodiscard]] Config config(std::string base_url = "https://api.openai.test/v1") {
-  return Config{
-      .base_url = std::move(base_url),
-      .api_key = "sanitized-key",
-      .model = "chat-model",
-      .dialect = ProviderDialect::openai_compatible,
-  };
-}
+using namespace scry::test_fixtures;
 
 [[nodiscard]] ModelRequest request() {
   return ModelRequest{
@@ -118,7 +89,7 @@ void require_invalid_request(const Config& value, const ModelRequest& model_requ
 
 TEST_CASE("OpenAI request is semantically equivalent to the common contract") {
   OpenAiAdapter adapter;
-  const auto encoded = adapter.make_request(config(), request());
+  const auto encoded = adapter.make_request(openai_config(), request());
   REQUIRE(encoded);
   CHECK(encoded->url == "https://api.openai.test/v1/chat/completions");
   // The transport prefixes body-derived error tokens with this namespace, so it
@@ -139,7 +110,7 @@ TEST_CASE("OpenAI request carries the configured network options") {
   const auto adapter = make_provider_adapter(ProviderDialect::openai_compatible);
   REQUIRE(adapter);
 
-  auto networked = config();
+  auto networked = openai_config();
   networked.extra_headers = {HttpHeader{.name = "x-scry-example", .value = "1"}};
   networked.ca_bundle_path = "/tmp/ca.pem";
   networked.proxy = "http://proxy.internal:3128";
@@ -159,36 +130,15 @@ TEST_CASE("OpenAI request omits max_tokens when the sampling value is unset") {
   auto model_request = request();
   model_request.sampling.max_tokens.reset();
 
-  const auto encoded = adapter.make_request(config(), model_request);
+  const auto encoded = adapter.make_request(openai_config(), model_request);
   REQUIRE(encoded);
   CHECK(encoded->body.find("max_tokens") == std::string::npos);
   CHECK(encoded->body.find(R"("temperature":1.5)") != std::string::npos);
 }
 
-TEST_CASE("OpenAI request encodes committed history before the turn suffix") {
-  OpenAiAdapter adapter;
-  auto model_request = request();
-  model_request.history =
-      std::make_shared<const std::vector<Message>>(std::vector<Message>{
-          Message{.role = Role::user,
-                  .content = {TextBlock{.text = "committed-prefix"}}},
-      });
-  model_request.messages = {
-      Message{.role = Role::assistant, .content = {TextBlock{.text = "turn-suffix"}}},
-  };
-
-  const auto encoded = adapter.make_request(config(), model_request);
-  REQUIRE(encoded);
-  const auto history_position = encoded->body.find("committed-prefix");
-  const auto suffix_position = encoded->body.find("turn-suffix");
-  REQUIRE(history_position != std::string::npos);
-  REQUIRE(suffix_position != std::string::npos);
-  CHECK(history_position < suffix_position);
-}
-
 TEST_CASE("OpenAI request can disable reasoning without changing the default") {
   OpenAiAdapter adapter;
-  auto no_reasoning = config();
+  auto no_reasoning = openai_config();
   no_reasoning.reasoning_mode = ReasoningMode::disabled;
 
   const auto encoded = adapter.make_request(no_reasoning, request());
@@ -213,7 +163,7 @@ TEST_CASE("OpenAI endpoint normalization accepts only the documented base forms"
   const auto model_request = request();
   for (const auto& [base, expected] : cases) {
     INFO(base);
-    const auto encoded = adapter.make_request(config(base), model_request);
+    const auto encoded = adapter.make_request(openai_config(base), model_request);
     REQUIRE(encoded);
     CHECK(encoded->url == expected);
     CHECK(header(*encoded, "accept") == "text/event-stream");
@@ -222,50 +172,11 @@ TEST_CASE("OpenAI endpoint normalization accepts only the documented base forms"
 
 TEST_CASE("OpenAI authentication is optional for local servers") {
   OpenAiAdapter adapter;
-  auto local = config("http://localhost:11434/v1");
+  auto local = openai_config("http://localhost:11434/v1");
   local.api_key.clear();
   const auto encoded = adapter.make_request(local, request());
   REQUIRE(encoded);
   CHECK(header(*encoded, "authorization").empty());
-}
-
-TEST_CASE("OpenAI request rejects neutral shapes that cannot be preserved") {
-  OpenAiAdapter adapter;
-  auto invalid = request();
-  invalid.messages.front().content.push_back(ToolResultBlock{
-      .tool_call_id = "call",
-      .result = Json{.text = "{}"},
-  });
-  auto encoded = adapter.make_request(config(), invalid);
-  REQUIRE_FALSE(encoded);
-  CHECK(encoded.error().category == ErrorCategory::invalid_config);
-
-  invalid = request();
-  invalid.messages.front().content = {
-      TextBlock{},
-      ToolResultBlock{
-          .tool_call_id = "call",
-          .result = Json{.text = "{}"},
-      },
-  };
-  encoded = adapter.make_request(config(), invalid);
-  REQUIRE_FALSE(encoded);
-  CHECK(encoded.error().category == ErrorCategory::invalid_config);
-
-  invalid = request();
-  std::get<ToolCallBlock>(invalid.messages[1].content[1]).arguments.text = "[]";
-  encoded = adapter.make_request(config(), invalid);
-  REQUIRE_FALSE(encoded);
-  CHECK(encoded.error().category == ErrorCategory::invalid_config);
-
-  invalid = request();
-  invalid.tools = std::make_shared<const std::vector<ToolDefinition>>(
-      std::vector<ToolDefinition>{{.name = "weather",
-                                   .description = "Get weather",
-                                   .input_schema = {.text = "[]"}}});
-  encoded = adapter.make_request(config(), invalid);
-  REQUIRE_FALSE(encoded);
-  CHECK(encoded.error().category == ErrorCategory::invalid_config);
 }
 
 TEST_CASE("OpenAI request preserves assistant text-only and tool-only shapes") {
@@ -285,7 +196,7 @@ TEST_CASE("OpenAI request preserves assistant text-only and tool-only shapes") {
   model_request.tools.reset();
   model_request.sampling.top_p.reset();
 
-  const auto encoded = adapter.make_request(config(), model_request);
+  const auto encoded = adapter.make_request(openai_config(), model_request);
   REQUIRE(encoded);
   CHECK(encoded->body.find(R"("content":"plain response")") != std::string::npos);
   CHECK(encoded->body.find(R"("content":null)") != std::string::npos);
@@ -293,45 +204,44 @@ TEST_CASE("OpenAI request preserves assistant text-only and tool-only shapes") {
   CHECK(encoded->body.find(R"("tools")") == std::string::npos);
 }
 
+// Embedded JSON payloads are covered by the matrix in request_encoding_tests.cpp;
+// these are the neutral shapes the Chat Completions wire cannot carry.
 TEST_CASE("OpenAI request rejects malformed tool boundary fields") {
   auto invalid = request();
   std::get<ToolCallBlock>(invalid.messages[1].content[1]).id.clear();
-  require_invalid_request(config(), invalid);
+  require_invalid_request(openai_config(), invalid);
 
   invalid = request();
   std::get<ToolCallBlock>(invalid.messages[1].content[1]).name.clear();
-  require_invalid_request(config(), invalid);
-
-  invalid = request();
-  std::get<ToolCallBlock>(invalid.messages[1].content[1]).arguments.text = "{";
-  require_invalid_request(config(), invalid);
+  require_invalid_request(openai_config(), invalid);
 
   invalid = request();
   std::get<ToolResultBlock>(invalid.messages[2].content[0]).tool_call_id.clear();
-  require_invalid_request(config(), invalid);
-
-  invalid = request();
-  std::get<ToolResultBlock>(invalid.messages[2].content[0]).result.text = "{";
-  require_invalid_request(config(), invalid);
+  require_invalid_request(openai_config(), invalid);
 
   invalid = request();
   invalid.messages[1].content = {
       ToolResultBlock{.tool_call_id = "call", .result = Json{.text = "{}"}}};
-  require_invalid_request(config(), invalid);
+  require_invalid_request(openai_config(), invalid);
+
+  invalid = request();
+  invalid.messages.front().content.push_back(
+      ToolResultBlock{.tool_call_id = "call", .result = Json{.text = "{}"}});
+  require_invalid_request(openai_config(), invalid);
+
+  invalid = request();
+  invalid.messages.front().content = {
+      TextBlock{},
+      ToolResultBlock{.tool_call_id = "call", .result = Json{.text = "{}"}},
+  };
+  require_invalid_request(openai_config(), invalid);
 
   invalid = request();
   invalid.tools = std::make_shared<const std::vector<ToolDefinition>>(
       std::vector<ToolDefinition>{{.name = "",
                                    .description = "lookup",
                                    .input_schema = {.text = R"({"type":"object"})"}}});
-  require_invalid_request(config(), invalid);
-
-  invalid = request();
-  invalid.tools = std::make_shared<const std::vector<ToolDefinition>>(
-      std::vector<ToolDefinition>{{.name = "weather",
-                                   .description = "Get weather",
-                                   .input_schema = {.text = "{"}}});
-  require_invalid_request(config(), invalid);
+  require_invalid_request(openai_config(), invalid);
 }
 
 TEST_CASE("OpenAI request leaves a history ending in tool results unmerged") {
@@ -368,7 +278,7 @@ TEST_CASE("OpenAI request leaves a history ending in tool results unmerged") {
       Message{.role = Role::user, .content = {TextBlock{.text = "second question"}}},
   };
 
-  const auto encoded = adapter.make_request(config(), model_request);
+  const auto encoded = adapter.make_request(openai_config(), model_request);
   REQUIRE(encoded);
   const auto body =
       parse_json(encoded->body, ErrorCategory::protocol, "body is not valid JSON");

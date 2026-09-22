@@ -14,20 +14,9 @@
 
 namespace scry::detail {
 
-// The Chat Completions request, described as plain aggregates instead of a JSON
-// tree. Glaze reflects each one member by member in declaration order, so the
-// members are declared alphabetically and the body still leaves the encoder in
-// the codec's canonical key order. Every std::string_view borrows from the
-// Config or the ModelRequest, both of which outlive the encode, and every
-// JsonText splices stored canonical JSON verbatim rather than re-parsing it.
-//
-// The names are dialect-qualified and the types deliberately sit outside the
-// unnamed namespace. Glaze derives each member's name from a pointer into an
-// `extern` object of the type, which a type with no linkage cannot have, and
-// GCC mangles every translation unit's unnamed namespace identically, so two
-// same-named wire structs here and in anthropic_request.cpp would have their key
-// tables merged by the linker and each dialect would serialize with the
-// other's keys.
+// The Chat Completions request as wire structs; see the note in
+// provider/shared.hpp for why they are ordered, named, and placed the way they
+// are.
 
 // An assistant message with tool calls and no text sends `"content": null`, a
 // distinct wire value from an omitted member, so the null is an alternative
@@ -159,42 +148,43 @@ namespace {
   };
 }
 
-[[nodiscard]] Result<std::vector<OpenAiMessage>>
-encode_user_message(const Message& message) {
-  std::vector<const ToolResultBlock*> results{};
+// A user message is either plain text or a run of tool results, each of which
+// becomes its own `tool` message. The shape is checked before anything is
+// appended.
+[[nodiscard]] Status encode_user_message(std::vector<OpenAiMessage>& encoded,
+                                         const Message& message) {
   bool saw_text = false;
+  bool saw_result = false;
   for (const auto& block : message.content) {
     if (std::holds_alternative<TextBlock>(block)) {
       saw_text = true;
-    } else if (const auto* result = std::get_if<ToolResultBlock>(&block)) {
-      results.push_back(result);
+    } else if (std::holds_alternative<ToolResultBlock>(block)) {
+      saw_result = true;
     } else {
       return std::unexpected(
           invalid_request("OpenAI user messages cannot contain tool calls"));
     }
   }
-  if (saw_text && !results.empty()) {
+  if (saw_text && saw_result) {
     return std::unexpected(
         invalid_request("OpenAI user messages cannot mix text and tool results"));
   }
-  std::vector<OpenAiMessage> encoded{};
-  if (results.empty()) {
+  if (!saw_result) {
     encoded.push_back(OpenAiMessage{.content = message_text(message), .role = "user"});
-    return encoded;
+    return {};
   }
-  encoded.reserve(results.size());
-  for (const auto* result : results) {
-    auto value = encode_tool_result(*result);
+  for (const auto& block : message.content) {
+    auto value = encode_tool_result(std::get<ToolResultBlock>(block));
     if (!value) {
       return std::unexpected(std::move(value.error()));
     }
     encoded.push_back(std::move(*value));
   }
-  return encoded;
+  return {};
 }
 
-[[nodiscard]] Result<std::vector<OpenAiMessage>>
-encode_assistant_message(const Message& message) {
+[[nodiscard]] Status encode_assistant_message(std::vector<OpenAiMessage>& encoded,
+                                              const Message& message) {
   std::vector<OpenAiToolCall> calls{};
   for (const auto& block : message.content) {
     if (std::holds_alternative<TextBlock>(block)) {
@@ -205,13 +195,13 @@ encode_assistant_message(const Message& message) {
       return std::unexpected(
           invalid_request("OpenAI assistant messages cannot contain tool results"));
     }
-    auto encoded = encode_tool_call(*call);
-    if (!encoded) {
-      return std::unexpected(std::move(encoded.error()));
+    auto wire = encode_tool_call(*call);
+    if (!wire) {
+      return std::unexpected(std::move(wire.error()));
     }
     // A wire tool call borrows every byte it carries, so it is trivially
     // copyable and there is nothing for a move to steal.
-    calls.push_back(*encoded);
+    calls.push_back(*wire);
   }
 
   OpenAiMessage value{.content = message_text(message), .role = "assistant"};
@@ -221,19 +211,7 @@ encode_assistant_message(const Message& message) {
     }
     value.tool_calls = std::move(calls);
   }
-  return std::vector<OpenAiMessage>{std::move(value)};
-}
-
-[[nodiscard]] Status encode_message_into(std::vector<OpenAiMessage>& encoded,
-                                         const Message& message) {
-  auto values = message.role == Role::user ? encode_user_message(message)
-                                           : encode_assistant_message(message);
-  if (!values) {
-    return std::unexpected(std::move(values.error()));
-  }
-  for (auto& value : *values) {
-    encoded.push_back(std::move(value));
-  }
+  encoded.push_back(std::move(value));
   return {};
 }
 
@@ -247,26 +225,27 @@ encode_messages(const ModelRequest& request) {
         .role = "system",
     });
   }
-  if (request.history) {
-    for (const auto& message : *request.history) {
-      if (auto status = encode_message_into(encoded, message); !status) {
-        return std::unexpected(std::move(status.error()));
-      }
-    }
-  }
-  for (const auto& message : request.messages) {
-    if (auto status = encode_message_into(encoded, message); !status) {
-      return std::unexpected(std::move(status.error()));
-    }
+  if (auto status = for_each_request_message(
+          request,
+          [&encoded](const Message& message) {
+            return message.role == Role::user
+                       ? encode_user_message(encoded, message)
+                       : encode_assistant_message(encoded, message);
+          });
+      !status) {
+    return std::unexpected(std::move(status.error()));
   }
   return encoded;
 }
 
-[[nodiscard]] Result<std::vector<OpenAiTool>>
-encode_tools(const std::vector<ToolDefinition>& tools) {
+[[nodiscard]] Result<std::optional<std::vector<OpenAiTool>>>
+encode_tools(const ModelRequest& request) {
+  if (!request.tools || request.tools->empty()) {
+    return std::nullopt;
+  }
   std::vector<OpenAiTool> encoded{};
-  encoded.reserve(tools.size());
-  for (const auto& tool : tools) {
+  encoded.reserve(request.tools->size());
+  for (const auto& tool : *request.tools) {
     if (tool.name.empty()) {
       return std::unexpected(invalid_request("OpenAI tools require a nonempty name"));
     }
@@ -287,10 +266,8 @@ encode_tools(const std::vector<ToolDefinition>& tools) {
   return encoded;
 }
 
-[[nodiscard]] std::string endpoint(std::string base_url) {
-  while (!base_url.empty() && base_url.back() == '/') {
-    base_url.pop_back();
-  }
+[[nodiscard]] std::string endpoint(const std::string& configured) {
+  auto base_url = trim_trailing_slashes(configured);
   constexpr auto endpoint_path = std::string_view{"/v1/chat/completions"};
   constexpr auto version_path = std::string_view{"/v1"};
   if (base_url.ends_with(endpoint_path)) {
@@ -307,13 +284,9 @@ encode_tools(const std::vector<ToolDefinition>& tools) {
   if (!messages) {
     return std::unexpected(std::move(messages.error()));
   }
-  std::optional<std::vector<OpenAiTool>> tools{};
-  if (request.tools && !request.tools->empty()) {
-    auto encoded = encode_tools(*request.tools);
-    if (!encoded) {
-      return std::unexpected(std::move(encoded.error()));
-    }
-    tools = std::move(*encoded);
+  auto tools = encode_tools(request);
+  if (!tools) {
+    return std::unexpected(std::move(tools.error()));
   }
 
   const OpenAiBody body{
@@ -324,14 +297,21 @@ encode_tools(const std::vector<ToolDefinition>& tools) {
                               ? std::optional<std::string_view>{"none"}
                               : std::nullopt,
       .temperature = request.sampling.temperature,
-      .tools = std::move(tools),
+      .tools = std::move(*tools),
       .top_p = request.sampling.top_p,
   };
   return write_wire_json(body, ErrorCategory::invalid_config,
                          "OpenAI request body could not be encoded");
 }
 
-[[nodiscard]] std::vector<HttpHeader> request_headers(const Config& config) {
+} // namespace
+
+Result<TransportRequest>
+OpenAiAdapter::make_request(const Config& config, const ModelRequest& request) const {
+  auto encoded = make_request_body(config, request);
+  if (!encoded) {
+    return std::unexpected(std::move(encoded.error()));
+  }
   std::vector<HttpHeader> headers{
       HttpHeader{.name = "content-type", .value = "application/json"},
       HttpHeader{.name = "accept", .value = "text/event-stream"},
@@ -342,32 +322,8 @@ encode_tools(const std::vector<ToolDefinition>& tools) {
         .value = "Bearer " + config.api_key,
     });
   }
-  append_extra_headers(headers, config);
-  return headers;
-}
-
-} // namespace
-
-// Config is immutable per Harness and validated once at Harness::create, so
-// this adapter encodes the request without re-checking endpoint, auth, or
-// sampling bounds.
-Result<TransportRequest>
-OpenAiAdapter::make_request(const Config& config, const ModelRequest& request) const {
-  auto encoded = make_request_body(config, request);
-  if (!encoded) {
-    return std::unexpected(std::move(encoded.error()));
-  }
-  return TransportRequest{
-      .url = endpoint(config.base_url),
-      .headers = request_headers(config),
-      .body = std::move(*encoded),
-      .provider_namespace = "openai",
-      .tls_verify_peer = config.tls_verify_peer,
-      .ca_bundle_path = config.ca_bundle_path,
-      .proxy = config.proxy,
-      .timeouts = config.timeouts,
-      .limits = config.limits,
-  };
+  return transport_request(config, endpoint(config.base_url), std::move(headers),
+                           std::move(*encoded), "openai");
 }
 
 } // namespace scry::detail

@@ -14,7 +14,6 @@ set(
   "${PROJECT_SOURCE_DIR}/src/provider/anthropic_content.cpp"
   "${PROJECT_SOURCE_DIR}/src/provider/anthropic_request.cpp"
   "${PROJECT_SOURCE_DIR}/src/provider/anthropic_stream.cpp"
-  "${PROJECT_SOURCE_DIR}/src/provider/openai_content.cpp"
   "${PROJECT_SOURCE_DIR}/src/provider/openai_request.cpp"
   "${PROJECT_SOURCE_DIR}/src/provider/openai_stream.cpp"
   "${PROJECT_SOURCE_DIR}/src/provider/provider.cpp"
