@@ -99,6 +99,12 @@ struct ExpectedHandler {
   scry::Result<NestedResult> operator()(PresenceArguments) const { return {}; }
 };
 
+// A const-qualified value is supported, so a Result of one is too, just as a
+// handler returning a const value directly is.
+struct ConstExpectedHandler {
+  scry::Result<const std::int32_t> operator()(PresenceArguments) const { return 7; }
+};
+
 struct ReferenceHandler {
   NestedResult& operator()(PresenceArguments) const;
 };
@@ -145,12 +151,26 @@ struct VoidContextHandler {
 
 template <scry::reflection::SupportedValue Type>
 [[nodiscard]] scry::Result<Type> decode_value(const std::string_view text) {
-  auto parsed =
-      scry::reflection::detail::parse_json(scry::Json{.text = std::string{text}});
+  auto parsed = scry::JsonView::parse(scry::Json{.text = std::string{text}});
   if (!parsed) {
     return std::unexpected(std::move(parsed.error()));
   }
   return scry::reflection::detail::decode<Type>(*parsed);
+}
+
+// A dispatchable snapshot holding one reflected handler under the given name.
+[[nodiscard]] scry::detail::ToolSnapshot
+snapshot_of(std::string name, scry::ContextualToolHandler handler) {
+  return {
+      std::make_shared<const scry::detail::RegisteredTool>(scry::detail::RegisteredTool{
+          .definition =
+              {
+                  .name = std::move(name),
+                  .description = "Reflected test tool",
+                  .input_schema = {.text = "{}"},
+              },
+          .handler = std::move(handler),
+      })};
 }
 
 } // namespace
@@ -162,6 +182,8 @@ static_assert(scry::reflection::ToolArguments<NumericArguments>);
 static_assert(scry::reflection::ToolArguments<PresenceArguments>);
 static_assert(scry::reflection::ToolHandlerFor<DirectHandler, PresenceArguments>);
 static_assert(scry::reflection::ToolHandlerFor<ExpectedHandler, PresenceArguments>);
+static_assert(
+    scry::reflection::ToolHandlerFor<ConstExpectedHandler, PresenceArguments>);
 static_assert(!scry::reflection::ToolHandlerFor<ReferenceHandler, PresenceArguments>);
 static_assert(!scry::reflection::ToolHandlerFor<RawJsonHandler, PresenceArguments>);
 static_assert(!scry::reflection::ToolHandlerFor<VoidHandler, PresenceArguments>);
@@ -223,29 +245,6 @@ TEST_CASE("reflected decoding preserves defaults and required nullability") {
   CHECK(decoded->required == "Detroit");
 }
 
-TEST_CASE("reflected decoding rejects unknown missing and mistyped members") {
-  auto decoded = scry::reflection::detail::decode_arguments<PresenceArguments>(
-      scry::Json{.text = R"({"nullable":null,"required":"Detroit","surprise":1})"});
-  REQUIRE_FALSE(decoded);
-  CHECK(decoded.error().message ==
-        R"(reflected JSON at $ contains unknown member "surprise")");
-
-  decoded = scry::reflection::detail::decode_arguments<PresenceArguments>(
-      scry::Json{.text = R"({"required":"Detroit"})"});
-  REQUIRE_FALSE(decoded);
-  CHECK(decoded.error().message == "reflected JSON at $.nullable is a required member");
-
-  decoded = scry::reflection::detail::decode_arguments<PresenceArguments>(
-      scry::Json{.text = R"({"nullable":null,"required":4})"});
-  REQUIRE_FALSE(decoded);
-  CHECK(decoded.error().message == "reflected JSON at $.required must be a string");
-
-  decoded = scry::reflection::detail::decode_arguments<PresenceArguments>(
-      scry::Json{.text = "[]"});
-  REQUIRE_FALSE(decoded);
-  CHECK(decoded.error().message == "reflected JSON at $ must be an object");
-}
-
 TEST_CASE("reflected decode failures carry a schema-derived model message") {
   const auto model_message = [](const std::string_view text) {
     auto decoded = scry::reflection::detail::decode_arguments<AllTypesArguments>(
@@ -269,6 +268,9 @@ TEST_CASE("reflected decode failures carry a schema-derived model message") {
   CHECK(model_message(R"({"fixed":[1,2],"flag":true,"nested":{},"ratio":1,)"
                       R"("unit":"celsius","values":[4294967296]})") ==
         "$.values[0] is outside the integer range");
+  CHECK(model_message(R"({"fixed":[1,2],"flag":true,"nested":{},"ratio":1,)"
+                      R"("unit":"celsius","values":[1.0]})") ==
+        "$.values[0] must be an integer");
   CHECK(model_message(R"({"fixed":[1,2],"flag":true,"nested":{"label":1},"ratio":1,)"
                       R"("unit":"celsius","values":[]})") ==
         "$.nested.label must be a string");
@@ -279,11 +281,15 @@ TEST_CASE("reflected decode failures carry a schema-derived model message") {
   auto required = scry::reflection::detail::decode_arguments<PresenceArguments>(
       scry::Json{.text = R"({"required":"Detroit"})"});
   REQUIRE_FALSE(required);
+  CHECK(required.error().message ==
+        "reflected JSON at $.nullable is a required member");
   CHECK(required.error().model_message == "$.nullable is a required member");
 
   auto malformed = scry::reflection::detail::decode_arguments<PresenceArguments>(
       scry::Json{.text = "{"});
   REQUIRE_FALSE(malformed);
+  CHECK(malformed.error().category == scry::ErrorCategory::tool);
+  CHECK(malformed.error().message == "reflected tool arguments are not valid JSON");
   CHECK(malformed.error().model_message == "tool arguments are not valid JSON");
 }
 
@@ -308,35 +314,6 @@ TEST_CASE("reflected codec round trips every supported composite family") {
       R"({"fixed":[1,2],"flag":true,"nested":{"label":"indoors"},"ratio":0.1,"unit":"fahrenheit","values":[3,4]})");
 }
 
-TEST_CASE("reflected codec enforces numeric enum and fixed-array bounds") {
-  auto decoded = scry::reflection::detail::decode_arguments<
-      AllTypesArguments>(scry::Json{
-      .text =
-          R"({"fixed":[1],"flag":true,"nested":{"label":"x"},"ratio":1,"unit":"celsius","values":[]})"});
-  REQUIRE_FALSE(decoded);
-  CHECK(decoded.error().message ==
-        "reflected JSON at $.fixed must be an array of the declared fixed size");
-
-  decoded = scry::reflection::detail::decode_arguments<AllTypesArguments>(scry::Json{
-      .text =
-          R"({"fixed":[1,2],"flag":true,"nested":{"label":"x"},"ratio":1,"unit":"kelvin","values":[]})"});
-  REQUIRE_FALSE(decoded);
-  CHECK(decoded.error().message ==
-        "reflected JSON at $.unit is not a declared enumerator; must be one of: "
-        "celsius, fahrenheit");
-
-  auto narrow = scry::reflection::detail::decode_arguments<PresenceArguments>(
-      scry::Json{.text = R"({"nullable":32768,"required":"x"})"});
-  REQUIRE_FALSE(narrow);
-  CHECK(narrow.error().message ==
-        "reflected JSON at $.nullable is outside the integer range");
-
-  narrow = scry::reflection::detail::decode_arguments<PresenceArguments>(
-      scry::Json{.text = R"({"nullable":1.0,"required":"x"})"});
-  REQUIRE_FALSE(narrow);
-  CHECK(narrow.error().message == "reflected JSON at $.nullable must be an integer");
-}
-
 TEST_CASE("reflected numeric decoding accepts exact boundaries and signs") {
   auto decoded =
       scry::reflection::detail::decode_arguments<NumericArguments>(scry::Json{
@@ -345,18 +322,6 @@ TEST_CASE("reflected numeric decoding accepts exact boundaries and signs") {
   CHECK(decoded->floating == 7.0F);
   CHECK(decoded->signed_value == std::int16_t{-32768});
   CHECK(decoded->unsigned_value == std::uint16_t{65535});
-
-  decoded = scry::reflection::detail::decode_arguments<NumericArguments>(
-      scry::Json{.text = R"({"floating":1,"signed_value":32768,"unsigned_value":1})"});
-  REQUIRE_FALSE(decoded);
-  CHECK(decoded.error().message ==
-        "reflected JSON at $.signed_value is outside the integer range");
-
-  decoded = scry::reflection::detail::decode_arguments<NumericArguments>(
-      scry::Json{.text = R"({"floating":1,"signed_value":0,"unsigned_value":-1})"});
-  REQUIRE_FALSE(decoded);
-  CHECK(decoded.error().message ==
-        "reflected JSON at $.unsigned_value is outside the integer range");
 
   decoded = scry::reflection::detail::decode_arguments<NumericArguments>(
       scry::Json{.text = R"({"floating":1e39,"signed_value":0,"unsigned_value":1})"});
@@ -439,13 +404,6 @@ TEST_CASE("reflected fixed-array decoding distinguishes kind size and element er
   CHECK_FALSE(decode_value<Fixed>(R"([1,"bad"])"));
 }
 
-TEST_CASE("reflected argument parsing rejects malformed JSON") {
-  const auto decoded = scry::reflection::detail::decode_arguments<PresenceArguments>(
-      scry::Json{.text = "{"});
-  REQUIRE_FALSE(decoded);
-  CHECK(decoded.error().message == "reflected tool arguments are not valid JSON");
-}
-
 TEST_CASE("reflected encoding covers nullable enum and sequence results") {
   CHECK(scry::reflection::encode(std::optional<std::int16_t>{})->text == "null");
   CHECK(scry::reflection::encode(std::optional<std::int16_t>{std::int16_t{7}})->text ==
@@ -514,16 +472,7 @@ TEST_CASE("reflected result-encoding failures reach the model as the fixed text"
             .unit = TemperatureUnit::celsius,
         };
       });
-  const scry::detail::ToolSnapshot tools{
-      std::make_shared<const scry::detail::RegisteredTool>(scry::detail::RegisteredTool{
-          .definition =
-              {
-                  .name = "private_calculation",
-                  .description = "Return a result the host cannot encode",
-                  .input_schema = {.text = "{}"},
-              },
-          .handler = std::make_shared<scry::ContextualToolHandler>(std::move(handler)),
-      })};
+  const auto tools = snapshot_of("private_calculation", std::move(handler));
 
   const auto result = scry::detail::dispatch_tool(
       tools,
@@ -551,16 +500,7 @@ TEST_CASE("public encoding matches reflected tool dispatch output") {
   };
   auto handler = scry::reflection::detail::make_tool_handler<PresenceArguments>(
       [value](PresenceArguments) { return value; });
-  const scry::detail::ToolSnapshot tools{
-      std::make_shared<const scry::detail::RegisteredTool>(scry::detail::RegisteredTool{
-          .definition =
-              {
-                  .name = "snapshot",
-                  .description = "Return the snapshot",
-                  .input_schema = {.text = "{}"},
-              },
-          .handler = std::make_shared<scry::ContextualToolHandler>(std::move(handler)),
-      })};
+  const auto tools = snapshot_of("snapshot", std::move(handler));
 
   const auto direct = scry::reflection::encode(value);
   const auto through_dispatch = scry::detail::dispatch_tool(
@@ -585,31 +525,39 @@ TEST_CASE("public encoding matches reflected tool dispatch output") {
 
 TEST_CASE("reflected erased handlers encode copy-only results without extra copies") {
   CopyOnlyResult::destructions = 0;
-  auto handler = scry::reflection::detail::make_tool_handler<PresenceArguments>(
-      [](PresenceArguments) { return CopyOnlyResult{.values = {1, 2, 3}}; });
+  const auto run_handler = [](auto body) {
+    auto handler =
+        scry::reflection::detail::make_tool_handler<PresenceArguments>(std::move(body));
+    return handler({}, scry::Json{.text = R"({"nullable":null,"required":"ok"})"});
+  };
 
-  const auto result =
-      handler({}, scry::Json{.text = R"({"nullable":null,"required":"ok"})"});
+  scry::Result<scry::Json> result{};
+  SECTION("bare result") {
+    result = run_handler(
+        [](PresenceArguments) { return CopyOnlyResult{.values = {1, 2, 3}}; });
+  }
+  SECTION("expected result") {
+    result = run_handler([](PresenceArguments) -> scry::Result<CopyOnlyResult> {
+      return scry::Result<CopyOnlyResult>{std::in_place, std::vector<int>{1, 2, 3}};
+    });
+  }
 
   REQUIRE(result);
   CHECK(result->text == R"({"values":[1,2,3]})");
   CHECK(CopyOnlyResult::destructions == 1);
 }
 
-TEST_CASE(
-    "reflected erased handlers encode expected copy-only results without copies") {
-  CopyOnlyResult::destructions = 0;
+TEST_CASE("reflected erased handlers encode a Result of a const-qualified value") {
+  // Instantiating the handler is the regression: the const value type used to
+  // reach encode_value unstripped and fail to compile inside the library.
   auto handler = scry::reflection::detail::make_tool_handler<PresenceArguments>(
-      [](PresenceArguments) -> scry::Result<CopyOnlyResult> {
-        return scry::Result<CopyOnlyResult>{std::in_place, std::vector<int>{1, 2, 3}};
-      });
+      ConstExpectedHandler{});
 
   const auto result =
       handler({}, scry::Json{.text = R"({"nullable":null,"required":"ok"})"});
 
   REQUIRE(result);
-  CHECK(result->text == R"({"values":[1,2,3]})");
-  CHECK(CopyOnlyResult::destructions == 1);
+  CHECK(result->text == "7");
 }
 
 TEST_CASE("encoding named reflected results does not copy their values") {

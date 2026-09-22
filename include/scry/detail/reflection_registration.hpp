@@ -19,7 +19,8 @@ template <typename Return>
 [[nodiscard]] Result<Json> encode_handler_result(Return&& result) {
   using ResultType = std::remove_cvref_t<Return>;
   if constexpr (expected_traits<ResultType>::recognized) {
-    using Value = typename expected_traits<ResultType>::value_type;
+    // A Result<const T> is supported like a const T return; encode the T.
+    using Value = std::remove_cv_t<typename expected_traits<ResultType>::value_type>;
     if (!result) {
       return std::unexpected(std::forward<Return>(result).error());
     }
@@ -31,27 +32,22 @@ template <typename Return>
 
 template <ToolArguments Args, typename Handler>
   requires ToolHandlerFor<Handler, Args>
-[[nodiscard]] Result<Json>
-invoke_and_encode(Handler& handler, const ToolCallContext& context, Args args) {
-  if constexpr (std::invocable<Handler&, const ToolCallContext&, Args>) {
-    return encode_handler_result(std::invoke(handler, context, std::move(args)));
-  } else {
-    return encode_handler_result(std::invoke(handler, std::move(args)));
-  }
-}
-
-template <ToolArguments Args, typename Handler>
-  requires ToolHandlerFor<Handler, Args>
 [[nodiscard]] ContextualToolHandler make_tool_handler(Handler&& handler) {
   using Callable = std::decay_t<Handler>;
   return ContextualToolHandler{
       [callable = Callable{std::forward<Handler>(handler)}](
           const ToolCallContext& context, Json input) mutable -> Result<Json> {
-        auto arguments = decode_arguments<Args>(std::move(input));
+        auto arguments = decode_arguments<Args>(input);
         if (!arguments) {
           return std::unexpected(std::move(arguments.error()));
         }
-        return invoke_and_encode<Args>(callable, context, std::move(*arguments));
+        // The same preference ToolHandlerFor applies: the contextual form wins.
+        if constexpr (std::invocable<Callable&, const ToolCallContext&, Args>) {
+          return encode_handler_result(
+              std::invoke(callable, context, std::move(*arguments)));
+        } else {
+          return encode_handler_result(std::invoke(callable, std::move(*arguments)));
+        }
       }};
 }
 

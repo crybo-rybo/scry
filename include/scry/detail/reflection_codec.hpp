@@ -5,17 +5,16 @@
 #include <cmath>
 #include <concepts>
 #include <cstddef>
-#include <cstdint>
 #include <limits>
 #include <meta>
 #include <optional>
 #include <scry/detail/reflection_json.hpp>
+#include <scry/detail/reflection_json_string.hpp>
 #include <scry/detail/reflection_meta.hpp>
 #include <scry/error.hpp>
 #include <scry/json.hpp>
 #include <string>
 #include <string_view>
-#include <system_error>
 #include <type_traits>
 #include <utility>
 
@@ -67,37 +66,24 @@ namespace scry::reflection::detail {
 
 template <typename Type>
   requires SupportedValue<Type> && std::same_as<Type, std::remove_cvref_t<Type>>
-[[nodiscard]] Result<Type> decode(const JsonView& view, std::string path = "$");
+[[nodiscard]] Result<Type> decode(const JsonView& view, const std::string& path = "$");
 
 template <typename Integer>
   requires is_supported_integer_v<Integer>
 [[nodiscard]] Result<Integer> decode_integer(const JsonView& view,
                                              const std::string& path) {
-  if (view.kind() == JsonKind::signed_integer) {
-    const auto value = *view.signed_integer();
-    if constexpr (std::is_signed_v<Integer>) {
-      if (value < static_cast<std::int64_t>(std::numeric_limits<Integer>::lowest()) ||
-          value > static_cast<std::int64_t>(std::numeric_limits<Integer>::max())) {
-        return std::unexpected(decode_error(path, "is outside the integer range"));
-      }
-    } else {
-      if (value < 0 ||
-          static_cast<std::uint64_t>(value) >
-              static_cast<std::uint64_t>(std::numeric_limits<Integer>::max())) {
-        return std::unexpected(decode_error(path, "is outside the integer range"));
-      }
-    }
-    return static_cast<Integer>(value);
-  }
-
-  if (view.kind() == JsonKind::unsigned_integer) {
-    const auto value = *view.unsigned_integer();
-    if (value > static_cast<std::uint64_t>(std::numeric_limits<Integer>::max())) {
+  const auto narrow = [&path](const auto value) -> Result<Integer> {
+    if (!std::in_range<Integer>(value)) {
       return std::unexpected(decode_error(path, "is outside the integer range"));
     }
     return static_cast<Integer>(value);
+  };
+  if (const auto value = view.signed_integer()) {
+    return narrow(*value);
   }
-
+  if (const auto value = view.unsigned_integer()) {
+    return narrow(*value);
+  }
   return std::unexpected(decode_error(path, "must be an integer"));
 }
 
@@ -190,9 +176,10 @@ template <typename Type>
     return std::unexpected(decode_error(path, "must be an object"));
   }
 
+  // key_at cannot be empty here: the view is an object and index is in range.
   for (std::size_t index = 0; index < view.size(); ++index) {
     const auto key = view.key_at(index);
-    if (key.has_value() && !is_reflected_member<Type>(*key)) {
+    if (!is_reflected_member<Type>(*key)) {
       std::string message{"contains unknown member "};
       append_json_string(message, *key);
       return std::unexpected(decode_error(path, message));
@@ -229,12 +216,13 @@ template <typename Type>
 }
 
 template <typename Optional>
-[[nodiscard]] Result<Optional> decode_optional(const JsonView& view, std::string path) {
+[[nodiscard]] Result<Optional> decode_optional(const JsonView& view,
+                                               const std::string& path) {
   using Element = typename optional_traits<Optional>::value_type;
   if (view.kind() == JsonKind::null) {
     return Optional{std::nullopt};
   }
-  auto decoded = decode<Element>(view, std::move(path));
+  auto decoded = decode<Element>(view, path);
   if (!decoded) {
     return std::unexpected(std::move(decoded.error()));
   }
@@ -281,7 +269,7 @@ template <typename Array>
 
 template <typename Type>
   requires SupportedValue<Type> && std::same_as<Type, std::remove_cvref_t<Type>>
-Result<Type> decode(const JsonView& view, std::string path) {
+Result<Type> decode(const JsonView& view, const std::string& path) {
   if constexpr (std::same_as<Type, bool>) {
     if (view.kind() != JsonKind::boolean) {
       return std::unexpected(decode_error(path, "must be a boolean"));
@@ -299,7 +287,7 @@ Result<Type> decode(const JsonView& view, std::string path) {
   } else if constexpr (is_supported_enum_v<Type>) {
     return decode_enum<Type>(view, path);
   } else if constexpr (optional_traits<Type>::recognized) {
-    return decode_optional<Type>(view, std::move(path));
+    return decode_optional<Type>(view, path);
   } else if constexpr (vector_traits<Type>::recognized) {
     return decode_vector<Type>(view, path);
   } else if constexpr (array_traits<Type>::recognized) {
@@ -309,10 +297,15 @@ Result<Type> decode(const JsonView& view, std::string path) {
   }
 }
 
-template <ToolArguments Args> [[nodiscard]] Result<Args> decode_arguments(Json input) {
-  auto parsed = parse_json(input);
+template <ToolArguments Args>
+[[nodiscard]] Result<Args> decode_arguments(const Json& input) {
+  auto parsed = JsonView::parse(input);
   if (!parsed) {
-    return std::unexpected(std::move(parsed.error()));
+    return std::unexpected(Error{
+        .category = ErrorCategory::tool,
+        .message = "reflected tool arguments are not valid JSON",
+        .model_message = "tool arguments are not valid JSON",
+    });
   }
   return decode<Args>(*parsed);
 }
@@ -325,7 +318,9 @@ template <typename Type>
 template <typename Number>
 [[nodiscard]] Status append_number(std::string& output, const Number value,
                                    const std::string& path) {
-  std::array<char, 128> buffer{};
+  // Wide enough for any 64-bit integer or max_digits10 float in general form
+  // (at most 24 characters), so to_chars cannot run out of room.
+  std::array<char, 32> buffer{};
   std::to_chars_result result{};
   if constexpr (std::integral<Number>) {
     result = std::to_chars(buffer.data(), buffer.data() + buffer.size(), value);
@@ -336,9 +331,6 @@ template <typename Number>
     result = std::to_chars(buffer.data(), buffer.data() + buffer.size(), value,
                            std::chars_format::general,
                            std::numeric_limits<Number>::max_digits10);
-  }
-  if (result.ec != std::errc{}) {
-    return std::unexpected(codec_error(path, "could not be encoded as JSON"));
   }
   output.append(buffer.data(), result.ptr);
   return {};
@@ -364,13 +356,13 @@ template <typename Enum>
   return {};
 }
 
-template <typename Element, typename Sequence>
+template <typename Sequence>
 [[nodiscard]] Status append_sequence(std::string& output, const Sequence& value,
                                      const std::string& path) {
+  using Element = typename Sequence::value_type;
   output.push_back('[');
-  bool first = true;
   for (std::size_t index = 0; index < value.size(); ++index) {
-    if (!first) {
+    if (index != 0) {
       output.push_back(',');
     }
     auto status =
@@ -378,7 +370,6 @@ template <typename Element, typename Sequence>
     if (!status) {
       return status;
     }
-    first = false;
   }
   output.push_back(']');
   return {};
@@ -433,12 +424,9 @@ Status append_encoded(std::string& output, const Type& value, const std::string&
     }
     using Element = typename optional_traits<Type>::value_type;
     return append_encoded<Element>(output, *value, path);
-  } else if constexpr (vector_traits<Type>::recognized) {
-    return append_sequence<typename vector_traits<Type>::value_type>(output, value,
-                                                                     path);
-  } else if constexpr (array_traits<Type>::recognized) {
-    return append_sequence<typename array_traits<Type>::value_type>(output, value,
-                                                                    path);
+  } else if constexpr (vector_traits<Type>::recognized ||
+                       array_traits<Type>::recognized) {
+    return append_sequence(output, value, path);
   } else {
     return append_aggregate(output, value, path);
   }
