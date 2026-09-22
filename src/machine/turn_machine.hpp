@@ -68,18 +68,6 @@ using MachineEvent = std::variant<BeginTurn, ModelTextDelta, ModelSemanticOutput
                                   ModelCompleted, AttemptFailed, RetryWake,
                                   ToolResultReady, ToolExecutionFailed, CancelTurn>;
 
-enum class MachineEventKind : std::uint8_t {
-  begin,
-  text_delta,
-  semantic_output,
-  completed,
-  attempt_failed,
-  retry_wake,
-  tool_result_ready,
-  tool_execution_failed,
-  cancel,
-};
-
 // Tells the worker to send one model request. The request is shared rather than
 // copied, because retries and tool rounds resend the same conversation; the
 // machine copies it before adding a tool round, so the snapshot an attempt is
@@ -87,7 +75,6 @@ enum class MachineEventKind : std::uint8_t {
 struct IssueModelRequest {
   TurnId turn_id{};
   std::shared_ptr<const ModelRequest> request{};
-  std::uint32_t attempt{};
 };
 
 struct PublishTextDelta {
@@ -97,9 +84,7 @@ struct PublishTextDelta {
 };
 
 struct ScheduleRetryWake {
-  TurnId turn_id{};
   MachineTimePoint deadline{};
-  std::uint32_t failed_attempt{};
 };
 
 struct PublishToolCall {
@@ -140,35 +125,26 @@ using MachineCommand =
     std::variant<IssueModelRequest, PublishTextDelta, ScheduleRetryWake,
                  PublishToolCall, CommitCompletion, PublishError, PublishCancelled>;
 
+// Every status but applied names why the event was rejected; a rejected event
+// leaves the machine's state untouched and issues no commands.
 enum class TransitionStatus : std::uint8_t {
   applied,
   ignored_terminal,
-  illegal_transition,
-};
-
-enum class TransitionDiagnosticReason : std::uint8_t {
   event_not_allowed,
-  non_monotonic_time,
   wake_before_deadline,
   unknown_tool_call,
   duplicate_tool_result,
 };
 
-struct TransitionDiagnostic {
-  MachinePhase phase{MachinePhase::queued};
-  MachineEventKind event{MachineEventKind::begin};
-  TransitionDiagnosticReason reason{TransitionDiagnosticReason::event_not_allowed};
-};
-
 struct TransitionResult {
   std::vector<MachineCommand> commands{};
   TransitionStatus status{TransitionStatus::applied};
-  std::optional<TransitionDiagnostic> diagnostic{};
 };
 
+// The worker fills every field from Config; nothing here duplicates its defaults.
 struct ToolLoopPolicy {
-  std::uint32_t max_rounds{8};
-  std::size_t max_argument_bytes{std::size_t{1024} * 1024};
+  std::uint32_t max_rounds{};
+  std::size_t max_argument_bytes{};
   std::size_t max_exchange_bytes{std::numeric_limits<std::size_t>::max()};
   ToolRoundLimitPolicy limit_policy{ToolRoundLimitPolicy::fail};
 };
@@ -176,7 +152,7 @@ struct ToolLoopPolicy {
 class TurnMachine {
 public:
   TurnMachine(TurnId turn_id, ModelRequest request, RetryPolicy retry_policy,
-              ToolLoopPolicy tool_policy = {});
+              ToolLoopPolicy tool_policy);
 
   [[nodiscard]] TransitionResult apply(MachineEvent event);
 
@@ -186,13 +162,9 @@ public:
 private:
   struct QueuedState {};
 
-  struct AwaitingModelState {
-    std::uint32_t attempt{};
-  };
+  struct AwaitingModelState {};
 
-  struct StreamingState {
-    std::uint32_t attempt{};
-  };
+  struct StreamingState {};
 
   struct RetryWaitState {
     MachineTimePoint deadline{};
@@ -232,10 +204,8 @@ private:
   [[nodiscard]] TransitionResult start_request(MachineTimePoint observed_at);
   [[nodiscard]] TransitionResult issue_attempt();
   // Commits the response as the round's assistant message and publishes one
-  // dispatch per tool call it carries; call_count is what validate_response
-  // counted in that same response.
-  [[nodiscard]] TransitionResult begin_tool_round(ModelResponse response,
-                                                  std::size_t call_count);
+  // dispatch per tool call it carries.
+  [[nodiscard]] TransitionResult begin_tool_round(ModelResponse response);
   [[nodiscard]] TransitionResult
   complete_turn(ModelResponse response, std::vector<ToolCallBlock> unexecuted = {});
   // Ends the turn at the round limit instead of failing it: the response's text
@@ -245,20 +215,15 @@ private:
   [[nodiscard]] TransitionResult fail_response(ErrorCategory category,
                                                std::string message,
                                                std::string provider_request_id);
-  [[nodiscard]] TransitionResult illegal(MachineEventKind event,
-                                         TransitionDiagnosticReason reason) const;
-  [[nodiscard]] bool retry_is_allowed(const Error& error,
-                                      MachineTimePoint observed_at) const noexcept;
+  [[nodiscard]] bool attempt_in_flight() const noexcept;
   // Validates the model response and rewrites each tool call in place with its
   // canonical arguments, so the committed assistant message and the dispatched
   // call carry the same bytes. Returns how many tool calls the response carries;
   // the blocks stay in the response rather than being copied out.
   [[nodiscard]] Result<std::size_t> validate_response(ModelResponse& response) const;
   [[nodiscard]] ModelRequest& mutable_request();
-  [[nodiscard]] bool usage_would_overflow(const Usage& usage) const noexcept;
+  [[nodiscard]] bool add_usage(const Usage& usage) noexcept;
   [[nodiscard]] bool reserve_exchange_bytes(std::size_t bytes) noexcept;
-  [[nodiscard]] std::size_t remaining_exchange_bytes() const noexcept;
-  void accumulate_usage(const Usage& usage) noexcept;
   [[nodiscard]] Error correlate(Error error) const;
 
   TurnId turn_id_{};
@@ -270,8 +235,8 @@ private:
   RetryPolicy retry_policy_{};
   ToolLoopPolicy tool_policy_{};
   State state_{QueuedState{}};
-  std::optional<MachineTimePoint> request_started_at_{};
-  std::optional<MachineTimePoint> latest_time_{};
+  // When the current model request's retry window closes; set by start_request.
+  MachineTimePoint retry_window_end_{};
   std::uint32_t attempt_count_{};
   std::uint32_t request_attempt_count_{};
   std::uint32_t tool_round_count_{};

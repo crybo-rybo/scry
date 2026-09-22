@@ -5,12 +5,15 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <chrono>
+#include <cstdint>
 #include <scry/error.hpp>
 #include <string>
 #include <utility>
 #include <variant>
+#include <vector>
 
 using namespace std::chrono_literals;
+using namespace scry::detail;
 
 namespace scry::detail::machine_test {
 
@@ -91,10 +94,36 @@ inline constexpr TurnId turn_id{42};
   };
 }
 
+[[nodiscard]] inline ToolResultReady
+result(std::string id, std::string json, const MachineTimePoint observed_at = at(1ms),
+       const bool is_error = false) {
+  return {
+      .result =
+          {
+              .tool_call_id = std::move(id),
+              .result = Json{.text = std::move(json)},
+              .is_error = is_error,
+          },
+      .observed_at = observed_at,
+  };
+}
+
+[[nodiscard]] inline ModelResponse
+final_response(std::string text = "done", const std::uint64_t input_tokens = 7,
+               const std::uint64_t output_tokens = 11) {
+  return {
+      .content = {TextBlock{.text = std::move(text)}},
+      .finish_reason = FinishReason::completed,
+      .usage = {.input_tokens = input_tokens, .output_tokens = output_tokens},
+      .provider_request_id = "final-request",
+  };
+}
+
+// Asserts the transition applied and issued exactly one Command. Callers that only
+// need the assertion discard the reference.
 template <typename Command>
-[[nodiscard]] const Command& only_command(const TransitionResult& result) {
+const Command& only_command(const TransitionResult& result) {
   REQUIRE(result.status == TransitionStatus::applied);
-  REQUIRE_FALSE(result.diagnostic.has_value());
   REQUIRE(result.commands.size() == 1);
   REQUIRE(std::holds_alternative<Command>(result.commands.front()));
   return std::get<Command>(result.commands.front());
@@ -108,13 +137,13 @@ make_machine(const RetryPolicy policy = retry_policy(),
 
 inline void begin(TurnMachine& machine, const std::chrono::milliseconds elapsed = 0ms) {
   const auto result = machine.apply(BeginTurn{.observed_at = at(elapsed)});
-  static_cast<void>(only_command<IssueModelRequest>(result));
+  only_command<IssueModelRequest>(result);
 }
 
 inline void enter_streaming(TurnMachine& machine) {
   begin(machine);
   const auto result = machine.apply(ModelTextDelta{.text = "first"});
-  static_cast<void>(only_command<PublishTextDelta>(result));
+  only_command<PublishTextDelta>(result);
 }
 
 inline void enter_retry_wait(TurnMachine& machine) {
@@ -123,13 +152,13 @@ inline void enter_retry_wait(TurnMachine& machine) {
       .error = error(ErrorCategory::network),
       .observed_at = at(0ms),
   });
-  static_cast<void>(only_command<ScheduleRetryWake>(result));
+  only_command<ScheduleRetryWake>(result);
 }
 
 inline void enter_awaiting_tool(TurnMachine& machine) {
   begin(machine);
   const auto result = machine.apply(ModelCompleted{.response = tool_response()});
-  static_cast<void>(only_command<PublishToolCall>(result));
+  only_command<PublishToolCall>(result);
 }
 
 [[nodiscard]] inline bool is_terminal_command(const MachineCommand& command) {
@@ -138,39 +167,32 @@ inline void enter_awaiting_tool(TurnMachine& machine) {
          std::holds_alternative<PublishCancelled>(command);
 }
 
-[[nodiscard]] inline MachineEvent event_for(const MachineEventKind kind) {
-  using enum MachineEventKind;
-  switch (kind) {
-  case begin:
-    return BeginTurn{.observed_at = at(0ms)};
-  case text_delta:
-    return ModelTextDelta{.text = "delta"};
-  case semantic_output:
-    return ModelSemanticOutput{};
-  case completed:
-    return ModelCompleted{.response = text_response()};
-  case attempt_failed:
-    return AttemptFailed{
-        .error = error(ErrorCategory::protocol),
-        .observed_at = at(0ms),
-    };
-  case retry_wake:
-    return RetryWake{.observed_at = at(100ms)};
-  case tool_result_ready:
-    return ToolResultReady{
-        .result =
-            ToolResultBlock{
-                .tool_call_id = "call-1",
-                .result = Json{.text = "{}"},
-            },
-        .observed_at = at(0ms),
-    };
-  case tool_execution_failed:
-    return ToolExecutionFailed{.error = error(ErrorCategory::resource_limit)};
-  case cancel:
-    return CancelTurn{};
-  }
-  return CancelTurn{};
+// One sample of every event, in MachineEvent's alternative order.
+[[nodiscard]] inline std::vector<MachineEvent> sample_events() {
+  return {
+      BeginTurn{.observed_at = at(0ms)},
+      ModelTextDelta{.text = "delta"},
+      ModelSemanticOutput{},
+      ModelCompleted{.response = text_response()},
+      AttemptFailed{
+          .error = error(ErrorCategory::protocol),
+          .observed_at = at(0ms),
+      },
+      RetryWake{.observed_at = at(100ms)},
+      result("call-1", "{}", at(0ms)),
+      ToolExecutionFailed{.error = error(ErrorCategory::resource_limit)},
+      CancelTurn{},
+  };
+}
+
+// The sample events a phase must reject: every one but the Accepted kinds.
+template <typename... Accepted>
+[[nodiscard]] std::vector<MachineEvent> events_except() {
+  auto events = sample_events();
+  std::erase_if(events, [](const MachineEvent& event) {
+    return (std::holds_alternative<Accepted>(event) || ...);
+  });
+  return events;
 }
 
 } // namespace scry::detail::machine_test
