@@ -217,7 +217,9 @@ target_link_libraries(app PRIVATE scry::scry)
 - [Contributing](docs/contributing.md) — toolchain setup, presets, gates, and
   what a change needs before it lands.
 - API reference: `./scripts/ci-docs.sh` writes the Doxygen site to
-  `build/docs/html/index.html`.
+  `build/docs/html/index.html`. Successful non-pull-request runs on `main`
+  deploy the current reference to
+  [crybo-rybo.github.io/scry](https://crybo-rybo.github.io/scry/).
 
 ## License
 
