@@ -13,10 +13,14 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <utility>
 
 namespace {
 
-[[nodiscard]] scry::Config valid_config() {
+using namespace std::chrono_literals;
+using scry::Config;
+
+[[nodiscard]] Config valid_config() {
   return {
       .base_url = "https://example.test",
       .api_key = "test-key",
@@ -24,323 +28,242 @@ namespace {
   };
 }
 
+[[nodiscard]] Config openai_config() {
+  auto config = valid_config();
+  config.dialect = scry::ProviderDialect::openai_compatible;
+  return config;
+}
+
+constexpr double not_a_number = std::numeric_limits<double>::quiet_NaN();
+constexpr double infinite = std::numeric_limits<double>::infinity();
+
+constexpr std::string_view bad_url = "base_url must be an absolute HTTP or HTTPS URL";
+constexpr std::string_view line_break_key = "api_key must contain no line breaks";
+constexpr std::string_view anthropic_temperature =
+    "Anthropic temperature must be finite and between 0 and 1";
+constexpr std::string_view anthropic_top_p =
+    "top_p must be finite, greater than 0, and at most 1";
+constexpr std::string_view anthropic_max_tokens =
+    "Anthropic max_tokens must be set and greater than 0; the Messages API requires it";
+constexpr std::string_view openai_temperature =
+    "OpenAI temperature must be finite and between 0 and 2";
+constexpr std::string_view openai_top_p =
+    "OpenAI top_p must be finite and between 0 and 1";
+constexpr std::string_view bad_retry = "retry policy is invalid";
+constexpr std::string_view bad_timeouts =
+    "transport timeouts must be greater than 0 (transfer may be unset)";
+constexpr std::string_view bad_header = "extra header name or value is invalid";
+constexpr std::string_view header_collision =
+    "extra header collides with a Scry-managed header";
+constexpr std::string_view bad_path =
+    "proxy or CA bundle path contains invalid characters";
+
+struct Rejection {
+  std::string_view name{};
+  Config config{};
+  std::string_view message{};
+};
+
+template <typename Mutate>
+[[nodiscard]] Config with(Mutate mutate, Config config = valid_config()) {
+  mutate(config);
+  return config;
+}
+
+[[nodiscard]] Config with_header(std::string name, std::string value) {
+  return with([&](Config& c) {
+    c.extra_headers = {
+        scry::HttpHeader{.name = std::move(name), .value = std::move(value)}};
+  });
+}
+
+void require_rejected(const Config& config, const std::string_view message) {
+  const auto status = scry::detail::validate_config(config);
+  REQUIRE_FALSE(status);
+  CHECK(status.error().category == scry::ErrorCategory::invalid_config);
+  CHECK(status.error().message == message);
+}
+
 } // namespace
 
-TEST_CASE("valid Anthropic configuration is accepted") {
-  CHECK(scry::detail::validate_config(valid_config()));
-}
-
-TEST_CASE("configuration validates proxy, CA bundle, and extra headers") {
-  auto accepted = valid_config();
-  accepted.extra_headers = {scry::HttpHeader{.name = "x-scry-example", .value = "1"}};
-  accepted.proxy = "http://proxy.internal:3128";
-  accepted.ca_bundle_path = "/etc/ssl/certs/corporate.pem";
-  CHECK(scry::detail::validate_config(accepted));
-
-  const auto reject = [](const scry::Config& config, const std::string_view message) {
-    auto status = scry::detail::validate_config(config);
-    REQUIRE_FALSE(status);
-    CHECK(status.error().category == scry::ErrorCategory::invalid_config);
-    CHECK(status.error().message == message);
+TEST_CASE("configuration accepts every valid shape") {
+  const Config accepted[] = {
+      valid_config(),
+      with([](Config& c) { c.base_url = "http://localhost:8080/v1"; }),
+      with([](Config& c) {
+        c.extra_headers = {scry::HttpHeader{.name = "x-scry-example", .value = "1"}};
+        c.proxy = "http://proxy.internal:3128";
+        c.ca_bundle_path = "/etc/ssl/certs/corporate.pem";
+      }),
+      with_header("x-scry-example", "before\tafter"),
+      // Unset is the default and means unlimited.
+      with([](Config& c) { c.max_tool_calls_per_turn.reset(); }),
+      with([](Config& c) { c.max_tool_calls_per_turn = 1; }),
+      // An unset total transfer bound is the default.
+      with([](Config& c) { c.timeouts.transfer = {}; }),
+      // OpenAI-compatible local servers need no auth and take wider sampling bounds.
+      with(
+          [](Config& c) {
+            c.api_key.clear();
+            c.sampling.temperature = 2.0;
+            c.sampling.top_p = 0.0;
+          },
+          openai_config()),
+      with([](Config& c) { c.sampling.temperature = 1.5; }, openai_config()),
+      with([](Config& c) { c.reasoning_mode = scry::ReasoningMode::disabled; },
+           openai_config()),
+      // An unset max_tokens is omitted from the request; the server default applies.
+      with([](Config& c) { c.sampling.max_tokens.reset(); }, openai_config()),
   };
-
-  auto empty_name = valid_config();
-  empty_name.extra_headers = {scry::HttpHeader{.name = "", .value = "1"}};
-  reject(empty_name, "extra header name or value is invalid");
-
-  auto spaced_name = valid_config();
-  spaced_name.extra_headers = {scry::HttpHeader{.name = "x scry", .value = "1"}};
-  reject(spaced_name, "extra header name or value is invalid");
-
-  auto injected_value = valid_config();
-  injected_value.extra_headers = {
-      scry::HttpHeader{.name = "x-scry-example", .value = "1\r\nx-evil: 2"}};
-  reject(injected_value, "extra header name or value is invalid");
-
-  // Every control byte but tab is rejected, not only CR and LF: curl takes the
-  // value as a C string, so an embedded NUL would otherwise be sent as a
-  // silently truncated header.
-  for (const char control : {'\0', '\x01', '\x7f'}) {
-    auto control_value = valid_config();
-    control_value.extra_headers = {scry::HttpHeader{
-        .name = "x-scry-example", .value = std::string{"before"} + control + "after"}};
-    CHECK(control_value.extra_headers.front().value.size() == 12);
-    reject(control_value, "extra header name or value is invalid");
-    REQUIRE_FALSE(scry::Harness::validate(control_value));
-  }
-
-  auto tabbed_value = valid_config();
-  tabbed_value.extra_headers = {
-      scry::HttpHeader{.name = "x-scry-example", .value = "before\tafter"}};
-  CHECK(scry::detail::validate_config(tabbed_value));
-
-  auto collision = valid_config();
-  collision.extra_headers = {
-      scry::HttpHeader{.name = "Content-Type", .value = "text/plain"}};
-  reject(collision, "extra header collides with a Scry-managed header");
-
-  auto key_collision = valid_config();
-  key_collision.extra_headers = {
-      scry::HttpHeader{.name = "X-Api-Key", .value = "other"}};
-  reject(key_collision, "extra header collides with a Scry-managed header");
-
-  auto spaced_proxy = valid_config();
-  spaced_proxy.proxy = "http://a b";
-  reject(spaced_proxy, "proxy or CA bundle path contains invalid characters");
-
-  auto broken_bundle = valid_config();
-  broken_bundle.ca_bundle_path = "/etc/ssl/ca\n.pem";
-  reject(broken_bundle, "proxy or CA bundle path contains invalid characters");
-}
-
-TEST_CASE("Harness::validate runs the create-time configuration checks") {
-  CHECK(scry::Harness::validate(valid_config()));
-
-  auto missing_model = valid_config();
-  missing_model.model.clear();
-  auto rejected = scry::Harness::validate(missing_model);
-  REQUIRE_FALSE(rejected);
-  CHECK(rejected.error().category == scry::ErrorCategory::invalid_config);
-  CHECK(rejected.error().message == "model must not be empty");
-
-  auto zero_rounds = valid_config();
-  zero_rounds.max_tool_rounds = 0;
-  rejected = scry::Harness::validate(zero_rounds);
-  REQUIRE_FALSE(rejected);
-  CHECK(rejected.error().message == "max_tool_rounds must be greater than 0");
-
-  auto zero_calls = valid_config();
-  zero_calls.max_tool_calls_per_turn = 0;
-  rejected = scry::Harness::validate(zero_calls);
-  REQUIRE_FALSE(rejected);
-  CHECK(rejected.error().category == scry::ErrorCategory::invalid_config);
-  CHECK(rejected.error().message ==
-        "max_tool_calls_per_turn must be greater than 0 when set");
-
-  auto one_call = valid_config();
-  one_call.max_tool_calls_per_turn = 1;
-  CHECK(scry::Harness::validate(one_call));
-
-  // Unset is the default and means unlimited, so it must stay acceptable.
-  auto unlimited_calls = valid_config();
-  unlimited_calls.max_tool_calls_per_turn.reset();
-  CHECK(scry::Harness::validate(unlimited_calls));
-
-  auto no_max_tokens = valid_config();
-  no_max_tokens.sampling.max_tokens.reset();
-  rejected = scry::Harness::validate(no_max_tokens);
-  REQUIRE_FALSE(rejected);
-  CHECK(rejected.error().category == scry::ErrorCategory::invalid_config);
-
-  CHECK_FALSE(scry::Harness::validate(scry::Config{}));
-}
-
-TEST_CASE("configuration rejects missing endpoint and model") {
-  auto config = valid_config();
-  config.base_url.clear();
-  CHECK_FALSE(scry::detail::validate_config(config));
-
-  config = valid_config();
-  config.base_url = "https:///";
-  CHECK_FALSE(scry::detail::validate_config(config));
-
-  config = valid_config();
-  config.base_url = "https://example.test?version=1";
-  CHECK_FALSE(scry::detail::validate_config(config));
-
-  config = valid_config();
-  config.base_url = "https://example.test#fragment";
-  CHECK_FALSE(scry::detail::validate_config(config));
-
-  config = valid_config();
-  config.base_url = "https://example .test";
-  CHECK_FALSE(scry::detail::validate_config(config));
-
-  config = valid_config();
-  config.api_key.clear();
-  CHECK_FALSE(scry::detail::validate_config(config));
-
-  config = valid_config();
-  config.api_key = "unsafe\r\nheader";
-  CHECK_FALSE(scry::detail::validate_config(config));
-
-  config = valid_config();
-  config.model.clear();
-  CHECK_FALSE(scry::detail::validate_config(config));
-}
-
-TEST_CASE("OpenAI-compatible configuration accepts local servers without auth") {
-  auto config = valid_config();
-  config.dialect = scry::ProviderDialect::openai_compatible;
-  config.api_key.clear();
-  config.sampling.temperature = 2.0;
-  config.sampling.top_p = 0.0;
-  CHECK(scry::detail::validate_config(config));
-
-  config.api_key = "unsafe\r\nheader";
-  CHECK_FALSE(scry::detail::validate_config(config));
-}
-
-TEST_CASE("configuration rejects unknown provider dialects") {
-  auto config = valid_config();
-  config.dialect =
-      static_cast<scry::ProviderDialect>(std::numeric_limits<std::uint8_t>::max());
-  const auto result = scry::detail::validate_config(config);
-  REQUIRE_FALSE(result);
-  CHECK(result.error().category == scry::ErrorCategory::invalid_config);
-}
-
-TEST_CASE("reasoning disablement is restricted to OpenAI-compatible requests") {
-  auto config = valid_config();
-  config.reasoning_mode = scry::ReasoningMode::disabled;
-  const auto unsupported = scry::detail::validate_config(config);
-  REQUIRE_FALSE(unsupported);
-  CHECK(unsupported.error().message ==
-        "reasoning_mode = disabled requires the OpenAI-compatible provider dialect");
-
-  config.dialect = scry::ProviderDialect::openai_compatible;
-  CHECK(scry::detail::validate_config(config));
-
-  config.reasoning_mode =
-      static_cast<scry::ReasoningMode>(std::numeric_limits<std::uint8_t>::max());
-  CHECK_FALSE(scry::detail::validate_config(config));
-}
-
-TEST_CASE("configuration validates sampling and retries") {
-  auto config = valid_config();
-  config.sampling.temperature = std::numeric_limits<double>::infinity();
-  CHECK_FALSE(scry::detail::validate_config(config));
-
-  config = valid_config();
-  config.sampling.temperature = 1.01;
-  CHECK_FALSE(scry::detail::validate_config(config));
-
-  config = valid_config();
-  config.sampling.top_p = 0.0;
-  CHECK_FALSE(scry::detail::validate_config(config));
-
-  config = valid_config();
-  config.sampling.max_tokens.reset();
-  const auto unset_max_tokens = scry::detail::validate_config(config);
-  REQUIRE_FALSE(unset_max_tokens);
-  CHECK(unset_max_tokens.error().message ==
-        "Anthropic max_tokens must be set and greater than 0; the Messages API "
-        "requires it");
-
-  config = valid_config();
-  config.sampling.max_tokens = 0;
-  CHECK_FALSE(scry::detail::validate_config(config));
-
-  config = valid_config();
-  config.retry.max_attempts = 0;
-  CHECK_FALSE(scry::detail::validate_config(config));
-
-  config = valid_config();
-  config.retry.initial_backoff =
-      config.retry.max_backoff + std::chrono::milliseconds{1};
-  CHECK_FALSE(scry::detail::validate_config(config));
-}
-
-TEST_CASE("configuration applies provider-specific sampling bounds") {
-  auto config = valid_config();
-  config.sampling.temperature = 1.5;
-  CHECK_FALSE(scry::detail::validate_config(config));
-
-  config.dialect = scry::ProviderDialect::openai_compatible;
-  CHECK(scry::detail::validate_config(config));
-
-  config.sampling.temperature = 2.01;
-  CHECK_FALSE(scry::detail::validate_config(config));
-
-  config.sampling.temperature = 1.0;
-  config.sampling.top_p = 0.0;
-  CHECK(scry::detail::validate_config(config));
-
-  config.sampling.top_p = -0.01;
-  CHECK_FALSE(scry::detail::validate_config(config));
-}
-
-TEST_CASE("Anthropic sampling rejects every invalid numeric shape") {
-  auto config = valid_config();
-
-  for (const auto temperature : {std::numeric_limits<double>::quiet_NaN(), -0.1, 1.1}) {
-    config.sampling.temperature = temperature;
-    CHECK_FALSE(scry::detail::validate_config(config));
-  }
-
-  config.sampling.temperature = 0.5;
-  for (const auto top_p : {std::numeric_limits<double>::quiet_NaN(), 0.0, -0.1, 1.1}) {
-    config.sampling.top_p = top_p;
-    CHECK_FALSE(scry::detail::validate_config(config));
+  for (const auto& config : accepted) {
+    CHECK(scry::detail::validate_config(config));
   }
 }
 
-TEST_CASE("OpenAI-compatible sampling rejects every invalid numeric shape") {
-  auto config = valid_config();
-  config.dialect = scry::ProviderDialect::openai_compatible;
-
-  for (const auto temperature :
-       {std::numeric_limits<double>::quiet_NaN(), -0.01, 2.01}) {
-    config.sampling.temperature = temperature;
-    CHECK_FALSE(scry::detail::validate_config(config));
+TEST_CASE("configuration rejects each invalid field with its own message") {
+  const Rejection rejections[] = {
+      // Endpoint and model.
+      {"empty base_url", with([](Config& c) { c.base_url.clear(); }), bad_url},
+      {"scheme only", with([](Config& c) { c.base_url = "https://"; }), bad_url},
+      {"empty authority", with([](Config& c) { c.base_url = "https:///"; }), bad_url},
+      {"non-HTTP scheme", with([](Config& c) { c.base_url = "ftp://example.test"; }),
+       bad_url},
+      {"query", with([](Config& c) { c.base_url = "https://example.test?version=1"; }),
+       bad_url},
+      {"fragment",
+       with([](Config& c) { c.base_url = "https://example.test#fragment"; }), bad_url},
+      {"space", with([](Config& c) { c.base_url = "https://example .test"; }), bad_url},
+      {"empty model", with([](Config& c) { c.model.clear(); }),
+       "model must not be empty"},
+      // Auth.
+      {"Anthropic without a key", with([](Config& c) { c.api_key.clear(); }),
+       "Anthropic api_key must be present"},
+      {"key with line breaks", with([](Config& c) { c.api_key = "unsafe\r\nheader"; }),
+       line_break_key},
+      {"OpenAI key with line breaks",
+       with([](Config& c) { c.api_key = "unsafe\r\nheader"; }, openai_config()),
+       line_break_key},
+      // Reasoning and dialect. The enum casts reach the -Wreturn-type fallbacks.
+      {"Anthropic reasoning disabled",
+       with([](Config& c) { c.reasoning_mode = scry::ReasoningMode::disabled; }),
+       "reasoning_mode = disabled requires the OpenAI-compatible provider dialect"},
+      {"unknown reasoning mode", with([](Config& c) {
+         c.reasoning_mode =
+             static_cast<scry::ReasoningMode>(std::numeric_limits<std::uint8_t>::max());
+       }),
+       "reasoning_mode is invalid"},
+      {"unknown dialect", with([](Config& c) {
+         c.dialect = static_cast<scry::ProviderDialect>(
+             std::numeric_limits<std::uint8_t>::max());
+       }),
+       "the configured provider dialect is not available"},
+      // Anthropic sampling.
+      {"Anthropic temperature NaN",
+       with([](Config& c) { c.sampling.temperature = not_a_number; }),
+       anthropic_temperature},
+      {"Anthropic temperature infinite",
+       with([](Config& c) { c.sampling.temperature = infinite; }),
+       anthropic_temperature},
+      {"Anthropic temperature negative",
+       with([](Config& c) { c.sampling.temperature = -0.1; }), anthropic_temperature},
+      {"Anthropic temperature above 1",
+       with([](Config& c) { c.sampling.temperature = 1.01; }), anthropic_temperature},
+      {"Anthropic top_p NaN", with([](Config& c) { c.sampling.top_p = not_a_number; }),
+       anthropic_top_p},
+      {"Anthropic top_p zero", with([](Config& c) { c.sampling.top_p = 0.0; }),
+       anthropic_top_p},
+      {"Anthropic top_p negative", with([](Config& c) { c.sampling.top_p = -0.1; }),
+       anthropic_top_p},
+      {"Anthropic top_p above 1", with([](Config& c) { c.sampling.top_p = 1.1; }),
+       anthropic_top_p},
+      {"Anthropic max_tokens unset",
+       with([](Config& c) { c.sampling.max_tokens.reset(); }), anthropic_max_tokens},
+      {"Anthropic max_tokens zero", with([](Config& c) { c.sampling.max_tokens = 0; }),
+       anthropic_max_tokens},
+      // OpenAI-compatible sampling.
+      {"OpenAI temperature NaN",
+       with([](Config& c) { c.sampling.temperature = not_a_number; }, openai_config()),
+       openai_temperature},
+      {"OpenAI temperature negative",
+       with([](Config& c) { c.sampling.temperature = -0.01; }, openai_config()),
+       openai_temperature},
+      {"OpenAI temperature above 2",
+       with([](Config& c) { c.sampling.temperature = 2.01; }, openai_config()),
+       openai_temperature},
+      {"OpenAI top_p NaN",
+       with([](Config& c) { c.sampling.top_p = not_a_number; }, openai_config()),
+       openai_top_p},
+      {"OpenAI top_p negative",
+       with([](Config& c) { c.sampling.top_p = -0.01; }, openai_config()),
+       openai_top_p},
+      {"OpenAI top_p above 1",
+       with([](Config& c) { c.sampling.top_p = 1.01; }, openai_config()), openai_top_p},
+      {"OpenAI max_tokens zero",
+       with([](Config& c) { c.sampling.max_tokens = 0; }, openai_config()),
+       "OpenAI max_tokens must be greater than 0 when set"},
+      // Retry policy.
+      {"zero attempts", with([](Config& c) { c.retry.max_attempts = 0; }), bad_retry},
+      {"initial above max backoff",
+       with([](Config& c) { c.retry.initial_backoff = c.retry.max_backoff + 1ms; }),
+       bad_retry},
+      {"negative initial backoff",
+       with([](Config& c) { c.retry.initial_backoff = -1ms; }), bad_retry},
+      {"negative max backoff", with([](Config& c) { c.retry.max_backoff = -1ms; }),
+       bad_retry},
+      {"negative max elapsed", with([](Config& c) { c.retry.max_elapsed = -1ms; }),
+       bad_retry},
+      {"infinite jitter", with([](Config& c) { c.retry.jitter_ratio = infinite; }),
+       bad_retry},
+      {"negative jitter", with([](Config& c) { c.retry.jitter_ratio = -0.1; }),
+       bad_retry},
+      {"jitter above 1", with([](Config& c) { c.retry.jitter_ratio = 1.1; }),
+       bad_retry},
+      // Runtime bounds.
+      {"zero connect timeout", with([](Config& c) { c.timeouts.connect = {}; }),
+       bad_timeouts},
+      {"zero idle timeout", with([](Config& c) { c.timeouts.idle = {}; }),
+       bad_timeouts},
+      {"zero shutdown timeout", with([](Config& c) { c.timeouts.shutdown = {}; }),
+       bad_timeouts},
+      {"zero transfer timeout", with([](Config& c) { c.timeouts.transfer = 0ms; }),
+       bad_timeouts},
+      {"negative transfer timeout", with([](Config& c) { c.timeouts.transfer = -1ms; }),
+       bad_timeouts},
+      {"undersized queued-event limit",
+       with([](Config& c) { c.limits.max_queued_event_bytes_per_turn = 1023; }),
+       "per-turn queued-event limit must be at least 1024 bytes"},
+      {"zero tool rounds", with([](Config& c) { c.max_tool_rounds = 0; }),
+       "max_tool_rounds must be greater than 0"},
+      {"zero tool calls", with([](Config& c) { c.max_tool_calls_per_turn = 0; }),
+       "max_tool_calls_per_turn must be greater than 0 when set"},
+      // Network options.
+      {"empty header name", with_header("", "1"), bad_header},
+      {"header name with a space", with_header("x scry", "1"), bad_header},
+      {"header value injection", with_header("x-scry-example", "1\r\nx-evil: 2"),
+       bad_header},
+      // Every control byte but tab is rejected, not only CR and LF: curl takes the
+      // value as a C string, so an embedded NUL would otherwise be sent as a
+      // silently truncated header.
+      {"header value with NUL",
+       with_header("x-scry-example", std::string{"before\0after", 12}), bad_header},
+      {"header value with SOH",
+       with_header("x-scry-example", "before\x01"
+                                     "after"),
+       bad_header},
+      {"header value with DEL",
+       with_header("x-scry-example", "before\x7f"
+                                     "after"),
+       bad_header},
+      {"managed header", with_header("Content-Type", "text/plain"), header_collision},
+      {"managed key header", with_header("X-Api-Key", "other"), header_collision},
+      {"proxy with a space", with([](Config& c) { c.proxy = "http://a b"; }), bad_path},
+      {"CA bundle with a line break",
+       with([](Config& c) { c.ca_bundle_path = "/etc/ssl/ca\n.pem"; }), bad_path},
+  };
+  for (const auto& rejection : rejections) {
+    INFO(rejection.name);
+    require_rejected(rejection.config, rejection.message);
   }
-
-  config.sampling.temperature = 1.0;
-  for (const auto top_p : {std::numeric_limits<double>::quiet_NaN(), -0.01, 1.01}) {
-    config.sampling.top_p = top_p;
-    CHECK_FALSE(scry::detail::validate_config(config));
-  }
-
-  config.sampling.top_p = 0.5;
-  // An unset max_tokens is valid for this dialect: the field is omitted and the
-  // server default applies. Zero is still rejected.
-  config.sampling.max_tokens.reset();
-  CHECK(scry::detail::validate_config(config));
-  config.sampling.max_tokens = 0;
-  CHECK_FALSE(scry::detail::validate_config(config));
-}
-
-TEST_CASE("configuration rejects zero timeouts, undersized limits, and zero tool "
-          "rounds") {
-  using namespace std::chrono_literals;
-
-  auto config = valid_config();
-  config.timeouts.shutdown = {};
-  CHECK_FALSE(scry::detail::validate_config(config));
-
-  config = valid_config();
-  config.timeouts.connect = {};
-  CHECK_FALSE(scry::detail::validate_config(config));
-
-  config = valid_config();
-  config.timeouts.idle = {};
-  CHECK_FALSE(scry::detail::validate_config(config));
-
-  // An unset total transfer bound is the default and stays accepted; a set one
-  // must still be positive.
-  config = valid_config();
-  config.timeouts.transfer = {};
-  CHECK(scry::detail::validate_config(config));
-
-  config = valid_config();
-  config.timeouts.transfer = 0ms;
-  CHECK_FALSE(scry::detail::validate_config(config));
-
-  config = valid_config();
-  config.timeouts.transfer = -1ms;
-  CHECK_FALSE(scry::detail::validate_config(config));
-
-  config = valid_config();
-  config.limits.max_queued_event_bytes_per_turn = 1023;
-  CHECK_FALSE(scry::detail::validate_config(config));
-
-  config = valid_config();
-  config.max_tool_rounds = 0;
-  CHECK_FALSE(scry::detail::validate_config(config));
-
-  config = valid_config();
-  config.max_tool_calls_per_turn = 0;
-  CHECK_FALSE(scry::detail::validate_config(config));
 }
 
 TEST_CASE("configuration rejects a zero value for every resource limit") {
@@ -356,38 +279,20 @@ TEST_CASE("configuration rejects a zero value for every resource limit") {
   for (const auto member : limits) {
     auto config = valid_config();
     config.limits.*member = 0;
-    const auto status = scry::detail::validate_config(config);
-    REQUIRE_FALSE(status);
-    CHECK(status.error().category == scry::ErrorCategory::invalid_config);
+    require_rejected(config, "resource limits must be greater than 0");
   }
 }
 
-TEST_CASE("configuration rejects negative retry backoffs and out-of-range jitter") {
-  using namespace std::chrono_literals;
+TEST_CASE("Harness::validate runs the create-time configuration checks") {
+  CHECK(scry::Harness::validate(valid_config()));
 
-  auto config = valid_config();
-  config.retry.initial_backoff = -1ms;
-  CHECK_FALSE(scry::detail::validate_config(config));
+  const auto rejected =
+      scry::Harness::validate(with([](Config& c) { c.model.clear(); }));
+  REQUIRE_FALSE(rejected);
+  CHECK(rejected.error().category == scry::ErrorCategory::invalid_config);
+  CHECK(rejected.error().message == "model must not be empty");
 
-  config = valid_config();
-  config.retry.max_backoff = -1ms;
-  CHECK_FALSE(scry::detail::validate_config(config));
-
-  config = valid_config();
-  config.retry.max_elapsed = -1ms;
-  CHECK_FALSE(scry::detail::validate_config(config));
-
-  config = valid_config();
-  config.retry.jitter_ratio = std::numeric_limits<double>::infinity();
-  CHECK_FALSE(scry::detail::validate_config(config));
-
-  config = valid_config();
-  config.retry.jitter_ratio = -0.1;
-  CHECK_FALSE(scry::detail::validate_config(config));
-
-  config = valid_config();
-  config.retry.jitter_ratio = 1.1;
-  CHECK_FALSE(scry::detail::validate_config(config));
+  CHECK_FALSE(scry::Harness::validate(Config{}));
 }
 
 TEST_CASE(

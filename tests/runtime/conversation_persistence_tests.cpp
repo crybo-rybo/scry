@@ -212,6 +212,32 @@ TEST_CASE("Conversation persistence enforces tool block roles and shapes") {
   }
 }
 
+TEST_CASE("Conversation::from_json reports which part of the document it rejected") {
+  const std::vector<std::pair<std::string, std::string_view>> cases{
+      {R"({"messages":[],"system_prompt":"","version":-1})",
+       "Conversation document version must be an unsigned integer"},
+      {R"({"messages":[],"system_prompt":"","version":2})",
+       "Conversation document version is not supported"},
+      {R"({"messages":[],"system_prompt":0,"version":1})",
+       "Conversation document field 'system_prompt' must be a string"},
+      {document(R"([{"content":[],"role":"system"}])"),
+       "Conversation message has an unknown role"},
+      {document(
+           R"([{"content":[{"arguments":{},"id":"","name":"tool","type":"tool_call"}],"role":"assistant"}])"),
+       "Tool-call block field 'id' must not be empty"},
+      {document(
+           R"([{"content":[{"is_error":0,"result":null,"tool_call_id":"id","type":"tool_result"}],"role":"user"}])"),
+       "Tool-result block field 'is_error' must be a boolean"},
+  };
+  for (const auto& [input, message] : cases) {
+    CAPTURE(input);
+    const auto conversation = scry::Conversation::from_json(scry::Json{.text = input});
+    REQUIRE_FALSE(conversation);
+    CHECK(conversation.error().category == scry::ErrorCategory::invalid_config);
+    CHECK(conversation.error().message == message);
+  }
+}
+
 TEST_CASE("Conversation persistence diagnoses inactive moved-from handles") {
   auto created = scry::Conversation::create();
   REQUIRE(created);
@@ -307,4 +333,29 @@ TEST_CASE("a history ending in tool results round-trips through persistence") {
   REQUIRE(reencoded);
   CHECK(reencoded->text == encoded->text);
   CHECK(round_trip->messages().back().role == scry::Role::user);
+}
+
+TEST_CASE("private JSON codec escapes control characters without a short escape") {
+  // Regression: Glaze's default writer has no \u00XX form for a control byte
+  // outside \b \f \n \r \t and wrote two NUL bytes in its place, so a tool
+  // argument or an ANSI-coloured user string became invalid JSON on the way out.
+  const scry::Json input{.text = R"({"a":"\u0001x\u001b"})"};
+  auto canonical = scry::detail::canonicalize_json(
+      input, scry::ErrorCategory::invalid_argument, "invalid JSON");
+  REQUIRE(canonical);
+  CHECK(canonical->text == R"({"a":"\u0001x\u001B"})");
+  auto reread = scry::JsonView::parse(*canonical);
+  REQUIRE(reread);
+  CHECK(reread->find("a")->string() == "\x01x\x1b");
+
+  auto wire = scry::detail::write_wire_json(
+      std::string{"\x1b[0m"}, scry::ErrorCategory::invalid_argument, "invalid wire");
+  REQUIRE(wire);
+  CHECK(*wire == R"("\u001B[0m")");
+
+  const auto error_object = scry::detail::make_json_error_object("\x01");
+  CHECK(error_object.text == R"({"error":"\u0001"})");
+  auto error_view = scry::JsonView::parse(error_object);
+  REQUIRE(error_view);
+  CHECK(error_view->find("error")->string() == "\x01");
 }

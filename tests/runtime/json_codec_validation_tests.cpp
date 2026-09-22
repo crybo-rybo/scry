@@ -23,18 +23,13 @@ namespace {
 
 using scry::JsonView;
 
-// The replaced implementation, verbatim, as the differential oracle.
+// The replaced implementation as the differential oracle: the allocation-free skip
+// pass, which is exactly production detail::validate_json, then a plain read.
 constexpr glz::opts two_pass_read_options{.null_terminated = false};
-struct TwoPassValidateOptions : glz::opts {
-  bool validate_skipped = true;
-  bool validate_trailing_whitespace = true;
-};
-constexpr TwoPassValidateOptions two_pass_validate_options{{.null_terminated = false}};
 
 [[nodiscard]] bool two_pass_accepts(const std::string_view input) {
-  glz::skip skipped{};
-  glz::context context{};
-  if (glz::read<two_pass_validate_options>(skipped, input, context)) {
+  if (!scry::detail::validate_json(input, scry::ErrorCategory::invalid_argument,
+                                   "JSON text is not valid")) {
     return false;
   }
   scry::detail::JsonValue value{};

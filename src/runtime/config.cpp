@@ -36,15 +36,11 @@ namespace {
   if (scheme_size == 0 || scheme_size == value.size()) {
     return false;
   }
-  if (value.find_first_of("?#") != std::string_view::npos) {
+  if (value.find_first_of("?# \t\r\n") != std::string_view::npos) {
     return false;
   }
-  const auto authority_end = value.find_first_of("/?#", scheme_size);
-  const auto authority =
-      value.substr(scheme_size, authority_end == std::string_view::npos
-                                    ? std::string_view::npos
-                                    : authority_end - scheme_size);
-  return !authority.empty() && value.find_first_of(" \t\r\n") == std::string_view::npos;
+  // substr clamps an npos end, so a URL with no path keeps its whole authority.
+  return !value.substr(scheme_size, value.find('/', scheme_size) - scheme_size).empty();
 }
 
 [[nodiscard]] Status validate_endpoint(const Config& config) {
@@ -145,10 +141,8 @@ namespace {
 
 [[nodiscard]] Status validate_runtime_bounds(const Config& config) {
   constexpr std::size_t minimum_event_bytes = 1024;
-  if (config.timeouts.connect.count() <= 0 || config.timeouts.idle.count() <= 0 ||
-      config.timeouts.shutdown.count() <= 0 ||
-      (config.timeouts.transfer && config.timeouts.transfer->count() <= 0)) {
-    return invalid("transport timeouts must be greater than 0 (transfer may be unset)");
+  if (auto timeouts = transport_policy::validate_timeouts(config.timeouts); !timeouts) {
+    return timeouts;
   }
   if (!positive_limits(config.limits)) {
     return invalid("resource limits must be greater than 0");
@@ -176,11 +170,6 @@ namespace {
   });
 }
 
-[[nodiscard]] bool has_forbidden_characters(const std::string_view value,
-                                            const std::string_view forbidden) noexcept {
-  return value.find_first_of(forbidden) != std::string_view::npos;
-}
-
 [[nodiscard]] Status validate_network_options(const Config& config) {
   if (!transport_policy::validate_headers(config.extra_headers)) {
     return invalid("extra header name or value is invalid");
@@ -194,8 +183,8 @@ namespace {
   }
   constexpr auto control = std::string_view{"\0\r\n", 3};
   constexpr auto control_and_space = std::string_view{"\0\r\n \t", 5};
-  if (has_forbidden_characters(config.ca_bundle_path, control) ||
-      has_forbidden_characters(config.proxy, control_and_space)) {
+  if (config.ca_bundle_path.find_first_of(control) != std::string::npos ||
+      config.proxy.find_first_of(control_and_space) != std::string::npos) {
     return invalid("proxy or CA bundle path contains invalid characters");
   }
   return {};
