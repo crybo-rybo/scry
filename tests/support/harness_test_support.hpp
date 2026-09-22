@@ -53,9 +53,8 @@ scripted_exchange(const std::string_view stream,
   };
 }
 
-// The stream builders now live in the installed scry::testing component; the
-// suites keep their unqualified spelling so scry's own tests exercise exactly
-// the bodies a downstream consumer scripts.
+// The stream builders are the installed scry::testing ones, so scry's own tests
+// script exactly the bodies a downstream consumer does.
 using scry::testing::anthropic_error_body;
 using scry::testing::anthropic_text_stream;
 using scry::testing::anthropic_tool_stream;
@@ -78,10 +77,11 @@ template <typename Value> [[nodiscard]] Value unwrap(scry::Result<Value> result)
 }
 
 template <typename Predicate>
-[[nodiscard]] bool pump_until(scry::Harness& harness, Predicate&& predicate) {
+[[nodiscard]] bool pump_until(scry::Harness& harness, Predicate&& predicate,
+                              const scry::UpdateOptions options = {}) {
   constexpr std::size_t maximum_pumps = 100'000;
   for (std::size_t pump = 0; pump < maximum_pumps; ++pump) {
-    static_cast<void>(harness.update());
+    static_cast<void>(harness.update(options));
     if (predicate()) {
       return true;
     }
@@ -94,15 +94,7 @@ template <typename Predicate>
 // the pump imposes between successive deliveries.
 template <typename Predicate>
 [[nodiscard]] bool pump_one_until(scry::Harness& harness, Predicate&& predicate) {
-  constexpr std::size_t maximum_pumps = 100'000;
-  for (std::size_t pump = 0; pump < maximum_pumps; ++pump) {
-    static_cast<void>(harness.update({.max_callbacks = 1}));
-    if (predicate()) {
-      return true;
-    }
-    std::this_thread::yield();
-  }
-  return false;
+  return pump_until(harness, std::forward<Predicate>(predicate), {.max_callbacks = 1});
 }
 
 // Wall-clock variant for suites driving a live endpoint, where progress depends

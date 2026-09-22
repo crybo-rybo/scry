@@ -67,16 +67,6 @@ namespace {
   return status;
 }
 
-[[nodiscard]] Status account_bytes(ResponseState& response, const std::size_t bytes) {
-  if (response.received_bytes > response.limit ||
-      bytes > response.limit - response.received_bytes) {
-    return std::unexpected(
-        make_error(ErrorCategory::resource_limit, "response exceeds configured limit"));
-  }
-  response.received_bytes += bytes;
-  return {};
-}
-
 [[nodiscard]] Status accept_status_line(ResponseState& response,
                                         const std::string_view line) {
   auto status = response_status(line);
@@ -104,31 +94,31 @@ namespace {
   return {};
 }
 
-// One parsed header line. The two views travel together so the name can never
-// be handed in as the value; both borrow from the line being accepted.
-struct HeaderField {
-  std::string_view name{};
-  std::string_view value{};
-};
+[[nodiscard]] bool is_request_id_header(const std::string_view name) noexcept {
+  return header_name_equal(name, "request-id") ||
+         header_name_equal(name, "x-request-id") ||
+         header_name_equal(name, "anthropic-request-id");
+}
 
-[[nodiscard]] Status record_header(ResponseState& response, const HeaderField field) {
-  if (is_content_length_header(field.name)) {
-    if (auto status = validate_content_length(response, field.value); !status) {
+[[nodiscard]] Status record_header(ResponseState& response, const std::string_view name,
+                                   const std::string_view value) {
+  if (header_name_equal(name, "content-length")) {
+    if (auto status = validate_content_length(response, value); !status) {
       return status;
     }
   }
-  if (header_name_equal(field.name, "retry-after")) {
-    response.retry_after_values.emplace_back(field.value);
+  if (header_name_equal(name, "retry-after")) {
+    response.retry_after_values.emplace_back(value);
   }
-  if (!is_request_id_header(field.name)) {
+  if (!is_request_id_header(name)) {
     return {};
   }
   constexpr std::size_t maximum_request_id_bytes = 256;
-  if (field.value.size() > maximum_request_id_bytes) {
+  if (value.size() > maximum_request_id_bytes) {
     return std::unexpected(make_error(ErrorCategory::protocol,
                                       "provider request identifier is too large"));
   }
-  response.provider_request_id = field.value;
+  response.provider_request_id = value;
   return {};
 }
 
@@ -151,7 +141,7 @@ struct HeaderField {
 } // namespace
 
 Status ResponseState::accept_header(std::string_view line) {
-  if (auto status = account_bytes(*this, line.size()); !status) {
+  if (auto status = account_body(line.size()); !status) {
     return status;
   }
   line = trim(line);
@@ -172,11 +162,17 @@ Status ResponseState::accept_header(std::string_view line) {
     return std::unexpected(
         make_error(ErrorCategory::protocol, "malformed response header"));
   }
-  return record_header(*this, HeaderField{.name = name, .value = value});
+  return record_header(*this, name, value);
 }
 
+// Header and body bytes count against the same budget.
 Status ResponseState::account_body(const std::size_t bytes) {
-  return account_bytes(*this, bytes);
+  if (received_bytes > limit || bytes > limit - received_bytes) {
+    return std::unexpected(
+        make_error(ErrorCategory::resource_limit, "response exceeds configured limit"));
+  }
+  received_bytes += bytes;
+  return {};
 }
 
 bool header_name_equal(const std::string_view left,
@@ -190,16 +186,6 @@ bool header_name_equal(const std::string_view left,
   });
 }
 
-bool is_request_id_header(const std::string_view name) noexcept {
-  return header_name_equal(name, "request-id") ||
-         header_name_equal(name, "x-request-id") ||
-         header_name_equal(name, "anthropic-request-id");
-}
-
-bool is_content_length_header(const std::string_view name) noexcept {
-  return header_name_equal(name, "content-length");
-}
-
 std::optional<std::size_t> parse_size(const std::string_view value) noexcept {
   std::size_t parsed{};
   const auto result =
@@ -208,6 +194,17 @@ std::optional<std::size_t> parse_size(const std::string_view value) noexcept {
     return std::nullopt;
   }
   return parsed;
+}
+
+Status validate_timeouts(const TransportTimeouts& timeouts) {
+  constexpr auto zero = std::chrono::milliseconds::zero();
+  if (timeouts.connect <= zero || timeouts.idle <= zero || timeouts.shutdown <= zero ||
+      (timeouts.transfer && *timeouts.transfer <= zero)) {
+    return std::unexpected(make_error(
+        ErrorCategory::invalid_config,
+        "transport timeouts must be greater than 0 (transfer may be unset)"));
+  }
+  return {};
 }
 
 Status validate_request(const TransportRequest& request,
@@ -220,16 +217,7 @@ Status validate_request(const TransportRequest& request,
     return std::unexpected(
         make_error(ErrorCategory::invalid_state, "response sink is missing"));
   }
-  if (request.timeouts.connect <= std::chrono::milliseconds::zero() ||
-      request.timeouts.idle <= std::chrono::milliseconds::zero() ||
-      request.timeouts.shutdown <= std::chrono::milliseconds::zero() ||
-      (request.timeouts.transfer &&
-       *request.timeouts.transfer <= std::chrono::milliseconds::zero())) {
-    return std::unexpected(make_error(
-        ErrorCategory::invalid_config,
-        "transport timeouts must be greater than 0 (transfer may be unset)"));
-  }
-  return {};
+  return validate_timeouts(request.timeouts);
 }
 
 Status validate_headers(const std::vector<HttpHeader>& headers) {
@@ -255,6 +243,20 @@ Error http_error(const std::int32_t status, const std::string& request_id) {
   }
   error.provider_request_id = request_id;
   error.http_status = static_cast<std::uint16_t>(status);
+  return error;
+}
+
+void append_error_body(std::string& body, const std::string_view chunk) {
+  if (body.size() < maximum_error_body_bytes) {
+    body.append(chunk.substr(0, maximum_error_body_bytes - body.size()));
+  }
+}
+
+Error http_error(const std::int32_t status, const std::string& request_id,
+                 const std::string_view body,
+                 const std::string_view provider_namespace) {
+  auto error = http_error(status, request_id);
+  error.provider_detail = http_error_detail(body, provider_namespace);
   return error;
 }
 

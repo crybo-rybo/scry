@@ -44,34 +44,19 @@ namespace {
   return shutdown.stop_requested() || cancelled.load(std::memory_order_acquire);
 }
 
-[[nodiscard]] bool successful_status(const int status) noexcept {
-  return status >= 200 && status < 300;
-}
-
-// The bounded prefix CurlTransport keeps of a non-2xx body: enough to find the
-// provider's error token, never enough to matter.
-[[nodiscard]] std::string error_body_prefix(const std::vector<std::string>& chunks) {
-  constexpr std::size_t maximum_bytes = std::size_t{8} * 1024;
-  auto body = std::string{};
-  for (const auto& chunk : chunks) {
-    if (body.size() >= maximum_bytes) {
-      break;
-    }
-    body.append(chunk.substr(0, maximum_bytes - body.size()));
-  }
-  return body;
-}
-
 // A scripted non-2xx status is classified exactly as a real one: the status
-// picks the category and whether the runtime retries, and the body is mined for
-// the provider's error token instead of being decoded as a stream.
+// picks the category and whether the runtime retries, and the same bounded body
+// prefix CurlTransport keeps is mined for the provider's error token instead of
+// being decoded as a stream.
 [[nodiscard]] Error http_status_error(const ScriptedResponse& response,
                                       const std::string_view provider_namespace) {
-  auto error = detail::transport_policy::http_error(
-      static_cast<std::int32_t>(response.status), response.request_id);
-  error.provider_detail = detail::transport_policy::http_error_detail(
-      error_body_prefix(response.body_chunks), provider_namespace);
-  return error;
+  auto body = std::string{};
+  for (const auto& chunk : response.body_chunks) {
+    detail::transport_policy::append_error_body(body, chunk);
+  }
+  return detail::transport_policy::http_error(
+      static_cast<std::int32_t>(response.status), response.request_id, body,
+      provider_namespace);
 }
 
 // The Harness owns the transport it is created with, but a script has to stay
@@ -140,34 +125,24 @@ public:
     if (stopping(shutdown, cancelled)) {
       return std::unexpected(cancelled_error());
     }
-    auto response = ScriptedResponse{};
-    if (auto claimed = claim(request, shutdown, cancelled)) {
-      response = std::move(*claimed);
-    } else {
+    auto claimed = claim(request, shutdown, cancelled);
+    if (!claimed) {
       return std::unexpected(std::move(claimed.error()));
     }
+    auto& response = *claimed;
     if (stopping(shutdown, cancelled)) {
       return std::unexpected(cancelled_error());
     }
     if (response.failure) {
       return std::unexpected(std::move(*response.failure));
     }
-    if (!successful_status(response.status)) {
+    if (response.status < 200 || response.status >= 300) {
       return std::unexpected(http_status_error(response, request.provider_namespace));
     }
     return stream(response, cancelled, shutdown, body_sink);
   }
 
 private:
-  [[nodiscard]] static CapturedRequest
-  capture(const detail::TransportRequest& request) {
-    return {
-        .url = request.url,
-        .headers = request.headers,
-        .body = request.body,
-    };
-  }
-
   // Records the request and takes the next scripted answer, blocking inside the
   // lock while a held answer waits for release().
   [[nodiscard]] Result<ScriptedResponse> claim(const detail::TransportRequest& request,
@@ -178,7 +153,11 @@ private:
       return std::unexpected(exhausted_error());
     }
     ++calls_;
-    requests_.push_back(capture(request));
+    requests_.push_back({
+        .url = request.url,
+        .headers = request.headers,
+        .body = request.body,
+    });
     auto response = std::move(responses_.front());
     responses_.pop_front();
     changed_.notify_all();

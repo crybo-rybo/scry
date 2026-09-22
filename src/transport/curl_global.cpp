@@ -33,9 +33,6 @@ public:
     }
   }
 
-  CurlGlobalOwner(const CurlGlobalOwner&) = delete;
-  CurlGlobalOwner& operator=(const CurlGlobalOwner&) = delete;
-
   ~CurlGlobalOwner() {
     if (initialized_) {
       curl_global_cleanup();
@@ -48,11 +45,6 @@ private:
   Status status_{};
   bool initialized_{false};
 };
-
-[[nodiscard]] CurlGlobalOwner& curl_global_owner() {
-  static CurlGlobalOwner owner{};
-  return owner;
-}
 
 } // namespace
 
@@ -75,9 +67,8 @@ Status validate_curl_runtime_capabilities(const CurlRuntimeCapabilities capabili
 }
 
 Status curl_global_status() {
-  // The function-static owner supplies the guarantees documented on the
-  // declaration in curl_global.hpp.
-  return curl_global_owner().status();
+  static const CurlGlobalOwner owner{};
+  return owner.status();
 }
 
 } // namespace scry::detail

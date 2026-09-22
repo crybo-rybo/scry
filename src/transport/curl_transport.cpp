@@ -7,7 +7,7 @@
 
 #include <algorithm>
 #include <chrono>
-#include <climits>
+#include <concepts>
 #include <cstddef>
 #include <cstdint>
 #include <curl/curl.h>
@@ -27,45 +27,14 @@ struct EasyDeleter {
 
 using EasyHandle = std::unique_ptr<CURL, EasyDeleter>;
 
-struct MultiDeleter {
-  void operator()(CURLM* multi) const noexcept {
-    static_cast<void>(curl_multi_cleanup(multi));
-  }
-};
+// Detaches an added easy handle at scope exit, which returns its connection to
+// the multi handle's cache instead of destroying the cache with the transfer.
+// It must be destroyed before the easy handle it names.
+struct MultiDetach {
+  CURLM* multi;
+  CURL* easy;
 
-using MultiHandle = std::unique_ptr<CURLM, MultiDeleter>;
-
-// Borrows the transport's multi handle for one transfer. Detaching the easy
-// handle at scope exit returns its connection to that handle's cache instead
-// of destroying the cache with the transfer.
-class MultiTransfer final {
-public:
-  explicit MultiTransfer(CURLM* multi) noexcept : multi_(multi) {}
-
-  ~MultiTransfer() {
-    if (multi_ != nullptr && easy_ != nullptr) {
-      static_cast<void>(curl_multi_remove_handle(multi_, easy_));
-    }
-  }
-
-  MultiTransfer(const MultiTransfer&) = delete;
-  MultiTransfer& operator=(const MultiTransfer&) = delete;
-
-  [[nodiscard]] bool valid() const noexcept { return multi_ != nullptr; }
-
-  [[nodiscard]] CURLMcode add(CURL* easy) noexcept {
-    const auto code = curl_multi_add_handle(multi_, easy);
-    if (code == CURLM_OK) {
-      easy_ = easy;
-    }
-    return code;
-  }
-
-  [[nodiscard]] CURLM* get() const noexcept { return multi_; }
-
-private:
-  CURLM* multi_{};
-  CURL* easy_{};
+  ~MultiDetach() { static_cast<void>(curl_multi_remove_handle(multi, easy)); }
 };
 
 class HeaderList final {
@@ -112,27 +81,30 @@ struct TransferContext {
   curl_error::AbortCause abort_cause{curl_error::AbortCause::none};
 };
 
-void set_callback_error(TransferContext& context, Error error) noexcept {
-  context.callback_error = std::move(error);
-}
-
-std::size_t header_callback(char* data, const std::size_t size, const std::size_t count,
-                            void* userdata) noexcept {
+// Runs one libcurl data callback. A failure, returned or thrown, is recorded on
+// the context and reported to libcurl as a short write, which aborts the
+// transfer; no exception crosses back into C.
+template <typename Accept>
+[[nodiscard]] std::size_t guarded_callback(void* userdata, const std::string_view data,
+                                           const char* exception_message,
+                                           Accept accept) noexcept {
   auto& context = *static_cast<TransferContext*>(userdata);
-  const auto bytes = size * count;
   try {
-    auto status = context.response.accept_header(
-        std::string_view{data, static_cast<std::size_t>(bytes)});
+    auto status = accept(context, data);
     if (!status) {
-      set_callback_error(context, std::move(status.error()));
+      context.callback_error = std::move(status.error());
       return 0;
     }
-    return bytes;
+    return data.size();
   } catch (...) {
-    set_callback_error(context, make_error(ErrorCategory::protocol,
-                                           "response header processing failed"));
+    context.callback_error = make_error(ErrorCategory::protocol, exception_message);
     return 0;
   }
+}
+
+[[nodiscard]] Status accept_header(TransferContext& context,
+                                   const std::string_view line) {
+  return context.response.accept_header(line);
 }
 
 [[nodiscard]] Status accept_body(TransferContext& context,
@@ -141,11 +113,7 @@ std::size_t header_callback(char* data, const std::size_t size, const std::size_
     return status;
   }
   if (!context.response.deliver_body) {
-    constexpr std::size_t maximum_error_body_bytes = std::size_t{8} * 1024;
-    if (context.error_body.size() < maximum_error_body_bytes) {
-      context.error_body.append(
-          chunk.substr(0, maximum_error_body_bytes - context.error_body.size()));
-    }
+    transport_policy::append_error_body(context.error_body, chunk);
     return {};
   }
   auto status = (*context.body_sink)(chunk);
@@ -159,23 +127,16 @@ std::size_t header_callback(char* data, const std::size_t size, const std::size_
   return {};
 }
 
+std::size_t header_callback(char* data, const std::size_t size, const std::size_t count,
+                            void* userdata) noexcept {
+  return guarded_callback(userdata, std::string_view{data, size * count},
+                          "response header processing failed", accept_header);
+}
+
 std::size_t body_callback(char* data, const std::size_t size, const std::size_t count,
                           void* userdata) noexcept {
-  auto& context = *static_cast<TransferContext*>(userdata);
-  const auto bytes = size * count;
-  try {
-    auto status =
-        accept_body(context, std::string_view{data, static_cast<std::size_t>(bytes)});
-    if (!status) {
-      set_callback_error(context, std::move(status.error()));
-      return 0;
-    }
-    return bytes;
-  } catch (...) {
-    set_callback_error(context, make_error(ErrorCategory::protocol,
-                                           "response body processing failed"));
-    return 0;
-  }
+  return guarded_callback(userdata, std::string_view{data, size * count},
+                          "response body processing failed", accept_body);
 }
 
 // Records why the transfer is being abandoned so the eventual
@@ -211,25 +172,24 @@ int progress_callback(void* userdata, curl_off_t, curl_off_t, curl_off_t,
   return list;
 }
 
-[[nodiscard]] long
-timeout_milliseconds(const std::chrono::milliseconds value) noexcept {
-  return static_cast<long>(std::min<std::chrono::milliseconds::rep>(
-      value.count(), static_cast<std::chrono::milliseconds::rep>(LONG_MAX)));
+// A millisecond count clamped to what libcurl's `long` or `int` parameter holds.
+template <std::integral Target>
+[[nodiscard]] Target
+saturated_milliseconds(const std::chrono::milliseconds value) noexcept {
+  using Rep = std::chrono::milliseconds::rep;
+  return static_cast<Target>(std::min<Rep>(
+      value.count(), static_cast<Rep>(std::numeric_limits<Target>::max())));
 }
 
 // Curl expresses the low-speed (idle) bound in whole seconds, so a sub-second
 // value rounds up rather than disabling the bound.
 [[nodiscard]] long
 idle_timeout_seconds(const std::chrono::milliseconds value) noexcept {
+  using Rep = std::chrono::seconds::rep;
   const auto seconds = std::chrono::ceil<std::chrono::seconds>(value).count();
-  return std::max(1L, static_cast<long>(std::min<std::chrono::seconds::rep>(
-                          seconds, static_cast<std::chrono::seconds::rep>(LONG_MAX))));
-}
-
-[[nodiscard]] int
-poll_timeout_milliseconds(const std::chrono::milliseconds value) noexcept {
-  return static_cast<int>(std::min<std::chrono::milliseconds::rep>(
-      value.count(), static_cast<std::chrono::milliseconds::rep>(INT_MAX)));
+  return std::max(1L,
+                  static_cast<long>(std::min<Rep>(
+                      seconds, static_cast<Rep>(std::numeric_limits<long>::max()))));
 }
 
 // Applies a flat sequence of easy-handle options, stopping at the first
@@ -278,7 +238,8 @@ private:
       .set(CURLOPT_XFERINFOFUNCTION, progress_callback)
       .set(CURLOPT_XFERINFODATA, &context)
       .set(CURLOPT_NOPROGRESS, 0L)
-      .set(CURLOPT_CONNECTTIMEOUT_MS, timeout_milliseconds(request.timeouts.connect))
+      .set(CURLOPT_CONNECTTIMEOUT_MS,
+           saturated_milliseconds<long>(request.timeouts.connect))
       .set(CURLOPT_LOW_SPEED_LIMIT, 1L)
       .set(CURLOPT_LOW_SPEED_TIME, idle_timeout_seconds(request.timeouts.idle))
       .set(CURLOPT_SSL_VERIFYPEER, request.tls_verify_peer ? 1L : 0L)
@@ -286,7 +247,8 @@ private:
   // Leaving CURLOPT_TIMEOUT_MS unset keeps curl's default of no total bound,
   // which is what an unset transfer timeout means.
   if (request.timeouts.transfer) {
-    options.set(CURLOPT_TIMEOUT_MS, timeout_milliseconds(*request.timeouts.transfer));
+    options.set(CURLOPT_TIMEOUT_MS,
+                saturated_milliseconds<long>(*request.timeouts.transfer));
   }
   // Same pattern for the optional network options: an empty value leaves
   // libcurl's default trust store and its proxy environment handling alone.
@@ -317,14 +279,14 @@ private:
 }
 
 [[nodiscard]] Result<CURLcode>
-drive_transfer(MultiTransfer& multi, TransferContext& context,
+drive_transfer(CURLM* multi, TransferContext& context,
                const std::chrono::milliseconds shutdown_bound) {
   int running = 0;
   while (true) {
     if (cancellation_requested(context)) {
       return CURLE_ABORTED_BY_CALLBACK;
     }
-    if (curl_multi_perform(multi.get(), &running) != CURLM_OK) {
+    if (curl_multi_perform(multi, &running) != CURLM_OK) {
       return std::unexpected(
           make_error(ErrorCategory::network, "libcurl transfer driver failed", true));
     }
@@ -332,8 +294,7 @@ drive_transfer(MultiTransfer& multi, TransferContext& context,
       break;
     }
     int ready = 0;
-    if (curl_multi_poll(multi.get(), nullptr, 0,
-                        poll_timeout_milliseconds(shutdown_bound),
+    if (curl_multi_poll(multi, nullptr, 0, saturated_milliseconds<int>(shutdown_bound),
                         &ready) != CURLM_OK) {
       return std::unexpected(
           make_error(ErrorCategory::network, "libcurl transfer wait failed", true));
@@ -341,7 +302,7 @@ drive_transfer(MultiTransfer& multi, TransferContext& context,
   }
 
   int messages_remaining = 0;
-  while (auto* message = curl_multi_info_read(multi.get(), &messages_remaining)) {
+  while (auto* message = curl_multi_info_read(multi, &messages_remaining)) {
     if (message->msg == CURLMSG_DONE) {
       return message->data.result;
     }
@@ -353,7 +314,7 @@ drive_transfer(MultiTransfer& multi, TransferContext& context,
 [[nodiscard]] Result<TransportResult> finish_transfer(CURL* easy, const CURLcode code,
                                                       TransferContext& context,
                                                       const TransportRequest& request) {
-  if (code != CURLE_OK && code != CURLE_HTTP_RETURNED_ERROR) {
+  if (code != CURLE_OK) {
     auto error = curl_error::classify(static_cast<int>(code), context.callback_error,
                                       context.abort_cause);
     if (error.provider_request_id.empty()) {
@@ -375,10 +336,9 @@ drive_transfer(MultiTransfer& multi, TransferContext& context,
   const auto status = static_cast<std::int32_t>(response_code);
   if (status < 200 || status >= 300) {
     auto error =
-        transport_policy::http_error(status, context.response.provider_request_id);
+        transport_policy::http_error(status, context.response.provider_request_id,
+                                     context.error_body, request.provider_namespace);
     error.retry_after = curl_error::retry_after(context.response.retry_after_values);
-    error.provider_detail = transport_policy::http_error_detail(
-        context.error_body, request.provider_namespace);
     return std::unexpected(std::move(error));
   }
   return TransportResult{
@@ -389,42 +349,33 @@ drive_transfer(MultiTransfer& multi, TransferContext& context,
 
 } // namespace
 
-class CurlTransport::Impl final {
-public:
-  // Constructing a transport is what first initializes libcurl's process-wide
-  // state, so a failure is observable through status() before any transfer.
-  Impl() : startup_status_(curl_global_status()) {}
+// Constructing a transport is what first initializes libcurl's process-wide
+// state, so a failure is observable through status() before any transfer.
+CurlTransport::CurlTransport() { static_cast<void>(curl_global_status()); }
 
-  [[nodiscard]] const Status& startup_status() const noexcept {
-    return startup_status_;
+CurlTransport::~CurlTransport() {
+  if (multi_ != nullptr) {
+    static_cast<void>(curl_multi_cleanup(multi_));
   }
+}
 
-  // Creates the multi handle once and keeps it for the transport's lifetime,
-  // because it holds libcurl's connection cache: reusing it is what lets a
-  // retry or a later turn skip the TCP and TLS handshake. Null on failure.
-  [[nodiscard]] CURLM* multi() {
-    if (!multi_) {
-      multi_.reset(curl_multi_init());
-    }
-    return multi_.get();
+Status CurlTransport::status() const { return curl_global_status(); }
+
+// Creates the multi handle once and keeps it for the transport's lifetime,
+// because it holds libcurl's connection cache: reusing it is what lets a retry
+// or a later turn skip the TCP and TLS handshake. Null on failure.
+CURLM* CurlTransport::multi() {
+  if (multi_ == nullptr) {
+    multi_ = curl_multi_init();
   }
-
-private:
-  Status startup_status_{};
-  MultiHandle multi_{};
-};
-
-CurlTransport::CurlTransport() : impl_(std::make_unique<Impl>()) {}
-
-CurlTransport::~CurlTransport() = default;
-
-Status CurlTransport::status() const { return impl_->startup_status(); }
+  return multi_;
+}
 
 Result<TransportResult> CurlTransport::perform(const TransportRequest& request,
                                                const std::stop_token shutdown,
                                                const std::atomic<bool>& cancelled,
                                                BodyChunkSink& body_sink) {
-  if (auto status = validate_execution(impl_->startup_status(), shutdown, cancelled);
+  if (auto status = validate_execution(curl_global_status(), shutdown, cancelled);
       !status) {
     return std::unexpected(std::move(status.error()));
   }
@@ -452,11 +403,12 @@ Result<TransportResult> CurlTransport::perform(const TransportRequest& request,
   if (auto status = configure_easy(easy.get(), request, *headers, context); !status) {
     return std::unexpected(std::move(status.error()));
   }
-  MultiTransfer multi{impl_->multi()};
-  if (!multi.valid() || multi.add(easy.get()) != CURLM_OK) {
+  auto* multi = this->multi();
+  if (multi == nullptr || curl_multi_add_handle(multi, easy.get()) != CURLM_OK) {
     return std::unexpected(
         make_error(ErrorCategory::network, "libcurl transfer setup failed", true));
   }
+  const MultiDetach detach{.multi = multi, .easy = easy.get()};
   auto code = drive_transfer(multi, context, request.timeouts.shutdown);
   if (!code) {
     code.error().provider_request_id = context.response.provider_request_id;

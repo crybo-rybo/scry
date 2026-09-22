@@ -2,8 +2,6 @@
 
 #include "core/transport.hpp"
 
-#include <memory>
-
 namespace scry::detail {
 
 class CurlTransport final : public Transport {
@@ -13,8 +11,6 @@ public:
 
   CurlTransport(const CurlTransport&) = delete;
   CurlTransport& operator=(const CurlTransport&) = delete;
-  CurlTransport(CurlTransport&&) = delete;
-  CurlTransport& operator=(CurlTransport&&) = delete;
 
   [[nodiscard]] Status status() const;
 
@@ -24,8 +20,11 @@ public:
                                                 BodyChunkSink& body_sink) override;
 
 private:
-  class Impl;
-  std::unique_ptr<Impl> impl_;
+  // libcurl declares CURLM as void, so the handle is held as void* to keep
+  // <curl/curl.h> out of this header.
+  [[nodiscard]] void* multi();
+
+  void* multi_{};
 };
 
 } // namespace scry::detail

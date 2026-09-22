@@ -3,6 +3,7 @@
 #include "core/transport.hpp"
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstddef>
 #include <deque>
@@ -18,8 +19,8 @@ struct ScriptedExchange {
   std::vector<std::string> body_chunks{};
   Result<detail::TransportResult> result{detail::TransportResult{}};
   // A held exchange records its request and then blocks inside perform() until
-  // release() is called, so a test can observe the worker mid-transfer without
-  // defining its own gated transport.
+  // release(), turn cancellation, or shutdown, so a test can observe or cancel
+  // the worker mid-transfer without defining its own gated transport.
   bool hold{false};
 };
 
@@ -71,7 +72,7 @@ public:
   perform(const detail::TransportRequest& request, const std::stop_token shutdown,
           const std::atomic<bool>& cancelled,
           detail::BodyChunkSink& body_sink) override {
-    if (shutdown.stop_requested() || cancelled.load(std::memory_order_acquire)) {
+    if (stopping(shutdown, cancelled)) {
       return std::unexpected(cancelled_error());
     }
     ScriptedExchange exchange{};
@@ -88,17 +89,15 @@ public:
       exchange = std::move(exchanges_.front());
       exchanges_.pop_front();
       changed_.notify_all();
-      if (exchange.hold &&
-          !changed_.wait(lock, shutdown, [this] { return released_; })) {
+      if (exchange.hold && !await_release(lock, shutdown, cancelled)) {
         return std::unexpected(cancelled_error());
       }
     }
-    if (exchange.hold &&
-        (shutdown.stop_requested() || cancelled.load(std::memory_order_acquire))) {
+    if (exchange.hold && stopping(shutdown, cancelled)) {
       return std::unexpected(cancelled_error());
     }
     for (const auto& chunk : exchange.body_chunks) {
-      if (shutdown.stop_requested() || cancelled.load(std::memory_order_acquire)) {
+      if (stopping(shutdown, cancelled)) {
         return std::unexpected(cancelled_error());
       }
       auto status = body_sink(chunk);
@@ -115,6 +114,28 @@ private:
         .category = ErrorCategory::cancelled,
         .message = "scripted transport cancelled",
     };
+  }
+
+  [[nodiscard]] static bool stopping(const std::stop_token& shutdown,
+                                     const std::atomic<bool>& cancelled) {
+    return shutdown.stop_requested() || cancelled.load(std::memory_order_acquire);
+  }
+
+  // Same hold as scry::testing::ScriptedTransport: the turn's cancel flag has no
+  // notifier, so a held exchange polls it, and either cancellation or shutdown
+  // ends the hold without a release().
+  [[nodiscard]] bool await_release(std::unique_lock<std::mutex>& lock,
+                                   const std::stop_token& shutdown,
+                                   const std::atomic<bool>& cancelled) {
+    constexpr auto poll_period = std::chrono::milliseconds{2};
+    while (!released_) {
+      if (stopping(shutdown, cancelled)) {
+        return false;
+      }
+      static_cast<void>(
+          changed_.wait_for(lock, shutdown, poll_period, [this] { return released_; }));
+    }
+    return true;
   }
 
   mutable std::mutex mutex_{};

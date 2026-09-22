@@ -14,8 +14,7 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data,
   }
   // The first byte selects how the remainder is cut into body chunks, so one
   // input exercises many accounting orders against the same ceiling. It is a
-  // selector only: leaving it in the payload pinned every seed's chunk size to
-  // its own first character, so no run ever varied the chunking.
+  // selector only and is not part of the payload.
   const auto chunk_size =
       std::max<std::size_t>(1, static_cast<std::size_t>(bytes.front()));
   const auto payload = bytes.subspan(1);
@@ -32,8 +31,7 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data,
       break;
     }
     remainder.remove_prefix(line.size());
-    // The blank line ends the headers. Without this the body was consumed as
-    // more headers, so any JSON containing a colon starved account_body.
+    // The blank line ends the headers; everything after it is body.
     if (line.find_first_not_of(" \t\r\n") == std::string_view::npos) {
       break;
     }
