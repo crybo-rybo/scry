@@ -182,6 +182,7 @@ set(
   include/scry/conversation.hpp
   include/scry/detail/reflection_codec.hpp
   include/scry/detail/reflection_json.hpp
+  include/scry/detail/reflection_json_string.hpp
   include/scry/detail/reflection_meta.hpp
   include/scry/detail/reflection_registration.hpp
   include/scry/detail/reflection_schema.hpp
