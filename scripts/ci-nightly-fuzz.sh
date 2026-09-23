@@ -3,6 +3,8 @@
 set -euo pipefail
 
 readonly root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=scripts/gnu-timeout.sh
+source "${root_dir}/scripts/gnu-timeout.sh"
 readonly fuzz_kind="${1:-}"
 readonly fuzz_seconds="${SCRY_NIGHTLY_FUZZ_SECONDS:-900}"
 readonly per_input_timeout="${SCRY_NIGHTLY_FUZZ_INPUT_TIMEOUT_SECONDS:-10}"
@@ -53,7 +55,7 @@ cmake --preset fuzz -B "${build_dir}"
 cmake --build "${build_dir}" --target "${target}"
 
 echo "Running ${target} for ${fuzz_seconds}s; artifacts: ${artifact_dir}"
-timeout "$((fuzz_seconds + 120))" \
+gnu_timeout "$((fuzz_seconds + 120))" \
   "${build_dir}/tests/fuzz/${target}" \
   "-max_total_time=${fuzz_seconds}" \
   "-timeout=${per_input_timeout}" \
