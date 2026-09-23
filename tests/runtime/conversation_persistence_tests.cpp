@@ -1,10 +1,13 @@
 #include "core/json_codec.hpp"
 
 #include <catch2/catch_test_macros.hpp>
+#include <filesystem>
+#include <fstream>
 #include <scry/conversation.hpp>
 #include <scry/error.hpp>
 #include <scry/json.hpp>
 #include <scry/message.hpp>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -358,4 +361,39 @@ TEST_CASE("private JSON codec escapes control characters without a short escape"
   auto error_view = scry::JsonView::parse(error_object);
   REQUIRE(error_view);
   CHECK(error_view->find("error")->string() == "\x01");
+}
+
+TEST_CASE("restored tool-call argument keys holding control characters re-encode") {
+  // Regression for the weekly fuzz find (#108): from_json accepted a document
+  // whose tool-call arguments had an object *key* with control characters, and
+  // to_json then failed because the key was re-encoded with the bytes raw. A
+  // document the parser accepts must re-encode, and the encoding must be a
+  // fixed point.
+  const auto round_trips = [](const std::string& text) {
+    auto restored = scry::Conversation::from_json(scry::Json{.text = text});
+    REQUIRE(restored);
+    auto encoded = restored->to_json();
+    REQUIRE(encoded);
+    auto reread = scry::Conversation::from_json(*encoded);
+    REQUIRE(reread);
+    auto re_encoded = reread->to_json();
+    REQUIRE(re_encoded);
+    CHECK(re_encoded->text == encoded->text);
+    return encoded->text;
+  };
+
+  const auto minimal = round_trips(
+      R"({"messages":[{"content":[{"arguments":{"a\u0000b\u000ec":1},"id":"call-1",)"
+      R"("name":"lookup","type":"tool_call"}],"role":"assistant"}],)"
+      R"("system_prompt":"","version":1})");
+  CHECK(minimal.find(R"("a\u0000b\u000Ec")") != std::string::npos);
+
+  // The fuzzer's own input, kept in the corpus so the Clang replay pins it too.
+  std::ifstream corpus{std::filesystem::path{SCRY_FUZZ_CORPUS_DIR} / "conversation" /
+                           "control_character_key.json",
+                       std::ios::binary};
+  REQUIRE(corpus);
+  std::stringstream bytes;
+  bytes << corpus.rdbuf();
+  static_cast<void>(round_trips(bytes.str()));
 }
