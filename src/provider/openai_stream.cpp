@@ -395,10 +395,11 @@ validated_choice_delta(const JsonValue& choice,
   if (!reason) {
     return std::unexpected(std::move(reason.error()));
   }
-  if (!*reason) {
+  const auto& finish_reason = *reason;
+  if (!finish_reason.has_value()) {
     return {};
   }
-  auto finish = decode_finish(**reason);
+  auto finish = decode_finish(*finish_reason);
   if (!finish) {
     return std::unexpected(std::move(finish.error()));
   }

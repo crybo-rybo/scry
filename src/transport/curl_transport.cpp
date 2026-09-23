@@ -349,9 +349,7 @@ drive_transfer(CURLM* multi, TransferContext& context,
 
 } // namespace
 
-// Constructing a transport is what first initializes libcurl's process-wide
-// state, so a failure is observable through status() before any transfer.
-CurlTransport::CurlTransport() { static_cast<void>(curl_global_status()); }
+CurlTransport::CurlTransport() = default;
 
 CurlTransport::~CurlTransport() {
   if (multi_ != nullptr) {
@@ -359,6 +357,8 @@ CurlTransport::~CurlTransport() {
   }
 }
 
+// The first call initializes libcurl's process-wide state, so a failure is
+// observable here before any transfer; the result is cached process-wide.
 Status CurlTransport::status() const { return curl_global_status(); }
 
 // Creates the multi handle once and keeps it for the transport's lifetime,
