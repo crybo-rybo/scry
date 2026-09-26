@@ -67,15 +67,31 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install pinned fuzz toolchain
+        # Retries the apt.llvm.org fetch + install up to 3 times: a transient
+        # outage in either source fails the whole scheduled run, and there is
+        # nothing actionable to do except wait and try again.
         run: |
-          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
-            | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
-          echo "deb https://apt.llvm.org/noble/ llvm-toolchain-noble-21 main" \
-            | sudo tee /etc/apt/sources.list.d/llvm-21.list
-          sudo apt-get update
-          sudo apt-get install -y \
-            clang-21 g++-14 libclang-rt-21-dev libcurl4-openssl-dev \
-            libfuzzer-21-dev ninja-build
+          set -o pipefail  # a failed wget must fail the pipeline, not be masked by tee
+          installed=0
+          for attempt in 1 2 3; do
+            if wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
+                | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null \
+              && echo "deb https://apt.llvm.org/noble/ llvm-toolchain-noble-21 main" \
+                | sudo tee /etc/apt/sources.list.d/llvm-21.list \
+              && sudo apt-get update \
+              && sudo apt-get install -y \
+                clang-21 g++-14 libclang-rt-21-dev libcurl4-openssl-dev \
+                libfuzzer-21-dev ninja-build; then
+              installed=1
+              break
+            fi
+            echo "Fuzz toolchain install attempt ${attempt} failed; retrying in 30s..." >&2
+            sleep 30
+          done
+          if [[ "${installed}" -ne 1 ]] || ! command -v clang-21 >/dev/null; then
+            echo "Fuzz toolchain install failed after 3 attempts." >&2
+            exit 1
+          fi
       - name: Run long fuzz target
         run: ./scripts/ci-nightly-fuzz.sh "${{ matrix.target }}"
       - name: Upload fuzz artifacts

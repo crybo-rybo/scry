@@ -10,11 +10,26 @@ runs:
   using: composite
   steps:
     - name: Install GCC 16, Ninja, and libcurl
+      # Retries the PPA fetch + apt install up to 3 times: the 2026-09-21
+      # scheduled run failed two jobs on a transient Launchpad/PPA outage,
+      # and there is nothing actionable to do except wait and try again.
       shell: bash
       run: |
-        sudo add-apt-repository --yes ppa:ubuntu-toolchain-r/test
-        sudo apt-get update
-        sudo apt-get install -y g++-16 libcurl4-openssl-dev ninja-build
+        installed=0
+        for attempt in 1 2 3; do
+          if sudo add-apt-repository --yes ppa:ubuntu-toolchain-r/test \
+            && sudo apt-get update \
+            && sudo apt-get install -y g++-16 libcurl4-openssl-dev ninja-build; then
+            installed=1
+            break
+          fi
+          echo "GCC 16 toolchain install attempt ${attempt} failed; retrying in 30s..." >&2
+          sleep 30
+        done
+        if [[ "${installed}" -ne 1 ]] || ! command -v g++-16 >/dev/null; then
+          echo "GCC 16 toolchain install failed after 3 attempts." >&2
+          exit 1
+        fi
     - name: Lower ASLR entropy for sanitizers
       # High-entropy ASLR (vm.mmap_rnd_bits=32) breaks ASan/TSan shadow-memory
       # mapping on Ubuntu 24.04 runners.
