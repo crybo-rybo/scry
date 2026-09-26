@@ -131,8 +131,14 @@ inline constexpr bool is_supported_float_v =
     std::same_as<Type, float> || std::same_as<Type, double>;
 
 template <typename Type>
-inline constexpr bool is_supported_enum_v =
-    std::is_enum_v<Type> && std::is_scoped_enum_v<Type>;
+inline constexpr bool is_supported_enum_v = std::is_scoped_enum_v<Type>;
+
+// Decoding default-constructs a value, move-assigns decoded parts into it, and
+// returns it by move.
+template <typename Type>
+inline constexpr bool is_storable_v =
+    std::is_default_constructible_v<Type> && std::is_move_constructible_v<Type> &&
+    std::is_move_assignable_v<Type>;
 
 template <typename Type> consteval auto sorted_members_of() {
   auto members = std::meta::nonstatic_data_members_of(
@@ -146,11 +152,6 @@ template <typename Type> consteval auto sorted_members_of() {
 template <typename Type> consteval auto declared_members_of() {
   return std::define_static_array(std::meta::nonstatic_data_members_of(
       ^^Type, std::meta::access_context::unchecked()));
-}
-
-template <typename Type> consteval auto declared_bases_of() {
-  return std::define_static_array(
-      std::meta::bases_of(^^Type, std::meta::access_context::unchecked()));
 }
 
 template <typename Type> consteval auto declared_enumerators_of() {
@@ -179,10 +180,7 @@ template <typename Optional, typename... Seen>
 consteval bool supported_optional_impl() {
   using Element = typename optional_traits<Optional>::value_type;
   if constexpr (!std::same_as<Element, std::remove_cvref_t<Element>> ||
-                optional_traits<Element>::recognized ||
-                !std::is_default_constructible_v<Optional> ||
-                !std::is_move_constructible_v<Optional> ||
-                !std::is_move_assignable_v<Optional>) {
+                optional_traits<Element>::recognized || !is_storable_v<Optional>) {
     return false;
   } else {
     return supported_value_impl<Element, Seen...>();
@@ -192,10 +190,7 @@ consteval bool supported_optional_impl() {
 template <typename Vector, typename... Seen> consteval bool supported_vector_impl() {
   using Element = typename vector_traits<Vector>::value_type;
   if constexpr (!std::same_as<Element, std::remove_cvref_t<Element>> ||
-                std::same_as<Element, bool> ||
-                !std::is_default_constructible_v<Vector> ||
-                !std::is_move_constructible_v<Vector> ||
-                !std::is_move_assignable_v<Vector>) {
+                std::same_as<Element, bool> || !is_storable_v<Vector>) {
     return false;
   } else {
     return supported_value_impl<Element, Seen...>();
@@ -205,9 +200,7 @@ template <typename Vector, typename... Seen> consteval bool supported_vector_imp
 template <typename Array, typename... Seen> consteval bool supported_array_impl() {
   using Element = typename array_traits<Array>::value_type;
   if constexpr (!std::same_as<Element, std::remove_cvref_t<Element>> ||
-                !std::is_default_constructible_v<Array> ||
-                !std::is_move_constructible_v<Array> ||
-                !std::is_move_assignable_v<Array>) {
+                !is_storable_v<Array>) {
     return false;
   } else {
     return supported_value_impl<Element, Seen...>();
@@ -216,13 +209,11 @@ template <typename Array, typename... Seen> consteval bool supported_array_impl(
 
 template <typename Type, typename... Seen> consteval bool supported_aggregate_impl() {
   if constexpr (!std::is_aggregate_v<Type> || std::is_union_v<Type> ||
-                !std::is_default_constructible_v<Type> ||
-                !std::is_move_constructible_v<Type> ||
-                !std::is_move_assignable_v<Type>) {
+                !is_storable_v<Type>) {
     return false;
   } else {
-    static constexpr auto bases = declared_bases_of<Type>();
-    if constexpr (!bases.empty()) {
+    if constexpr (!std::meta::bases_of(^^Type, std::meta::access_context::unchecked())
+                       .empty()) {
       return false;
     }
 

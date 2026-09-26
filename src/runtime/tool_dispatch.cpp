@@ -1,5 +1,6 @@
 #include "runtime/tool_dispatch.hpp"
 
+#include "core/error.hpp"
 #include "core/json_codec.hpp"
 
 #include <algorithm>
@@ -11,27 +12,9 @@
 namespace scry::detail {
 namespace {
 
-[[nodiscard]] Error dispatch_error(const ErrorCategory category, std::string message) {
-  return Error{
-      .category = category,
-      .message = std::move(message),
-  };
-}
-
-[[nodiscard]] Result<Json> invoke_handler(ContextualToolHandler& handler,
-                                          const ToolCallBlock& call,
-                                          const ToolCallContext& context) noexcept {
-  try {
-    return handler(context, call.arguments);
-  } catch (...) {
-    return std::unexpected(
-        dispatch_error(ErrorCategory::tool, "tool handler threw an exception"));
-  }
-}
-
 [[nodiscard]] Error oversized_result() {
-  return dispatch_error(ErrorCategory::resource_limit,
-                        "tool result exceeds the configured byte limit");
+  return make_error(ErrorCategory::resource_limit,
+                    "tool result exceeds the configured byte limit");
 }
 
 [[nodiscard]] Result<ToolResultBlock>
@@ -90,37 +73,31 @@ successful_result(const ToolCallBlock& call, const Json& value,
   return text;
 }
 
-[[nodiscard]] ToolRegistrationPtr find_tool_registration(const ToolSnapshot& snapshot,
-                                                         const std::string_view name) {
-  const auto found = std::ranges::find_if(snapshot, [name](const auto& registration) {
-    return registration->definition.name == name;
-  });
-  return found == snapshot.end() ? nullptr : *found;
-}
+// What the model is told when a handler fails without publishing its own text.
+constexpr std::string_view handler_failed_message = "tool handler returned an error";
 
 [[nodiscard]] Result<ToolResultBlock>
 dispatch_tool_handler(ContextualToolHandler& handler, const ToolCallBlock& call,
                       const ToolCallContext& context,
                       const std::size_t max_result_bytes) {
-  auto invoked = invoke_handler(handler, call, context);
+  Result<Json> invoked{};
+  try {
+    invoked = handler(context, call.arguments);
+  } catch (...) {
+    return error_result(call, handler_failed_message, max_result_bytes);
+  }
   if (!invoked) {
     // Only text the handler deliberately published travels on; `message` and any
     // exception text stay on the host side of the boundary.
     const auto& published = invoked.error().model_message;
-    const std::string_view visible =
-        published.empty() ? std::string_view{"tool handler returned an error"}
-                          : std::string_view{published};
-    return error_result(call, visible, max_result_bytes);
+    return error_result(
+        call, published.empty() ? handler_failed_message : std::string_view{published},
+        max_result_bytes);
   }
   return successful_result(call, *invoked, max_result_bytes);
 }
 
 } // namespace
-
-bool tool_is_registered(const ToolSnapshot& snapshot,
-                        const std::string_view name) noexcept {
-  return find_tool_registration(snapshot, name) != nullptr;
-}
 
 Result<ToolResultBlock> error_result(const ToolCallBlock& call,
                                      const std::string_view message,
@@ -131,8 +108,8 @@ Result<ToolResultBlock> error_result(const ToolCallBlock& call,
   }
   if (payload.text.size() > max_result_bytes) {
     return std::unexpected(
-        dispatch_error(ErrorCategory::resource_limit,
-                       "tool error result exceeds the configured byte limit"));
+        make_error(ErrorCategory::resource_limit,
+                   "tool error result exceeds the configured byte limit"));
   }
   return ToolResultBlock{
       .tool_call_id = call.id,
@@ -145,18 +122,12 @@ Result<ToolResultBlock> dispatch_tool(const ToolSnapshot& snapshot,
                                       const ToolCallBlock& call,
                                       const ToolCallContext& context,
                                       const std::size_t max_result_bytes) {
-  const auto registration = find_tool_registration(snapshot, call.name);
-  if (!registration) {
+  const auto* const registration = find_tool(snapshot, call.name);
+  if (registration == nullptr) {
     return error_result(call, unknown_tool_message(snapshot, call.name),
                         max_result_bytes);
   }
-  // Registration rejects an empty handler, so this only catches a snapshot
-  // assembled by hand. The call below dereferences the pointer and then invokes
-  // the function, so both have to be live.
-  if (!registration->handler || !*registration->handler) {
-    return error_result(call, "tool handler is unavailable", max_result_bytes);
-  }
-  return dispatch_tool_handler(*registration->handler, call, context, max_result_bytes);
+  return dispatch_tool_handler(registration->handler, call, context, max_result_bytes);
 }
 
 } // namespace scry::detail

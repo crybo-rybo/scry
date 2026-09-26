@@ -5,8 +5,6 @@
 #include <cstddef>
 #include <memory>
 #include <scry/conversation.hpp>
-#include <scry/json.hpp>
-#include <scry/tool_registry.hpp>
 #include <vector>
 
 namespace scry::detail {
@@ -18,37 +16,17 @@ struct ConversationState {
   // block before appending whenever an in-flight request still shares it.
   std::shared_ptr<std::vector<Message>> messages{
       std::make_shared<std::vector<Message>>()};
+  // The system prompt plus every committed message.
   std::size_t payload_bytes{};
   bool busy{false};
 };
 
-struct RegisteredTool final {
-  ToolDefinition definition{};
-  std::shared_ptr<ContextualToolHandler> handler{};
-};
-
-// Registrations store one handler shape so dispatch has one call path. A plain
-// handler is adapted here rather than at every call site; an empty one stays
-// empty so registration still rejects it.
-[[nodiscard]] ContextualToolHandler to_contextual_handler(ToolHandler handler);
-
-using ToolRegistrationPtr = std::shared_ptr<const RegisteredTool>;
-using ToolSnapshot = std::vector<ToolRegistrationPtr>;
-using FrozenToolEntries = std::shared_ptr<const ToolSnapshot>;
-
-// The registrations and the schemas derived from them, frozen together so a
-// turn can share both without copying. Rebuilt lazily on the first send after a
-// registration, so a rejected send never pays for the rebuild.
-struct FrozenToolSnapshot {
-  FrozenToolEntries entries{};
-  SchemaSnapshot schemas{};
-};
-
-struct ToolRegistryState {
-  ToolSnapshot entries{};
-  FrozenToolSnapshot frozen{};
-};
-
-[[nodiscard]] FrozenToolSnapshot snapshot_tools(ToolRegistryState& state);
-
 } // namespace scry::detail
+
+namespace scry {
+
+// The public handle's state is the shared state itself, so a route holds the
+// same block the handle does and every accessor is one hop away.
+class Conversation::Impl final : public detail::ConversationState {};
+
+} // namespace scry

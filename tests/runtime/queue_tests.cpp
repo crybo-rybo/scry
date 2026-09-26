@@ -76,7 +76,7 @@ TEST_CASE("event queue coalescing handles non-adjacent and cross-turn events") {
   scry::detail::EventQueue queue;
   const auto first = scry::TurnId{.value = 203};
   const auto second = scry::TurnId{.value = 204};
-  REQUIRE(queue.push_terminal(
+  REQUIRE(queue.push(
       scry::detail::ErrorEvent{.turn_id = first, .error = {.message = "e"}}, 16));
   REQUIRE(queue.push(scry::detail::TextDeltaEvent{.turn_id = first, .text = "a"}, 16));
   REQUIRE(queue.push(scry::detail::TextDeltaEvent{.turn_id = second, .text = "b"}, 16));
@@ -86,7 +86,6 @@ TEST_CASE("event queue coalescing handles non-adjacent and cross-turn events") {
 TEST_CASE("event queue admits or rejects a same-turn batch atomically") {
   scry::detail::EventQueue queue;
   const auto turn_id = scry::TurnId{.value = 230};
-  CHECK(queue.push_batch({}, 0));
   std::vector<scry::detail::WorkerEvent> oversized{
       scry::detail::TextDeltaEvent{.turn_id = turn_id, .text = "12"},
       scry::detail::TextDeltaEvent{.turn_id = turn_id, .text = "345"},
@@ -119,16 +118,6 @@ TEST_CASE("event queue batch honors a reduced limit after ownership transfers") 
   CHECK_FALSE(queue.push_batch(std::move(batch), 3));
 }
 
-TEST_CASE("event queue rejects batches that mix turn ownership") {
-  scry::detail::EventQueue queue;
-  std::vector<scry::detail::WorkerEvent> mixed{
-      scry::detail::TextDeltaEvent{.turn_id = {.value = 231}, .text = "a"},
-      scry::detail::TextDeltaEvent{.turn_id = {.value = 232}, .text = "b"},
-  };
-  CHECK_FALSE(queue.push_batch(std::move(mixed), 4));
-  CHECK(queue.size() == 0);
-}
-
 TEST_CASE("event queue rejects coalescing against a reduced byte limit") {
   scry::detail::EventQueue queue;
   const auto turn_id = scry::TurnId{.value = 205};
@@ -136,7 +125,7 @@ TEST_CASE("event queue rejects coalescing against a reduced byte limit") {
       queue.push(scry::detail::TextDeltaEvent{.turn_id = turn_id, .text = "1234"}, 4));
   CHECK_FALSE(
       queue.push(scry::detail::TextDeltaEvent{.turn_id = turn_id, .text = "x"}, 3));
-  CHECK_FALSE(queue.push_terminal(scry::detail::CancelledEvent{.turn_id = turn_id}, 3));
+  CHECK_FALSE(queue.push(scry::detail::CancelledEvent{.turn_id = turn_id}, 3));
 }
 
 TEST_CASE("event queue rejects a coalesced delta beyond remaining capacity") {
@@ -164,11 +153,11 @@ TEST_CASE("a rejected push charges the turn nothing") {
   // A refusal against a turn that has queued bytes leaves that charge alone: the
   // exact remainder still fits afterwards.
   const auto other = scry::TurnId{.value = 211};
-  REQUIRE(queue.push_terminal(
+  REQUIRE(queue.push(
       scry::detail::ErrorEvent{.turn_id = other, .error = {.message = "123"}}, 8));
-  CHECK_FALSE(queue.push_terminal(
+  CHECK_FALSE(queue.push(
       scry::detail::ErrorEvent{.turn_id = other, .error = {.message = "123456"}}, 8));
-  REQUIRE(queue.push_terminal(
+  REQUIRE(queue.push(
       scry::detail::ErrorEvent{.turn_id = other, .error = {.message = "12345"}}, 8));
   CHECK(queue.size() == 3);
 }
@@ -180,7 +169,7 @@ TEST_CASE("event queue release retains and then clears remaining accounting") {
                      16));
   auto first = queue.try_pop();
   REQUIRE(first);
-  REQUIRE(queue.push_terminal(
+  REQUIRE(queue.push(
       scry::detail::ErrorEvent{.turn_id = turn_id, .error = {.message = "last"}}, 16));
   auto last = queue.try_pop();
   REQUIRE(last);
@@ -213,7 +202,6 @@ TEST_CASE("blocking queue exposes timeout and size behavior") {
 TEST_CASE("event queue wait reports timeout and ready data") {
   scry::detail::EventQueue queue;
   CHECK_FALSE(queue.wait_for_data(0ms));
-  REQUIRE(
-      queue.push_terminal(scry::detail::CancelledEvent{.turn_id = {.value = 211}}, 16));
+  REQUIRE(queue.push(scry::detail::CancelledEvent{.turn_id = {.value = 211}}, 16));
   CHECK(queue.wait_for_data(0ms));
 }

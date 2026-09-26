@@ -1,6 +1,5 @@
 #include <chrono>
 #include <iostream>
-#include <scry/reflection.hpp>
 #include <scry/scry.hpp>
 #include <string>
 #include <thread>

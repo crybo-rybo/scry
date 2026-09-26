@@ -6,11 +6,13 @@ if(SCRY_CLANG_TOOLING_LIBCXX AND NOT SCRY_CLANG_TOOLING)
   )
 endif()
 
-if(SCRY_BUILD_FUZZERS AND
-   (NOT SCRY_CLANG_TOOLING OR NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang"))
+if(SCRY_BUILD_FUZZERS AND NOT SCRY_CLANG_TOOLING)
   message(FATAL_ERROR
     "SCRY_BUILD_FUZZERS requires SCRY_CLANG_TOOLING=ON and a Clang-family compiler")
 endif()
+
+include(CheckCXXSourceCompiles)
+include(CMakePushCheckState)
 
 # Scry's public API is C++26: the reflected typed-tool surface is part of the
 # library, not an option. The implementation under src/ is deliberately kept to
@@ -34,8 +36,7 @@ if(SCRY_CLANG_TOOLING)
   # recent libc++ expose that C++20 surface directly; LLVM 18's libc++ still
   # gates it behind experimental-library mode. Probe rather than assume, so the
   # flag appears only on the standard libraries that need it.
-  include(CheckCXXSourceCompiles)
-  set(SCRY_SAVED_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS}")
+  cmake_push_check_state()
   set(CMAKE_REQUIRED_FLAGS "-std=c++23")
   if(SCRY_CLANG_TOOLING_LIBCXX)
     # The probe must see the same standard library the build will use, or the
@@ -52,7 +53,7 @@ if(SCRY_CLANG_TOOLING)
     ]=]
     SCRY_TOOLING_HAS_STOP_TOKEN
   )
-  set(CMAKE_REQUIRED_FLAGS "${SCRY_SAVED_REQUIRED_FLAGS}")
+  cmake_pop_check_state()
 else()
   if(
     NOT CMAKE_CXX_COMPILER_ID STREQUAL "GNU"
@@ -66,8 +67,7 @@ else()
     )
   endif()
 
-  include(CheckCXXSourceCompiles)
-  set(SCRY_SAVED_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS}")
+  cmake_push_check_state()
   set(CMAKE_REQUIRED_FLAGS "-std=c++26 -freflection")
   set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_LIST_DIR}/probes/reflection.cpp")
@@ -77,7 +77,7 @@ else()
     "${SCRY_REFLECTION_PROBE}"
     SCRY_COMPILER_HAS_REFLECTION_ANNOTATIONS
   )
-  set(CMAKE_REQUIRED_FLAGS "${SCRY_SAVED_REQUIRED_FLAGS}")
+  cmake_pop_check_state()
   if(NOT SCRY_COMPILER_HAS_REFLECTION_ANNOTATIONS)
     message(
       FATAL_ERROR

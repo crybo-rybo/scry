@@ -5,8 +5,7 @@
 #
 #   cmake -S extras/showcase -B build/showcase -G Ninja -DCMAKE_BUILD_TYPE=Debug
 #
-# ./scripts/ci-showcase.sh builds this project; the core CI script audits the
-# installed package.
+# ./scripts/ci-showcase.sh builds this project.
 
 cmake_minimum_required(VERSION 3.28)
 
@@ -54,7 +53,6 @@ target_include_directories(
 )
 
 add_library(scry_imgui_chat_panel STATIC imgui/chat_panel.cpp)
-target_compile_features(scry_imgui_chat_panel PRIVATE cxx_std_23)
 target_include_directories(
   scry_imgui_chat_panel
   PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/imgui"

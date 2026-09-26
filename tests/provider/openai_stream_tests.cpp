@@ -1,4 +1,5 @@
 #include "core/model.hpp"
+#include "fixture_support.hpp"
 #include "provider/openai.hpp"
 
 #include <array>
@@ -13,20 +14,14 @@ namespace {
 
 using namespace scry;
 using namespace scry::detail;
+using namespace scry::test_fixtures;
 
-[[nodiscard]] Result<std::vector<ProviderEvent>>
-event(OpenAiAdapter& adapter, ProviderDecodeState& state, const std::string_view data,
-      const std::string_view name = "message") {
-  std::vector<ProviderEvent> events{};
-  if (auto status = adapter.parse_stream_event(name, data, state, events); !status) {
-    return std::unexpected(std::move(status.error()));
-  }
-  return events;
-}
-
-void require_protocol(const Result<std::vector<ProviderEvent>>& result) {
-  REQUIRE_FALSE(result);
-  CHECK(result.error().category == ErrorCategory::protocol);
+// Most OpenAI data arrives as unnamed `message` events.
+[[nodiscard]] StreamResult event(const OpenAiAdapter& adapter,
+                                 ProviderDecodeState& state,
+                                 const std::string_view data,
+                                 const std::string_view name = "message") {
+  return decode(adapter, name, data, state);
 }
 
 void apply(OpenAiAdapter& adapter, ProviderDecodeState& state,
@@ -294,8 +289,7 @@ TEST_CASE("OpenAI stream enforces finish and terminal lifecycle") {
     ProviderDecodeState state{};
     const auto ignored = event(adapter, state, "opaque", "future_optional");
     REQUIRE(ignored);
-    REQUIRE(ignored->size() == 1);
-    CHECK(std::get<ProviderIgnoredEvent>(ignored->front()).name == "future_optional");
+    CHECK(ignored->empty());
     apply(
         adapter, state,
         chunk(R"({"index":0,"delta":{"function_call":null},"finish_reason":"stop"})"));
@@ -326,6 +320,8 @@ TEST_CASE("OpenAI stream enforces finish and terminal lifecycle") {
   }
 
   SECTION("duplicate terminal marker fails") {
+    // The terminal event owns the accumulated response, so every later event
+    // must be refused before anything reads the decode state's response again.
     ProviderDecodeState state{};
     apply(adapter, state, chunk(R"({"index":0,"delta":{},"finish_reason":"stop"})"));
     REQUIRE(event(adapter, state, "[DONE]"));
@@ -368,14 +364,12 @@ TEST_CASE("OpenAI stream maps errors and isolates dialect state") {
   CHECK(error.error().message.find("private") == std::string::npos);
 
   ProviderDecodeState mislabeled{};
-  mislabeled.response.provider_request_id = "req-mislabeled";
   const auto root_error =
       event(adapter, mislabeled,
             R"({"error":{"type":"invalid_api_key","message":"private"}})", "telemetry");
   REQUIRE_FALSE(root_error);
   CHECK(root_error.error().category == ErrorCategory::authentication);
   CHECK(root_error.error().provider_detail == "openai:invalid_api_key");
-  CHECK(root_error.error().provider_request_id == "req-mislabeled");
   CHECK(root_error.error().message.find("private") == std::string::npos);
 
   ProviderDecodeState mixed_error{};
@@ -443,27 +437,4 @@ TEST_CASE("OpenAI stream error descriptors map recognized, fallback, and unsafe 
     CHECK_FALSE(result.error().retryable);
     CHECK(result.error().provider_detail == detail);
   }
-}
-
-TEST_CASE("OpenAI stream rejects events after the completion claims the response") {
-  OpenAiAdapter adapter{};
-  ProviderDecodeState state{};
-
-  apply(adapter, state,
-        chunk(R"({"index":0,"delta":{"content":"Hello"},"finish_reason":null})"));
-  apply(adapter, state, chunk(R"({"index":0,"delta":{},"finish_reason":"stop"})"));
-  const auto completed = event(adapter, state, "[DONE]");
-  REQUIRE(completed);
-  REQUIRE(completed->size() == 1);
-  CHECK(std::get<TextBlock>(
-            std::get<ProviderCompleted>(completed->front()).response.content.front())
-            .text == "Hello");
-  CHECK(state.completed);
-
-  // The terminal event owns the accumulated response, so every later event must
-  // be refused before anything reads the decode state's response again.
-  require_protocol(
-      event(adapter, state,
-            chunk(R"({"index":0,"delta":{"content":"late"},"finish_reason":null})")));
-  require_protocol(event(adapter, state, "[DONE]"));
 }

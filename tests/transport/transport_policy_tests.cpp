@@ -5,6 +5,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <curl/curl.h>
 #include <limits>
 #include <optional>
@@ -17,18 +18,7 @@
 namespace {
 
 using scry::ErrorCategory;
-using scry::detail::HttpHeader;
-
-[[nodiscard]] scry::detail::BodyChunkSink sink() {
-  return scry::detail::BodyChunkSink{
-      [](std::string_view) -> scry::Status { return {}; }};
-}
-
-[[nodiscard]] scry::detail::TransportRequest valid_request() {
-  return scry::detail::TransportRequest{
-      .url = "https://example.invalid/messages",
-  };
-}
+using scry::HttpHeader;
 
 void check_category(const scry::Error& error, const ErrorCategory category,
                     const bool retryable, const char* message) {
@@ -40,63 +30,54 @@ void check_category(const scry::Error& error, const ErrorCategory category,
 } // namespace
 
 TEST_CASE("transport request validation rejects incomplete requests") {
-  using namespace std::chrono_literals;
-  using scry::ErrorCategory;
   using scry::detail::transport_policy::validate_request;
 
-  auto body_sink = sink();
-  auto request = valid_request();
+  scry::detail::BodyChunkSink body_sink{
+      [](std::string_view) -> scry::Status { return {}; }};
+  auto request = scry::detail::TransportRequest{
+      .url = "https://example.invalid/messages",
+  };
   CHECK(validate_request(request, body_sink));
 
-  request.url.clear();
-  auto result = validate_request(request, body_sink);
-  REQUIRE_FALSE(result);
-  CHECK(result.error().category == ErrorCategory::invalid_config);
-
-  request = valid_request();
   scry::detail::BodyChunkSink missing_sink;
-  result = validate_request(request, missing_sink);
+  auto result = validate_request(request, missing_sink);
   REQUIRE_FALSE(result);
   CHECK(result.error().category == ErrorCategory::invalid_state);
 
-  request.timeouts.connect = 0ms;
+  request.timeouts.idle = std::chrono::milliseconds::zero();
   result = validate_request(request, body_sink);
   REQUIRE_FALSE(result);
   CHECK(result.error().category == ErrorCategory::invalid_config);
 
-  request = valid_request();
-  request.timeouts.idle = 0ms;
+  request.url.clear();
   result = validate_request(request, body_sink);
   REQUIRE_FALSE(result);
   CHECK(result.error().category == ErrorCategory::invalid_config);
+  CHECK(result.error().message == "transport URL is empty");
+}
+
+TEST_CASE("transport timeout validation requires positive bounds") {
+  using namespace std::chrono_literals;
+  using scry::detail::transport_policy::validate_timeouts;
 
   // An unset total transfer bound is the default and stays accepted; a set one
   // must still be positive.
-  request = valid_request();
-  request.timeouts.transfer = {};
-  CHECK(validate_request(request, body_sink));
-
-  request.timeouts.transfer = 0ms;
-  result = validate_request(request, body_sink);
-  REQUIRE_FALSE(result);
-  CHECK(result.error().category == ErrorCategory::invalid_config);
-
-  request = valid_request();
-  request.timeouts.transfer = -1ms;
-  result = validate_request(request, body_sink);
-  REQUIRE_FALSE(result);
-  CHECK(result.error().category == ErrorCategory::invalid_config);
-
-  request = valid_request();
-  request.timeouts.shutdown = 0ms;
-  result = validate_request(request, body_sink);
-  REQUIRE_FALSE(result);
-  CHECK(result.error().category == ErrorCategory::invalid_config);
+  CHECK(validate_timeouts({}));
+  CHECK(validate_timeouts({.transfer = 1ms}));
+  for (const auto& timeouts : {
+           scry::TransportTimeouts{.connect = 0ms},
+           scry::TransportTimeouts{.idle = 0ms},
+           scry::TransportTimeouts{.transfer = 0ms},
+           scry::TransportTimeouts{.transfer = -1ms},
+           scry::TransportTimeouts{.shutdown = 0ms},
+       }) {
+    const auto result = validate_timeouts(timeouts);
+    REQUIRE_FALSE(result);
+    CHECK(result.error().category == ErrorCategory::invalid_config);
+  }
 }
 
 TEST_CASE("transport header validation accepts RFC tokens and rejects injection") {
-  using scry::ErrorCategory;
-  using scry::detail::HttpHeader;
   using scry::detail::transport_policy::validate_headers;
 
   CHECK(validate_headers({}));
@@ -128,21 +109,13 @@ TEST_CASE("transport header validation accepts RFC tokens and rejects injection"
   CHECK(validate_headers({HttpHeader{.name = "x-safe", .value = "caf\xc3\xa9"}}));
 }
 
-TEST_CASE("transport header policy recognizes provider correlation fields") {
-  using namespace scry::detail::transport_policy;
+TEST_CASE("transport header names compare case-insensitively") {
+  using scry::detail::transport_policy::header_name_equal;
 
   CHECK(header_name_equal("Content-Length", "content-length"));
   CHECK_FALSE(header_name_equal("content", "content-length"));
   CHECK_FALSE(header_name_equal("request-ia", "request-id"));
   CHECK_FALSE(header_name_equal("request-ix", "request-id"));
-  CHECK(is_request_id_header("request-id"));
-  CHECK(is_request_id_header("x-request-id"));
-  CHECK(is_request_id_header("X-Request-ID"));
-  CHECK(is_request_id_header("anthropic-request-id"));
-  CHECK(is_request_id_header("Anthropic-Request-Id"));
-  CHECK_FALSE(is_request_id_header("trace-id"));
-  CHECK(is_content_length_header("CONTENT-LENGTH"));
-  CHECK_FALSE(is_content_length_header("transfer-encoding"));
 }
 
 TEST_CASE("transport size parsing rejects malformed and overflowing values") {
@@ -160,39 +133,33 @@ TEST_CASE("transport size parsing rejects malformed and overflowing values") {
 }
 
 TEST_CASE("HTTP status policy maps retryability and preserves correlation") {
-  using scry::ErrorCategory;
   using scry::detail::transport_policy::http_error;
 
-  const auto unauthorized = http_error(401, "request-1");
-  CHECK(unauthorized.category == ErrorCategory::authentication);
-  CHECK_FALSE(unauthorized.retryable);
-  CHECK(unauthorized.provider_request_id == "request-1");
-  CHECK(unauthorized.http_status == 401);
-  CHECK(http_error(403, "").category == ErrorCategory::authentication);
-  CHECK(http_error(403, "").http_status == 403);
-
-  const auto rate_limit = http_error(429, "");
-  CHECK(rate_limit.category == ErrorCategory::rate_limit);
-  CHECK(rate_limit.retryable);
-  CHECK(rate_limit.http_status == 429);
-
-  const auto server_error = http_error(599, "");
-  CHECK(server_error.category == ErrorCategory::network);
-  CHECK(server_error.retryable);
-  CHECK(server_error.http_status == 599);
-
-  const auto redirect = http_error(301, "");
-  CHECK(redirect.category == ErrorCategory::protocol);
-  CHECK_FALSE(redirect.retryable);
-  CHECK(redirect.http_status == 301);
-
+  struct Case {
+    std::int32_t status;
+    ErrorCategory category;
+    bool retryable;
+  };
   // Only the 5xx range is treated as a retryable server failure.
-  CHECK(http_error(499, "").category == ErrorCategory::protocol);
-  CHECK(http_error(500, "").category == ErrorCategory::network);
-  CHECK(http_error(600, "").category == ErrorCategory::protocol);
-  CHECK(http_error(499, "").http_status == 499);
-  CHECK(http_error(500, "").http_status == 500);
-  CHECK(http_error(600, "").http_status == 600);
+  constexpr std::array cases{
+      Case{401, ErrorCategory::authentication, false},
+      Case{403, ErrorCategory::authentication, false},
+      Case{429, ErrorCategory::rate_limit, true},
+      Case{301, ErrorCategory::protocol, false},
+      Case{499, ErrorCategory::protocol, false},
+      Case{500, ErrorCategory::network, true},
+      Case{599, ErrorCategory::network, true},
+      Case{600, ErrorCategory::protocol, false},
+  };
+
+  for (const auto& test_case : cases) {
+    CAPTURE(test_case.status);
+    const auto error = http_error(test_case.status, "request-1");
+    CHECK(error.category == test_case.category);
+    CHECK(error.retryable == test_case.retryable);
+    CHECK(error.http_status == test_case.status);
+    CHECK(error.provider_request_id == "request-1");
+  }
 }
 
 TEST_CASE("HTTP error detail extracts only a sanitized provider token") {
@@ -225,6 +192,19 @@ TEST_CASE("HTTP error detail extracts only a sanitized provider token") {
   CHECK(http_error_detail("", "anthropic").empty());
 }
 
+TEST_CASE("a retained error body stops growing at the documented cap") {
+  using scry::detail::transport_policy::append_error_body;
+  using scry::detail::transport_policy::maximum_error_body_bytes;
+
+  std::string body;
+  append_error_body(body, std::string(maximum_error_body_bytes - 1, 'a'));
+  append_error_body(body, "bc");
+  CHECK(body.size() == maximum_error_body_bytes);
+  CHECK(body.back() == 'b');
+  append_error_body(body, "d");
+  CHECK(body.size() == maximum_error_body_bytes);
+}
+
 TEST_CASE("response policy parses status, headers, and bounded body bytes") {
   using scry::detail::transport_policy::ResponseState;
 
@@ -239,6 +219,12 @@ TEST_CASE("response policy parses status, headers, and bounded body bytes") {
   CHECK(response.provider_request_id == "request-42");
   REQUIRE(response.account_body(4));
   CHECK(response.received_bytes > 4);
+
+  // Every provider spelling of the correlation header is recognized, and an
+  // unrelated one is not.
+  REQUIRE(response.accept_header("Anthropic-Request-Id: request-43\r\n"));
+  REQUIRE(response.accept_header("trace-id: not-a-request-id\r\n"));
+  CHECK(response.provider_request_id == "request-43");
 
   ResponseState redirect{.limit = 128};
   REQUIRE(redirect.accept_header("HTTP/1.1 302 Found\r\n"));

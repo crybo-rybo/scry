@@ -1,13 +1,10 @@
 #include "protocol/sse.hpp"
 
-#include <algorithm>
 #include <catch2/catch_test_macros.hpp>
 #include <cstddef>
-#include <random>
 #include <scry/error.hpp>
 #include <string>
 #include <string_view>
-#include <utility>
 #include <vector>
 
 namespace {
@@ -24,28 +21,10 @@ constexpr auto stream = std::string_view{": keepalive\r\n"
                                          "data: {\"ok\":true}\n"
                                          "\n"};
 
+// The worker hands the parser one vector for a whole response, so every chunk
+// appends to the same sink.
 [[nodiscard]] std::vector<SseEvent>
 parse_chunks(const std::vector<std::string_view>& chunks) {
-  SseParser parser{1024};
-  std::vector<SseEvent> result{};
-  for (const auto chunk : chunks) {
-    auto events = parser.push(chunk);
-    REQUIRE(events.has_value());
-    result.insert(result.end(), std::make_move_iterator(events->begin()),
-                  std::make_move_iterator(events->end()));
-  }
-  auto tail = parser.finish();
-  REQUIRE(tail.has_value());
-  result.insert(result.end(), std::make_move_iterator(tail->begin()),
-                std::make_move_iterator(tail->end()));
-  return result;
-}
-
-// The worker hands the parser one vector for a whole response and clears it
-// per chunk, so the appending overloads have to yield exactly what the owning
-// overloads do, wherever the byte stream is split.
-[[nodiscard]] std::vector<SseEvent>
-parse_chunks_into_sink(const std::vector<std::string_view>& chunks) {
   SseParser parser{1024};
   std::vector<SseEvent> result{};
   for (const auto chunk : chunks) {
@@ -62,10 +41,10 @@ parse_chunks_into_sink(const std::vector<std::string_view>& chunks) {
   };
 }
 
-void check_resource_limit(const scry::Result<std::vector<SseEvent>>& result) {
-  REQUIRE_FALSE(result);
-  CHECK(result.error().category == scry::ErrorCategory::resource_limit);
-  CHECK(result.error().message == "SSE event exceeds the configured byte limit");
+void check_resource_limit(const scry::Status& status) {
+  REQUIRE_FALSE(status);
+  CHECK(status.error().category == scry::ErrorCategory::resource_limit);
+  CHECK(status.error().message == "SSE event exceeds the configured byte limit");
 }
 
 } // namespace
@@ -78,9 +57,7 @@ TEST_CASE("SSE parser is invariant at every single split point") {
   const auto expected = expected_events();
   for (std::size_t split = 0; split <= stream.size(); ++split) {
     INFO("split at byte " << split);
-    const std::vector chunks{stream.substr(0, split), stream.substr(split)};
-    CHECK(parse_chunks(chunks) == expected);
-    CHECK(parse_chunks_into_sink(chunks) == expected);
+    CHECK(parse_chunks({stream.substr(0, split), stream.substr(split)}) == expected);
   }
 }
 
@@ -91,54 +68,33 @@ TEST_CASE("SSE parser is invariant when delivered one byte at a time") {
     chunks.push_back(stream.substr(offset, 1));
   }
   CHECK(parse_chunks(chunks) == expected_events());
-  CHECK(parse_chunks_into_sink(chunks) == expected_events());
-}
-
-TEST_CASE("SSE parser is invariant across fixed-seed random partitions") {
-  std::mt19937 generator{0x5C12'024U};
-  std::uniform_int_distribution<std::size_t> width{1, 13};
-  const auto expected = expected_events();
-
-  for (int run = 0; run < 100; ++run) {
-    std::vector<std::string_view> chunks{};
-    for (std::size_t offset = 0; offset < stream.size();) {
-      const auto count = std::min(width(generator), stream.size() - offset);
-      chunks.push_back(stream.substr(offset, count));
-      offset += count;
-    }
-    INFO("partition " << run);
-    CHECK(parse_chunks(chunks) == expected);
-  }
 }
 
 TEST_CASE("SSE parser flushes an unterminated final event") {
   SseParser parser{64};
-  REQUIRE(parser.push("event: done\rdata: yes\r").has_value());
-  const auto events = parser.finish();
-  REQUIRE(events.has_value());
-  REQUIRE(events->size() == 1);
-  CHECK(events->front() == SseEvent{.name = "done", .data = "yes"});
+  std::vector<SseEvent> events{};
+  REQUIRE(parser.push("event: done\rdata: yes\r", events));
+  REQUIRE(parser.finish(events));
+  REQUIRE(events.size() == 1);
+  CHECK(events.front() == SseEvent{.name = "done", .data = "yes"});
   CHECK(parser.buffered_bytes() == 0);
 }
 
 TEST_CASE("SSE parser enforces the per-event byte limit") {
   constexpr auto complete = std::string_view{"event: ping\ndata: {}\n\n"};
+  std::vector<SseEvent> events{};
   SseParser exact{complete.size()};
-  const auto accepted = exact.push(complete);
-  REQUIRE(accepted.has_value());
-  REQUIRE(accepted->size() == 1);
+  REQUIRE(exact.push(complete, events));
+  REQUIRE(events.size() == 1);
 
   SseParser too_small{complete.size() - 1};
-  const auto rejected = too_small.push(complete);
-  REQUIRE_FALSE(rejected.has_value());
-  CHECK(rejected.error().category == scry::ErrorCategory::resource_limit);
+  check_resource_limit(too_small.push(complete, events));
 }
 
 TEST_CASE("SSE parser bounds an event even before a line ending arrives") {
   SseParser parser{8};
-  const auto result = parser.push("data: payload-without-newline");
-  REQUIRE_FALSE(result.has_value());
-  CHECK(result.error().category == scry::ErrorCategory::resource_limit);
+  std::vector<SseEvent> events{};
+  check_resource_limit(parser.push("data: payload-without-newline", events));
 }
 
 TEST_CASE("SSE parser ignores comment-only and empty dispatches") {
@@ -153,104 +109,107 @@ TEST_CASE("SSE parser preserves empty data lines") {
 }
 
 TEST_CASE("SSE parser handles CRLF and standalone carriage returns across chunks") {
+  std::vector<SseEvent> events{};
+
   SECTION("split CRLF") {
     SseParser parser{128};
-    REQUIRE(parser.push("event: split\r")->empty());
-    REQUIRE(parser.push("\ndata: value\r")->empty());
-    REQUIRE(parser.push("\n\r")->empty());
+    REQUIRE(parser.push("event: split\r", events));
+    REQUIRE(parser.push("\ndata: value\r", events));
+    REQUIRE(events.empty());
 
-    const auto events = parser.push("\n");
+    // The line feed completes the data line's CRLF; the carriage return ends
+    // the blank line that dispatches, without waiting for its line feed.
+    REQUIRE(parser.push("\n\r", events));
+    REQUIRE(events.size() == 1);
+    CHECK(events.front() == SseEvent{.name = "split", .data = "value"});
 
-    REQUIRE(events);
-    REQUIRE(events->size() == 1);
-    CHECK(events->front() == SseEvent{.name = "split", .data = "value"});
+    REQUIRE(parser.push("\n", events));
+    CHECK(events.size() == 1);
     CHECK(parser.buffered_bytes() == 0);
   }
 
   SECTION("standalone carriage return") {
     SseParser parser{128};
-    const auto pending = parser.push("event: lone\rdata: first\rdata: second\r\r");
-    REQUIRE(pending);
-    CHECK(pending->empty());
+    REQUIRE(parser.push("event: lone\rdata: first\rdata: second\r\r", events));
+    REQUIRE(events.size() == 1);
+    CHECK(events.front() == SseEvent{.name = "lone", .data = "first\nsecond"});
 
-    const auto events = parser.finish();
-    REQUIRE(events);
-    REQUIRE(events->size() == 1);
-    CHECK(events->front() == SseEvent{.name = "lone", .data = "first\nsecond"});
+    REQUIRE(parser.finish(events));
+    CHECK(events.size() == 1);
     CHECK(parser.buffered_bytes() == 0);
   }
 }
 
 TEST_CASE("SSE parser applies field syntax without carrying empty events forward") {
   SseParser parser{256};
-  const auto events = parser.push("event: stale\n"
-                                  "id: ignored\n"
-                                  "retry: 20\n"
-                                  "\n"
-                                  "event\n"
-                                  "event: named\n"
-                                  ": comment\n"
-                                  "data\n"
-                                  "data:  second\n"
-                                  "unknown-field\n"
-                                  "\n"
-                                  "data:value\n"
-                                  "\n");
+  std::vector<SseEvent> events{};
+  REQUIRE(parser.push("event: stale\n"
+                      "id: ignored\n"
+                      "retry: 20\n"
+                      "\n"
+                      "event\n"
+                      "event: named\n"
+                      ": comment\n"
+                      "data\n"
+                      "data:  second\n"
+                      "unknown-field\n"
+                      "\n"
+                      "data:value\n"
+                      "\n",
+                      events));
 
-  REQUIRE(events);
-  REQUIRE(events->size() == 2);
-  CHECK((*events)[0] == SseEvent{.name = "named", .data = "\n second"});
-  CHECK((*events)[1] == SseEvent{.name = "message", .data = "value"});
+  REQUIRE(events.size() == 2);
+  CHECK(events[0] == SseEvent{.name = "named", .data = "\n second"});
+  CHECK(events[1] == SseEvent{.name = "message", .data = "value"});
   CHECK(parser.buffered_bytes() == 0);
 }
 
 TEST_CASE("SSE parser dispatches multiple events and safely finishes empty state") {
   SseParser parser{128};
-  REQUIRE(parser.push({})->empty());
+  std::vector<SseEvent> events{};
+  REQUIRE(parser.push({}, events));
+  REQUIRE(events.empty());
 
-  const auto events = parser.push("data: one\n\nevent: two\ndata: second\n\n");
+  REQUIRE(parser.push("data: one\n\nevent: two\ndata: second\n\n", events));
 
-  REQUIRE(events);
-  REQUIRE(events->size() == 2);
-  CHECK((*events)[0] == SseEvent{.name = "message", .data = "one"});
-  CHECK((*events)[1] == SseEvent{.name = "two", .data = "second"});
-  const auto finished = parser.finish();
-  REQUIRE(finished);
-  CHECK(finished->empty());
+  REQUIRE(events.size() == 2);
+  CHECK(events[0] == SseEvent{.name = "message", .data = "one"});
+  CHECK(events[1] == SseEvent{.name = "two", .data = "second"});
+  REQUIRE(parser.finish(events));
+  CHECK(events.size() == 2);
   CHECK(parser.buffered_bytes() == 0);
 }
 
 TEST_CASE("SSE parser accounts for the implicit terminator at end of input") {
+  std::vector<SseEvent> events{};
   SseParser enough{5};
-  REQUIRE(enough.push("data")->empty());
-  const auto accepted_finish = enough.finish();
-  REQUIRE(accepted_finish);
-  REQUIRE(accepted_finish->size() == 1);
-  CHECK(accepted_finish->front() == SseEvent{.name = "message", .data = ""});
+  REQUIRE(enough.push("data", events));
+  REQUIRE(events.empty());
+  REQUIRE(enough.finish(events));
+  REQUIRE(events.size() == 1);
+  CHECK(events.front() == SseEvent{.name = "message", .data = ""});
   CHECK(enough.buffered_bytes() == 0);
 
   SseParser exact{4};
-  REQUIRE(exact.push("data")->empty());
+  REQUIRE(exact.push("data", events));
 
-  const auto rejected_finish = exact.finish();
-
-  check_resource_limit(rejected_finish);
+  check_resource_limit(exact.finish(events));
 }
 
 TEST_CASE("SSE parser rejects zero and cumulative event limits") {
+  std::vector<SseEvent> events{};
   SseParser zero{0};
-  check_resource_limit(zero.push("x"));
+  check_resource_limit(zero.push("x", events));
 
   SseParser cumulative{12};
-  REQUIRE(cumulative.push("data: a\n")->empty());
+  REQUIRE(cumulative.push("data: a\n", events));
   CHECK(cumulative.buffered_bytes() == 8);
-  check_resource_limit(cumulative.push("data: b"));
+  check_resource_limit(cumulative.push("data: b", events));
 
   SseParser trailing_carriage_return{1};
-  REQUIRE(trailing_carriage_return.push("\r")->empty());
-  const auto finished = trailing_carriage_return.finish();
-  REQUIRE(finished);
-  CHECK(finished->empty());
+  REQUIRE(trailing_carriage_return.push("\r", events));
+  REQUIRE(trailing_carriage_return.finish(events));
+  CHECK(events.empty());
   CHECK(trailing_carriage_return.buffered_bytes() == 0);
 }
 

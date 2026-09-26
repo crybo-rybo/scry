@@ -1,0 +1,45 @@
+# Composite action for the pinned Clang 21 + libFuzzer toolchain shared by the
+# per-commit fuzz replay and the scheduled long fuzz runs. The caller must
+# check out the repository first.
+name: Fuzz toolchain
+description: >-
+  Install Clang 21 with its libFuzzer runtime from apt.llvm.org and lower ASLR
+  entropy.
+
+runs:
+  using: composite
+  steps:
+    - name: Install Clang 21 and libFuzzer
+      # g++-14 provides the libstdc++ headers clang-21 compiles against.
+      # Retries the apt.llvm.org fetch + install up to 3 times: a transient
+      # outage in either source fails the whole scheduled run, and there is
+      # nothing actionable to do except wait and try again.
+      shell: bash
+      run: |
+        set -o pipefail  # a failed wget must fail the pipeline, not be masked by tee
+        installed=0
+        for attempt in 1 2 3; do
+          if wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
+              | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null \
+            && echo "deb https://apt.llvm.org/noble/ llvm-toolchain-noble-21 main" \
+              | sudo tee /etc/apt/sources.list.d/llvm-21.list \
+            && sudo apt-get update \
+            && sudo apt-get install -y \
+              clang-21 g++-14 libclang-rt-21-dev libcurl4-openssl-dev \
+              libfuzzer-21-dev ninja-build; then
+            installed=1
+            break
+          fi
+          echo "Fuzz toolchain install attempt ${attempt} failed; retrying in 30s..." >&2
+          sleep 30
+        done
+        if [[ "${installed}" -ne 1 ]] || ! command -v clang-21 >/dev/null; then
+          echo "Fuzz toolchain install failed after 3 attempts." >&2
+          exit 1
+        fi
+    - name: Lower ASLR entropy for sanitizers
+      # The fuzz preset is ASan + UBSan, and high-entropy ASLR
+      # (vm.mmap_rnd_bits=32) breaks ASan shadow-memory mapping on Ubuntu 24.04
+      # runners.
+      shell: bash
+      run: sudo sysctl vm.mmap_rnd_bits=28

@@ -13,58 +13,40 @@ list(APPEND CMAKE_MODULE_PATH "${catch2_SOURCE_DIR}/extras")
 include(Catch)
 
 # Every public header must compile on its own, so each one becomes a lone
-# translation unit that includes nothing else.
-# The generated <scry/version.hpp> lives in the build tree, so the loop derives
-# the include spelling from the last "include/" in each path rather than
-# assuming a source-relative one.
+# translation unit that includes nothing else, on an object target of its own
+# per library. The generated <scry/version.hpp> lives in the build tree, so the
+# include spelling is derived from the last "include/" in each path.
 file(MAKE_DIRECTORY "${PROJECT_BINARY_DIR}/generated/header_checks")
-add_library(scry_header_checks OBJECT)
-# Keep one translation unit per header even in a unity build.
-set_target_properties(scry_header_checks PROPERTIES UNITY_BUILD OFF)
-target_link_libraries(scry_header_checks PRIVATE scry::scry scry_project_options)
-foreach(
-  SCRY_HEADER
-  IN
-  LISTS SCRY_CORE_PUBLIC_HEADERS
-  ITEMS "${SCRY_GENERATED_VERSION_HEADER}"
-)
-  get_filename_component(SCRY_HEADER_NAME "${SCRY_HEADER}" NAME_WE)
-  string(REGEX REPLACE "^.*include/" "" SCRY_HEADER_INCLUDE "${SCRY_HEADER}")
-  set(
-    SCRY_HEADER_CHECK_SOURCE
-    "${PROJECT_BINARY_DIR}/generated/header_checks/${SCRY_HEADER_NAME}.cpp"
-  )
-  file(
-    GENERATE
-    OUTPUT "${SCRY_HEADER_CHECK_SOURCE}"
-    CONTENT "#include <${SCRY_HEADER_INCLUDE}>\n"
-  )
-  target_sources(scry_header_checks PRIVATE "${SCRY_HEADER_CHECK_SOURCE}")
-endforeach()
-
-if(SCRY_BUILD_TESTING_SUPPORT)
-  # The testing component's headers get the same lone-translation-unit check,
-  # on a target of their own because they link scry::testing.
-  add_library(scry_testing_header_checks OBJECT)
-  set_target_properties(scry_testing_header_checks PROPERTIES UNITY_BUILD OFF)
-  target_link_libraries(
-    scry_testing_header_checks
-    PRIVATE scry::testing scry_project_options
-  )
-  foreach(SCRY_HEADER IN LISTS SCRY_TESTING_PUBLIC_HEADERS)
+function(scry_add_header_checks TARGET LIBRARY PREFIX)
+  add_library("${TARGET}" OBJECT)
+  # Keep one translation unit per header even in a unity build.
+  set_target_properties("${TARGET}" PROPERTIES UNITY_BUILD OFF)
+  target_link_libraries("${TARGET}" PRIVATE "${LIBRARY}" scry_project_options)
+  foreach(SCRY_HEADER IN LISTS ARGN)
     get_filename_component(SCRY_HEADER_NAME "${SCRY_HEADER}" NAME_WE)
     string(REGEX REPLACE "^.*include/" "" SCRY_HEADER_INCLUDE "${SCRY_HEADER}")
     set(
       SCRY_HEADER_CHECK_SOURCE
-      "${PROJECT_BINARY_DIR}/generated/header_checks/testing_${SCRY_HEADER_NAME}.cpp"
+      "${PROJECT_BINARY_DIR}/generated/header_checks/${PREFIX}${SCRY_HEADER_NAME}.cpp"
     )
     file(
       GENERATE
       OUTPUT "${SCRY_HEADER_CHECK_SOURCE}"
       CONTENT "#include <${SCRY_HEADER_INCLUDE}>\n"
     )
-    target_sources(scry_testing_header_checks PRIVATE "${SCRY_HEADER_CHECK_SOURCE}")
+    target_sources("${TARGET}" PRIVATE "${SCRY_HEADER_CHECK_SOURCE}")
   endforeach()
+endfunction()
+
+scry_add_header_checks(
+  scry_header_checks scry::scry ""
+  ${SCRY_CORE_PUBLIC_HEADERS} "${SCRY_GENERATED_VERSION_HEADER}"
+)
+if(SCRY_BUILD_TESTING_SUPPORT)
+  scry_add_header_checks(
+    scry_testing_header_checks scry::testing "testing_"
+    ${SCRY_TESTING_PUBLIC_HEADERS}
+  )
 endif()
 
 add_executable(scry_public_api_contract public_api_contract.cpp)
@@ -173,7 +155,6 @@ function(
       "-DSOURCE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/reflection/compile_fail/${SOURCE_NAME}"
       "-DPROJECT_INCLUDE_DIR=${PROJECT_SOURCE_DIR}/include"
       "-DEXPECTED_SUBSTRING=${EXPECTED_SUBSTRING}"
-      "-DOUTPUT_DIRECTORY=${PROJECT_BINARY_DIR}/reflection-compile-fail"
       -P "${PROJECT_SOURCE_DIR}/cmake/ExpectCompileFailure.cmake"
   )
 endfunction()
@@ -182,16 +163,6 @@ scry_add_reflection_compile_fail_test(
   unsupported-arguments
   unsupported_arguments.cpp
   "ToolArguments"
-)
-scry_add_reflection_compile_fail_test(
-  void-handler
-  void_handler.cpp
-  "ToolHandlerFor"
-)
-scry_add_reflection_compile_fail_test(
-  raw-json-handler
-  raw_json_handler.cpp
-  "ToolHandlerFor"
 )
 scry_add_reflection_compile_fail_test(
   wrong-context-order

@@ -85,8 +85,7 @@ Result<ContentBlock> decode_anthropic_content(const JsonValue& value,
                  "Anthropic returned an unsupported required content block"));
 }
 
-Result<FinishReason>
-decode_anthropic_finish(const std::optional<std::string_view> reason) {
+FinishReason decode_anthropic_finish(const std::optional<std::string_view> reason) {
   if (!reason) {
     return FinishReason::unknown;
   }

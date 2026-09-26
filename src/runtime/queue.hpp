@@ -10,10 +10,12 @@
 #include <optional>
 #include <stop_token>
 #include <unordered_map>
-#include <utility>
 #include <vector>
 
 namespace scry::detail {
+
+// The bytes an event holds against its turn's queue budget.
+[[nodiscard]] std::size_t event_payload_bytes(const WorkerEvent& event) noexcept;
 
 struct TurnIdHash {
   [[nodiscard]] std::size_t operator()(const TurnId id) const noexcept {
@@ -21,69 +23,30 @@ struct TurnIdHash {
   }
 };
 
-template <typename Value> class BlockingQueue final {
+class CommandQueue final {
 public:
-  void push(Value value) {
-    {
-      const std::scoped_lock lock{mutex_};
-      values_.push_back(std::move(value));
-    }
-    ready_.notify_one();
-  }
-
-  [[nodiscard]] std::optional<Value> try_pop() {
-    const std::scoped_lock lock{mutex_};
-    if (values_.empty()) {
-      return std::nullopt;
-    }
-    auto value = std::move(values_.front());
-    values_.pop_front();
-    return value;
-  }
-
-  [[nodiscard]] std::optional<Value> wait_pop(const std::stop_token& stopped) {
-    std::unique_lock lock{mutex_};
-    if (!ready_.wait(lock, stopped, [this] { return !values_.empty(); })) {
-      return std::nullopt;
-    }
-    auto value = std::move(values_.front());
-    values_.pop_front();
-    return value;
-  }
-
-  template <typename Clock, typename Duration>
-  [[nodiscard]] std::optional<Value>
-  wait_pop_until(const std::stop_token& stopped,
-                 const std::chrono::time_point<Clock, Duration> deadline) {
-    std::unique_lock lock{mutex_};
-    if (!ready_.wait_until(lock, stopped, deadline,
-                           [this] { return !values_.empty(); })) {
-      return std::nullopt;
-    }
-    auto value = std::move(values_.front());
-    values_.pop_front();
-    return value;
-  }
-
-  [[nodiscard]] std::size_t size() const {
-    const std::scoped_lock lock{mutex_};
-    return values_.size();
-  }
+  void push(WorkerCommand command);
+  [[nodiscard]] std::optional<WorkerCommand> try_pop();
+  [[nodiscard]] std::optional<WorkerCommand> wait_pop(const std::stop_token& stopped);
+  [[nodiscard]] std::optional<WorkerCommand>
+  wait_pop_until(const std::stop_token& stopped, MachineTimePoint deadline);
+  [[nodiscard]] std::size_t size() const;
 
 private:
+  // Under the caller's lock, with at least one command queued.
+  [[nodiscard]] WorkerCommand take_front();
+
   mutable std::mutex mutex_{};
   std::condition_variable_any ready_{};
-  std::deque<Value> values_{};
+  std::deque<WorkerCommand> values_{};
 };
-
-using CommandQueue = BlockingQueue<WorkerCommand>;
 
 class EventQueue final {
 public:
   [[nodiscard]] bool push(WorkerEvent event, std::size_t max_bytes_per_turn);
+  // Admits every event of one turn's non-empty batch, or none of them.
   [[nodiscard]] bool push_batch(std::vector<WorkerEvent> events,
                                 std::size_t max_bytes_per_turn);
-  [[nodiscard]] bool push_terminal(WorkerEvent event, std::size_t max_bytes_per_turn);
   void release(const WorkerEvent& event);
   void release(TurnId turn_id, std::size_t payload_bytes);
 

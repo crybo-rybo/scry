@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# Builds the standalone showcase. The core CI script owns the package audit.
+# Builds the standalone showcase.
 
 set -euo pipefail
 

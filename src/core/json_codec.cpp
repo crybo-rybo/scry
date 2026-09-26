@@ -20,18 +20,25 @@ constexpr JsonReadOptions json_read_options{{.null_terminated = false}};
 // Glaze parses it as a bare null, so it is rejected before the read.
 constexpr std::string_view json_whitespace = " \t\n\r";
 
-// Truncation is the one failure the read does not report by itself. Glaze settles
-// `end_reached` into success or truncation by whether nesting closed -- ctx.depth
-// back at zero -- but the variant reader behind glz::generic clears the code as
-// soon as a parse consumed anything, before the top level ever settles it, so a
-// buffer that stops inside a container (`{"a":1`, `[1,2`, `{"a"`) reads as a whole
-// document. Reading depth directly applies Glaze's own completion rule, which is
-// what the second validation pass used to buy.
+// The variant reader behind glz::generic clears Glaze's `end_reached` code before
+// the top level settles it into success or truncation, so a buffer that stops
+// inside a container (`{"a":1`, `[1,2`, `{"a"`) reads as a whole document.
+// Completion is therefore judged directly: nesting closed (depth back at zero)
+// and the input held something other than whitespace.
 [[nodiscard]] bool document_is_complete(const std::string_view input,
                                         const glz::context& context) noexcept {
   return context.depth == 0 &&
          input.find_first_not_of(json_whitespace) != std::string_view::npos;
 }
+
+// Glaze's validating reader with no destination: it checks every byte of the
+// document and allocates nothing, which is what lets a request encoder splice
+// stored text after one pass instead of rebuilding it as a tree.
+struct JsonSkipOptions : glz::opts {
+  bool validate_skipped = true;
+  bool validate_trailing_whitespace = true;
+};
+constexpr JsonSkipOptions json_skip_options{{.null_terminated = false}};
 
 [[nodiscard]] Error field_error(const std::string_view name,
                                 const std::string_view expected) {
@@ -55,16 +62,15 @@ Status parse_json_into(JsonValue& destination, const std::string_view input,
 Result<JsonValue> parse_json(const std::string_view input, const ErrorCategory category,
                              const std::string_view failure_message) {
   JsonValue value{};
-  if (auto status = parse_json_into(value, input, category, failure_message); !status) {
-    return std::unexpected(std::move(status.error()));
-  }
-  return value;
+  return parse_json_into(value, input, category, failure_message).transform([&value] {
+    return std::move(value);
+  });
 }
 
 Result<std::string> write_json_text(const JsonValue& value,
                                     const ErrorCategory category,
                                     const std::string_view failure_message) {
-  auto encoded = glz::write_json(value);
+  auto encoded = glz::write<json_write_options>(value);
   if (!encoded) {
     return std::unexpected(make_error(category, std::string{failure_message}));
   }
@@ -73,42 +79,34 @@ Result<std::string> write_json_text(const JsonValue& value,
 
 Result<Json> write_json(const JsonValue& value, const ErrorCategory category,
                         const std::string_view failure_message) {
-  auto encoded = write_json_text(value, category, failure_message);
-  if (!encoded) {
-    return std::unexpected(std::move(encoded.error()));
-  }
-  return Json{.text = std::move(*encoded)};
+  return write_json_text(value, category, failure_message)
+      .transform([](std::string text) { return Json{.text = std::move(text)}; });
 }
 
 Result<Json> canonicalize_json(const Json& json, const ErrorCategory category,
                                const std::string_view failure_message) {
-  auto value = parse_json(json.text, category, failure_message);
-  if (!value) {
-    return std::unexpected(std::move(value.error()));
-  }
-  return write_json(*value, category, failure_message);
+  return parse_json(json.text, category, failure_message)
+      .and_then([&](const JsonValue& value) {
+        return write_json(value, category, failure_message);
+      });
 }
 
 Result<Json> canonicalize_json_object(const Json& json, const ErrorCategory category,
                                       const std::string_view failure_message) {
-  auto value = parse_json(json.text, category, failure_message);
-  if (!value) {
-    return std::unexpected(std::move(value.error()));
-  }
-  if (!value->is_object()) {
-    return std::unexpected(make_error(category, std::string{failure_message}));
-  }
-  return write_json(*value, category, failure_message);
+  return parse_json(json.text, category, failure_message)
+      .and_then([&](const JsonValue& value) -> Result<Json> {
+        if (!value.is_object()) {
+          return std::unexpected(make_error(category, std::string{failure_message}));
+        }
+        return write_json(value, category, failure_message);
+      });
 }
 
 Json make_json_error_object(const std::string_view message) {
-  JsonValue value{};
-  value["error"] = message;
-  auto encoded = glz::write_json(value);
-  if (!encoded) {
-    return Json{.text = R"({"error":"tool execution failed"})"};
-  }
-  return Json{.text = std::move(*encoded)};
+  // Writing one string into a growable buffer cannot fail.
+  std::string quoted{};
+  static_cast<void>(glz::write<json_write_options>(message, quoted));
+  return Json{.text = "{\"error\":" + quoted + "}"};
 }
 
 const JsonValue* json_field(const JsonValue& value,
@@ -172,21 +170,6 @@ Result<std::optional<std::uint64_t>> optional_json_uint(const JsonValue& value,
   return std::optional<std::uint64_t>{field->get<std::uint64_t>()};
 }
 
-namespace {
-
-// Glaze's validating reader with no destination: it checks every byte of the
-// document and allocates nothing, which is what lets a request encoder splice
-// stored text after one pass instead of rebuilding it as a tree.
-struct JsonSkipOptions : glz::opts {
-  bool validate_skipped = true;
-  bool validate_trailing_whitespace = true;
-};
-constexpr JsonSkipOptions json_skip_options{{.null_terminated = false}};
-
-constexpr std::string_view json_validation_whitespace = " \t\n\r";
-
-} // namespace
-
 Status validate_json(const std::string_view input, const ErrorCategory category,
                      const std::string_view failure_message) {
   glz::skip skipped{};
@@ -202,7 +185,7 @@ Status validate_json_object(const std::string_view input, const ErrorCategory ca
   if (auto status = validate_json(input, category, failure_message); !status) {
     return status;
   }
-  const auto first = input.find_first_not_of(json_validation_whitespace);
+  const auto first = input.find_first_not_of(json_whitespace);
   if (first == std::string_view::npos || input[first] != '{') {
     return std::unexpected(make_error(category, std::string{failure_message}));
   }

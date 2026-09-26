@@ -1,13 +1,8 @@
-if(NOT DEFINED SCRY_PUBLIC_INCLUDE_DIR)
-  message(FATAL_ERROR "SCRY_PUBLIC_INCLUDE_DIR is required")
-endif()
-
+# cmake -DSCRY_PUBLIC_INCLUDE_DIR=... -DSCRY_GENERATED_INCLUDE_DIR=...
+#       -P CheckPublicHeaders.cmake
+#
 # <scry/version.hpp> is generated into the build tree, so the audit takes the
 # generated include directory alongside the source one.
-if(NOT DEFINED SCRY_GENERATED_INCLUDE_DIR)
-  message(FATAL_ERROR "SCRY_GENERATED_INCLUDE_DIR is required")
-endif()
-
 file(
   GLOB_RECURSE
   SCRY_AUDITED_HEADERS

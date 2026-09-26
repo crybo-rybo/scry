@@ -3,7 +3,6 @@
 #include "core/model.hpp"
 #include "core/transport.hpp"
 
-#include <cstdint>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -23,12 +22,8 @@ struct ProviderCompleted {
   ModelResponse response{};
 };
 
-struct ProviderIgnoredEvent {
-  std::string name{};
-};
-
-using ProviderEvent =
-    std::variant<ProviderTextDelta, ProviderCompleted, ProviderIgnoredEvent>;
+// Unknown optional events are ignored without producing an event.
+using ProviderEvent = std::variant<ProviderTextDelta, ProviderCompleted>;
 
 struct AnthropicProviderDecodeState {
   std::optional<std::size_t> active_content_index{};
@@ -36,29 +31,21 @@ struct AnthropicProviderDecodeState {
   bool finish_observed{false};
 };
 
+// An empty id or name is rejected on arrival, so empty means not yet seen.
 struct OpenAiToolDecodeState {
-  static constexpr std::uint8_t id_present = 1U << 0U;
-  static constexpr std::uint8_t name_present = 1U << 1U;
-  static constexpr std::uint8_t type_present = 1U << 2U;
-
   std::size_t index{};
   std::string id{};
   std::string name{};
   std::string arguments{};
-  std::uint8_t metadata{};
+  bool typed{false};
 };
 
 struct OpenAiProviderDecodeState {
-  static constexpr std::size_t no_text_content =
-      std::numeric_limits<std::size_t>::max();
-
   std::string chunk_id{};
-  std::size_t text_content_index{no_text_content};
   // Sorted by index and stores only observed calls, so an untrusted sparse
   // index cannot size the allocation.
   std::vector<OpenAiToolDecodeState> tool_calls{};
   bool finish_observed{false};
-  bool tools_finalized{false};
 };
 
 using ProviderDialectDecodeState =

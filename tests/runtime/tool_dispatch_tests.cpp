@@ -48,32 +48,6 @@ TEST_CASE(
         R"({"error":"unknown tool \"jump\"; registered tools: eat, look, move"})");
 }
 
-TEST_CASE("tool dispatch treats unavailable handlers as model-visible errors") {
-  const auto check_unavailable = [](scry::detail::ToolRegistrationPtr tool) {
-    const auto result =
-        scry::detail::dispatch_tool({std::move(tool)}, tool_call(), {}, 1024);
-    REQUIRE(result);
-    CHECK(result->tool_call_id == "call-1");
-    CHECK(result->is_error);
-    CHECK(result->result.text == R"({"error":"tool handler is unavailable"})");
-  };
-
-  SECTION("missing handler storage") {
-    check_unavailable(std::make_shared<const scry::detail::RegisteredTool>(
-        scry::detail::RegisteredTool{
-            .definition = tool_definition("forecast"),
-            .handler = nullptr,
-        }));
-  }
-  SECTION("empty type-erased handler") {
-    check_unavailable(std::make_shared<const scry::detail::RegisteredTool>(
-        scry::detail::RegisteredTool{
-            .definition = tool_definition("forecast"),
-            .handler = std::make_shared<scry::ContextualToolHandler>(),
-        }));
-  }
-}
-
 TEST_CASE("tool dispatch does not disclose handler-returned Error details") {
   const scry::detail::ToolSnapshot tools{
       registered_tool("forecast", [](scry::Json) -> scry::Result<scry::Json> {

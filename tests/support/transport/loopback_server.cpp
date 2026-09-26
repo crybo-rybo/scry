@@ -25,18 +25,6 @@ public:
     }
   }
 
-  Socket(Socket&& other) noexcept : descriptor_(std::exchange(other.descriptor_, -1)) {}
-
-  Socket& operator=(Socket&& other) noexcept {
-    if (this != &other) {
-      if (descriptor_ >= 0) {
-        ::close(descriptor_);
-      }
-      descriptor_ = std::exchange(other.descriptor_, -1);
-    }
-    return *this;
-  }
-
   Socket(const Socket&) = delete;
   Socket& operator=(const Socket&) = delete;
 
@@ -131,22 +119,17 @@ LoopbackServer::LoopbackServer(std::string response, const bool hold_response,
                                const std::size_t requests_to_serve)
     : response_(std::move(response)), requests_to_serve_(requests_to_serve),
       response_released_(!hold_response) {
+  // create_listener throws rather than returning an invalid descriptor.
   listener_ = create_listener(port_);
-  if (listener_ < 0) {
-    throw std::runtime_error{"failed to retain loopback socket"};
-  }
   thread_ = std::jthread{[this](const std::stop_token stop) { serve(stop); }};
 }
 
 LoopbackServer::~LoopbackServer() {
   thread_.request_stop();
   release_response();
-  if (listener_ >= 0) {
-    ::shutdown(listener_, SHUT_RDWR);
-    ::close(listener_);
-    thread_.join();
-    listener_ = -1;
-  }
+  ::shutdown(listener_, SHUT_RDWR);
+  ::close(listener_);
+  thread_.join();
 }
 
 std::string LoopbackServer::url(const std::string_view path) const {

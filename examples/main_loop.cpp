@@ -3,7 +3,6 @@
 #include <cstdint>
 #include <iostream>
 #include <optional>
-#include <scry/reflection.hpp>
 #include <scry/scry.hpp>
 #include <string>
 #include <string_view>
@@ -127,31 +126,29 @@ struct StatusResult {
       echo_handler());
 }
 
+[[nodiscard]] int write_stdout(std::string_view text, std::string_view what) {
+  std::cout << text << '\n';
+  std::cout.flush();
+  if (!std::cout) {
+    std::cerr << "Failed to write " << what << " to stdout\n";
+    return 1;
+  }
+  return 0;
+}
+
 [[nodiscard]] int print_tool_manifest(const scry::ToolRegistry& tools) {
   const auto manifest = tools.to_json();
   if (!manifest) {
     std::cerr << manifest.error().message << '\n';
     return 1;
   }
-  std::cout << manifest->text << '\n';
-  std::cout.flush();
-  if (!std::cout) {
-    std::cerr << "Failed to write tool manifest to stdout\n";
-    return 1;
-  }
-  return 0;
+  return write_stdout(manifest->text, "tool manifest");
 }
 
 // Result schemas never reach the model; exporting one lets a host publish the full
 // tool contract next to the manifest.
 [[nodiscard]] int print_result_schema() {
-  std::cout << scry::reflection::schema_v<StatusResult> << '\n';
-  std::cout.flush();
-  if (!std::cout) {
-    std::cerr << "Failed to write result schema to stdout\n";
-    return 1;
-  }
-  return 0;
+  return write_stdout(scry::reflection::schema_v<StatusResult>, "result schema");
 }
 
 void print_block(const scry::ContentBlock& block) {

@@ -44,8 +44,8 @@ public:
       }
     }
     object_ = new StoredCallable(std::forward<Callable>(callable));
-    invoke_ = &invoke<Callable>;
-    destroy_ = &destroy<Callable>;
+    invoke_ = &invoke<StoredCallable>;
+    destroy_ = &destroy<StoredCallable>;
   }
 
   /// Destroys the owned callable, if any.
@@ -105,15 +105,13 @@ public:
   }
 
 private:
-  template <typename Callable> static Return invoke(void* object, Args&&... args) {
-    using StoredCallable = std::decay_t<Callable>;
-    return std::invoke_r<Return>(*static_cast<StoredCallable*>(object),
+  template <typename Stored> static Return invoke(void* object, Args&&... args) {
+    return std::invoke_r<Return>(*static_cast<Stored*>(object),
                                  std::forward<Args>(args)...);
   }
 
-  template <typename Callable> static void destroy(void* object) noexcept {
-    using StoredCallable = std::decay_t<Callable>;
-    delete static_cast<StoredCallable*>(object);
+  template <typename Stored> static void destroy(void* object) noexcept {
+    delete static_cast<Stored*>(object);
   }
 
   void* object_{};

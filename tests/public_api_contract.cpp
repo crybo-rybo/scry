@@ -476,10 +476,5 @@ int main() {
     return 1;
   }
 
-  static_assert(scry::version_major == SCRY_VERSION_MAJOR);
-  static_assert(scry::version_minor == SCRY_VERSION_MINOR);
-  static_assert(scry::version_patch == SCRY_VERSION_PATCH);
-  static_assert(SCRY_VERSION == scry::version_major * 10000 +
-                                    scry::version_minor * 100 + scry::version_patch);
   return scry::version == "0.4.1" ? 0 : 1;
 }

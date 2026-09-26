@@ -1,9 +1,9 @@
+#include "core/error.hpp"
 #include "core/json_codec.hpp"
-#include "runtime/conversation_impl.hpp"
+#include "runtime/state.hpp"
 
 #include <cstdint>
 #include <initializer_list>
-#include <limits>
 #include <memory>
 #include <scry/error.hpp>
 #include <scry/json.hpp>
@@ -19,10 +19,7 @@ namespace {
 constexpr std::uint64_t conversation_document_version = 1;
 
 [[nodiscard]] Error invalid_document(const std::string_view message) {
-  return Error{
-      .category = ErrorCategory::invalid_config,
-      .message = std::string{message},
-  };
+  return detail::make_error(ErrorCategory::invalid_config, std::string{message});
 }
 
 [[nodiscard]] Status
@@ -119,11 +116,6 @@ decode_text_block(const detail::JsonValue& value) {
   return detail::TextBlock{.text = std::string{*text}};
 }
 
-[[nodiscard]] Result<Json> encode_embedded_json(const detail::JsonValue& value,
-                                                const std::string_view message) {
-  return detail::write_json(value, ErrorCategory::invalid_config, message);
-}
-
 [[nodiscard]] Result<detail::ContentBlock>
 decode_tool_call(const detail::JsonValue& value, const detail::Role role) {
   if (role != detail::Role::assistant) {
@@ -136,14 +128,21 @@ decode_tool_call(const detail::JsonValue& value, const detail::Role role) {
     return std::unexpected(std::move(status.error()));
   }
   auto id = nonempty_string_field(value, "id", "Tool-call block");
-  auto name = nonempty_string_field(value, "name", "Tool-call block");
-  const auto* arguments = detail::json_field(value, "arguments");
-  if (!id || !name || arguments == nullptr || !arguments->is_object()) {
-    return std::unexpected(
-        invalid_document("Tool-call block has invalid id, name, or arguments"));
+  if (!id) {
+    return std::unexpected(std::move(id.error()));
   }
-  auto encoded =
-      encode_embedded_json(*arguments, "Tool-call arguments could not be encoded");
+  auto name = nonempty_string_field(value, "name", "Tool-call block");
+  if (!name) {
+    return std::unexpected(std::move(name.error()));
+  }
+  // require_fields has already established that every field is present.
+  const auto& arguments = *detail::json_field(value, "arguments");
+  if (!arguments.is_object()) {
+    return std::unexpected(
+        invalid_document("Tool-call block field 'arguments' must be an object"));
+  }
+  auto encoded = detail::write_json(arguments, ErrorCategory::invalid_config,
+                                    "Tool-call arguments could not be encoded");
   if (!encoded) {
     return std::unexpected(std::move(encoded.error()));
   }
@@ -166,13 +165,17 @@ decode_tool_result(const detail::JsonValue& value, const detail::Role role) {
     return std::unexpected(std::move(status.error()));
   }
   auto id = nonempty_string_field(value, "tool_call_id", "Tool-result block");
-  auto is_error = bool_field(value, "is_error", "Tool-result block");
-  const auto* result = detail::json_field(value, "result");
-  if (!id || !is_error || result == nullptr) {
-    return std::unexpected(
-        invalid_document("Tool-result block has invalid id, result, or error flag"));
+  if (!id) {
+    return std::unexpected(std::move(id.error()));
   }
-  auto encoded = encode_embedded_json(*result, "Tool result could not be encoded");
+  auto is_error = bool_field(value, "is_error", "Tool-result block");
+  if (!is_error) {
+    return std::unexpected(std::move(is_error.error()));
+  }
+  // require_fields has already established that every field is present.
+  auto encoded = detail::write_json(*detail::json_field(value, "result"),
+                                    ErrorCategory::invalid_config,
+                                    "Tool result could not be encoded");
   if (!encoded) {
     return std::unexpected(std::move(encoded.error()));
   }
@@ -212,10 +215,12 @@ decode_tool_result(const detail::JsonValue& value, const detail::Role role) {
     return std::unexpected(std::move(status.error()));
   }
   auto role = decode_role(value);
+  if (!role) {
+    return std::unexpected(std::move(role.error()));
+  }
   auto content = array_field(value, "content", "Conversation message");
-  if (!role || !content) {
-    return std::unexpected(
-        invalid_document("Conversation message has an invalid role or content"));
+  if (!content) {
+    return std::unexpected(std::move(content.error()));
   }
   if ((*content)->empty()) {
     return std::unexpected(
@@ -353,27 +358,6 @@ encode_messages(const std::vector<detail::Message>& messages) {
   return encoded;
 }
 
-[[nodiscard]] bool add_size(std::size_t& total, const std::size_t value) noexcept {
-  if (value > std::numeric_limits<std::size_t>::max() - total) {
-    return false;
-  }
-  total += value;
-  return true;
-}
-
-[[nodiscard]] Result<std::size_t>
-conversation_payload_bytes(const ConversationConfig& config,
-                           const std::vector<detail::Message>& messages) {
-  std::size_t total = config.system_prompt.size();
-  for (const auto& message : messages) {
-    if (!add_size(total, detail::message_payload_bytes(message))) {
-      return std::unexpected(
-          invalid_document("Conversation payload size exceeds platform limits"));
-    }
-  }
-  return total;
-}
-
 [[nodiscard]] Result<std::uint64_t> decode_version(const detail::JsonValue& root) {
   const auto* version = detail::json_field(root, "version");
   if (version == nullptr || !version->is_uint64()) {
@@ -387,12 +371,10 @@ conversation_payload_bytes(const ConversationConfig& config,
 
 Result<Json> Conversation::to_json() const {
   if (impl_ == nullptr) {
-    return std::unexpected(Error{
-        .category = ErrorCategory::invalid_state,
-        .message = "Conversation is inactive",
-    });
+    return std::unexpected(
+        detail::make_error(ErrorCategory::invalid_state, "Conversation is inactive"));
   }
-  auto messages = encode_messages(*impl_->state->messages);
+  auto messages = encode_messages(*impl_->messages);
   if (!messages) {
     return std::unexpected(std::move(messages.error()));
   }
@@ -400,7 +382,7 @@ Result<Json> Conversation::to_json() const {
   detail::JsonValue message_value{};
   message_value.data = std::move(*messages);
   root["messages"] = std::move(message_value);
-  root["system_prompt"] = impl_->state->config.system_prompt;
+  root["system_prompt"] = impl_->config.system_prompt;
   root["version"] = conversation_document_version;
   return detail::write_json(root, ErrorCategory::invalid_config,
                             "Conversation document could not be encoded");
@@ -418,25 +400,31 @@ Result<Conversation> Conversation::from_json(const Json& json) {
     return std::unexpected(std::move(status.error()));
   }
   auto version = decode_version(*root);
-  if (!version || *version != conversation_document_version) {
+  if (!version) {
+    return std::unexpected(std::move(version.error()));
+  }
+  if (*version != conversation_document_version) {
     return std::unexpected(
         invalid_document("Conversation document version is not supported"));
   }
   auto prompt = string_field(*root, "system_prompt", "Conversation document");
+  if (!prompt) {
+    return std::unexpected(std::move(prompt.error()));
+  }
   auto messages = decode_messages(*root);
-  if (!prompt || !messages) {
-    return std::unexpected(
-        invalid_document("Conversation document has invalid prompt or messages"));
+  if (!messages) {
+    return std::unexpected(std::move(messages.error()));
   }
-  ConversationConfig config{.system_prompt = std::string{*prompt}};
-  auto payload_bytes = conversation_payload_bytes(config, *messages);
-  if (!payload_bytes) {
-    return std::unexpected(std::move(payload_bytes.error()));
+  auto impl = std::make_shared<Impl>();
+  impl->config.system_prompt = std::string{*prompt};
+  // Every counted byte is resident in the parsed document, so the sum cannot
+  // overflow; saturation only keeps the arithmetic obviously total.
+  impl->payload_bytes = impl->config.system_prompt.size();
+  for (const auto& message : *messages) {
+    impl->payload_bytes = detail::saturating_payload_add(
+        impl->payload_bytes, detail::message_payload_bytes(message));
   }
-  auto impl = std::make_unique<Impl>(std::move(config));
-  *impl->state->messages = std::move(*messages);
-  impl->state->payload_bytes = *payload_bytes;
-  impl->state->busy = false;
+  *impl->messages = std::move(*messages);
   return Conversation{std::move(impl)};
 }
 

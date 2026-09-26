@@ -1,5 +1,6 @@
 #include "core/json_codec.hpp"
 #include "core/model.hpp"
+#include "fixture_support.hpp"
 #include "provider/anthropic.hpp"
 #include "provider/anthropic_content.hpp"
 #include "provider/shared.hpp"
@@ -16,67 +17,11 @@
 namespace {
 using namespace scry;
 using namespace scry::detail;
-using StreamResult = Result<std::vector<ProviderEvent>>;
-[[nodiscard]] StreamResult event(AnthropicAdapter& adapter, const std::string_view name,
-                                 const std::string_view data,
-                                 ProviderDecodeState& state) {
-  std::vector<ProviderEvent> events{};
-  if (auto status = adapter.parse_stream_event(name, data, state, events); !status) {
-    return std::unexpected(std::move(status.error()));
-  }
-  return events;
-}
-[[nodiscard]] JsonValue json_value(const std::string_view text) {
-  auto value = parse_json(text, ErrorCategory::protocol, "invalid test JSON");
-  REQUIRE(value);
-  return std::move(*value);
-}
-[[nodiscard]] Config config() {
-  return {
-      .base_url = "https://api.anthropic.test",
-      .api_key = "sanitized-key",
-      .model = "fallback-model",
-  };
-}
-[[nodiscard]] ModelRequest request() {
-  return {
-      .messages = {Message{
-          .role = Role::user,
-          .content = {TextBlock{.text = "hello"}},
-      }},
-      .sampling =
-          SamplingConfig{
-              .temperature = 0.5,
-              .max_tokens = 32,
-          },
-  };
-}
-void require_protocol(StreamResult result) {
-  REQUIRE_FALSE(result);
-  CHECK(result.error().category == ErrorCategory::protocol);
-}
-void require_request_error(AnthropicAdapter& adapter, const Config& value,
-                           const ModelRequest& model_request,
-                           const std::string_view expected_message = {}) {
-  const auto result = adapter.make_request(value, model_request);
-  REQUIRE_FALSE(result);
-  CHECK(result.error().category == ErrorCategory::invalid_config);
-  CHECK(result.error().message.find("sanitized-key") == std::string::npos);
-  if (!expected_message.empty()) {
-    CHECK(result.error().message == expected_message);
-  }
-}
-void start_message(AnthropicAdapter& adapter, ProviderDecodeState& state) {
-  auto result = event(
-      adapter, "message_start",
-      R"({"type":"message_start","message":{"type":"message","content":[],"stop_reason":null}})",
-      state);
-  REQUIRE(result);
-}
+using namespace scry::test_fixtures;
 [[nodiscard]] ProviderDecodeState text_state(AnthropicAdapter& adapter) {
   ProviderDecodeState state;
-  start_message(adapter, state);
-  auto result = event(
+  start_anthropic_message(adapter, state);
+  auto result = decode(
       adapter, "content_block_start",
       R"({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}})",
       state);
@@ -85,8 +30,8 @@ void start_message(AnthropicAdapter& adapter, ProviderDecodeState& state) {
 }
 [[nodiscard]] ProviderDecodeState tool_state(AnthropicAdapter& adapter) {
   ProviderDecodeState state;
-  start_message(adapter, state);
-  auto result = event(
+  start_anthropic_message(adapter, state);
+  auto result = decode(
       adapter, "content_block_start",
       R"({"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"tool_1","name":"lookup","input":{}}})",
       state);
@@ -94,20 +39,11 @@ void start_message(AnthropicAdapter& adapter, ProviderDecodeState& state) {
   return state;
 }
 } // namespace
-TEST_CASE("JSON codec errors and provider error tokens remain bounded and safe") {
-  const auto malformed =
-      parse_json("{", ErrorCategory::invalid_config, "boundary failed");
-  REQUIRE_FALSE(malformed);
-  CHECK(malformed.error().category == ErrorCategory::invalid_config);
-  const auto encoded =
-      write_json_text(json_value(R"({"safe":true})"), ErrorCategory::protocol, "write");
-  REQUIRE(encoded);
-  CHECK(sanitize_error_token("") == "unknown_error");
-  CHECK(sanitize_error_token(std::string(97, 'a')) == "unknown_error");
+TEST_CASE("provider error tokens remain bounded and safe") {
+  CHECK_FALSE(sanitize_error_token(""));
+  CHECK_FALSE(sanitize_error_token(std::string(97, 'a')));
   CHECK(sanitize_error_token("Safe_123") == "Safe_123");
-  CHECK(sanitize_error_token("unsafe-value") == "unknown_error");
-  REQUIRE(make_provider_adapter(ProviderDialect::anthropic));
-  REQUIRE(make_provider_adapter(ProviderDialect::openai_compatible));
+  CHECK_FALSE(sanitize_error_token("unsafe-value"));
 }
 TEST_CASE("Anthropic content decoding covers text, tool, and rejection shapes") {
   auto text = decode_anthropic_content(
@@ -143,13 +79,13 @@ TEST_CASE("Anthropic content decoding covers text, tool, and rejection shapes") 
   }
 }
 TEST_CASE("Anthropic finish and usage decoding covers every wire variant") {
-  CHECK(*decode_anthropic_finish(std::nullopt) == FinishReason::unknown);
+  CHECK(decode_anthropic_finish(std::nullopt) == FinishReason::unknown);
   for (const auto reason : {"end_turn", "stop_sequence"}) {
-    CHECK(*decode_anthropic_finish(reason) == FinishReason::completed);
+    CHECK(decode_anthropic_finish(reason) == FinishReason::completed);
   }
-  CHECK(*decode_anthropic_finish("max_tokens") == FinishReason::length);
-  CHECK(*decode_anthropic_finish("tool_use") == FinishReason::tool_use);
-  CHECK(*decode_anthropic_finish("future") == FinishReason::unknown);
+  CHECK(decode_anthropic_finish("max_tokens") == FinishReason::length);
+  CHECK(decode_anthropic_finish("tool_use") == FinishReason::tool_use);
+  CHECK(decode_anthropic_finish("future") == FinishReason::unknown);
   Usage usage{.input_tokens = 1, .output_tokens = 2};
   REQUIRE(apply_anthropic_usage(json_value("{}"), usage));
   REQUIRE_FALSE(apply_anthropic_usage(json_value(R"({"usage":[]})"), usage));
@@ -163,59 +99,31 @@ TEST_CASE("Anthropic finish and usage decoding covers every wire variant") {
   REQUIRE_FALSE(
       apply_anthropic_usage(json_value(R"({"usage":{"output_tokens":"9"}})"), usage));
 }
-TEST_CASE("Anthropic request encoding preserves optional and tool branches") {
+TEST_CASE("Anthropic endpoint normalization appends the Messages path once") {
   AnthropicAdapter adapter;
-  auto value_config = config();
-  value_config.base_url = "https://api.anthropic.test/v1/messages///";
-  value_config.tls_verify_peer = false;
-  auto value_request = request();
-  value_request.system_prompt = "system";
-  value_request.sampling.top_p = 0.8;
-  value_request.tools =
-      std::make_shared<const std::vector<ToolDefinition>>(std::vector<ToolDefinition>{
-          {.name = "lookup",
-           .description = "lookup",
-           .input_schema = {.text = R"({"type":"object"})"}},
-      });
-  value_request.messages.push_back(
-      {.role = Role::assistant,
-       .content = {ToolCallBlock{
-           .id = "id", .name = "lookup", .arguments = {.text = R"({"x":1})"}}}});
-  value_request.messages.push_back(
-      {.role = Role::user,
-       .content = {ToolResultBlock{.tool_call_id = "id",
-                                   .result = {.text = R"({"answer":2})"},
-                                   .is_error = true}}});
-  const auto encoded = adapter.make_request(value_config, value_request);
-  REQUIRE(encoded);
-  CHECK(encoded->url == "https://api.anthropic.test/v1/messages");
-  CHECK(encoded->body.find(R"("model":"fallback-model")") != std::string::npos);
-  CHECK(encoded->body.find(R"("system":"system")") != std::string::npos);
-  CHECK(encoded->body.find(R"("top_p":0.8)") != std::string::npos);
-  CHECK(encoded->body.find(R"("is_error":true)") != std::string::npos);
-  CHECK(encoded->body.find(R"("tools")") != std::string::npos);
-}
-TEST_CASE("Anthropic request encoding propagates invalid boundary JSON") {
-  AnthropicAdapter adapter;
-  auto value = request();
-  value.messages.front().content = {
-      ToolCallBlock{.id = "id", .name = "tool", .arguments = {.text = "{"}}};
-  require_request_error(adapter, config(), value);
-  value = request();
-  value.messages.front().content = {
-      ToolResultBlock{.tool_call_id = "id", .result = {.text = "{"}}};
-  require_request_error(adapter, config(), value);
-  value = request();
-  value.tools =
-      std::make_shared<const std::vector<ToolDefinition>>(std::vector<ToolDefinition>{
-          {.name = "tool", .description = "tool", .input_schema = {.text = "{"}}});
-  require_request_error(adapter, config(), value);
+  constexpr std::array cases{
+      std::pair{"https://api.anthropic.test", "https://api.anthropic.test/v1/messages"},
+      std::pair{"https://api.anthropic.test/v1/messages///",
+                "https://api.anthropic.test/v1/messages"},
+  };
+  const ModelRequest request{
+      .messages = {Message{.role = Role::user, .content = {TextBlock{.text = "hi"}}}},
+      .sampling = SamplingConfig{.max_tokens = 32},
+  };
+  for (const auto& [base, expected] : cases) {
+    INFO(base);
+    auto config = anthropic_config();
+    config.base_url = base;
+    const auto encoded = adapter.make_request(config, request);
+    REQUIRE(encoded);
+    CHECK(encoded->url == expected);
+  }
 }
 TEST_CASE("Anthropic stream start handles initial content and rejects bad envelopes") {
   AnthropicAdapter adapter;
   ProviderDecodeState state;
   state.response.provider_request_id = "header-id";
-  auto result = event(
+  auto result = decode(
       adapter, "message_start",
       R"({"type":"message_start","message":{"type":"message","request_id":"body-id","content":[{"type":"text","text":"initial"},{"type":"tool_use","id":"id","name":"lookup","input":{}}],"stop_reason":null,"usage":{"input_tokens":2}}})",
       state);
@@ -223,7 +131,7 @@ TEST_CASE("Anthropic stream start handles initial content and rejects bad envelo
   REQUIRE(result->size() == 1);
   CHECK(std::get<ProviderTextDelta>(result->front()).text == "initial");
   CHECK(state.response.provider_request_id == "header-id");
-  require_protocol(event(
+  require_protocol(decode(
       adapter, "message_start",
       R"({"type":"message_start","message":{"type":"message","content":[]}})", state));
   constexpr std::array invalid{
@@ -239,13 +147,13 @@ TEST_CASE("Anthropic stream start handles initial content and rejects bad envelo
   };
   for (const auto body : invalid) {
     ProviderDecodeState fresh;
-    require_protocol(event(adapter, "message_start", body, fresh));
+    require_protocol(decode(adapter, "message_start", body, fresh));
   }
 }
 TEST_CASE("Anthropic stream content start rejects invalid lifecycle and shapes") {
   AnthropicAdapter adapter;
   ProviderDecodeState empty;
-  require_protocol(event(
+  require_protocol(decode(
       adapter, "content_block_start",
       R"({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}})",
       empty));
@@ -259,18 +167,18 @@ TEST_CASE("Anthropic stream content start rejects invalid lifecycle and shapes")
   };
   for (const auto body : invalid) {
     ProviderDecodeState state;
-    start_message(adapter, state);
-    require_protocol(event(adapter, "content_block_start", body, state));
+    start_anthropic_message(adapter, state);
+    require_protocol(decode(adapter, "content_block_start", body, state));
   }
   auto state = text_state(adapter);
-  require_protocol(event(
+  require_protocol(decode(
       adapter, "content_block_start",
       R"({"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}})",
       state));
   state = ProviderDecodeState{};
-  start_message(adapter, state);
+  start_anthropic_message(adapter, state);
   std::get<AnthropicProviderDecodeState>(state.dialect).finish_observed = true;
-  require_protocol(event(
+  require_protocol(decode(
       adapter, "content_block_start",
       R"({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}})",
       state));
@@ -289,17 +197,17 @@ TEST_CASE("Anthropic stream content deltas validate indexes, targets, and payloa
   };
   for (const auto body : invalid_text) {
     auto state = text_state(adapter);
-    require_protocol(event(adapter, "content_block_delta", body, state));
+    require_protocol(decode(adapter, "content_block_delta", body, state));
   }
   auto text = text_state(adapter);
-  auto delta = event(
+  auto delta = decode(
       adapter, "content_block_delta",
       R"({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"x"}})",
       text);
   REQUIRE(delta);
   CHECK(std::get<ProviderTextDelta>(delta->front()).text == "x");
   auto tool = tool_state(adapter);
-  require_protocol(event(
+  require_protocol(decode(
       adapter, "content_block_delta",
       R"({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"x"}})",
       tool));
@@ -308,34 +216,34 @@ TEST_CASE("Anthropic stream content deltas validate indexes, targets, and payloa
       {R"({"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta"}})",
        R"({"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":7}})"}) {
     tool = tool_state(adapter);
-    require_protocol(event(adapter, "content_block_delta", body, tool));
+    require_protocol(decode(adapter, "content_block_delta", body, tool));
   }
 }
 TEST_CASE("Anthropic stream content stop canonicalizes tools and closes text") {
   AnthropicAdapter adapter;
   auto text = text_state(adapter);
-  REQUIRE(event(adapter, "content_block_stop",
-                R"({"type":"content_block_stop","index":0})", text));
+  REQUIRE(decode(adapter, "content_block_stop",
+                 R"({"type":"content_block_stop","index":0})", text));
   CHECK_FALSE(
       std::get<AnthropicProviderDecodeState>(text.dialect).active_content_index);
   auto tool = tool_state(adapter);
-  REQUIRE(event(adapter, "content_block_stop",
-                R"({"type":"content_block_stop","index":0})", tool));
+  REQUIRE(decode(adapter, "content_block_stop",
+                 R"({"type":"content_block_stop","index":0})", tool));
   CHECK(std::get<ToolCallBlock>(tool.response.content.front()).arguments.text == "{}");
   tool = tool_state(adapter);
-  REQUIRE(event(
+  REQUIRE(decode(
       adapter, "content_block_delta",
       R"({"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{"}})",
       tool));
-  require_protocol(event(adapter, "content_block_stop",
-                         R"({"type":"content_block_stop","index":0})", tool));
+  require_protocol(decode(adapter, "content_block_stop",
+                          R"({"type":"content_block_stop","index":0})", tool));
 }
 TEST_CASE("Anthropic stream message finish enforces lifecycle and usage") {
   AnthropicAdapter adapter;
   ProviderDecodeState empty;
   require_protocol(
-      event(adapter, "message_delta",
-            R"({"type":"message_delta","delta":{"stop_reason":"end_turn"}})", empty));
+      decode(adapter, "message_delta",
+             R"({"type":"message_delta","delta":{"stop_reason":"end_turn"}})", empty));
   constexpr std::array invalid{
       R"({"type":"message_delta"})",
       R"({"type":"message_delta","delta":[]})",
@@ -344,34 +252,36 @@ TEST_CASE("Anthropic stream message finish enforces lifecycle and usage") {
   };
   for (const auto body : invalid) {
     ProviderDecodeState state;
-    start_message(adapter, state);
-    require_protocol(event(adapter, "message_delta", body, state));
+    start_anthropic_message(adapter, state);
+    require_protocol(decode(adapter, "message_delta", body, state));
   }
   ProviderDecodeState state;
-  start_message(adapter, state);
-  REQUIRE(event(adapter, "message_delta",
-                R"({"type":"message_delta","delta":{"stop_reason":null}})", state));
-  require_protocol(event(adapter, "message_stop", R"({"type":"message_stop"})", state));
+  start_anthropic_message(adapter, state);
+  REQUIRE(decode(adapter, "message_delta",
+                 R"({"type":"message_delta","delta":{"stop_reason":null}})", state));
+  require_protocol(
+      decode(adapter, "message_stop", R"({"type":"message_stop"})", state));
   state = text_state(adapter);
-  require_protocol(event(adapter, "message_stop", R"({"type":"message_stop"})", state));
+  require_protocol(
+      decode(adapter, "message_stop", R"({"type":"message_stop"})", state));
   state = ProviderDecodeState{};
-  start_message(adapter, state);
-  REQUIRE(event(
+  start_anthropic_message(adapter, state);
+  REQUIRE(decode(
       adapter, "message_delta",
       R"({"type":"message_delta","delta":{"stop_reason":"max_tokens"},"usage":{"output_tokens":3}})",
       state));
-  REQUIRE(event(adapter, "message_stop", R"({"type":"message_stop"})", state));
+  REQUIRE(decode(adapter, "message_stop", R"({"type":"message_stop"})", state));
   CHECK(state.response.finish_reason == FinishReason::length);
   CHECK(state.response.usage.output_tokens == 3);
 }
 TEST_CASE("Anthropic stream envelopes and provider errors cover safe categories") {
   AnthropicAdapter adapter;
   ProviderDecodeState state;
-  require_protocol(event(adapter, "ping", R"({})", state));
-  require_protocol(event(adapter, "ping", R"({"type":"message_stop"})", state));
-  auto ignored = event(adapter, "message", R"({"type":"future"})", state);
+  require_protocol(decode(adapter, "ping", R"({})", state));
+  require_protocol(decode(adapter, "ping", R"({"type":"message_stop"})", state));
+  auto ignored = decode(adapter, "message", R"({"type":"future"})", state);
   REQUIRE(ignored);
-  CHECK(std::get<ProviderIgnoredEvent>(ignored->front()).name == "future");
+  CHECK(ignored->empty());
   constexpr std::array cases{
       std::pair{"authentication_error", ErrorCategory::authentication},
       std::pair{"permission_error", ErrorCategory::authentication},
@@ -382,17 +292,21 @@ TEST_CASE("Anthropic stream envelopes and provider errors cover safe categories"
   };
   for (const auto& [type, category] : cases) {
     const auto body = std::string{R"({"type":"error","error":{"type":")"} + type +
-                      R"("},"request_id":"id"})";
-    auto result = event(adapter, "error", body, state);
+                      R"(","message":"private"},"request_id":"id"})";
+    auto result = decode(adapter, "error", body, state);
     REQUIRE_FALSE(result);
     CHECK(result.error().category == category);
+    CHECK(result.error().provider_detail == std::string{"anthropic:"} + type);
+    CHECK(result.error().message.find("private") == std::string::npos);
     CHECK(result.error().provider_request_id == "id");
     CHECK(result.error().retryable == (category == ErrorCategory::rate_limit ||
                                        category == ErrorCategory::network));
   }
-  for (const auto body : {R"({"type":"error"})", R"({"type":"error","error":[]})",
-                          R"({"type":"error","error":{"type":7}})"}) {
-    auto result = event(adapter, "error", body, state);
+  for (const auto body :
+       {R"({"type":"error"})", R"({"type":"error","error":[]})",
+        R"({"type":"error","error":{"type":7}})",
+        R"({"type":"error","error":{"type":"unsafe-secret-value"}})"}) {
+    auto result = decode(adapter, "error", body, state);
     REQUIRE_FALSE(result);
     CHECK(result.error().provider_detail == "anthropic:unknown_error");
   }

@@ -14,6 +14,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <utility>
 
 namespace {
 
@@ -21,7 +22,9 @@ using scry::ErrorCategory;
 using scry::detail::BodyChunkSink;
 using scry::detail::CurlTransport;
 using scry::detail::TransportRequest;
+using scry::detail::TransportResult;
 using scry::test::http_response;
+using scry::test::LoopbackServer;
 
 [[nodiscard]] TransportRequest request(const std::string& url) {
   return TransportRequest{
@@ -43,45 +46,79 @@ using scry::test::http_response;
   }};
 }
 
-struct InterruptedTransfer {
-  scry::Result<scry::detail::TransportResult> result;
-  std::chrono::steady_clock::duration shutdown_elapsed{};
+// One synchronous transfer on a fresh transport with neither cancellation
+// signal raised.
+[[nodiscard]] scry::Result<TransportResult>
+perform_with(const TransportRequest& request, BodyChunkSink& sink) {
+  CurlTransport transport;
+  std::stop_source shutdown;
+  const std::atomic cancelled{false};
+  return transport.perform(request, shutdown.get_token(), cancelled, sink);
+}
+
+struct Outcome {
+  scry::Result<TransportResult> result;
+  std::string body;
 };
 
-[[nodiscard]] InterruptedTransfer interrupt_during_transfer(const bool stop_harness) {
-  using namespace std::chrono_literals;
-  scry::test::LoopbackServer server{http_response("200 OK", "", "body"), true};
+// perform_with, collecting whatever reaches the sink.
+[[nodiscard]] Outcome perform_once(const TransportRequest& request) {
+  Outcome outcome;
+  auto sink = append_to(outcome.body);
+  outcome.result = perform_with(request, sink);
+  return outcome;
+}
+
+enum class Interrupt { none, cancel_turn, stop_harness };
+
+struct TimedOutcome {
+  scry::Result<TransportResult> result;
+  // Time the worker took to finish once the server had the request.
+  std::chrono::steady_clock::duration elapsed{};
+};
+
+// Runs one transfer on a worker thread against a server that holds its
+// response, then raises `interrupt` once the request has arrived.
+[[nodiscard]] TimedOutcome perform_on_worker(LoopbackServer& server,
+                                             const TransportRequest& request,
+                                             const Interrupt interrupt) {
   CurlTransport transport;
-  auto held_request = request(server.url());
-  // No total bound: cancellation and shutdown must work on their own.
-  held_request.timeouts.transfer = std::nullopt;
-  held_request.timeouts.shutdown = 50ms;
   std::string body;
   auto sink = append_to(body);
   std::stop_source shutdown;
   std::atomic cancelled{false};
-  std::optional<scry::Result<scry::detail::TransportResult>> outcome;
+  std::optional<scry::Result<TransportResult>> outcome;
   std::jthread worker{[&] {
-    outcome = transport.perform(held_request, shutdown.get_token(), cancelled, sink);
+    outcome = transport.perform(request, shutdown.get_token(), cancelled, sink);
   }};
   server.wait_until_request();
-  if (stop_harness) {
+  if (interrupt == Interrupt::stop_harness) {
     shutdown.request_stop();
-  } else {
+  } else if (interrupt == Interrupt::cancel_turn) {
     cancelled.store(true, std::memory_order_release);
   }
   const auto started = std::chrono::steady_clock::now();
   worker.join();
   return {
       .result = std::move(*outcome),
-      .shutdown_elapsed = std::chrono::steady_clock::now() - started,
+      .elapsed = std::chrono::steady_clock::now() - started,
   };
+}
+
+[[nodiscard]] TimedOutcome interrupt_during_transfer(const Interrupt interrupt) {
+  using namespace std::chrono_literals;
+  LoopbackServer server{http_response("200 OK", "", "body"), true};
+  auto held_request = request(server.url());
+  // No total bound: cancellation and shutdown must work on their own.
+  held_request.timeouts.transfer = std::nullopt;
+  held_request.timeouts.shutdown = 50ms;
+  return perform_on_worker(server, held_request, interrupt);
 }
 
 } // namespace
 
 TEST_CASE("loopback server destruction wakes an unconnected listener") {
-  const scry::test::LoopbackServer server{http_response("200 OK", "", "unused")};
+  const LoopbackServer server{http_response("200 OK", "", "unused")};
 }
 
 TEST_CASE("curl global initialization is process-wide and repeatable") {
@@ -130,17 +167,11 @@ TEST_CASE("curl runtime rejects capabilities that cannot honor host shutdown") {
 }
 
 TEST_CASE("curl transport posts request data and returns response metadata") {
-  scry::test::LoopbackServer server{http_response(
+  LoopbackServer server{http_response(
       "200 OK", "Content-Type: application/json\r\nrequest-id: req-123\r\n",
       R"({"text":"hello"})")};
-  CurlTransport transport;
-  std::string body;
-  auto sink = append_to(body);
-  std::stop_source shutdown;
-  const std::atomic cancelled{false};
 
-  const auto result = transport.perform(request(server.url("/v1/messages")),
-                                        shutdown.get_token(), cancelled, sink);
+  const auto [result, body] = perform_once(request(server.url("/v1/messages")));
 
   REQUIRE(result);
   CHECK(result->status_code == 200);
@@ -157,19 +188,13 @@ TEST_CASE("curl transport sends extra headers and routes through a configured pr
   // request line to it rather than resolving the unreachable origin host. No
   // TLS loopback exists, so the CA bundle option is covered by configuration
   // validation and the provider request carry-through tests instead.
-  scry::test::LoopbackServer server{http_response(
-      "200 OK", "Content-Type: application/json\r\n", R"({"text":"via"})")};
-  CurlTransport transport;
-  std::string body;
-  auto sink = append_to(body);
-  std::stop_source shutdown;
-  const std::atomic cancelled{false};
-
+  LoopbackServer server{http_response("200 OK", "Content-Type: application/json\r\n",
+                                      R"({"text":"via"})")};
   auto proxied = request("http://example.invalid/v1/messages");
   proxied.proxy = server.url();
   proxied.headers.push_back({"x-scry-example", "1"});
 
-  const auto result = transport.perform(proxied, shutdown.get_token(), cancelled, sink);
+  const auto [result, body] = perform_once(proxied);
 
   REQUIRE(result);
   CHECK(result->status_code == 200);
@@ -180,8 +205,7 @@ TEST_CASE("curl transport sends extra headers and routes through a configured pr
 }
 
 TEST_CASE("curl transport enforces declared response size before the sink") {
-  scry::test::LoopbackServer server{http_response("200 OK", "", "response-too-large")};
-  CurlTransport transport;
+  LoopbackServer server{http_response("200 OK", "", "response-too-large")};
   auto bounded_request = request(server.url());
   bounded_request.limits.max_response_bytes = 4;
   std::size_t sink_calls{};
@@ -189,11 +213,8 @@ TEST_CASE("curl transport enforces declared response size before the sink") {
     ++sink_calls;
     return {};
   }};
-  std::stop_source shutdown;
-  const std::atomic cancelled{false};
 
-  const auto result =
-      transport.perform(bounded_request, shutdown.get_token(), cancelled, sink);
+  const auto result = perform_with(bounded_request, sink);
 
   REQUIRE_FALSE(result);
   CHECK(result.error().category == ErrorCategory::resource_limit);
@@ -201,32 +222,21 @@ TEST_CASE("curl transport enforces declared response size before the sink") {
 }
 
 TEST_CASE("curl transport enforces streamed response size before each sink call") {
-  const std::string chunked_response{
-      "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n"
-      "Connection: close\r\n\r\n5\r\nlarge\r\n0\r\n\r\n"};
-  scry::test::LoopbackServer server{chunked_response};
-  CurlTransport transport;
+  LoopbackServer server{
+      std::string{"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n"
+                  "Connection: close\r\n\r\n5\r\nlarge\r\n0\r\n\r\n"}};
   auto bounded_request = request(server.url());
   bounded_request.limits.max_response_bytes = 4;
-  std::size_t delivered_bytes{};
-  BodyChunkSink sink{[&delivered_bytes](const std::string_view chunk) -> scry::Status {
-    delivered_bytes += chunk.size();
-    return {};
-  }};
-  std::stop_source shutdown;
-  const std::atomic cancelled{false};
 
-  const auto result =
-      transport.perform(bounded_request, shutdown.get_token(), cancelled, sink);
+  const auto [result, body] = perform_once(bounded_request);
 
   REQUIRE_FALSE(result);
   CHECK(result.error().category == ErrorCategory::resource_limit);
-  CHECK(delivered_bytes <= bounded_request.limits.max_response_bytes);
+  CHECK(body.size() <= bounded_request.limits.max_response_bytes);
 }
 
 TEST_CASE("curl transport sanitizes response consumer errors") {
-  scry::test::LoopbackServer server{http_response("200 OK", "", "body")};
-  CurlTransport transport;
+  LoopbackServer server{http_response("200 OK", "", "body")};
   BodyChunkSink sink{[](std::string_view) -> scry::Status {
     return std::unexpected(scry::Error{
         .category = ErrorCategory::resource_limit,
@@ -235,11 +245,8 @@ TEST_CASE("curl transport sanitizes response consumer errors") {
         .provider_detail = "api-key-never-log",
     });
   }};
-  std::stop_source shutdown;
-  const std::atomic cancelled{false};
 
-  const auto result =
-      transport.perform(request(server.url()), shutdown.get_token(), cancelled, sink);
+  const auto result = perform_with(request(server.url()), sink);
 
   REQUIRE_FALSE(result);
   CHECK(result.error().category == ErrorCategory::resource_limit);
@@ -249,17 +256,10 @@ TEST_CASE("curl transport sanitizes response consumer errors") {
 }
 
 TEST_CASE("curl transport rejects malformed response framing") {
-  const std::string malformed{"HTTP/1.1 200 OK\r\nContent-Length: not-a-size\r\n"
-                              "Connection: close\r\n\r\nbody"};
-  scry::test::LoopbackServer server{malformed};
-  CurlTransport transport;
-  std::string body;
-  auto sink = append_to(body);
-  std::stop_source shutdown;
-  const std::atomic cancelled{false};
+  LoopbackServer server{std::string{"HTTP/1.1 200 OK\r\nContent-Length: not-a-size\r\n"
+                                    "Connection: close\r\n\r\nbody"}};
 
-  const auto result =
-      transport.perform(request(server.url()), shutdown.get_token(), cancelled, sink);
+  const auto [result, body] = perform_once(request(server.url()));
 
   REQUIRE_FALSE(result);
   CHECK(result.error().category == ErrorCategory::protocol);
@@ -295,17 +295,11 @@ TEST_CASE("curl transport maps HTTP failures without leaking request data") {
     CAPTURE(std::string{test_case.status});
     const auto retry_after =
         test_case.category == ErrorCategory::rate_limit ? "Retry-After: 7\r\n" : "";
-    scry::test::LoopbackServer server{http_response(
+    LoopbackServer server{http_response(
         test_case.status, "request-id: failed-request\r\n" + std::string{retry_after},
         test_case.response_body)};
-    CurlTransport transport;
-    std::string body;
-    auto sink = append_to(body);
-    std::stop_source shutdown;
-    const std::atomic cancelled{false};
 
-    const auto result =
-        transport.perform(request(server.url()), shutdown.get_token(), cancelled, sink);
+    const auto [result, body] = perform_once(request(server.url()));
 
     REQUIRE_FALSE(result);
     CHECK(result.error().category == test_case.category);
@@ -330,32 +324,21 @@ TEST_CASE("curl transport maps HTTP failures without leaking request data") {
 
 TEST_CASE("curl transport fails a silent response after the idle bound") {
   using namespace std::chrono_literals;
-  scry::test::LoopbackServer server{http_response("200 OK", "", "body"), true};
-  CurlTransport transport;
+  LoopbackServer server{http_response("200 OK", "", "body"), true};
   auto silent_request = request(server.url());
   silent_request.timeouts.connect = 1s;
   silent_request.timeouts.idle = 1s;
   silent_request.timeouts.transfer = std::nullopt;
   silent_request.timeouts.shutdown = 50ms;
-  std::string body;
-  auto sink = append_to(body);
-  std::stop_source shutdown;
-  const std::atomic cancelled{false};
-  std::optional<scry::Result<scry::detail::TransportResult>> outcome;
-  std::jthread worker{[&] {
-    outcome = transport.perform(silent_request, shutdown.get_token(), cancelled, sink);
-  }};
-  server.wait_until_request();
-  const auto observed = std::chrono::steady_clock::now();
-  worker.join();
-  const auto elapsed = std::chrono::steady_clock::now() - observed;
 
-  REQUIRE(outcome);
-  REQUIRE_FALSE(*outcome);
-  CHECK(outcome->error().category == ErrorCategory::network);
-  CHECK(outcome->error().retryable);
-  CHECK(outcome->error().message == "transfer timed out");
-  CHECK(outcome->error().http_status == 0);
+  const auto [result, elapsed] =
+      perform_on_worker(server, silent_request, Interrupt::none);
+
+  REQUIRE_FALSE(result);
+  CHECK(result.error().category == ErrorCategory::network);
+  CHECK(result.error().retryable);
+  CHECK(result.error().message == "transfer timed out");
+  CHECK(result.error().http_status == 0);
   // The bound fires, but not at exactly `idle`: libcurl compares a rolling
   // average speed, and the request body just uploaded keeps that average above
   // the limit until the averaging window rolls past it. Measured on curl 8.7.1
@@ -367,33 +350,22 @@ TEST_CASE("curl transport fails a silent response after the idle bound") {
 
 TEST_CASE("curl transport fails a held response after the total transfer bound") {
   using namespace std::chrono_literals;
-  scry::test::LoopbackServer server{http_response("200 OK", "", "body"), true};
-  CurlTransport transport;
+  LoopbackServer server{http_response("200 OK", "", "body"), true};
   auto bounded_request = request(server.url());
   bounded_request.timeouts.connect = 1s;
   // The idle bound is far away, so only the total transfer bound can end this.
   bounded_request.timeouts.idle = 30s;
   bounded_request.timeouts.transfer = 1s;
   bounded_request.timeouts.shutdown = 50ms;
-  std::string body;
-  auto sink = append_to(body);
-  std::stop_source shutdown;
-  const std::atomic cancelled{false};
-  std::optional<scry::Result<scry::detail::TransportResult>> outcome;
-  std::jthread worker{[&] {
-    outcome = transport.perform(bounded_request, shutdown.get_token(), cancelled, sink);
-  }};
-  server.wait_until_request();
-  const auto observed = std::chrono::steady_clock::now();
-  worker.join();
-  const auto elapsed = std::chrono::steady_clock::now() - observed;
 
-  REQUIRE(outcome);
-  REQUIRE_FALSE(*outcome);
-  CHECK(outcome->error().category == ErrorCategory::network);
-  CHECK(outcome->error().retryable);
-  CHECK(outcome->error().message == "transfer timed out");
-  CHECK(outcome->error().http_status == 0);
+  const auto [result, elapsed] =
+      perform_on_worker(server, bounded_request, Interrupt::none);
+
+  REQUIRE_FALSE(result);
+  CHECK(result.error().category == ErrorCategory::network);
+  CHECK(result.error().retryable);
+  CHECK(result.error().message == "transfer timed out");
+  CHECK(result.error().http_status == 0);
   // The guarantee under test is that a permanently held response ends instead of
   // hanging; the bound is generous so a loaded sanitizer runner cannot flake it.
   CHECK(elapsed < 10s);
@@ -422,56 +394,44 @@ TEST_CASE("curl transport handles cancellation signals before network IO") {
 
 TEST_CASE("curl progress callback independently observes both cancellation signals") {
   using namespace std::chrono_literals;
-  const auto turn_result = interrupt_during_transfer(false);
+  const auto turn_result = interrupt_during_transfer(Interrupt::cancel_turn);
   REQUIRE_FALSE(turn_result.result);
   CHECK(turn_result.result.error().category == ErrorCategory::cancelled);
   CHECK(turn_result.result.error().message == "transfer cancelled");
   // Promptness is the progress-callback wiring's job; this bound only guards
   // against a hang, so a loaded TSan runner cannot flake it.
-  CHECK(turn_result.shutdown_elapsed < 5s);
+  CHECK(turn_result.elapsed < 5s);
 
-  const auto shutdown_result = interrupt_during_transfer(true);
+  const auto shutdown_result = interrupt_during_transfer(Interrupt::stop_harness);
   REQUIRE_FALSE(shutdown_result.result);
   CHECK(shutdown_result.result.error().category == ErrorCategory::cancelled);
   CHECK(shutdown_result.result.error().message ==
         "transfer cancelled by harness shutdown");
-  CHECK(shutdown_result.shutdown_elapsed < 5s);
+  CHECK(shutdown_result.elapsed < 5s);
 }
 
 TEST_CASE("curl transport never forwards redirect bodies to the response sink") {
-  scry::test::LoopbackServer server{
+  LoopbackServer server{
       http_response("302 Found", "Location: /elsewhere\r\n",
                     "event: content_block_delta\r\ndata: semantic-output\r\n\r\n")};
-  CurlTransport transport;
-  std::string body;
-  auto sink = append_to(body);
-  std::stop_source shutdown;
-  const std::atomic cancelled{false};
 
-  const auto result =
-      transport.perform(request(server.url()), shutdown.get_token(), cancelled, sink);
+  const auto [result, body] = perform_once(request(server.url()));
 
   REQUIRE_FALSE(result);
   CHECK(result.error().category == ErrorCategory::protocol);
   CHECK(body.empty());
 }
 
-// Response headers are no longer retained wholesale, so the Retry-After value a
-// retryable failure depends on has to survive on its own all the way to the
-// error the worker schedules the next attempt from.
+// Only the Retry-After values survive header parsing, so a retryable failure
+// must carry one all the way to the error the worker schedules the next attempt
+// from.
 TEST_CASE("curl transport reports Retry-After on a retryable server error") {
-  scry::test::LoopbackServer server{http_response(
+  LoopbackServer server{http_response(
       "503 Service Unavailable",
       "content-type: application/json\r\nRetry-After: 3\r\nx-trace: ignored\r\n",
       "unavailable")};
-  CurlTransport transport;
-  std::string body;
-  auto sink = append_to(body);
-  std::stop_source shutdown;
-  const std::atomic cancelled{false};
 
-  const auto result =
-      transport.perform(request(server.url()), shutdown.get_token(), cancelled, sink);
+  const auto [result, body] = perform_once(request(server.url()));
 
   REQUIRE_FALSE(result);
   CHECK(result.error().category == ErrorCategory::network);
@@ -483,17 +443,11 @@ TEST_CASE("curl transport reports Retry-After on a retryable server error") {
 }
 
 TEST_CASE("curl transport parses HTTP-date Retry-After values") {
-  scry::test::LoopbackServer server{
-      http_response("429 Too Many Requests",
-                    "Retry-After: Wed, 21 Oct 2099 07:28:00 GMT\r\n", "retry later")};
-  CurlTransport transport;
-  std::string body;
-  auto sink = append_to(body);
-  std::stop_source shutdown;
-  const std::atomic cancelled{false};
+  LoopbackServer server{http_response("429 Too Many Requests",
+                                      "Retry-After: Wed, 21 Oct 2099 07:28:00 GMT\r\n",
+                                      "retry later")};
 
-  const auto result =
-      transport.perform(request(server.url()), shutdown.get_token(), cancelled, sink);
+  const auto [result, body] = perform_once(request(server.url()));
 
   REQUIRE_FALSE(result);
   CHECK(result.error().category == ErrorCategory::rate_limit);
@@ -503,9 +457,8 @@ TEST_CASE("curl transport parses HTTP-date Retry-After values") {
 }
 
 TEST_CASE("curl transport preserves provider-neutral sanitized error detail") {
-  scry::test::LoopbackServer server{
+  LoopbackServer server{
       http_response("200 OK", "request-id: header-request\r\n", "body")};
-  CurlTransport transport;
   BodyChunkSink sink{[](std::string_view) -> scry::Status {
     return std::unexpected(scry::Error{
         .category = ErrorCategory::network,
@@ -515,11 +468,8 @@ TEST_CASE("curl transport preserves provider-neutral sanitized error detail") {
         .provider_request_id = "body-request",
     });
   }};
-  std::stop_source shutdown;
-  const std::atomic cancelled{false};
 
-  const auto result =
-      transport.perform(request(server.url()), shutdown.get_token(), cancelled, sink);
+  const auto result = perform_with(request(server.url()), sink);
 
   REQUIRE_FALSE(result);
   CHECK(result.error().message == "response consumer rejected response data");
@@ -530,14 +480,10 @@ TEST_CASE("curl transport preserves provider-neutral sanitized error detail") {
 }
 
 TEST_CASE("curl callbacks contain response consumer exceptions") {
-  scry::test::LoopbackServer server{http_response("200 OK", "", "body")};
-  CurlTransport transport;
+  LoopbackServer server{http_response("200 OK", "", "body")};
   BodyChunkSink sink{[](std::string_view) -> scry::Status { throw 42; }};
-  std::stop_source shutdown;
-  const std::atomic cancelled{false};
 
-  const auto result =
-      transport.perform(request(server.url()), shutdown.get_token(), cancelled, sink);
+  const auto result = perform_with(request(server.url()), sink);
 
   REQUIRE_FALSE(result);
   CHECK(result.error().category == ErrorCategory::protocol);
@@ -545,38 +491,22 @@ TEST_CASE("curl callbacks contain response consumer exceptions") {
 }
 
 TEST_CASE("curl transport rejects header injection before network IO") {
-  CurlTransport transport;
   auto invalid_request = request("http://127.0.0.1:1/");
   invalid_request.headers.push_back({"x-bad", "value\r\ninjected: true"});
-  std::string body;
-  auto sink = append_to(body);
-  std::stop_source shutdown;
-  const std::atomic cancelled{false};
 
-  const auto result =
-      transport.perform(invalid_request, shutdown.get_token(), cancelled, sink);
+  const auto [result, body] = perform_once(invalid_request);
 
   REQUIRE_FALSE(result);
   CHECK(result.error().category == ErrorCategory::protocol);
 }
 
 TEST_CASE("curl transport rejects invalid request state before network IO") {
-  CurlTransport transport;
-  std::stop_source shutdown;
-  const std::atomic cancelled{false};
-  std::string body;
-  auto valid_sink = append_to(body);
-
-  auto invalid_request = request("");
-  auto result =
-      transport.perform(invalid_request, shutdown.get_token(), cancelled, valid_sink);
+  auto result = perform_once(request("")).result;
   REQUIRE_FALSE(result);
   CHECK(result.error().category == ErrorCategory::invalid_config);
 
-  invalid_request = request("http://127.0.0.1:1/");
   BodyChunkSink missing_sink;
-  result =
-      transport.perform(invalid_request, shutdown.get_token(), cancelled, missing_sink);
+  result = perform_with(request("http://127.0.0.1:1/"), missing_sink);
   REQUIRE_FALSE(result);
   CHECK(result.error().category == ErrorCategory::invalid_state);
 }
@@ -588,7 +518,7 @@ TEST_CASE("consecutive transfers reuse one connection") {
   const std::string keep_alive =
       "HTTP/1.1 200 OK\r\nContent-Length: " + std::to_string(body.size()) + "\r\n\r\n" +
       std::string{body};
-  scry::test::LoopbackServer server{keep_alive, false, 2};
+  LoopbackServer server{keep_alive, false, 2};
   CurlTransport transport;
   std::stop_source shutdown;
   const std::atomic cancelled{false};
@@ -610,27 +540,19 @@ TEST_CASE("consecutive transfers reuse one connection") {
 }
 
 TEST_CASE("curl transport discards interim metadata and honors disabled TLS checks") {
-  using namespace std::chrono_literals;
-
-  const std::string raw_response{"HTTP/1.1 100 Continue\r\n"
-                                 "request-id: interim-request\r\n\r\n"
-                                 "HTTP/1.1 200 OK\r\n"
-                                 "request-id: final-request\r\n"
-                                 "Content-Length: 2\r\nConnection: close\r\n\r\nok"};
-  scry::test::LoopbackServer server{raw_response};
-  CurlTransport transport;
+  LoopbackServer server{
+      std::string{"HTTP/1.1 100 Continue\r\n"
+                  "request-id: interim-request\r\n\r\n"
+                  "HTTP/1.1 200 OK\r\n"
+                  "request-id: final-request\r\n"
+                  "Content-Length: 2\r\nConnection: close\r\n\r\nok"}};
   auto local_request = request(server.url());
   local_request.tls_verify_peer = false;
   local_request.timeouts.connect = std::chrono::milliseconds::max();
   local_request.timeouts.transfer = std::chrono::milliseconds::max();
   local_request.timeouts.shutdown = std::chrono::milliseconds::max();
-  std::string body;
-  auto sink = append_to(body);
-  std::stop_source shutdown;
-  const std::atomic cancelled{false};
 
-  const auto result =
-      transport.perform(local_request, shutdown.get_token(), cancelled, sink);
+  const auto [result, body] = perform_once(local_request);
 
   REQUIRE(result);
   CHECK(result->status_code == 200);
@@ -648,14 +570,8 @@ TEST_CASE("curl transport classifies malformed and unsupported URLs locally") {
 
   for (const auto url : urls) {
     CAPTURE(std::string{url});
-    CurlTransport transport;
-    std::string body;
-    auto sink = append_to(body);
-    std::stop_source shutdown;
-    const std::atomic cancelled{false};
 
-    const auto result = transport.perform(request(std::string{url}),
-                                          shutdown.get_token(), cancelled, sink);
+    const auto [result, body] = perform_once(request(std::string{url}));
 
     REQUIRE_FALSE(result);
     CHECK(result.error().category == ErrorCategory::protocol);
@@ -666,9 +582,8 @@ TEST_CASE("curl transport classifies malformed and unsupported URLs locally") {
 }
 
 TEST_CASE("curl transport falls back to the response request ID on sink failure") {
-  scry::test::LoopbackServer server{
+  LoopbackServer server{
       http_response("200 OK", "request-id: header-request\r\n", "body")};
-  CurlTransport transport;
   BodyChunkSink sink{[](std::string_view) -> scry::Status {
     return std::unexpected(scry::Error{
         .category = ErrorCategory::network,
@@ -680,11 +595,8 @@ TEST_CASE("curl transport falls back to the response request ID on sink failure"
         .turn_id = scry::TurnId{9},
     });
   }};
-  std::stop_source shutdown;
-  const std::atomic cancelled{false};
 
-  const auto result =
-      transport.perform(request(server.url()), shutdown.get_token(), cancelled, sink);
+  const auto result = perform_with(request(server.url()), sink);
 
   REQUIRE_FALSE(result);
   CHECK(result.error().category == ErrorCategory::network);

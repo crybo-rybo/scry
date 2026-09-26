@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cstddef>
-#include <cstdint>
 #include <limits>
 #include <memory>
 #include <scry/config.hpp>

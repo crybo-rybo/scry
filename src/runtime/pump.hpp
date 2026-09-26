@@ -2,6 +2,7 @@
 
 #include "runtime/queue.hpp"
 #include "runtime/state.hpp"
+#include "runtime/tool_registry_impl.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -21,7 +22,6 @@ namespace scry::detail {
 struct TurnRouteOptions {
   FrozenToolEntries tools{};
   std::size_t max_tool_result_bytes{};
-  std::size_t max_exchange_bytes{std::numeric_limits<std::size_t>::max()};
   std::size_t max_conversation_bytes{};
   std::optional<std::uint32_t> max_tool_calls{};
   TurnCallbacks callbacks{};
@@ -39,46 +39,25 @@ public:
   [[nodiscard]] bool disconnect() noexcept;
 
   void detach() noexcept;
-  [[nodiscard]] bool attached() const noexcept;
   [[nodiscard]] bool terminal() const noexcept;
   [[nodiscard]] bool finished() const noexcept;
-  void mark_terminal() noexcept;
-
-  // Pending-event bookkeeping, maintained by PumpState: one increment per entry
-  // the pump retains for this route, one decrement per entry it drops.
-  void note_pending() noexcept;
-  void note_delivered() noexcept;
-  [[nodiscard]] std::size_t pending_events() const noexcept;
-  // Drops the host captures and the tool snapshot a running turn needed. Only
-  // legal once finished() with no pending event left to deliver, and idempotent
-  // because finished() stays true once the callbacks are gone.
   void retire() noexcept;
 
   [[nodiscard]] bool has_callback(const WorkerEvent& event) const noexcept;
-  // Takes the event by mutable reference so the terminal payloads it owns move
-  // into the callback's value instead of being copied into it.
+  // Takes the event by mutable reference so the payloads it owns move into the
+  // callback's value instead of being copied into it.
   void invoke(WorkerEvent& event);
 
-  [[nodiscard]] const std::shared_ptr<ConversationState>& conversation() const noexcept;
-  [[nodiscard]] std::size_t max_conversation_bytes() const noexcept;
-
 private:
-  // The two gates in front of a handler: the per-turn limit, then the host's
-  // admission hook. An engaged value is the refusal the model is given in place
-  // of a result; std::nullopt admits the call and asks for the handler.
+  // PumpState owns the route's delivery bookkeeping: the terminal and attached
+  // flags, the pending-entry count, and the Conversation the commit writes to.
+  friend class PumpState;
+
   [[nodiscard]] std::optional<Result<ToolResultBlock>>
   admit(const ToolCallEvent& event);
-  // What the model is told about one call, or nothing when cancellation was
-  // requested before the handler ran and the turn owes the model no answer at
-  // all. Only a framework failure leaves it with a result that holds no block.
   [[nodiscard]] std::optional<Result<ToolResultBlock>>
   produce(const ToolCallEvent& event);
-  // Takes the consumed event by mutable reference: once produce() has returned
-  // and the result is posted, the call's own strings move into the observation
-  // instead of being copied into it.
   void dispatch(ToolCallEvent& event);
-  // What on_tool_call is handed, or nothing when no observation is wanted. Built
-  // before the result is posted, because the queue takes the result block.
   [[nodiscard]] std::optional<ToolCall>
   observation(const ToolCallEvent& event, const Result<ToolResultBlock>& result) const;
   void notify_tool_observer(ToolCallEvent& event, ToolCall& observed);
@@ -91,6 +70,7 @@ private:
   std::size_t max_tool_result_bytes_{};
   std::size_t remaining_exchange_bytes_{std::numeric_limits<std::size_t>::max()};
   std::size_t max_conversation_bytes_{};
+  // One per entry the pump retains for this route, released as it drops each.
   std::size_t pending_events_{};
   std::optional<std::uint32_t> max_tool_calls_{};
   // Calls this route has taken charge of, and the subset it refused. Both are
@@ -113,7 +93,11 @@ public:
   explicit PumpState(std::shared_ptr<EventQueue> events, PumpClock clock = {});
 
   void add_route(std::shared_ptr<TurnRoute> route);
-  [[nodiscard]] std::shared_ptr<TurnRoute> find_route(TurnId turn_id) const;
+  // The pointer stays valid until the next clean_routes(), which runs only at
+  // the end of update(). update() is non-reentrant and nothing a host callback
+  // can call - disconnect(), cancel(), send() - erases a route, so a lookup made
+  // before running a callback still names a live route after it.
+  [[nodiscard]] TurnRoute* find_route(TurnId turn_id) const noexcept;
   [[nodiscard]] std::size_t live_route_count() const noexcept;
   [[nodiscard]] bool updating() const noexcept;
 
@@ -126,12 +110,6 @@ private:
     std::size_t accounted_bytes{};
   };
 
-  // Ownership-free lookup for the scan loops, which touch a route only for the
-  // length of one update(). Nothing but clean_routes() erases from routes_ and
-  // update() is non-reentrant, so no host callback a scan runs can invalidate
-  // the pointer; find_route stays for callers that outlive one update.
-  [[nodiscard]] TurnRoute* route_for(TurnId turn_id) const noexcept;
-
   [[nodiscard]] bool ingest_events(std::chrono::steady_clock::time_point deadline);
   void accept_event(WorkerEvent event);
   [[nodiscard]] bool coalesce_pending_delta(const TextDeltaEvent& event,
@@ -143,6 +121,7 @@ private:
   void commit_completion(TurnRoute& route, CompletionEvent& event);
   [[nodiscard]] bool deliver_one(std::size_t& callbacks_delivered);
   [[nodiscard]] bool has_deliverable() const noexcept;
+  void release_entry(TurnRoute* route, const PendingCallback& entry);
   void release_discarded();
   void clean_routes();
 

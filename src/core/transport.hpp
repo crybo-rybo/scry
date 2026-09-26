@@ -12,10 +12,6 @@
 
 namespace scry::detail {
 
-// The public request-header value type; the transport layer keeps the historical
-// detail-namespace spelling.
-using HttpHeader = ::scry::HttpHeader;
-
 struct TransportRequest {
   std::string url{};
   std::vector<HttpHeader> headers{};

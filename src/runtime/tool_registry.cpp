@@ -1,3 +1,4 @@
+#include "core/error.hpp"
 #include "core/json_codec.hpp"
 #include "runtime/tool_registry_impl.hpp"
 
@@ -10,16 +11,6 @@
 #include <vector>
 
 namespace scry::detail {
-namespace {
-
-[[nodiscard]] Error invalid_registration(std::string message) {
-  return Error{
-      .category = ErrorCategory::invalid_argument,
-      .message = std::move(message),
-  };
-}
-
-} // namespace
 
 ContextualToolHandler to_contextual_handler(ToolHandler handler) {
   if (!handler) {
@@ -31,55 +22,11 @@ ContextualToolHandler to_contextual_handler(ToolHandler handler) {
       }};
 }
 
-Status add_tool_registration(ToolRegistryState& state, ToolDefinition definition,
-                             ContextualToolHandler handler) {
-  if (definition.name.empty()) {
-    return std::unexpected(invalid_registration("tool name must not be empty"));
-  }
-  if (!handler) {
-    return std::unexpected(invalid_registration("tool handler must not be empty"));
-  }
-  auto schema =
-      canonicalize_json_object(definition.input_schema, ErrorCategory::invalid_argument,
-                               "tool input schema must be a valid JSON object");
-  if (!schema) {
-    return std::unexpected(std::move(schema.error()));
-  }
-  const auto duplicate =
-      std::ranges::any_of(state.entries, [&definition](const auto& entry) {
-        return entry->definition.name == definition.name;
-      });
-  if (duplicate) {
-    return std::unexpected(
-        invalid_registration("a tool with that name is already registered"));
-  }
-
-  definition.input_schema = std::move(*schema);
-  state.entries.push_back(std::make_shared<const RegisteredTool>(RegisteredTool{
-      .definition = std::move(definition),
-      .handler = std::make_shared<ContextualToolHandler>(std::move(handler)),
-  }));
-  return {};
-}
-
-FrozenToolSnapshot snapshot_tools(ToolRegistryState& state) {
-  // Tools are only ever added, and only from the app thread, so a frozen
-  // snapshot with as many entries as the working list is still current. Any
-  // rebuild is shared by every turn until the next registration.
-  if (state.frozen.entries && state.frozen.entries->size() == state.entries.size()) {
-    return state.frozen;
-  }
-  auto entries = std::make_shared<ToolSnapshot>(state.entries);
-  auto schemas = std::make_shared<std::vector<ToolDefinition>>();
-  schemas->reserve(entries->size());
-  for (const auto& registration : *entries) {
-    schemas->push_back(registration->definition);
-  }
-  state.frozen = FrozenToolSnapshot{
-      .entries = std::move(entries),
-      .schemas = std::move(schemas),
-  };
-  return state.frozen;
+const RegisteredTool* find_tool(const ToolSnapshot& tools,
+                                const std::string_view name) noexcept {
+  const auto found = std::ranges::find_if(
+      tools, [name](const auto& entry) { return entry->definition.name == name; });
+  return found == tools.end() ? nullptr : found->get();
 }
 
 } // namespace scry::detail
@@ -90,18 +37,60 @@ namespace {
 constexpr std::uint64_t tool_manifest_version = 1;
 
 [[nodiscard]] Error inactive_registry() {
-  return Error{
-      .category = ErrorCategory::invalid_state,
-      .message = "ToolRegistry is not active",
-  };
+  return detail::make_error(ErrorCategory::invalid_state, "ToolRegistry is not active");
 }
 
 } // namespace
 
 Status ToolRegistry::Impl::add(ToolDefinition definition,
                                ContextualToolHandler handler) {
-  return detail::add_tool_registration(state, std::move(definition),
-                                       std::move(handler));
+  const auto invalid = [](std::string message) {
+    return std::unexpected(
+        detail::make_error(ErrorCategory::invalid_argument, std::move(message)));
+  };
+  if (definition.name.empty()) {
+    return invalid("tool name must not be empty");
+  }
+  if (!handler) {
+    return invalid("tool handler must not be empty");
+  }
+  auto schema = detail::canonicalize_json_object(
+      definition.input_schema, ErrorCategory::invalid_argument,
+      "tool input schema must be a valid JSON object");
+  if (!schema) {
+    return std::unexpected(std::move(schema.error()));
+  }
+  if (detail::find_tool(entries_, definition.name) != nullptr) {
+    return invalid("a tool with that name is already registered");
+  }
+
+  definition.input_schema = std::move(*schema);
+  entries_.push_back(
+      std::make_shared<const detail::RegisteredTool>(detail::RegisteredTool{
+          .definition = std::move(definition),
+          .handler = std::move(handler),
+      }));
+  return {};
+}
+
+detail::FrozenToolSnapshot ToolRegistry::Impl::snapshot() {
+  // Tools are only ever added, and only from the app thread, so a frozen
+  // snapshot with as many entries as the working list is still current. Any
+  // rebuild is shared by every turn until the next registration.
+  if (frozen_.entries && frozen_.entries->size() == entries_.size()) {
+    return frozen_;
+  }
+  auto entries = std::make_shared<detail::ToolSnapshot>(entries_);
+  auto schemas = std::make_shared<std::vector<ToolDefinition>>();
+  schemas->reserve(entries->size());
+  for (const auto& registration : *entries) {
+    schemas->push_back(registration->definition);
+  }
+  frozen_ = detail::FrozenToolSnapshot{
+      .entries = std::move(entries),
+      .schemas = std::move(schemas),
+  };
+  return frozen_;
 }
 
 ToolRegistry::ToolRegistry() : impl_(std::make_unique<Impl>()) {}
@@ -122,18 +111,13 @@ Status ToolRegistry::add(ToolDefinition definition, ContextualToolHandler handle
 }
 
 std::size_t ToolRegistry::size() const noexcept {
-  return impl_ == nullptr ? 0 : impl_->state.entries.size();
+  return impl_ == nullptr ? 0 : impl_->entries().size();
 }
 
 bool ToolRegistry::empty() const noexcept { return size() == 0; }
 
 bool ToolRegistry::contains(const std::string_view name) const noexcept {
-  if (impl_ == nullptr) {
-    return false;
-  }
-  return std::ranges::any_of(impl_->state.entries, [name](const auto& entry) {
-    return entry->definition.name == name;
-  });
+  return impl_ != nullptr && detail::find_tool(impl_->entries(), name) != nullptr;
 }
 
 std::vector<std::string> ToolRegistry::names() const {
@@ -141,8 +125,8 @@ std::vector<std::string> ToolRegistry::names() const {
   if (impl_ == nullptr) {
     return registered;
   }
-  registered.reserve(impl_->state.entries.size());
-  for (const auto& entry : impl_->state.entries) {
+  registered.reserve(impl_->entries().size());
+  for (const auto& entry : impl_->entries()) {
     registered.push_back(entry->definition.name);
   }
   return registered;
@@ -154,8 +138,8 @@ Result<Json> ToolRegistry::to_json() const {
   }
 
   detail::JsonValue::array_t tools{};
-  tools.reserve(impl_->state.entries.size());
-  for (const auto& entry : impl_->state.entries) {
+  tools.reserve(impl_->entries().size());
+  for (const auto& entry : impl_->entries()) {
     const auto& definition = entry->definition;
     detail::JsonValue tool{};
     tool["name"] = definition.name;

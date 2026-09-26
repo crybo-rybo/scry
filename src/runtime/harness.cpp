@@ -1,7 +1,7 @@
+#include "core/error.hpp"
 #include "core/provider.hpp"
 #include "core/retry.hpp"
 #include "runtime/config.hpp"
-#include "runtime/conversation_impl.hpp"
 #include "runtime/pump.hpp"
 #include "runtime/startup.hpp"
 #include "runtime/test_access.hpp"
@@ -28,13 +28,6 @@
 namespace scry {
 namespace {
 
-[[nodiscard]] Error immediate_error(const ErrorCategory category, std::string message) {
-  return Error{
-      .category = category,
-      .message = std::move(message),
-  };
-}
-
 [[nodiscard]] std::uint64_t make_retry_jitter_seed(const void* identity) noexcept {
   const auto now = static_cast<std::uint64_t>(
       std::chrono::steady_clock::now().time_since_epoch().count());
@@ -52,50 +45,6 @@ namespace {
   }
   return detail::mix_seed(seed);
 }
-
-[[nodiscard]] detail::Message user_message(std::string text) {
-  return detail::Message{
-      .role = detail::Role::user,
-      .content = {detail::TextBlock{.text = std::move(text)}},
-  };
-}
-
-[[nodiscard]] detail::ModelRequest
-make_request(const Config& config, const detail::ConversationState& conversation,
-             std::vector<detail::Message> messages, detail::SchemaSnapshot schemas) {
-  return detail::ModelRequest{
-      .system_prompt = conversation.config.system_prompt,
-      .history = conversation.messages,
-      .messages = std::move(messages),
-      .tools = std::move(schemas),
-      .sampling = config.sampling,
-  };
-}
-
-// Keeps the send_and_wait() wait unwind-safe. That wait pumps callbacks for
-// every accepted turn, so another turn's callback can throw straight through it
-// while the waited turn is still running. Turn's destructor only detaches, and
-// the route keeps the on_finished closure that writes into the wait's own stack
-// slot, so the guard disconnects the waited turn on any exit that is not the
-// normal one. The turn keeps running and still commits its history.
-class WaitGuard final {
-public:
-  explicit WaitGuard(Turn& turn) noexcept : turn_(turn) {}
-  WaitGuard(const WaitGuard&) = delete;
-  WaitGuard(WaitGuard&&) = delete;
-  WaitGuard& operator=(const WaitGuard&) = delete;
-  WaitGuard& operator=(WaitGuard&&) = delete;
-  ~WaitGuard() {
-    if (!completed) {
-      static_cast<void>(turn_.disconnect());
-    }
-  }
-
-  bool completed{false};
-
-private:
-  Turn& turn_;
-};
 
 } // namespace
 
@@ -143,27 +92,27 @@ public:
   send(const std::shared_ptr<detail::ConversationState>& conversation, std::string text,
        TurnCallbacks callbacks) {
     if (text.empty()) {
-      return std::unexpected(immediate_error(ErrorCategory::invalid_argument,
-                                             "user message must not be empty"));
+      return std::unexpected(detail::make_error(ErrorCategory::invalid_argument,
+                                                "user message must not be empty"));
     }
     if (conversation->busy) {
-      return std::unexpected(immediate_error(
+      return std::unexpected(detail::make_error(
           ErrorCategory::busy, "Conversation already has a queued or active turn"));
     }
     if (pump_.live_route_count() >= config_.limits.max_pending_turns) {
-      return std::unexpected(immediate_error(
+      return std::unexpected(detail::make_error(
           ErrorCategory::resource_limit, "Harness has reached the pending-turn limit"));
     }
     if (conversation->payload_bytes > config_.limits.max_conversation_bytes ||
         text.size() >
             config_.limits.max_conversation_bytes - conversation->payload_bytes) {
       return std::unexpected(
-          immediate_error(ErrorCategory::resource_limit,
-                          "user message exceeds the Conversation byte limit"));
+          detail::make_error(ErrorCategory::resource_limit,
+                             "user message exceeds the Conversation byte limit"));
     }
     if (next_turn_id_ == std::numeric_limits<std::uint64_t>::max()) {
-      return std::unexpected(immediate_error(ErrorCategory::invalid_state,
-                                             "Harness exhausted its Turn identifiers"));
+      return std::unexpected(detail::make_error(
+          ErrorCategory::invalid_state, "Harness exhausted its Turn identifiers"));
     }
 
     const auto turn_id = TurnId{.value = ++next_turn_id_};
@@ -172,19 +121,26 @@ public:
     auto tools = detail::ToolRegistryAccess::snapshot(tools_);
     auto cancelled = std::make_shared<std::atomic<bool>>(false);
     auto messages = std::vector<detail::Message>{};
-    messages.push_back(user_message(std::move(text)));
+    messages.push_back(detail::Message{
+        .role = detail::Role::user,
+        .content = {detail::TextBlock{.text = std::move(text)}},
+    });
     auto route = std::make_shared<detail::TurnRoute>(
         turn_id, cancelled, commands_, conversation,
         detail::TurnRouteOptions{
             .tools = std::move(tools.entries),
             .max_tool_result_bytes = config_.limits.max_tool_result_bytes,
-            .max_exchange_bytes = max_exchange_bytes,
             .max_conversation_bytes = config_.limits.max_conversation_bytes,
             .max_tool_calls = config_.max_tool_calls_per_turn,
             .callbacks = std::move(callbacks),
         });
-    auto request = make_request(config_, *conversation, std::move(messages),
-                                std::move(tools.schemas));
+    auto request = detail::ModelRequest{
+        .system_prompt = conversation->config.system_prompt,
+        .history = conversation->messages,
+        .messages = std::move(messages),
+        .tools = std::move(tools.schemas),
+        .sampling = config_.sampling,
+    };
 
     conversation->busy = true;
     pump_.add_route(route);
@@ -198,11 +154,11 @@ public:
   }
 
   [[nodiscard]] bool cancel(const TurnId turn_id) noexcept {
-    const auto route = pump_.find_route(turn_id);
+    auto* const route = pump_.find_route(turn_id);
     return route != nullptr && route->cancel();
   }
   [[nodiscard]] bool disconnect(const TurnId turn_id) noexcept {
-    const auto route = pump_.find_route(turn_id);
+    auto* const route = pump_.find_route(turn_id);
     return route != nullptr && route->disconnect();
   }
   [[nodiscard]] ToolRegistry& tools() noexcept { return tools_; }
@@ -292,10 +248,10 @@ const ToolRegistry& Harness::tools() const noexcept {
 Result<Turn> Harness::send(Conversation& conversation, std::string user_message_text,
                            TurnCallbacks callbacks) {
   if (impl_ == nullptr || conversation.impl_ == nullptr) {
-    return std::unexpected(immediate_error(
+    return std::unexpected(detail::make_error(
         ErrorCategory::invalid_state, "Harness and Conversation must both be active"));
   }
-  auto route = impl_->send(conversation.impl_->state, std::move(user_message_text),
+  auto route = impl_->send(conversation.impl_, std::move(user_message_text),
                            std::move(callbacks));
   if (!route) {
     return std::unexpected(std::move(route.error()));
@@ -307,8 +263,8 @@ Result<Completion> Harness::send_and_wait(Conversation& conversation,
                                           std::string user_message_text) {
   if (impl_ != nullptr && impl_->updating()) {
     return std::unexpected(
-        immediate_error(ErrorCategory::invalid_state,
-                        "send_and_wait cannot run from inside an update callback"));
+        detail::make_error(ErrorCategory::invalid_state,
+                           "send_and_wait cannot run from inside an update callback"));
   }
   // on_finished is guaranteed exactly once per accepted turn, so it alone decides
   // when this loop stops.
@@ -322,17 +278,23 @@ Result<Completion> Harness::send_and_wait(Conversation& conversation,
   if (!turn_result) {
     return std::unexpected(std::move(turn_result.error()));
   }
-  // The Turn is declared before the guard so it outlives the disconnect the
-  // guard performs when the wait is abandoned.
+  // The wait pumps callbacks for every accepted turn, so another turn's callback
+  // can throw straight through it while this turn is still running. Turn's
+  // destructor only detaches, and the route keeps the on_finished closure that
+  // writes into `outcome` on this stack frame, so an abandoned wait disconnects
+  // the turn first. The turn keeps running and still commits its history.
   auto turn = std::move(*turn_result);
-  WaitGuard guard{turn};
-  while (!outcome) {
-    static_cast<void>(update());
-    if (!outcome) {
-      static_cast<void>(impl_->wait_for_event());
+  try {
+    while (!outcome) {
+      static_cast<void>(update());
+      if (!outcome) {
+        static_cast<void>(impl_->wait_for_event());
+      }
     }
+  } catch (...) {
+    static_cast<void>(turn.disconnect());
+    throw;
   }
-  guard.completed = true;
   return std::move(*outcome);
 }
 
@@ -352,8 +314,8 @@ Result<Harness> HarnessTestAccess::create(Config config,
   }
   if (!provider || !transport) {
     return std::unexpected(
-        immediate_error(ErrorCategory::invalid_config,
-                        "provider and transport components must not be empty"));
+        detail::make_error(ErrorCategory::invalid_config,
+                           "provider and transport components must not be empty"));
   }
   return Harness::Impl::start(std::move(config), std::move(provider),
                               std::move(transport), std::move(tools),

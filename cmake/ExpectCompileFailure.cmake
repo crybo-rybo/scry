@@ -1,41 +1,16 @@
-foreach(required_variable
-        IN ITEMS CXX_COMPILER SOURCE_FILE PROJECT_INCLUDE_DIR EXPECTED_SUBSTRING)
-  if(NOT DEFINED ${required_variable} OR "${${required_variable}}" STREQUAL "")
-    message(FATAL_ERROR "${required_variable} must be provided")
-  endif()
-endforeach()
-
-if(NOT EXISTS "${CXX_COMPILER}")
-  message(FATAL_ERROR "CXX_COMPILER does not exist: ${CXX_COMPILER}")
-endif()
-
-if(NOT EXISTS "${SOURCE_FILE}")
-  message(FATAL_ERROR "SOURCE_FILE does not exist: ${SOURCE_FILE}")
-endif()
-
-if(NOT IS_DIRECTORY "${PROJECT_INCLUDE_DIR}")
-  message(FATAL_ERROR
-          "PROJECT_INCLUDE_DIR is not a directory: ${PROJECT_INCLUDE_DIR}")
-endif()
-
-if(NOT DEFINED OUTPUT_DIRECTORY OR "${OUTPUT_DIRECTORY}" STREQUAL "")
-  set(OUTPUT_DIRECTORY
-      "${CMAKE_CURRENT_BINARY_DIR}/scry-reflection-compile-fail")
-endif()
-
-file(MAKE_DIRECTORY "${OUTPUT_DIRECTORY}")
-string(MD5 fixture_id "${SOURCE_FILE};${EXPECTED_SUBSTRING}")
-set(object_file "${OUTPUT_DIRECTORY}/${fixture_id}.o")
-
+# cmake -DCXX_COMPILER=... -DSOURCE_FILE=... -DPROJECT_INCLUDE_DIR=...
+#       -DEXPECTED_SUBSTRING=... -P ExpectCompileFailure.cmake
+#
+# Passes when SOURCE_FILE fails to compile with a diagnostic containing
+# EXPECTED_SUBSTRING. -fsyntax-only still instantiates templates and
+# constant-evaluates, so the reflection diagnostics fire without an object file.
 execute_process(
   COMMAND
-    "${CXX_COMPILER}" -std=c++26 -freflection "-I${PROJECT_INCLUDE_DIR}" -c
-    "${SOURCE_FILE}" -o "${object_file}"
+    "${CXX_COMPILER}" -std=c++26 -freflection "-I${PROJECT_INCLUDE_DIR}"
+    -fsyntax-only "${SOURCE_FILE}"
   RESULT_VARIABLE compile_result
   OUTPUT_VARIABLE compiler_stdout
   ERROR_VARIABLE compiler_stderr)
-
-file(REMOVE "${object_file}")
 
 set(compiler_output "${compiler_stdout}\n${compiler_stderr}")
 

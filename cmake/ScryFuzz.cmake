@@ -1,23 +1,13 @@
 # Registration for libFuzzer targets. Every fuzz target is built only under
 # SCRY_BUILD_FUZZERS and is registered as a ctest test that replays its
-# checked-in seed corpus. SCRY_FUZZ_RUNS controls the budget: the default of 0
-# makes libFuzzer execute the seed corpus once and exit, which is a
-# deterministic per-commit replay. The scheduled fuzz ring raises it.
-
-set(
-  SCRY_FUZZ_RUNS
-  "0"
-  CACHE STRING
-  "libFuzzer -runs budget for every registered fuzz target; 0 replays the seed corpus once"
-)
+# checked-in seed corpus: -runs=0 makes libFuzzer execute the corpus once and
+# exit, which is a deterministic per-commit replay. The scheduled long searches
+# run the binaries directly (scripts/ci-nightly-fuzz.sh).
 
 # scry_add_fuzzer(<target> <corpus> SOURCES <source>...
 #                 [TEST_PREFIX <prefix>] [LINK_LIBRARIES <lib>...])
 function(scry_add_fuzzer target corpus)
   cmake_parse_arguments(SCRY_FUZZER "" "TEST_PREFIX" "SOURCES;LINK_LIBRARIES" ${ARGN})
-  if(NOT SCRY_FUZZER_SOURCES)
-    message(FATAL_ERROR "scry_add_fuzzer(${target}) requires SOURCES")
-  endif()
 
   add_executable("${target}" ${SCRY_FUZZER_SOURCES})
   target_compile_features("${target}" PRIVATE cxx_std_23)
@@ -41,7 +31,7 @@ function(scry_add_fuzzer target corpus)
     NAME "${SCRY_FUZZER_TEST_PREFIX}${corpus}-fuzz"
     COMMAND
       "${target}"
-      "-runs=${SCRY_FUZZ_RUNS}"
+      -runs=0
       -timeout=5
       -max_total_time=30
       "${PROJECT_BINARY_DIR}/fuzz-corpus/${corpus}"

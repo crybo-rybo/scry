@@ -66,32 +66,8 @@ jobs:
       SCRY_NIGHTLY_FUZZ_SECONDS: "1200"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Install pinned fuzz toolchain
-        # Retries the apt.llvm.org fetch + install up to 3 times: a transient
-        # outage in either source fails the whole scheduled run, and there is
-        # nothing actionable to do except wait and try again.
-        run: |
-          set -o pipefail  # a failed wget must fail the pipeline, not be masked by tee
-          installed=0
-          for attempt in 1 2 3; do
-            if wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
-                | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null \
-              && echo "deb https://apt.llvm.org/noble/ llvm-toolchain-noble-21 main" \
-                | sudo tee /etc/apt/sources.list.d/llvm-21.list \
-              && sudo apt-get update \
-              && sudo apt-get install -y \
-                clang-21 g++-14 libclang-rt-21-dev libcurl4-openssl-dev \
-                libfuzzer-21-dev ninja-build; then
-              installed=1
-              break
-            fi
-            echo "Fuzz toolchain install attempt ${attempt} failed; retrying in 30s..." >&2
-            sleep 30
-          done
-          if [[ "${installed}" -ne 1 ]] || ! command -v clang-21 >/dev/null; then
-            echo "Fuzz toolchain install failed after 3 attempts." >&2
-            exit 1
-          fi
+      - name: Install the pinned fuzz toolchain
+        uses: ./.github/actions/fuzz-toolchain
       - name: Run long fuzz target
         run: ./scripts/ci-nightly-fuzz.sh "${{ matrix.target }}"
       - name: Upload fuzz artifacts
@@ -133,8 +109,6 @@ jobs:
       SCRY_LOCAL_MODEL_BASE_URL: http://127.0.0.1:11434/v1
       SCRY_LOCAL_MODEL_HEALTH_URL: http://127.0.0.1:11434/api/version
       SCRY_LOCAL_MODEL_MODEL: qwen3:1.7b-q4_K_M
-      SCRY_LOCAL_MODEL_HEALTH_TIMEOUT_SECONDS: "60"
-      SCRY_LOCAL_MODEL_TIMEOUT_SECONDS: "180"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install the GCC 16 environment
@@ -174,20 +148,10 @@ jobs:
           }
           trap cleanup EXIT
 
-          ready=0
-          for _ in $(seq 1 60); do
-            if curl --silent --show-error --fail --max-time 2 \
-              "${SCRY_LOCAL_MODEL_HEALTH_URL}" \
-              >>build/nightly-local-model-artifacts/ollama-health.log 2>&1; then
-              ready=1
-              break
-            fi
-            sleep 1
-          done
-          if [[ "${ready}" -ne 1 ]]; then
-            echo "Ollama did not become healthy within 60 seconds." >&2
-            exit 1
-          fi
+          curl --silent --show-error --fail --max-time 2 \
+            --retry 60 --retry-connrefused --retry-delay 1 \
+            "${SCRY_LOCAL_MODEL_HEALTH_URL}" \
+            >>build/nightly-local-model-artifacts/ollama-health.log 2>&1
 
           # The pulled model tag is not digest-pinned: an upstream repush
           # should not break the nightly, and the deterministic fake-transport

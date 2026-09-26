@@ -3,6 +3,8 @@
 set -euo pipefail
 
 readonly root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=scripts/gnu-timeout.sh
+source "${root_dir}/scripts/gnu-timeout.sh"
 readonly fuzz_kind="${1:-}"
 readonly fuzz_seconds="${SCRY_NIGHTLY_FUZZ_SECONDS:-900}"
 readonly per_input_timeout="${SCRY_NIGHTLY_FUZZ_INPUT_TIMEOUT_SECONDS:-10}"
@@ -18,19 +20,6 @@ require_positive_integer() {
     echo "${name} must be a positive integer, got: ${value}" >&2
     exit 2
   fi
-}
-
-timeout_command() {
-  if command -v timeout >/dev/null 2>&1; then
-    command -v timeout
-    return
-  fi
-  if command -v gtimeout >/dev/null 2>&1; then
-    command -v gtimeout
-    return
-  fi
-  echo "GNU timeout is required (install coreutils on macOS)." >&2
-  exit 2
 }
 
 if [[ "$#" -ne 1 ]]; then
@@ -58,33 +47,16 @@ readonly runtime_corpus="${artifact_dir}/corpus"
 readonly crash_dir="${artifact_dir}/crashes"
 readonly seed_corpus="${root_dir}/tests/fuzz/corpus/${fuzz_kind}"
 readonly log_file="${artifact_dir}/fuzz.log"
-readonly timeout_bin="$(timeout_command)"
-
-if [[ ! -d "${seed_corpus}" ]]; then
-  echo "Missing seed corpus: ${seed_corpus}" >&2
-  exit 1
-fi
 
 mkdir -p "${runtime_corpus}" "${crash_dir}"
 cd "${root_dir}"
 
 cmake --preset fuzz -B "${build_dir}"
-if ! cmake --build "${build_dir}" --target help | grep -Eq \
-  "(^|[[:space:]])${target}([:[:space:]]|$)"; then
-  echo "Missing fuzz target ${target}; configure with SCRY_BUILD_FUZZERS=ON." >&2
-  exit 1
-fi
 cmake --build "${build_dir}" --target "${target}"
 
-readonly binary="${build_dir}/tests/fuzz/${target}"
-if [[ ! -x "${binary}" ]]; then
-  echo "Built fuzz executable is missing or not executable: ${binary}" >&2
-  exit 1
-fi
-
 echo "Running ${target} for ${fuzz_seconds}s; artifacts: ${artifact_dir}"
-"${timeout_bin}" "$((fuzz_seconds + 120))" \
-  "${binary}" \
+gnu_timeout "$((fuzz_seconds + 120))" \
+  "${build_dir}/tests/fuzz/${target}" \
   "-max_total_time=${fuzz_seconds}" \
   "-timeout=${per_input_timeout}" \
   -rss_limit_mb=4096 \

@@ -99,35 +99,6 @@ public:
   }
 };
 
-// Holds one transfer open until the turn's cancel flag is set, so a test can
-// address an in-flight turn by identifier. The shared fake's held exchange
-// waits for an explicit release instead, so it cannot express this. The spin is bounded
-// by the flag and by Harness shutdown; there is no sleep or wall-clock deadline.
-class HeldTransport final : public scry::detail::Transport {
-public:
-  [[nodiscard]] scry::Result<scry::detail::TransportResult>
-  perform(const scry::detail::TransportRequest&, const std::stop_token stopped,
-          const std::atomic<bool>& cancelled, scry::detail::BodyChunkSink&) override {
-    entered_.store(true, std::memory_order_release);
-    while (!cancelled.load(std::memory_order_acquire) && !stopped.stop_requested()) {
-      std::this_thread::yield();
-    }
-    return std::unexpected(scry::Error{
-        .category = scry::ErrorCategory::cancelled,
-        .message = "held transport cancelled",
-    });
-  }
-
-  void wait_for_entry() const {
-    while (!entered_.load(std::memory_order_acquire)) {
-      std::this_thread::yield();
-    }
-  }
-
-private:
-  std::atomic<bool> entered_{false};
-};
-
 // Deliberately violates the transport seam contract by throwing; the shared
 // fake reports failures as values and cannot express this.
 class ThrowingTransport final : public scry::detail::Transport {
@@ -240,11 +211,9 @@ TEST_CASE("a turn without on_finished still reports finished once update runs") 
 }
 
 TEST_CASE("Harness::cancel addresses an in-flight turn by identifier") {
-  auto transport = std::make_unique<HeldTransport>();
-  auto* held = transport.get();
-  auto harness = unwrap(scry::detail::HarnessTestAccess::create(
-      test_config(), provider(), std::move(transport)));
-  auto conversation = unwrap(scry::Conversation::create());
+  // A held exchange blocks the worker mid-transfer until the turn is cancelled.
+  auto [transport, harness, conversation] =
+      make_harness_fixture(test_config(), {{.hold = true}});
 
   bool cancelled = false;
   const auto turn =
@@ -257,7 +226,7 @@ TEST_CASE("Harness::cancel addresses an in-flight turn by identifier") {
                                                         scry::ErrorCategory::cancelled;
                                   },
                           }));
-  held->wait_for_entry();
+  transport->wait_for_call(1);
 
   CHECK_FALSE(harness.cancel(scry::TurnId{999}));
   CHECK(harness.cancel(turn.id()));
@@ -270,11 +239,9 @@ TEST_CASE("Harness::cancel addresses an in-flight turn by identifier") {
 }
 
 TEST_CASE("Harness::disconnect stops delivery while the turn still runs") {
-  auto transport = std::make_unique<HeldTransport>();
-  auto* held = transport.get();
-  auto harness = unwrap(scry::detail::HarnessTestAccess::create(
-      test_config(), provider(), std::move(transport)));
-  auto conversation = unwrap(scry::Conversation::create());
+  // A held exchange blocks the worker mid-transfer until the turn is cancelled.
+  auto [transport, harness, conversation] =
+      make_harness_fixture(test_config(), {{.hold = true}});
 
   std::string streamed;
   bool reported = false;
@@ -286,7 +253,7 @@ TEST_CASE("Harness::disconnect stops delivery while the turn still runs") {
           .on_finished =
               [&reported](scry::Result<scry::Completion>) { reported = true; },
       }));
-  held->wait_for_entry();
+  transport->wait_for_call(1);
 
   CHECK_FALSE(harness.disconnect(scry::TurnId{999}));
   CHECK(harness.disconnect(turn.id()));

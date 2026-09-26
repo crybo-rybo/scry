@@ -70,9 +70,6 @@ jobs:
     env:
       CC: gcc-16
       CXX: g++-16
-      # The documentation job owns the formatting gate with a pinned
-      # clang-format; core legs skip it so unpinned tool versions can't skew.
-      SCRY_FORMAT_CHECK: "0"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install the Linux GCC 16 environment
@@ -116,9 +113,7 @@ jobs:
       - name: Analyze
         # Ubuntu 24.04 ships a libstdc++ whose <expected> clang 18 cannot
         # parse, so this leg analyzes against libc++.
-        env:
-          SCRY_TIDY_LIBCXX: "1"
-        run: ./scripts/ci-tidy.sh
+        run: ./scripts/ci-tidy.sh -DSCRY_CLANG_TOOLING_LIBCXX=ON
 
   sanitizers:
     name: ${{ matrix.name }}
@@ -130,40 +125,29 @@ jobs:
             leg: asan
           - name: TSan
             leg: tsan
-          # Every fuzz target builds and replays its checked-in seed corpus
-          # per pull request, so the targets cannot rot between the
-          # long scheduled runs. Toolchain pins match nightly.yml's long-fuzz
-          # job because libFuzzer needs the matching clang runtime.
-          - name: Fuzz corpus replay (ASan + UBSan)
-            leg: fuzz
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install the GCC 16 environment
-        if: matrix.leg != 'fuzz'
         uses: ./.github/actions/gcc16-env
-      - name: Install the pinned fuzz toolchain
-        # Only the fuzz replay leg needs clang-21 and its libFuzzer runtime;
-        # the same pin as nightly.yml's long-fuzz job. g++-14 is there for the
-        # libstdc++ headers clang-21 compiles against.
-        if: matrix.leg == 'fuzz'
-        run: |
-          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
-            | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
-          echo "deb https://apt.llvm.org/noble/ llvm-toolchain-noble-21 main" \
-            | sudo tee /etc/apt/sources.list.d/llvm-21.list
-          sudo apt-get update
-          sudo apt-get install -y \
-            clang-21 g++-14 libclang-rt-21-dev libcurl4-openssl-dev \
-            libfuzzer-21-dev ninja-build
-          sudo sysctl vm.mmap_rnd_bits=28
       - name: Run the sanitizer leg
-        if: matrix.leg != 'fuzz'
         run: ./scripts/ci-sanitizer.sh "${{ matrix.leg }}"
+
+  fuzz-replay:
+    # Every fuzz target builds and replays its checked-in seed corpus per pull
+    # request, so the targets cannot rot between the long scheduled runs. The
+    # fuzz-toolchain action is shared with nightly.yml's long-fuzz job because
+    # libFuzzer needs the matching clang runtime.
+    name: Fuzz corpus replay (ASan + UBSan)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      CC: clang-21
+      CXX: clang++-21
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install the pinned fuzz toolchain
+        uses: ./.github/actions/fuzz-toolchain
       - name: Replay the fuzz corpus
-        if: matrix.leg == 'fuzz'
-        env:
-          CC: clang-21
-          CXX: clang++-21
         run: ./scripts/ci-fuzz-replay.sh

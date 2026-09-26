@@ -30,10 +30,6 @@ jobs:
       - name: Install complexity checker
         run: python3 -m pip install --user --break-system-packages lizard==1.24.0
       - name: Build, test, install, and audit the package
-        # The documentation ring owns the formatting gate with a pinned
-        # clang-format; this leg runs everything else.
-        env:
-          SCRY_FORMAT_CHECK: "0"
         run: ./scripts/ci-local.sh
       - name: Install documentation toolchain
         run: sudo apt-get install -y doxygen graphviz
@@ -47,12 +43,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          notes="docs/releases/${TAG}.md"
-          if [[ ! -f "${notes}" ]]; then
-            echo "Missing release notes: ${notes}" >&2
-            exit 1
-          fi
           gh release create "${TAG}" \
             --title "Scry ${TAG}" \
-            --notes-file "${notes}" \
+            --notes-file "docs/releases/${TAG}.md" \
             "scry-api-docs-${TAG}.zip"

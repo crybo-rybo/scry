@@ -107,12 +107,10 @@ public:
   [[nodiscard]] std::optional<JsonView> find(std::string_view name) const noexcept;
 
 private:
-  class Document;
+  explicit JsonView(std::shared_ptr<const void> value) noexcept;
 
-  JsonView(std::shared_ptr<const Document> document, const void* value) noexcept;
-
-  std::shared_ptr<const Document> document_{};
-  const void* value_{};
+  // Owns the parsed document and points at this view's node within it.
+  std::shared_ptr<const void> value_{};
 };
 
 /// Quotes and escapes one JSON string literal, for hosts that assemble small JSON

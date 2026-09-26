@@ -14,14 +14,6 @@
 
 namespace scry::reflection::detail {
 
-consteval void append_literal(std::vector<char>& output, const std::string_view value) {
-  append_json_literal(output, value);
-}
-
-consteval void append_quoted(std::vector<char>& output, const std::string_view value) {
-  append_json_string(output, value);
-}
-
 consteval void append_unsigned(std::vector<char>& output, std::uint64_t value) {
   std::array<char, std::numeric_limits<std::uint64_t>::digits10 + 2U> digits{};
   std::size_t size = 0;
@@ -85,8 +77,8 @@ append_schema_prologue(std::vector<char>& output,
                        const std::optional<std::string_view> description_text) {
   output.push_back('{');
   if (description_text.has_value()) {
-    append_literal(output, "\"description\":");
-    append_quoted(output, *description_text);
+    append_json_literal(output, "\"description\":");
+    append_json_string(output, *description_text);
     output.push_back(',');
   }
 }
@@ -97,8 +89,8 @@ append_description_key(std::vector<char>& output,
   if (!description_text.has_value()) {
     return;
   }
-  append_literal(output, ",\"description\":");
-  append_quoted(output, *description_text);
+  append_json_literal(output, ",\"description\":");
+  append_json_string(output, *description_text);
 }
 
 template <typename Type>
@@ -133,9 +125,9 @@ consteval void
 append_aggregate_schema(std::vector<char>& output,
                         const std::optional<std::string_view> description_text) {
   output.push_back('{');
-  append_literal(output, "\"additionalProperties\":false");
+  append_json_literal(output, "\"additionalProperties\":false");
   append_description_key(output, description_text);
-  append_literal(output, ",\"properties\":{");
+  append_json_literal(output, ",\"properties\":{");
 
   bool first = true;
   static constexpr auto members = sorted_members_of<Type>();
@@ -143,24 +135,24 @@ append_aggregate_schema(std::vector<char>& output,
     if (!first) {
       output.push_back(',');
     }
-    append_quoted(output, std::meta::identifier_of(member));
+    append_json_string(output, std::meta::identifier_of(member));
     output.push_back(':');
     append_member_schema<member>(output);
     first = false;
   }
 
-  append_literal(output, "},\"required\":[");
+  append_json_literal(output, "},\"required\":[");
   first = true;
   template for (constexpr std::meta::info member : members) {
     if constexpr (!std::meta::has_default_member_initializer(member)) {
       if (!first) {
         output.push_back(',');
       }
-      append_quoted(output, std::meta::identifier_of(member));
+      append_json_string(output, std::meta::identifier_of(member));
       first = false;
     }
   }
-  append_literal(output, "],\"type\":\"object\"}");
+  append_json_literal(output, "],\"type\":\"object\"}");
 }
 
 consteval void
@@ -168,8 +160,8 @@ append_described_type(std::vector<char>& output,
                       const std::optional<std::string_view> description_text,
                       const std::string_view type) {
   append_schema_prologue(output, description_text);
-  append_literal(output, "\"type\":");
-  append_quoted(output, type);
+  append_json_literal(output, "\"type\":");
+  append_json_string(output, type);
   output.push_back('}');
 }
 
@@ -178,11 +170,11 @@ consteval void
 append_integer_schema(std::vector<char>& output,
                       const std::optional<std::string_view> description_text) {
   append_schema_prologue(output, description_text);
-  append_literal(output, "\"maximum\":");
+  append_json_literal(output, "\"maximum\":");
   append_integer(output, std::numeric_limits<Integer>::max());
-  append_literal(output, ",\"minimum\":");
+  append_json_literal(output, ",\"minimum\":");
   append_integer(output, std::numeric_limits<Integer>::lowest());
-  append_literal(output, ",\"type\":\"integer\"}");
+  append_json_literal(output, ",\"type\":\"integer\"}");
 }
 
 template <typename Enum>
@@ -190,17 +182,17 @@ consteval void
 append_enum_schema(std::vector<char>& output,
                    const std::optional<std::string_view> description_text) {
   append_schema_prologue(output, description_text);
-  append_literal(output, "\"enum\":[");
+  append_json_literal(output, "\"enum\":[");
   bool first = true;
   static constexpr auto enumerators = declared_enumerators_of<Enum>();
   template for (constexpr std::meta::info enumerator : enumerators) {
     if (!first) {
       output.push_back(',');
     }
-    append_quoted(output, std::meta::identifier_of(enumerator));
+    append_json_string(output, std::meta::identifier_of(enumerator));
     first = false;
   }
-  append_literal(output, "],\"type\":\"string\"}");
+  append_json_literal(output, "],\"type\":\"string\"}");
 }
 
 template <typename Optional>
@@ -208,42 +200,28 @@ consteval void
 append_optional_schema(std::vector<char>& output,
                        const std::optional<std::string_view> description_text) {
   using Element = typename optional_traits<Optional>::value_type;
-  append_literal(output, "{\"anyOf\":[");
+  append_json_literal(output, "{\"anyOf\":[");
   append_schema<Element>(output, std::nullopt);
-  append_literal(output, ",{\"type\":\"null\"}]");
+  append_json_literal(output, ",{\"type\":\"null\"}]");
   append_description_key(output, description_text);
   output.push_back('}');
 }
 
+template <typename Sequence>
 consteval void
-append_sequence_prefix(std::vector<char>& output,
+append_sequence_schema(std::vector<char>& output,
                        const std::optional<std::string_view> description_text) {
+  using Element = typename Sequence::value_type;
   append_schema_prologue(output, description_text);
-  append_literal(output, "\"items\":");
-}
-
-template <typename Vector>
-consteval void
-append_vector_schema(std::vector<char>& output,
-                     const std::optional<std::string_view> description_text) {
-  using Element = typename vector_traits<Vector>::value_type;
-  append_sequence_prefix(output, description_text);
+  append_json_literal(output, "\"items\":");
   append_schema<Element>(output, std::nullopt);
-  append_literal(output, ",\"type\":\"array\"}");
-}
-
-template <typename Array>
-consteval void
-append_array_schema(std::vector<char>& output,
-                    const std::optional<std::string_view> description_text) {
-  using Element = typename array_traits<Array>::value_type;
-  append_sequence_prefix(output, description_text);
-  append_schema<Element>(output, std::nullopt);
-  append_literal(output, ",\"maxItems\":");
-  append_unsigned(output, array_traits<Array>::size);
-  append_literal(output, ",\"minItems\":");
-  append_unsigned(output, array_traits<Array>::size);
-  append_literal(output, ",\"type\":\"array\"}");
+  if constexpr (array_traits<Sequence>::recognized) {
+    append_json_literal(output, ",\"maxItems\":");
+    append_unsigned(output, array_traits<Sequence>::size);
+    append_json_literal(output, ",\"minItems\":");
+    append_unsigned(output, array_traits<Sequence>::size);
+  }
+  append_json_literal(output, ",\"type\":\"array\"}");
 }
 
 template <typename Type>
@@ -265,10 +243,9 @@ consteval void append_schema(std::vector<char>& output,
     append_enum_schema<Value>(output, description_text);
   } else if constexpr (optional_traits<Value>::recognized) {
     append_optional_schema<Value>(output, description_text);
-  } else if constexpr (vector_traits<Value>::recognized) {
-    append_vector_schema<Value>(output, description_text);
-  } else if constexpr (array_traits<Value>::recognized) {
-    append_array_schema<Value>(output, description_text);
+  } else if constexpr (vector_traits<Value>::recognized ||
+                       array_traits<Value>::recognized) {
+    append_sequence_schema<Value>(output, description_text);
   } else {
     append_aggregate_schema<Value>(output, description_text);
   }
