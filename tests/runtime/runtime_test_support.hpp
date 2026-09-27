@@ -70,8 +70,8 @@ tool_event(const scry::TurnId turn_id, std::string name = "forecast",
   };
 }
 
-// Only the assistant text and the retry bookkeeping ever vary between suites,
-// so they travel as defaulted options rather than positional overloads.
+// The parts of a completion that suites vary: the assistant text and the retry
+// bookkeeping.
 struct CompletionOptions {
   std::string text{"done"};
   std::uint32_t attempt_count{1};
@@ -101,9 +101,8 @@ completion_event(const scry::TurnId turn_id, CompletionOptions options = {}) {
   };
 }
 
-// Everything a test wants to vary about a route, so one fixture serves the
-// tool-dispatch, pump-delivery, and conversation-limit suites without each
-// growing its own positional overload.
+// Everything a test wants to vary about a route, shared by the tool-dispatch,
+// pump-delivery, and conversation-limit suites.
 struct RouteOptions {
   // A real turn always freezes a snapshot, even of an empty registry.
   scry::detail::FrozenToolEntries tools{frozen_tools({})};

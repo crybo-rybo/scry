@@ -492,9 +492,11 @@ TEST_CASE("a throwing admission hook refuses the call and the turn continues") {
   CHECK(fixture.pump.update({}).events_remaining == 0);
 
   CHECK(handler_calls == 0);
+  // The documented contract: the model is told exactly what a throwing handler
+  // tells it, so it cannot tell the hook from the handler.
   CHECK(observed_results ==
-        std::vector<std::string>{R"({"error":"tool handler threw an exception"})",
-                                 R"({"error":"tool handler threw an exception"})"});
+        std::vector<std::string>{R"({"error":"tool handler returned an error"})",
+                                 R"({"error":"tool handler returned an error"})"});
   CHECK(fixture.commands->size() == 2);
 }
 

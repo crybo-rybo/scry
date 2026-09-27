@@ -23,7 +23,7 @@ get_filename_component(
   ABSOLUTE
 )
 
-# Build the library itself, without its own tests or example: this project is a
+# Build the library itself, without its own tests or examples: this project is a
 # consumer of scry::scry that happens to live in the same repository.
 set(SCRY_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(SCRY_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)

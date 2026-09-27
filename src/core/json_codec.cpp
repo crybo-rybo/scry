@@ -17,7 +17,7 @@ struct JsonReadOptions : glz::opts {
 constexpr JsonReadOptions json_read_options{{.null_terminated = false}};
 
 // Whitespace per RFC 8259. A buffer holding only these never held a document, but
-// Glaze parses it as a bare null, so it is rejected before the read.
+// Glaze parses it as a bare null, so the codec rejects it explicitly.
 constexpr std::string_view json_whitespace = " \t\n\r";
 
 // The variant reader behind glz::generic clears Glaze's `end_reached` code before

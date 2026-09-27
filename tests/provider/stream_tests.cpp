@@ -22,8 +22,8 @@ using namespace scry::test_fixtures;
 }
 
 // Every decoded event of the whole response lands in one caller-owned sink, so
-// this also pins the ordering the worker depends on: each call appends after
-// what the previous ones left behind.
+// this also pins parse_stream_event's append contract: each call adds after
+// whatever the sink already holds and never clears it.
 void decode_events(ProviderAdapter& adapter, ProviderDecodeState& state,
                    const std::vector<SseEvent>& events,
                    std::vector<ProviderEvent>& out) {

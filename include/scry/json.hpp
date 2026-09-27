@@ -27,9 +27,9 @@ enum class JsonKind : std::uint8_t {
   null,
   /// A JSON true or false.
   boolean,
-  /// A whole number that fits a signed 64-bit integer.
+  /// A negative whole number that fits a signed 64-bit integer.
   signed_integer,
-  /// A whole number that fits an unsigned 64-bit integer.
+  /// A non-negative whole number that fits an unsigned 64-bit integer.
   unsigned_integer,
   /// Any other numeric value.
   number,

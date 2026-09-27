@@ -70,8 +70,8 @@ using MachineEvent = std::variant<BeginTurn, ModelTextDelta, ModelSemanticOutput
 
 // Tells the worker to send one model request. The request is shared rather than
 // copied, because retries and tool rounds resend the same conversation; the
-// machine copies it before adding a tool round, so the snapshot an attempt is
-// reading never changes underneath it.
+// machine copies it before any change while an attempt still holds it, so the
+// snapshot an attempt is reading never changes underneath it.
 struct IssueModelRequest {
   TurnId turn_id{};
   std::shared_ptr<const ModelRequest> request{};
@@ -95,7 +95,7 @@ struct PublishToolCall {
   std::uint32_t index{};
 };
 
-// The driver forwards this terminal intent to the pump as one value. The pump
+// The worker forwards this terminal intent to the pump as one value. The pump
 // owns the atomic Conversation commit and callback delivery. The transcript is
 // the request's own message list, so it opens with the turn's user message.
 struct CommitCompletion {
@@ -141,7 +141,8 @@ struct TransitionResult {
   TransitionStatus status{TransitionStatus::applied};
 };
 
-// The worker fills every field from Config; nothing here duplicates its defaults.
+// The worker sets every field for each turn: max_exchange_bytes from what the
+// Conversation byte limit leaves after the user message, the rest from Config.
 struct ToolLoopPolicy {
   std::uint32_t max_rounds{};
   std::size_t max_argument_bytes{};

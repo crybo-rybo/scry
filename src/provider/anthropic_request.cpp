@@ -101,9 +101,9 @@ namespace {
 
 // The Messages API takes one message per role turn, so consecutive same-role
 // messages are concatenated into a single content array rather than emitted as
-// separate entries. A turn stopped at the tool-round limit commits history
-// ending in the user message carrying that round's tool results, and the next
-// send appends another user message straight after it.
+// separate entries. A calls-only response that stops a turn at the tool-round
+// limit commits history ending in the user message carrying the last round's tool
+// results, and the next send appends another user message straight after it.
 [[nodiscard]] Status append_message(std::vector<AnthropicMessage>& encoded,
                                     const Message& message) {
   const std::string_view role = message.role == Role::user ? "user" : "assistant";

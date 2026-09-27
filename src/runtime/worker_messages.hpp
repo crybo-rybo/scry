@@ -42,12 +42,11 @@ struct TextDeltaEvent {
 // The machine's publication already carries exactly what the pump needs.
 using ToolCallEvent = PublishToolCall;
 
-// The pump moves `transcript` into the Conversation and keeps `text`, a copy of
-// the final assistant text, for the completion callback. The transcript opens
-// with the turn's user message and was reserved against the Conversation budget
-// by the machine, so the queue charges neither it nor `text`. The calls
-// dropped at the tool-round limit were reserved the same way and are charged the
-// same nothing.
+// The pump moves `transcript` into the Conversation and fills `text` with the
+// final assistant text for the completion callback. The transcript opens with
+// the turn's user message. It and the calls dropped at the tool-round limit are
+// already reserved against the Conversation budget - the user message by send(),
+// the rest by the machine - so the queue charges neither them nor `text`.
 struct CompletionEvent {
   TurnId turn_id{};
   std::vector<Message> transcript{};

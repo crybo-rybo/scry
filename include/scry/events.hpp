@@ -49,8 +49,8 @@ struct Usage {
 /// Callback arguments are borrowed for the duration of the callback. Copy any fields
 /// that must outlive it. A call is reported once its result has been produced and
 /// posted to the worker for resend; this does not confirm server receipt. A framework
-/// failure that fails the whole turn instead, such
-/// as ErrorCategory::resource_limit on the result, reports no ToolCall at all.
+/// failure that fails the whole turn instead, such as ErrorCategory::resource_limit
+/// on the result, reports no ToolCall at all.
 struct ToolCall {
   /// Turn that owns this call.
   TurnId turn_id{};

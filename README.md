@@ -160,7 +160,9 @@ except the tool handler and the callbacks, which run inside `update()`.
 - **GCC 16 or newer.** Tools are declared with C++26 reflection, so the public
   headers need `-std=c++26 -freflection`. Clang and MSVC cannot consume the
   library.
-- **CMake 3.28** and **libcurl 7.84** or newer, with development headers.
+- **CMake 3.31** and **libcurl 7.84** or newer, with development headers. The
+  Glaze revision Scry fetches requires CMake 3.31; Scry's own build files
+  accept 3.28 when CMake finds a packaged Glaze instead.
 - **Linux or macOS.** CI runs GCC 16 on Ubuntu 24.04 and macOS 15.
 
 Glaze is a private header-only dependency that CMake finds or fetches. Tests
@@ -183,7 +185,7 @@ Then, in a project configured with GCC 16 and
 `-DCMAKE_PREFIX_PATH=/your/prefix`:
 
 ```cmake
-find_package(scry 0.4.1 CONFIG REQUIRED)
+find_package(scry 0.5.0 CONFIG REQUIRED)
 target_link_libraries(app PRIVATE scry::scry)
 ```
 
@@ -195,7 +197,7 @@ include(FetchContent)
 FetchContent_Declare(
   scry
   GIT_REPOSITORY https://github.com/crybo-rybo/scry.git
-  GIT_TAG v0.4.1
+  GIT_TAG v0.5.0
 )
 FetchContent_MakeAvailable(scry)
 target_link_libraries(app PRIVATE scry::scry)

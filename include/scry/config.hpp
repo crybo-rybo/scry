@@ -22,7 +22,8 @@ enum class ProviderDialect : std::uint8_t {
 enum class ReasoningMode : std::uint8_t {
   /// Omit reasoning controls and use the provider or model default.
   provider_default,
-  /// Request that reasoning be disabled when the selected dialect supports it.
+  /// Request that reasoning be disabled. Only the OpenAI-compatible dialect
+  /// supports this; Harness::create() rejects it for the Anthropic dialect.
   disabled,
 };
 

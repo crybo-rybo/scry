@@ -60,8 +60,8 @@ TEST_CASE("transport timeout validation requires positive bounds") {
   using namespace std::chrono_literals;
   using scry::detail::transport_policy::validate_timeouts;
 
-  // An unset total transfer bound is the default and stays accepted; a set one
-  // must still be positive.
+  // An unset total transfer bound is the default and is accepted; a set one must
+  // be positive like every other bound.
   CHECK(validate_timeouts({}));
   CHECK(validate_timeouts({.transfer = 1ms}));
   for (const auto& timeouts : {

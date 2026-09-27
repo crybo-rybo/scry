@@ -41,8 +41,8 @@ data: [DONE]
   };
   config.retry.max_attempts = 1;
   config.timeouts.connect = 500ms;
-  // No total bound: held transfers are ended by cancellation or destruction.
   config.timeouts.idle = 2s;
+  // No total bound: held transfers are ended by cancellation or destruction.
   config.timeouts.transfer = std::nullopt;
   config.timeouts.shutdown = 25ms;
   return config;

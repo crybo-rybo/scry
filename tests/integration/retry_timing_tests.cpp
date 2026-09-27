@@ -173,16 +173,16 @@ TEST_CASE("the elapsed-time cap ends retrying") {
   // Derived from src/machine/turn_machine.cpp, which owns the cap; the worker
   // only drives the wait.
   //
-  // Attempt 1 fails at the origin. retry_is_allowed passes (request attempt 1 of
-  // 10, and origin <= origin + max_elapsed). retry_delay gives the 800 ms
-  // initial backoff, so the wake deadline is origin + 800 ms; that is still
-  // within the origin + 1 s elapsed deadline, so a ScheduleRetryWake is emitted.
+  // Attempt 1 fails at the origin. It is request attempt 1 of 10, so retry_delay
+  // gives the 800 ms initial backoff and the wake deadline is origin + 800 ms;
+  // that is within the retry window ending at origin + 1 s, so a
+  // ScheduleRetryWake is emitted.
   //
-  // RetryWake at origin + 800 ms is not past the elapsed deadline, so attempt 2
-  // is issued. It fails at origin + 800 ms. retry_is_allowed still passes, but
-  // retry_delay now doubles to 1600 ms, putting the wake at origin + 2400 ms.
-  // `deadline > elapsed_deadline` therefore holds and on_event(AttemptFailed)
-  // takes the finish_error path instead of scheduling a third attempt.
+  // RetryWake at origin + 800 ms is not past the window end, so attempt 2 is
+  // issued. It fails at origin + 800 ms, and retry_delay doubles to 1600 ms for
+  // the second failure, putting the wake at origin + 2400 ms. That is past
+  // retry_window_end_, so on_event(AttemptFailed) takes the finish_error path
+  // instead of scheduling a third attempt.
   //
   // So: two attempts, one scheduled wake, and the terminal error is the second
   // failure correlated by TurnMachine::correlate, which stamps attempt with

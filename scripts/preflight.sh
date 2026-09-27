@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 
 # Local equivalent of the per-commit CI ring: documentation, formatting, core,
-# clang-tidy, sanitizers, and the fuzz corpus replay. Long fuzz runs, the showcase, and the
-# local-model smoke live in the scheduled/manual nightly workflow.
+# clang-tidy, sanitizers, and the fuzz corpus replay. Long fuzz runs, the
+# showcase, and the local-model smoke live in the scheduled/manual nightly
+# workflow.
 #
-# Every gate runs the same scripts/ci-*.sh script the hosted leg runs; the only
-# thing that lives here is the host-capability probe in front of it.
+# Every gate runs the same script the hosted leg runs (scripts/format.sh or a
+# scripts/ci-*.sh leg); the only thing that lives here is the host-capability
+# probe in front of it.
 #
 # A leg whose toolchain this host cannot provide is reported as SKIP rather than
 # FAIL, and named again in the summary, so a reader can see exactly which hosted

@@ -12,7 +12,8 @@ using namespace scry::test_support;
 
 namespace {
 
-// An error whose diagnostic alone fills most of a tightened per-turn budget.
+// An error whose 128-byte diagnostic stays charged to its turn until delivery
+// releases it.
 [[nodiscard]] scry::detail::ErrorEvent oversized_error(const scry::TurnId turn_id) {
   return {
       .turn_id = turn_id,
@@ -112,8 +113,8 @@ TEST_CASE("bounded terminal push preserves the per-turn event byte limit") {
 }
 
 // Delivery credits the bytes measured when the event arrived, so the per-turn
-// ledger drains exactly. Errors are the charged terminal event now that a
-// completion costs only its correlation id.
+// ledger drains exactly. An error is the terminal event that exercises this,
+// because a completion is charged only its correlation id.
 TEST_CASE("delivering a terminal error releases the originally accounted queue bytes") {
   PumpFixture fixture;
   std::optional<scry::Error> delivered_error;
@@ -704,9 +705,9 @@ TEST_CASE("disconnecting from inside on_text_delta does not destroy the running 
                         captured = std::string(64, 'x')](std::string_view) {
                          ++delta_calls;
                          disconnect_reported = route->disconnect();
-                         // Reading a capture after the disconnect is the whole
-                         // regression: clearing the callbacks eagerly deleted the
-                         // closure this frame is running out of.
+                         // Reading a capture after the disconnect is the point:
+                         // clearing the callbacks eagerly would delete the closure
+                         // this frame is running out of.
                          observed_size = captured.size();
                        },
                    .on_finished =

@@ -26,7 +26,7 @@ struct MoveResult {
 
 // A refusal is not a framework failure: the turn continues and the model gets a
 // chance to pick another direction. Only the first string reaches the model; the
-// second stays in the host's logs.
+// second is the host-side Error::message, which Scry never forwards.
 [[nodiscard]] scry::Result<MoveResult> move(const MoveArguments arguments) {
   if (arguments.direction != Direction::north) {
     return std::unexpected(scry::tool_error(

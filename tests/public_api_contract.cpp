@@ -75,8 +75,8 @@ static_assert(
     std::same_as<decltype(scry::Completion::rejected_tool_call_count), std::uint32_t>);
 static_assert(std::same_as<decltype(scry::Completion::unexecuted_tool_calls),
                            std::vector<scry::ToolCallBlock>>);
-// The soft stop appends its finish reason; the existing enumerators keep the
-// values a host may already have persisted.
+// A host may persist these values, so each enumerator keeps its number and a new
+// reason, such as the soft stop's tool_round_limit, is appended at the end.
 static_assert(std::to_underlying(scry::FinishReason::completed) == 0);
 static_assert(std::to_underlying(scry::FinishReason::length) == 1);
 static_assert(std::to_underlying(scry::FinishReason::tool_use) == 2);
@@ -175,7 +175,8 @@ static_assert(requires(const scry::Turn& turn) {
   { turn.finished() } -> std::same_as<bool>;
 });
 
-// Thin queries over state the runtime already holds.
+// A host holding only a TurnId can cancel or disconnect that turn, and a Config
+// can be validated without creating a Harness.
 static_assert(requires(scry::Harness& harness) {
   { harness.cancel(scry::TurnId{}) } -> std::same_as<bool>;
   { harness.disconnect(scry::TurnId{}) } -> std::same_as<bool>;
@@ -184,8 +185,8 @@ static_assert(requires(const scry::Config& config) {
   { scry::Harness::validate(config) } -> std::same_as<scry::Status>;
 });
 
-// create() adopts a registry, and the parameter is defaulted so the one-argument
-// spelling keeps working.
+// create() adopts a registry, and the parameter is defaulted so the config alone
+// is also a valid call.
 static_assert(requires(scry::Config config) {
   {
     scry::Harness::create(std::move(config))
@@ -479,5 +480,5 @@ int main() {
     return 1;
   }
 
-  return scry::version == "0.4.1" ? 0 : 1;
+  return scry::version == "0.5.0" ? 0 : 1;
 }

@@ -185,9 +185,9 @@ TEST_CASE("curl transport posts request data and returns response metadata") {
 
 TEST_CASE("curl transport sends extra headers and routes through a configured proxy") {
   // The loopback server stands in for the proxy: curl sends an absolute-form
-  // request line to it rather than resolving the unreachable origin host. No
-  // TLS loopback exists, so the CA bundle option is covered by configuration
-  // validation and the provider request carry-through tests instead.
+  // request line to it rather than resolving the unreachable origin host. The
+  // loopback server speaks plain HTTP only, so the CA bundle option is covered by
+  // configuration validation and the provider request carry-through tests.
   LoopbackServer server{http_response("200 OK", "Content-Type: application/json\r\n",
                                       R"({"text":"via"})")};
   auto proxied = request("http://example.invalid/v1/messages");
@@ -422,9 +422,9 @@ TEST_CASE("curl transport never forwards redirect bodies to the response sink") 
   CHECK(body.empty());
 }
 
-// Only the Retry-After values survive header parsing, so a retryable failure
-// must carry one all the way to the error the worker schedules the next attempt
-// from.
+// Header parsing retains only the request id and the Retry-After values, and a
+// retryable failure must carry Retry-After all the way to the error the worker
+// schedules the next attempt from.
 TEST_CASE("curl transport reports Retry-After on a retryable server error") {
   LoopbackServer server{http_response(
       "503 Service Unavailable",

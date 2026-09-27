@@ -548,8 +548,9 @@ TEST_CASE("reflected erased handlers encode copy-only results without extra copi
 }
 
 TEST_CASE("reflected erased handlers encode a Result of a const-qualified value") {
-  // Instantiating the handler is the regression: the const value type used to
-  // reach encode_value unstripped and fail to compile inside the library.
+  // Instantiating the handler is the check: the const value type has to be
+  // stripped before it reaches encode_value, or this fails to compile inside the
+  // library.
   auto handler = scry::reflection::detail::make_tool_handler<PresenceArguments>(
       ConstExpectedHandler{});
 

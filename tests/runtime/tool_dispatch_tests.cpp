@@ -161,9 +161,9 @@ TEST_CASE("tool dispatch hands the handler the identity of the call it is servic
       registered_tool("forecast",
                       [&observed](const scry::ToolCallContext& context,
                                   scry::Json) -> scry::Result<scry::Json> {
-                        // Copying the views here is the point: they borrow from the
-                        // live call block, so a handler that keeps them must own the
-                        // text itself.
+                        // The views borrow from `call`, which the test keeps
+                        // alive, so holding them is safe here; a handler that
+                        // keeps them past its return must copy the text instead.
                         observed = context;
                         return scry::Json{.text = "{}"};
                       })};

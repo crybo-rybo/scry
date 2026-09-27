@@ -21,8 +21,8 @@ constexpr auto stream = std::string_view{": keepalive\r\n"
                                          "data: {\"ok\":true}\n"
                                          "\n"};
 
-// The worker hands the parser one vector for a whole response, so every chunk
-// appends to the same sink.
+// push() appends to the caller's vector, so one sink never cleared between chunks
+// collects the whole stream's events for a single comparison.
 [[nodiscard]] std::vector<SseEvent>
 parse_chunks(const std::vector<std::string_view>& chunks) {
   SseParser parser{1024};

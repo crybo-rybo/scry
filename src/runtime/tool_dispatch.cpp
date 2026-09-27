@@ -73,9 +73,6 @@ successful_result(const ToolCallBlock& call, const Json& value,
   return text;
 }
 
-// What the model is told when a handler fails without publishing its own text.
-constexpr std::string_view handler_failed_message = "tool handler returned an error";
-
 [[nodiscard]] Result<ToolResultBlock>
 dispatch_tool_handler(ContextualToolHandler& handler, const ToolCallBlock& call,
                       const ToolCallContext& context,

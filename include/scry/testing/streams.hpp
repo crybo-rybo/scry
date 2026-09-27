@@ -144,7 +144,7 @@ openai_stream_end(const std::string_view prefix, const std::string_view finish_r
 
 } // namespace stream_frames
 
-/// Builds the canonical five-event Anthropic text completion.
+/// Builds the canonical six-event Anthropic text completion.
 /// @param text Assistant text delivered as one content delta.
 /// @param message_id Provider message identifier.
 /// @param request_id Correlation identifier carried in message_start; omitted
