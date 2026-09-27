@@ -48,9 +48,13 @@ struct ToolCallContext {
 
 /// Move-only type-erased explicit tool handler.
 ///
-/// The input is a canonical JSON object. The handler validates it against its schema;
-/// Scry does not perform general JSON Schema validation. A successful return must
-/// contain valid JSON. Typed C++ handlers can instead use scry::reflection.
+/// The input is a canonical JSON object: Scry has checked that the arguments parse
+/// and form an object, and nothing more. They are not checked against the registered
+/// input_schema, because Scry does not perform general JSON Schema validation; the
+/// handler owns that check, and returning scry::tool_error() tells the model what was
+/// wrong so it can correct the call. A successful return must contain valid JSON.
+/// Typed C++ handlers can instead use scry::reflection, whose generated decoder
+/// enforces the schema it generates.
 using ToolHandler = UniqueFunction<Result<Json>(Json)>;
 
 /// Move-only type-erased explicit tool handler that also receives its call identity.

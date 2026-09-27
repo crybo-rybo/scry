@@ -68,10 +68,11 @@ struct Error {
   /// Sanitized provider request identifier, when available.
   std::string provider_request_id{};
   /// Text a tool handler wants the model to see. Empty means the model receives
-  /// Scry's fixed diagnostic. Bounded by ResourceLimits::max_tool_result_bytes; an
-  /// oversized value falls back to the fixed diagnostic. The reflected codec fills
-  /// it for schema-derived decode failures; Scry never fills it from exception text
-  /// or from `message`.
+  /// Scry's fixed diagnostic, "tool handler returned an error". Bounded by
+  /// ResourceLimits::max_tool_result_bytes; a value too large for it is replaced by
+  /// the generic "tool execution failed". The reflected codec fills it for
+  /// schema-derived decode failures; Scry never fills it from exception text or
+  /// from `message`.
   std::string model_message{};
 };
 
