@@ -65,11 +65,11 @@ namespace scry::reflection {
 /// @tparam Args Complete reflected argument aggregate.
 /// @tparam Handler Move-constructible callable satisfying ToolHandlerFor<Handler,
 /// Args>.
-/// @param registry Harness-owned registry that receives the tool.
+/// @param registry Registry that receives the tool.
 /// @param metadata Provider-visible tool name and description.
 /// @param handler Callable invoked with Args moved by value, optionally preceded by
 /// a const ToolCallContext& naming the call being serviced.
-/// @return Success, or the explicit registry's immediate validation error.
+/// @return Success, or the immediate error ToolRegistry::add() reports.
 template <ToolArguments Args, typename Handler>
   requires ToolHandlerFor<Handler, Args>
 [[nodiscard]] Status add(ToolRegistry& registry, ToolMetadata metadata,

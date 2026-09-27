@@ -80,9 +80,9 @@ private:
 
 } // namespace
 
-// Every member is written on the worker thread and read from the host thread,
-// so the lock covers the script, the recorded requests, and the release flag
-// alike; accessors hand back copies rather than references into live state.
+// The worker thread and the host thread both touch every member, so the lock
+// covers the script, the recorded requests, and the release flag alike;
+// accessors hand back copies rather than references into live state.
 class ScriptedTransport::Impl final : public detail::Transport {
 public:
   void enqueue(ScriptedResponse response) {

@@ -175,10 +175,10 @@ bool PumpState::ingest_events(const std::chrono::steady_clock::time_point deadli
 }
 
 void PumpState::accept_event(WorkerEvent event) {
-  // Every release below credits the size measured here on arrival. Remeasuring
-  // later would under-credit a committed completion, whose transcript has by
-  // then moved into the Conversation, and strand the remainder in the queue's
-  // per-turn byte ledger.
+  // Every release below credits the size measured here on arrival, which is
+  // exactly what the queue charged. apply_terminal may then replace a completion
+  // with an error the queue never charged for, so remeasuring later would leave
+  // the queue's per-turn byte ledger unbalanced.
   const auto turn_id = event_turn_id(event);
   const auto accounted_bytes = event_payload_bytes(event);
   auto* const route = find_route(turn_id);
@@ -188,7 +188,8 @@ void PumpState::accept_event(WorkerEvent event) {
   }
 
   // Terminal handling runs before the retention test so that a turn whose
-  // callbacks are empty still commits its history and clears the conversation.
+  // callbacks are empty still commits its history and clears the Conversation's
+  // busy flag.
   apply_terminal(*route, event);
   // Callbacks are attached when the turn is accepted, so an event no route
   // callback can consume is dead on arrival rather than awaiting a later
@@ -321,8 +322,8 @@ void PumpState::release_entry(TurnRoute* const route, const PendingCallback& ent
 void PumpState::release_discarded() {
   // Every pending event was retained because its route could consume it. Two
   // things revoke that claim afterwards: a tool call whose route reached a
-  // terminal state or failed a dispatch, and any event on a route the host
-  // disconnected.
+  // terminal state or failed a dispatch, and a text or terminal event on a route
+  // the host disconnected.
   std::erase_if(pending_callbacks_, [this](const auto& entry) {
     auto* const route = find_route(event_turn_id(entry.event));
     const auto discard = !route || !route->has_callback(entry.event);

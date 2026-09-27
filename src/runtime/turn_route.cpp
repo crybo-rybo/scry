@@ -40,8 +40,9 @@ template <typename> inline constexpr bool unhandled_worker_event = false;
 constexpr std::string_view call_limit_message =
     "tool call limit for this turn reached; respond without calling tools";
 
-// An admission hook that throws is indistinguishable, from the model's side,
-// from a handler that throws, so it says the same thing.
+// An admission hook that throws refuses the call with a fixed text that blames
+// the handler, since the model cannot tell the hook and the handler apart. As
+// with a handler, the exception text stays on the host side of the boundary.
 [[nodiscard]] std::optional<ToolRejection>
 consult_admission(ToolAdmissionCallback& hook, const ToolRequest& request) noexcept {
   try {
@@ -181,7 +182,7 @@ void TurnRoute::invoke(WorkerEvent& event) {
         } else if constexpr (std::is_same_v<Event, ToolCallEvent>) {
           dispatch(value);
         } else if constexpr (std::is_same_v<Event, CompletionEvent>) {
-          // commit_completion captured the text before moving the exchange
+          // commit_completion captured the text before moving the transcript
           // into the Conversation. The event is consumed by this delivery, so
           // every payload it still owns moves into the Completion.
           terminal_delivered_ = true;
