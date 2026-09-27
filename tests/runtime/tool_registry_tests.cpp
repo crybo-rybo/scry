@@ -204,9 +204,9 @@ TEST_CASE("tool registration argument failures report invalid_argument") {
   CHECK(duplicate.error().category == scry::ErrorCategory::invalid_argument);
   CHECK(registry.size() == 1);
 
-  // invalid_state stays reserved for lifecycle failures. ToolRegistry's only
-  // invalid_state path is an inactive handle, which a host reaches by moving a
-  // registry away - covered by the moved-from case below.
+  // invalid_state is reserved for lifecycle failures: add() reports it only for
+  // an inactive handle, which a host reaches by moving a registry away - covered
+  // by the moved-from case below.
   static_assert(std::is_move_constructible_v<scry::ToolRegistry>);
 }
 

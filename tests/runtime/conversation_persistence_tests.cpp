@@ -298,8 +298,9 @@ TEST_CASE("private JSON codec safely quotes model-visible error strings") {
 }
 
 TEST_CASE("Conversation::from_json rejects a document truncated after a token") {
-  // A snapshot cut after a complete token is still a broken snapshot; Glaze read
-  // it as a whole document until the codec validated the trailing bytes.
+  // A snapshot cut after a complete token is still a broken snapshot. Glaze's
+  // generic reader takes one as a whole document, so the codec's own completeness
+  // check is what rejects it.
   const auto complete =
       document(R"([{"role":"user","content":[{"type":"text","text":"hi"}]}])");
   REQUIRE(scry::Conversation::from_json(scry::Json{.text = complete}));
@@ -339,9 +340,10 @@ TEST_CASE("a history ending in tool results round-trips through persistence") {
 }
 
 TEST_CASE("private JSON codec escapes control characters without a short escape") {
-  // Regression: Glaze's default writer has no \u00XX form for a control byte
-  // outside \b \f \n \r \t and wrote two NUL bytes in its place, so a tool
-  // argument or an ANSI-coloured user string became invalid JSON on the way out.
+  // Glaze's default writer has no \u00XX form for a control byte outside
+  // \b \f \n \r \t and writes two NUL bytes in its place, which would turn a tool
+  // argument or an ANSI-coloured user string into invalid JSON on the way out.
+  // Every write path here must emit the escape instead.
   const scry::Json input{.text = R"({"a":"\u0001x\u001b"})"};
   auto canonical = scry::detail::canonicalize_json(
       input, scry::ErrorCategory::invalid_argument, "invalid JSON");
@@ -364,11 +366,10 @@ TEST_CASE("private JSON codec escapes control characters without a short escape"
 }
 
 TEST_CASE("restored tool-call argument keys holding control characters re-encode") {
-  // Regression for the weekly fuzz find (#108): from_json accepted a document
-  // whose tool-call arguments had an object *key* with control characters, and
-  // to_json then failed because the key was re-encoded with the bytes raw. A
-  // document the parser accepts must re-encode, and the encoding must be a
-  // fixed point.
+  // Guards the fuzz find in issue #108: a document whose tool-call arguments hold
+  // an object *key* with control characters must re-encode with that key escaped
+  // rather than raw. A document the parser accepts must re-encode, and the
+  // encoding must be a fixed point.
   const auto round_trips = [](const std::string& text) {
     auto restored = scry::Conversation::from_json(scry::Json{.text = text});
     REQUIRE(restored);

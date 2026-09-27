@@ -24,10 +24,10 @@ struct ScriptedExchange {
   bool hold{false};
 };
 
-// Scripted transport shared by every suite that drives a real Harness. All
-// state is written on the worker thread and read from the test thread, so every
-// member is guarded; requests() therefore returns a copy taken under the lock
-// rather than a reference into live state.
+// Scripted transport for the suites that drive a real Harness without a live
+// endpoint. All state is written on the worker thread and read from the test
+// thread, so every member is guarded; requests() therefore returns a copy taken
+// under the lock rather than a reference into live state.
 class FakeTransport final : public detail::Transport {
 public:
   void enqueue(ScriptedExchange exchange) {

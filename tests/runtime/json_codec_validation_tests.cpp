@@ -1,10 +1,8 @@
-// What the single-pass JSON codec accepts, pinned against the two-pass validator it
-// replaced. src/core/json_codec.cpp used to skip every document once with
-// validate_skipped and validate_trailing_whitespace before reading it, purely to
-// reject truncation, trailing garbage, and a second document. It now reads once and
-// checks Glaze's own completion counter instead, so the whole acceptance boundary is
-// asserted here: a table of adversarial documents, and a differential replay of the
-// fuzz corpora against the old two-pass path kept below as an oracle.
+// What the JSON codec accepts. parse_json reads a document in a single pass and
+// judges completeness itself from Glaze's nesting depth, so the whole acceptance
+// boundary is asserted here: a table of adversarial documents, and a differential
+// replay of the fuzz corpora against a two-pass oracle that runs the validating
+// skip pass before a plain read.
 
 #include "core/json_codec.hpp"
 
@@ -23,8 +21,8 @@ namespace {
 
 using scry::JsonView;
 
-// The replaced implementation as the differential oracle: the allocation-free skip
-// pass, which is exactly production detail::validate_json, then a plain read.
+// The differential oracle: the allocation-free skip pass, which is exactly
+// production detail::validate_json, then a plain read.
 constexpr glz::opts two_pass_read_options{.null_terminated = false};
 
 [[nodiscard]] bool two_pass_accepts(const std::string_view input) {
@@ -78,9 +76,8 @@ struct Adversarial {
 TEST_CASE("the JSON codec rejects every shape of incomplete document") {
   // Glaze reports a value that ended with a non-NUL-terminated buffer as the
   // non-error code end_reached, and the variant reader behind glz::generic clears
-  // that code before the top level can settle it against the nesting depth. Each
-  // rejection below names the byte pattern that would otherwise read as a whole
-  // document.
+  // that code before the top level can settle it against the nesting depth, so a
+  // truncated container is rejected only by the codec's own completeness check.
   static constexpr Adversarial cases[] = {
       // Truncation: the buffer stops mid-value.
       {"truncated object", R"({"a":1)", false},
@@ -119,7 +116,7 @@ TEST_CASE("the JSON codec rejects every shape of incomplete document") {
       {"leading plus", "+1", false},
       {"single quoted string", "'a'", false},
       {"unescaped control character", std::string_view{"\"a\x01\x62\"", 5}, false},
-      // Invalid UTF-8 was rejected before and stays rejected.
+      // Invalid Unicode, in a value or a key.
       {"invalid UTF-8 in a string", "\"\xff\xfe\"", false},
       {"invalid UTF-8 in a key", "{\"\xff\":1}", false},
       {"lone surrogate escape", R"("\ud800")", false},
@@ -163,10 +160,10 @@ TEST_CASE("the JSON codec still collapses duplicate object keys") {
 }
 
 TEST_CASE("the JSON codec matches the two-pass validator on every fuzz corpus byte") {
-  // The fuzz targets need Clang, so the corpora are replayed here instead: every
-  // seed and every prefix of every seed, which is exactly the truncation the single
-  // pass had to learn to reject. Acceptance and the re-serialized document must both
-  // match what the two-pass path produced.
+  // The fuzz targets need Clang, so the GCC build replays the corpora here too:
+  // every seed and every prefix of every seed, which is exactly the truncation the
+  // single pass has to reject. Acceptance and the re-serialized document must both
+  // match the two-pass oracle.
   const auto files = corpus_files();
   REQUIRE_FALSE(files.empty());
 
