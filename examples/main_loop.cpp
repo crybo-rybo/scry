@@ -288,9 +288,8 @@ int main(int argc, char* argv[]) {
       .base_url = "http://127.0.0.1:11434/v1",
       .model = "qwen3:8b",
       .dialect = scry::ProviderDialect::openai_compatible,
-      // Stop at the round limit instead of failing: the tools that ran already
-      // changed this application's state, and rolling the turn back would not undo
-      // them.
+      // Stop at the round limit instead of failing: a failed turn rolls back its
+      // history, but not whatever the tools that ran already changed in the host.
       .tool_round_limit = scry::ToolRoundLimitPolicy::complete,
       // A corporate deployment would also set `.proxy` and `.ca_bundle_path`.
       .extra_headers = {{.name = "x-scry-example", .value = "main-loop"}},

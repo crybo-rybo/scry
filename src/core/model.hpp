@@ -14,9 +14,9 @@
 
 namespace scry::detail {
 
-// The neutral message model is the public scry::Message family re-exported here,
-// so adapters, persistence, and the pump keep their detail-namespace spelling
-// while hosts see exactly the types the runtime commits.
+// The neutral message model is the public scry::Message family, aliased here so
+// adapters, persistence, and the pump can spell it in the detail namespace while
+// hosts see exactly the types the runtime commits.
 using Role = ::scry::Role;
 using TextBlock = ::scry::TextBlock;
 using ToolCallBlock = ::scry::ToolCallBlock;
@@ -35,7 +35,7 @@ using SchemaSnapshot = std::shared_ptr<const std::vector<ToolDefinition>>;
 struct ModelRequest {
   std::string system_prompt{};
   // The Conversation's committed history as of send time, immutable for as long
-  // as this request lives. The Conversation copies its own block before
+  // as this request lives. The pump copies the Conversation's block before
   // appending while any request still points at this one.
   HistorySnapshot history{};
   // What this turn adds on top of the history: the user message, then one pair

@@ -7,9 +7,9 @@
 // aggregates instead of a JSON tree. Glaze reflects each one member by member
 // in declaration order, so the members are declared alphabetically and the body
 // still leaves the encoder in the codec's canonical key order. Every
-// std::string_view borrows from the Config or the ModelRequest, both of which
-// outlive the encode, and every JsonText splices stored canonical JSON verbatim
-// rather than re-parsing it. The names are dialect-qualified and the types
+// std::string_view borrows from a literal, the Config, or the ModelRequest, all
+// of which outlive the encode, and every JsonText splices stored canonical JSON
+// verbatim rather than re-parsing it. The names are dialect-qualified and the types
 // deliberately sit outside the unnamed namespace: Glaze derives each member's
 // name from a pointer into an `extern` object of the type, which a type with no
 // linkage cannot have, and GCC mangles every translation unit's unnamed
@@ -101,8 +101,8 @@ transport_request(const Config& config, std::string url,
   return validate_json(text, ErrorCategory::invalid_config, message);
 }
 
-// Provider error identifiers reach Error::provider_detail, so only a bounded
-// alphanumeric token survives; anything else is dropped.
+// Provider error identifiers reach Error::provider_detail, so only a bounded token
+// of alphanumerics and underscores survives; anything else is dropped.
 [[nodiscard]] inline std::optional<std::string>
 sanitize_error_token(const std::string_view value) {
   constexpr std::size_t maximum_bytes = 96;

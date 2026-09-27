@@ -28,8 +28,8 @@ struct EasyDeleter {
 using EasyHandle = std::unique_ptr<CURL, EasyDeleter>;
 
 // Detaches an added easy handle at scope exit, which returns its connection to
-// the multi handle's cache instead of destroying the cache with the transfer.
-// It must be destroyed before the easy handle it names.
+// the multi handle's cache for the next transfer. It must be destroyed before the
+// easy handle it names.
 struct MultiDetach {
   CURLM* multi;
   CURL* easy;

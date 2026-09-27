@@ -485,8 +485,9 @@ validated_choice_delta(const JsonValue& choice,
   return {};
 }
 
-// A named event other than `message` or `error` is optional and ignored, unless
-// its payload is an error root that a server mislabeled.
+// A named event other than `message` or `error` is optional: ignored before the
+// finish reason and refused after it. A payload that is an error root is an error
+// a server mislabeled and surfaces as the stream error either way.
 [[nodiscard]] Status handle_optional_event(const std::string_view data,
                                            const OpenAiProviderDecodeState& decode) {
   auto root =
