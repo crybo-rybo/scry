@@ -479,5 +479,5 @@ int main() {
     return 1;
   }
 
-  return scry::version == "0.4.1" ? 0 : 1;
+  return scry::version == "0.5.0" ? 0 : 1;
 }
