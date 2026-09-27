@@ -475,6 +475,76 @@ TEST_CASE(
   CHECK(resend_body.find(R"({\"handled\":\"second\"})") == std::string::npos);
 }
 
+TEST_CASE("the per-turn call limit counts across rounds and admits exactly its bound") {
+  auto config = test_config();
+  config.max_tool_calls_per_turn = 2;
+  // The first round spends the whole budget in one batch; the second round's lone
+  // call is the third of the turn, so it is refused even though its round is new.
+  const auto second_round = anthropic_tool_stream(
+      {
+          {.id = "call-c", .name = "first_tool", .arguments = R"({"ordinal":3})"},
+      },
+      "msg_second_round");
+  auto fixture = make_harness_fixture(
+      config, {scripted_exchange(two_tool_stream, "first-round-request"),
+               scripted_exchange(second_round, "second-round-request"),
+               scripted_exchange(final_stream, "final-request")});
+  auto* requests = fixture.transport;
+  auto& harness = fixture.harness;
+  auto& conversation = fixture.conversation;
+
+  std::size_t first_calls = 0;
+  std::size_t second_calls = 0;
+  REQUIRE(harness.tools().add(ordinal_tool_definition("first_tool"),
+                              [&first_calls](scry::Json) -> scry::Result<scry::Json> {
+                                ++first_calls;
+                                return scry::Json{.text = R"({"handled":"first"})"};
+                              }));
+  REQUIRE(harness.tools().add(ordinal_tool_definition("second_tool"),
+                              [&second_calls](scry::Json) -> scry::Result<scry::Json> {
+                                ++second_calls;
+                                return scry::Json{.text = R"({"handled":"second"})"};
+                              }));
+
+  std::vector<bool> observed_errors;
+  std::vector<std::uint32_t> observed_rounds;
+  std::optional<scry::Completion> completion;
+  REQUIRE(harness.send(conversation, "Run the tools",
+                       {
+                           .on_tool_call =
+                               [&](const scry::ToolCall& call) {
+                                 observed_errors.push_back(call.is_error);
+                                 observed_rounds.push_back(call.round);
+                               },
+                           .on_finished =
+                               [&completion](scry::Result<scry::Completion> finished) {
+                                 REQUIRE(finished);
+                                 completion = std::move(*finished);
+                               },
+                       }));
+  REQUIRE(pump_until(harness, [&completion] { return completion.has_value(); }));
+
+  // Both calls at the bound ran; only the one past it was refused.
+  CHECK(first_calls == 1);
+  CHECK(second_calls == 1);
+  CHECK(observed_errors == std::vector<bool>{false, false, true});
+  CHECK(observed_rounds == std::vector<std::uint32_t>{1, 1, 2});
+  REQUIRE(completion);
+  CHECK(completion->text == "all done");
+  CHECK(completion->tool_round_count == 2);
+  CHECK(completion->tool_call_count == 3);
+  CHECK(completion->rejected_tool_call_count == 1);
+
+  const auto recorded = requests->requests();
+  REQUIRE(recorded.size() == 3);
+  CHECK(recorded[1].body.find("tool call limit for this turn reached") ==
+        std::string::npos);
+  CHECK(
+      recorded[2].body.find(
+          R"({\"error\":\"tool call limit for this turn reached; respond without calling tools\"})") !=
+      std::string::npos);
+}
+
 TEST_CASE("an admission hook's refusal text reaches the model on the wire") {
   auto fixture = make_harness_fixture(
       test_config(), {scripted_exchange(two_tool_stream, "tool-request"),
