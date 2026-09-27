@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cassert>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <type_traits>
 #include <utility>
@@ -40,15 +41,15 @@ template <typename> inline constexpr bool unhandled_worker_event = false;
 constexpr std::string_view call_limit_message =
     "tool call limit for this turn reached; respond without calling tools";
 
-// An admission hook that throws refuses the call with a fixed text that blames
-// the handler, since the model cannot tell the hook and the handler apart. As
-// with a handler, the exception text stays on the host side of the boundary.
+// An admission hook that throws is treated exactly like a handler that throws:
+// the call is refused with the same fixed text, and the exception text stays on
+// the host side of the boundary.
 [[nodiscard]] std::optional<ToolRejection>
 consult_admission(ToolAdmissionCallback& hook, const ToolRequest& request) noexcept {
   try {
     return hook(request);
   } catch (...) {
-    return ToolRejection{.model_message = "tool handler threw an exception"};
+    return ToolRejection{.model_message = std::string{handler_failed_message}};
   }
 }
 

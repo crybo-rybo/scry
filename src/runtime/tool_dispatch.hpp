@@ -9,6 +9,12 @@
 
 namespace scry::detail {
 
+// What the model is told when a handler fails without publishing its own text,
+// including when it throws. A throwing admission hook is told the same, so the
+// model cannot tell the two apart.
+inline constexpr std::string_view handler_failed_message =
+    "tool handler returned an error";
+
 // The model-visible error result for a call that produced no usable handler
 // value: a refusal, a failed handler, invalid handler JSON, or an unknown tool.
 // Falls back to a fixed text and then to a framework failure when the message
