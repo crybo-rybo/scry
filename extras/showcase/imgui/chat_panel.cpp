@@ -28,8 +28,8 @@ struct PanelState {
 };
 
 // The callbacks hold the panel state directly. Nothing here has to ask whether
-// the delivery is stale: a superseded or dropped turn is disconnected, so the
-// library never invokes these again.
+// the delivery is stale: the panel disconnects a turn before superseding or
+// abandoning it, so the library never invokes these again.
 [[nodiscard]] scry::TurnCallbacks make_callbacks(std::shared_ptr<PanelState> state) {
   return scry::TurnCallbacks{
       .on_text_delta =

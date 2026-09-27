@@ -9,7 +9,8 @@
 # Extra arguments are forwarded to the configure step. The hosted leg passes
 # -DSCRY_CLANG_TOOLING_LIBCXX=ON to build against libc++ instead of the host's
 # libstdc++, which is newer than clang 18 can parse on Ubuntu 24.04. A Homebrew
-# llvm@18 already defaults to its own libc++, so a local run passes nothing.
+# llvm@18 already defaults to its own libc++, so a local run with it passes
+# nothing.
 
 set -euo pipefail
 

@@ -27,8 +27,8 @@ static_assert(std::is_aggregate_v<ToolUseBlock>);
 
 namespace {
 
-// Port 1 is never listening, so a test that loses its script fails fast instead
-// of reaching the network.
+// No request leaves the process, but port 1 is never listening, so a test wired
+// to a real transport by mistake fails fast instead of reaching the network.
 [[nodiscard]] scry::Config anthropic_config() {
   auto config = scry::Config{
       .base_url = "http://127.0.0.1:1",

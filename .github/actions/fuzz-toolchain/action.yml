@@ -12,8 +12,8 @@ runs:
     - name: Install Clang 21 and libFuzzer
       # g++-14 provides the libstdc++ headers clang-21 compiles against.
       # Retries the apt.llvm.org fetch + install up to 3 times: a transient
-      # outage in either source fails the whole scheduled run, and there is
-      # nothing actionable to do except wait and try again.
+      # outage in either source fails the job, and there is nothing actionable
+      # to do except wait and try again.
       shell: bash
       run: |
         set -o pipefail  # a failed wget must fail the pipeline, not be masked by tee

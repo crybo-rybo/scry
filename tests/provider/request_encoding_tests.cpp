@@ -18,8 +18,8 @@ using namespace scry::test_fixtures;
 // Every embedded payload below is spelled exactly as Scry's own codec would
 // have written it, because that is what reaches an adapter in production: the
 // turn machine canonicalizes tool-call arguments, dispatch canonicalizes
-// results, and registration canonicalizes schemas. The goldens were captured
-// from the generic-tree encoder this request path replaced.
+// results, and registration canonicalizes schemas. tests/fixtures/README.md
+// records where the request_tool_history.json goldens came from.
 constexpr auto weather_arguments =
     std::string_view{R"({"city":"Paris","options":{"units":"metric","verbose":true}})"};
 constexpr auto almanac_arguments =
