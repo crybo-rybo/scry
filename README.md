@@ -160,7 +160,9 @@ except the tool handler and the callbacks, which run inside `update()`.
 - **GCC 16 or newer.** Tools are declared with C++26 reflection, so the public
   headers need `-std=c++26 -freflection`. Clang and MSVC cannot consume the
   library.
-- **CMake 3.28** and **libcurl 7.84** or newer, with development headers.
+- **CMake 3.31** and **libcurl 7.84** or newer, with development headers. The
+  Glaze revision Scry fetches requires CMake 3.31; Scry's own build files
+  accept 3.28 when CMake finds a packaged Glaze instead.
 - **Linux or macOS.** CI runs GCC 16 on Ubuntu 24.04 and macOS 15.
 
 Glaze is a private header-only dependency that CMake finds or fetches. Tests

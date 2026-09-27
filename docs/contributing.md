@@ -4,8 +4,10 @@ Build commands, checks, and contribution requirements for the current tree.
 
 ## Toolchain
 
-Scry needs GCC 16 or newer (with reflection support), CMake 3.28 or newer,
-Ninja, and libcurl 7.84 or newer with development headers. Formatting uses
+Scry needs GCC 16 or newer (with reflection support), CMake 3.31 or newer,
+Ninja, and libcurl 7.84 or newer with development headers. Scry's own build
+files accept CMake 3.28, but the Glaze revision the build fetches requires
+3.31, and it is fetched unless CMake finds a packaged Glaze. Formatting uses
 clang-format; CI uses version 18. It runs independently of CMake and does not
 require a compiler or fetched dependencies.
 
@@ -15,7 +17,10 @@ require a compiler or fetched dependencies.
 sudo add-apt-repository --yes ppa:ubuntu-toolchain-r/test
 sudo apt-get update
 sudo apt-get install -y g++-16 libcurl4-openssl-dev ninja-build \
-  cmake clang-format-18 doxygen graphviz
+  clang-format-18 doxygen graphviz
+# Ubuntu 24.04 packages CMake 3.28, older than the fetched Glaze accepts.
+# pip installs cmake into ~/.local/bin, which must precede /usr/bin on PATH.
+python3 -m pip install --user --break-system-packages 'cmake>=3.31'
 ```
 
 **macOS:**
