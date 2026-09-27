@@ -32,8 +32,8 @@ inline const std::string final_stream =
   };
 }
 
-// Two tool calls whose names alone are large enough to overrun a tightened
-// event-queue budget.
+// Two tool calls whose long names push the batch past a tightened event-queue
+// budget.
 [[nodiscard]] inline std::string
 large_tool_batch_stream(const std::string_view first, const std::string_view second) {
   return anthropic_tool_stream({

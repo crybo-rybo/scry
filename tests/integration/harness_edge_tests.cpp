@@ -38,8 +38,8 @@ fake_harness(scry::Config config, scry::test::ScriptedExchange scripted) {
                                                  std::move(fake));
 }
 
-// A single text delta far larger than the tightened event-queue budget the
-// test configures.
+// A single text delta larger than the part of the test's tightened event-queue
+// budget left for streamed events once the terminal reserve is held back.
 [[nodiscard]] std::string large_delta_stream() {
   return anthropic_text_stream(std::string(600, 'x'), "msg_large", {}, 1, 1);
 }
