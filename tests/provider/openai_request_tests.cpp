@@ -6,6 +6,8 @@
 #include <array>
 #include <catch2/catch_test_macros.hpp>
 #include <cstddef>
+#include <cstdint>
+#include <limits>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -134,6 +136,20 @@ TEST_CASE("OpenAI request omits max_tokens when the sampling value is unset") {
   REQUIRE(encoded);
   CHECK(encoded->body.find("max_tokens") == std::string::npos);
   CHECK(encoded->body.find(R"("temperature":1.5)") != std::string::npos);
+}
+
+TEST_CASE("OpenAI request sends a configured seed and omits an unset one") {
+  OpenAiAdapter adapter;
+  auto model_request = request();
+
+  const auto unseeded = adapter.make_request(openai_config(), model_request);
+  REQUIRE(unseeded);
+  CHECK(unseeded->body.find(R"("seed")") == std::string::npos);
+
+  model_request.sampling.seed = std::numeric_limits<std::uint32_t>::max();
+  const auto seeded = adapter.make_request(openai_config(), model_request);
+  REQUIRE(seeded);
+  CHECK(seeded->body.find(R"("seed":4294967295)") != std::string::npos);
 }
 
 TEST_CASE("OpenAI request can disable reasoning without changing the default") {

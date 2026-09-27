@@ -64,6 +64,7 @@ struct OpenAiBody {
   std::vector<OpenAiMessage> messages{};
   std::string_view model{};
   std::optional<std::string_view> reasoning_effort{};
+  std::optional<std::uint32_t> seed{};
   bool stream{true};
   OpenAiStreamOptions stream_options{};
   double temperature{};
@@ -296,6 +297,7 @@ encode_tools(const ModelRequest& request) {
       .reasoning_effort = config.reasoning_mode == ReasoningMode::disabled
                               ? std::optional<std::string_view>{"none"}
                               : std::nullopt,
+      .seed = request.sampling.seed,
       .temperature = request.sampling.temperature,
       .tools = std::move(*tools),
       .top_p = request.sampling.top_p,

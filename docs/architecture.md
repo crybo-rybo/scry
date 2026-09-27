@@ -404,7 +404,16 @@ embedded text is still rejected with `invalid_config`.
 | `temperature` | 0–1 | 0–2 |
 | `top_p` | Greater than 0, at most 1 | 0–1 |
 | `max_tokens` | Required, positive | Optional; positive when set |
+| `seed` | Rejected during validation | Optional; sent when set |
 | Disabled reasoning | Rejected during validation | Sends `reasoning_effort: "none"` |
+
+`SamplingConfig::seed` is passed through, not enforced. Scry sends the same value
+with every request, retries and tool rounds included, and nothing more; whether
+the same seed, model, prompt, and sampling values repeat an output is up to the
+server, which treats it as best-effort, and no seed carries across models,
+servers, or server versions. The Messages API has no seed, so the Anthropic
+dialect rejects one instead of dropping it and leaving a host to believe its
+runs were seeded.
 
 For Anthropic, use an origin or the full `/v1/messages` endpoint. The OpenAI
 adapter accepts an origin, a `/v1` base, or the full `/v1/chat/completions` endpoint.

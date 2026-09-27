@@ -91,6 +91,11 @@ namespace {
         "Anthropic max_tokens must be set and greater than 0; the Messages API "
         "requires it");
   }
+  // The Messages API has no seed. Dropping one silently would let a host believe
+  // its runs were seeded when they were not.
+  if (sampling.seed) {
+    return invalid("seed requires the OpenAI-compatible provider dialect");
+  }
   return {};
 }
 

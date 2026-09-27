@@ -20,3 +20,9 @@ target_link_libraries(
   scry_tool_policy_example
   PRIVATE scry::scry scry_project_options
 )
+
+add_executable(scry_seeded_trials_example seeded_trials.cpp)
+target_link_libraries(
+  scry_seeded_trials_example
+  PRIVATE scry::scry scry_project_options
+)

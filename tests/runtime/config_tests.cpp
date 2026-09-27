@@ -114,6 +114,13 @@ TEST_CASE("configuration accepts every valid shape") {
            openai_config()),
       // An unset max_tokens is omitted from the request; the server default applies.
       with([](Config& c) { c.sampling.max_tokens.reset(); }, openai_config()),
+      // Every seed value is the server's to interpret, including both extremes.
+      with([](Config& c) { c.sampling.seed = 0; }, openai_config()),
+      with(
+          [](Config& c) {
+            c.sampling.seed = std::numeric_limits<std::uint32_t>::max();
+          },
+          openai_config()),
   };
   for (const auto& config : accepted) {
     CHECK(scry::detail::validate_config(config));
@@ -180,6 +187,8 @@ TEST_CASE("configuration rejects each invalid field with its own message") {
        with([](Config& c) { c.sampling.max_tokens.reset(); }), anthropic_max_tokens},
       {"Anthropic max_tokens zero", with([](Config& c) { c.sampling.max_tokens = 0; }),
        anthropic_max_tokens},
+      {"Anthropic seed", with([](Config& c) { c.sampling.seed = 42; }),
+       "seed requires the OpenAI-compatible provider dialect"},
       // OpenAI-compatible sampling.
       {"OpenAI temperature NaN",
        with([](Config& c) { c.sampling.temperature = not_a_number; }, openai_config()),
