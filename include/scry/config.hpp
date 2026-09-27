@@ -53,6 +53,15 @@ struct SamplingConfig {
   /// when unset the field is omitted from the request and the server default
   /// applies. Zero is rejected by both dialects.
   std::optional<std::uint32_t> max_tokens{1024};
+  /// Optional sampling seed, for repeatable experiments against one server.
+  ///
+  /// The OpenAI-compatible dialect sends it as `seed` when set and omits the field
+  /// when unset. The Anthropic Messages API has no seed, so the Anthropic dialect
+  /// rejects a set value rather than drop it silently. Repeatability is the
+  /// server's to provide, not Scry's: the same seed, model, prompt, and sampling
+  /// values often reproduce an output on one server, but servers treat the seed as
+  /// best-effort, and nothing carries across models, servers, or their versions.
+  std::optional<std::uint32_t> seed{};
 };
 
 /// Retry limits and exponential-backoff settings for transient failures.

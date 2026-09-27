@@ -349,21 +349,26 @@ are separated by the handler's arity, so a lambda of either shape selects one of
 them without a cast. Registration validates and canonicalizes the schema as a
 JSON object; Scry does not implement general JSON Schema validation. An empty
 handler of either shape is rejected at registration. The handler receives
-canonical object arguments and owns validation against its schema. It must
-synchronously return valid JSON or an error. Asynchronous or deferred tool
-results are not supported.
+canonical object arguments and owns validation against its schema: Scry has
+checked that the arguments parse and form an object, not that they match the
+schema the model was given. A handler that rejects them with
+`scry::tool_error()` tells the model what was wrong, and the turn continues so
+the model can correct the call; `on_tool_request` can apply the same check
+before any handler runs. A handler must synchronously return valid JSON or an
+error. Asynchronous or deferred tool results are not supported.
 
 Unknown tools, reflected decode failures, handler errors, exceptions, and invalid
 result JSON produce bounded model-visible error results. A handler error's
 `model_message` is forwarded inside `{"error": ...}` subject to the result byte
 cap; its `message` and any exception text are not. `scry::tool_error(model_message,
 host_message)` builds such an error; an empty `model_message` keeps Scry's fixed
-diagnostic, and one too large for the cap falls back to it. Reflected decode
-failures and unknown-tool errors carry schema-derived `model_message` text: an
-unknown tool names the requested tool and the registered tool names, which the
-request's tool list already carried. Scry applies no redaction to
-`model_message`, so a host that puts a secret in one has published it. An
-oversized result, or an error result that cannot fit its bound, fails the turn
+diagnostic, `tool handler returned an error`. Any error text too large for the
+cap, a `model_message` included, is replaced by the generic `tool execution
+failed`. Reflected decode failures and unknown-tool errors carry schema-derived
+`model_message` text: an unknown tool names the requested tool and the
+registered tool names, which the request's tool list already carried. Scry
+applies no redaction to `model_message`, so a host that puts a secret in one has
+published it. An oversized result, or an error result that cannot fit its bound, fails the turn
 with `resource_limit`.
 `on_tool_call` observes the canonical result and its `is_error` flag after the
 result is posted to the worker; it does not confirm that the server received it.
@@ -399,7 +404,16 @@ embedded text is still rejected with `invalid_config`.
 | `temperature` | 0–1 | 0–2 |
 | `top_p` | Greater than 0, at most 1 | 0–1 |
 | `max_tokens` | Required, positive | Optional; positive when set |
+| `seed` | Rejected during validation | Optional; sent when set |
 | Disabled reasoning | Rejected during validation | Sends `reasoning_effort: "none"` |
+
+`SamplingConfig::seed` is passed through, not enforced. Scry sends the same value
+with every request, retries and tool rounds included, and nothing more; whether
+the same seed, model, prompt, and sampling values repeat an output is up to the
+server, which treats it as best-effort, and no seed carries across models,
+servers, or server versions. The Messages API has no seed, so the Anthropic
+dialect rejects one instead of dropping it and leaving a host to believe its
+runs were seeded.
 
 For Anthropic, use an origin or the full `/v1/messages` endpoint. The OpenAI
 adapter accepts an origin, a `/v1` base, or the full `/v1/chat/completions` endpoint.

@@ -208,6 +208,8 @@ target_link_libraries(app PRIVATE scry::scry)
   export the tool contract without a running model.
 - [examples/tool_policy.cpp](examples/tool_policy.cpp) — a handler that
   rejects a move with a message the model reads, so the model tries again.
+- [examples/seeded_trials.cpp](examples/seeded_trials.cpp) — the same prompt
+  run several times against a local model with a fixed sampling seed.
 - [examples/testing_scripted.cpp](examples/testing_scripted.cpp) — a downstream
   test with a scripted provider and no network.
 - [extras/showcase](extras/showcase) — a standalone Dear ImGui chat panel and a

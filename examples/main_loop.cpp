@@ -44,12 +44,14 @@ struct StatusResult {
   std::string state{};
 };
 
+// Scry guarantees only that the arguments are a canonical JSON object; checking
+// them against the declared schema is the handler's job. Each rejection goes
+// through scry::tool_error() so the model reads what was wrong and can correct
+// the call. A plain scry::Error would reach it only as Scry's fixed "tool handler
+// returned an error", which gives it nothing to fix.
 [[nodiscard]] scry::Status validate_echo_arguments(const scry::JsonView& root) {
   const auto reject = [](std::string message) {
-    return std::unexpected(scry::Error{
-        .category = scry::ErrorCategory::tool,
-        .message = std::move(message),
-    });
+    return std::unexpected(scry::tool_error(std::move(message)));
   };
   if (root.kind() != scry::JsonKind::object) {
     return reject("echo expects a JSON object");
@@ -77,10 +79,7 @@ struct StatusResult {
     }
     const auto text = root.find("text");
     if (!text || text->kind() != scry::JsonKind::string) {
-      return std::unexpected(scry::Error{
-          .category = scry::ErrorCategory::tool,
-          .message = "echo requires a string text property",
-      });
+      return std::unexpected(scry::tool_error("echo requires a string text property"));
     }
     std::string result = R"({"echo":)";
     result += scry::escape_json_string(text->string().value_or(""));

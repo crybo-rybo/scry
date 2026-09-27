@@ -22,6 +22,8 @@ static_assert(
 static_assert(std::is_enum_v<scry::ToolRoundLimitPolicy>);
 static_assert(
     std::same_as<std::underlying_type_t<scry::ToolRoundLimitPolicy>, std::uint8_t>);
+static_assert(
+    std::same_as<decltype(scry::SamplingConfig::seed), std::optional<std::uint32_t>>);
 static_assert(std::is_aggregate_v<scry::HttpHeader>);
 static_assert(std::is_enum_v<scry::ReasoningMode>);
 static_assert(std::is_aggregate_v<scry::Error>);
@@ -419,6 +421,7 @@ int main() {
       config.tool_round_limit == scry::ToolRoundLimitPolicy::fail,
       !config.max_tool_calls_per_turn.has_value(),
       config.sampling.max_tokens == 1024,
+      !config.sampling.seed.has_value(),
       config.reasoning_mode == scry::ReasoningMode::provider_default,
       config.retry.max_attempts == 3,
       config.retry.initial_backoff == std::chrono::milliseconds{250},
