@@ -8,3 +8,9 @@ target_link_libraries(
   scry_local_model_smoke
   PRIVATE scry::scry scry_project_options
 )
+
+# Scenarios against a real llamad daemon and model, run by hand; see the file.
+if(SCRY_WITH_LLAMAD)
+  add_executable(scry_llamad_e2e EXCLUDE_FROM_ALL llamad_e2e.cpp)
+  target_link_libraries(scry_llamad_e2e PRIVATE scry::scry scry_project_options)
+endif()
