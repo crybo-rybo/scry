@@ -20,11 +20,12 @@ enum class ProviderDialect : std::uint8_t {
   ///
   /// Config::base_url is the gRPC target: `unix:` then a relative or absolute
   /// socket path, for example `unix:/run/user/1000/llamad.sock`, or `unix://` then
-  /// an absolute one. The path must be at most 107 bytes, what `sun_path` holds
-  /// with its terminator. Config::model must still be non-empty, but the daemon
-  /// serves the one model it loaded and ignores it. The daemon takes no credential,
-  /// headers, proxy, or CA bundle, so those fields must stay empty, and it is
-  /// reached without TLS, so Config::tls_verify_peer must stay true.
+  /// an absolute one. The path must fit in `sun_path` with its terminator: at
+  /// most 107 bytes on Linux and 103 on macOS. Config::model must still be
+  /// non-empty, but the daemon serves the one model it loaded and ignores it. The
+  /// daemon takes no credential, headers, proxy, or CA bundle, so those fields
+  /// must stay empty, and it is reached without TLS, so Config::tls_verify_peer
+  /// must stay true.
   ///
   /// The backend is compiled only when Scry is built with `SCRY_WITH_LLAMAD=ON`;
   /// without it, Harness::validate() and Harness::create() reject this dialect with

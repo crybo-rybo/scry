@@ -422,7 +422,7 @@ embedded text is still rejected with `invalid_config`.
 
 | Setting | Anthropic Messages | OpenAI-compatible Chat Completions | llamad |
 |---|---|---|---|
-| Endpoint | `/v1/messages` | `/v1/chat/completions` | `unix:` gRPC target, such as `unix:/run/user/1000/llamad.sock`; socket path at most 107 bytes |
+| Endpoint | `/v1/messages` | `/v1/chat/completions` | `unix:` gRPC target, such as `unix:/run/user/1000/llamad.sock`; socket path at most 107 bytes on Linux, 103 on macOS |
 | Authentication | Required `x-api-key` | Optional bearer token | None; `api_key` must be empty |
 | Headers, proxy, CA bundle, TLS verification | Allowed | Allowed | Headers, proxy, and CA bundle must be empty; `tls_verify_peer` must stay true |
 | `model` | Sent | Sent | Required non-empty but not sent; the daemon serves one model |

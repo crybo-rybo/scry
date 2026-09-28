@@ -13,6 +13,7 @@
 #include <scry/harness.hpp>
 #include <string>
 #include <string_view>
+#include <sys/un.h>
 #include <system_error>
 #include <utility>
 
@@ -108,7 +109,8 @@ constexpr std::string_view llamad_local_only =
     "llamad proxy and ca_bundle_path must be empty; the daemon is reached over a "
     "local socket";
 constexpr std::string_view llamad_long_path =
-    "llamad socket path must be at most 107 bytes";
+    "llamad socket path must fit in sockaddr_un::sun_path with its terminator: "
+    "107 bytes on Linux, 103 on macOS";
 
 } // namespace
 
@@ -343,6 +345,10 @@ TEST_CASE("an HTTP dialect refuses a unix: gRPC target") {
 
 namespace {
 
+// The longest socket path this platform can bind: sun_path less its terminator,
+// 107 bytes on Linux and 103 on macOS.
+constexpr std::size_t max_socket_path = sizeof(sockaddr_un{}.sun_path) - 1;
+
 // A `unix:` target whose absolute socket path is exactly `bytes` long.
 [[nodiscard]] std::string unix_target_of_length(const std::size_t bytes) {
   return "unix:/" + std::string(bytes - 1, 's');
@@ -357,8 +363,8 @@ TEST_CASE("a build with the llamad backend accepts every valid llamad shape") {
       with([](Config& c) { c.base_url = "unix:relative/llamad.sock"; },
            llamad_config()),
       with([](Config& c) { c.base_url = "unix:///abs.sock"; }, llamad_config()),
-      // sun_path holds 107 bytes and a terminator.
-      with([](Config& c) { c.base_url = unix_target_of_length(107); }, llamad_config()),
+      with([](Config& c) { c.base_url = unix_target_of_length(max_socket_path); },
+           llamad_config()),
       // 0 is greedy decoding on llamad.
       with([](Config& c) { c.sampling.temperature = 0.0; }, llamad_config()),
       with([](Config& c) { c.sampling.temperature = 2.0; }, llamad_config()),
@@ -390,7 +396,7 @@ TEST_CASE("a build with the llamad backend rejects each invalid llamad field") {
        with([](Config& c) { c.base_url = "unix://host/llamad.sock"; }, llamad_config()),
        llamad_target},
       {"path longer than sun_path",
-       with([](Config& c) { c.base_url = unix_target_of_length(108); },
+       with([](Config& c) { c.base_url = unix_target_of_length(max_socket_path + 1); },
             llamad_config()),
        llamad_long_path},
       {"HTTP URL",

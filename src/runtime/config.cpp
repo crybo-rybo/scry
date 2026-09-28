@@ -10,6 +10,7 @@
 #include <limits>
 #include <string>
 #include <string_view>
+#include <sys/un.h>
 #include <utility>
 
 namespace scry::detail {
@@ -66,8 +67,8 @@ namespace {
   return path;
 }
 
-// Linux's sockaddr_un::sun_path holds 108 bytes, its terminator included.
-constexpr std::size_t max_unix_socket_path = 107;
+// sun_path holds the path and its terminator: 108 bytes on Linux, 104 on macOS.
+constexpr std::size_t max_unix_socket_path = sizeof(sockaddr_un{}.sun_path) - 1;
 
 [[nodiscard]] Status validate_unix_target(const std::string_view value) {
   constexpr auto control = std::string_view{"\0\r\n", 3};
@@ -77,7 +78,8 @@ constexpr std::size_t max_unix_socket_path = 107;
                    "unix:/run/user/1000/llamad.sock");
   }
   if (path.size() > max_unix_socket_path) {
-    return invalid("llamad socket path must be at most 107 bytes");
+    return invalid("llamad socket path must fit in sockaddr_un::sun_path with its "
+                   "terminator: 107 bytes on Linux, 103 on macOS");
   }
   return {};
 }
