@@ -18,10 +18,13 @@ enum class ProviderDialect : std::uint8_t {
   openai_compatible,
   /// A local llamad daemon over gRPC on a Unix domain socket.
   ///
-  /// Config::base_url is the gRPC target and must start with `unix:`, for example
-  /// `unix:/run/user/1000/llamad.sock`. Config::model must still be non-empty, but
-  /// the daemon serves the one model it loaded and ignores it. The daemon takes no
-  /// credential, headers, proxy, or CA bundle, so those fields must stay empty.
+  /// Config::base_url is the gRPC target: `unix:` then a relative or absolute
+  /// socket path, for example `unix:/run/user/1000/llamad.sock`, or `unix://` then
+  /// an absolute one. The path must be at most 107 bytes, what `sun_path` holds
+  /// with its terminator. Config::model must still be non-empty, but the daemon
+  /// serves the one model it loaded and ignores it. The daemon takes no credential,
+  /// headers, proxy, or CA bundle, so those fields must stay empty, and it is
+  /// reached without TLS, so Config::tls_verify_peer must stay true.
   ///
   /// The backend is compiled only when Scry is built with `SCRY_WITH_LLAMAD=ON`;
   /// without it, Harness::validate() and Harness::create() reject this dialect with
@@ -95,8 +98,10 @@ struct RetryPolicy {
 /// Time bounds for Scry-owned network and shutdown operations.
 struct TransportTimeouts {
   /// Maximum time allowed to establish a connection, including name resolution.
-  /// For llamad it bounds the wait for the channel to connect to the socket; a
-  /// socket nobody is listening on fails at once rather than after this bound.
+  /// For llamad it bounds the wait for the channel to report an outcome; the
+  /// channel bounds each connection attempt itself, so a socket nobody is listening
+  /// on, or a listener that never completes the handshake, fails at once rather
+  /// than after this bound.
   std::chrono::milliseconds connect{10'000};
   /// Maximum time the response may stay silent. The transfer fails when no bytes
   /// arrive for this long, including while waiting for the first byte. Curl applies

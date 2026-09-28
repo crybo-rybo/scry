@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <string>
@@ -45,13 +46,40 @@ namespace {
   return !value.substr(scheme_size, value.find('/', scheme_size) - scheme_size).empty();
 }
 
-// A gRPC Unix-domain target: `unix:` then a non-empty path. gRPC resolves the
-// path itself, so only what can never name a socket is refused here.
-[[nodiscard]] bool valid_unix_target(const std::string_view value) noexcept {
+// The socket path of a gRPC Unix-domain target, in either form gRPC accepts:
+// `unix:` then a relative or absolute path, or `unix://` then an absolute one.
+// Empty for anything else. gRPC resolves the path itself, so only what can
+// never name a socket is refused here.
+[[nodiscard]] std::string_view unix_socket_path(const std::string_view value) noexcept {
   constexpr auto scheme = std::string_view{"unix:"};
+  constexpr auto no_authority = std::string_view{"//"};
+  if (!value.starts_with(scheme)) {
+    return {};
+  }
+  auto path = value.substr(scheme.size());
+  if (path.starts_with(no_authority)) {
+    path.remove_prefix(no_authority.size());
+    if (!path.starts_with('/')) {
+      return {};
+    }
+  }
+  return path;
+}
+
+// Linux's sockaddr_un::sun_path holds 108 bytes, its terminator included.
+constexpr std::size_t max_unix_socket_path = 107;
+
+[[nodiscard]] Status validate_unix_target(const std::string_view value) {
   constexpr auto control = std::string_view{"\0\r\n", 3};
-  return value.starts_with(scheme) && value.size() > scheme.size() &&
-         value.find_first_of(control) == std::string_view::npos;
+  const auto path = unix_socket_path(value);
+  if (path.empty() || path.find_first_of(control) != std::string_view::npos) {
+    return invalid("llamad base_url must be a unix: gRPC target, such as "
+                   "unix:/run/user/1000/llamad.sock");
+  }
+  if (path.size() > max_unix_socket_path) {
+    return invalid("llamad socket path must be at most 107 bytes");
+  }
+  return {};
 }
 
 // A dialect the build does not carry is refused before any of its fields are
@@ -70,9 +98,8 @@ namespace {
 
 [[nodiscard]] Status validate_endpoint(const Config& config) {
   if (config.dialect == ProviderDialect::llamad) {
-    if (!valid_unix_target(config.base_url)) {
-      return invalid("llamad base_url must be a unix: gRPC target, such as "
-                     "unix:/run/user/1000/llamad.sock");
+    if (auto status = validate_unix_target(config.base_url); !status) {
+      return status;
     }
   } else if (!valid_http_url(config.base_url)) {
     return invalid("base_url must be an absolute HTTP or HTTPS URL");
@@ -127,7 +154,8 @@ namespace {
   // The Messages API has no seed. Dropping one silently would let a host believe
   // its runs were seeded when they were not.
   if (sampling.seed) {
-    return invalid("seed requires the OpenAI-compatible provider dialect");
+    return invalid("the Anthropic Messages API has no seed; use the "
+                   "OpenAI-compatible or llamad dialect");
   }
   return {};
 }
@@ -240,6 +268,10 @@ namespace {
   if (!config.proxy.empty() || !config.ca_bundle_path.empty()) {
     return invalid("llamad proxy and ca_bundle_path must be empty; the daemon is "
                    "reached over a local socket");
+  }
+  if (!config.tls_verify_peer) {
+    return invalid("llamad tls_verify_peer must stay true; the daemon is reached "
+                   "over a local socket without TLS");
   }
   return {};
 }

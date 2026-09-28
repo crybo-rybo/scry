@@ -13,8 +13,15 @@
 #include <scry/config.hpp>
 #include <scry/error.hpp>
 #include <string>
+#include <string_view>
 
 namespace scry::detail::llamad_wire {
+
+// An error whose retry eligibility follows its category, as the turn machine
+// applies it, with `token` kept in provider_detail as `llamad:<token>`. The
+// message must be a fixed text: nothing the daemon sent may reach it.
+[[nodiscard]] Error llamad_error(ErrorCategory category, std::string message,
+                                 std::string_view token);
 
 // Writes `request` into `out`: the system prompt as a leading "system" message,
 // then the history and the turn's messages. User text becomes one "user"

@@ -315,12 +315,34 @@ TEST_CASE("llamad finish reasons map onto Scry's") {
   }
 }
 
-TEST_CASE("a llamad CANCELLED finish reason fails the turn as cancelled") {
-  // The turn machine ends every cancelled attempt through its own cancel path.
+TEST_CASE("a llamad CANCELLED finish reason is a daemon failure, not a host cancel") {
+  // Scry never decodes a chunk after its own cancel, so this CANCELLED is the
+  // daemon's and must not reach the host-cancellation path.
   const auto error =
       failed_turn({text_round({"partial"}, wire::FINISH_REASON_CANCELLED)});
-  CHECK(error.category == scry::ErrorCategory::cancelled);
-  CHECK(error.message == "turn cancelled");
+  CHECK(error.category == scry::ErrorCategory::network);
+  CHECK(error.retryable);
+  CHECK(error.message == "llamad cancelled the generation");
+  CHECK(error.provider_detail == "llamad:cancelled_generation");
+}
+
+TEST_CASE("a llamad CANCELLED finish reason before any text is retried") {
+  FakeDaemon daemon{{
+      text_round({}, wire::FINISH_REASON_CANCELLED),
+      text_round({"second time lucky"}),
+  }};
+  auto config = llamad_config(daemon.target());
+  config.retry.max_attempts = 2;
+  config.retry.initial_backoff = 1ms;
+  config.retry.max_backoff = 1ms;
+  auto harness = unwrap(scry::Harness::create(std::move(config)));
+  auto conversation = unwrap(scry::Conversation::create());
+
+  const auto outcome = run_turn(harness, conversation, "hi");
+
+  REQUIRE(*outcome.result);
+  CHECK((*outcome.result)->text == "second time lucky");
+  CHECK(daemon.calls() == 2);
 }
 
 TEST_CASE("llamad final chunks that break the stream contract fail with protocol") {
@@ -398,11 +420,13 @@ TEST_CASE("llamad gRPC statuses map to fixed errors without the daemon's message
        "llamad aborted the call", "llamad:aborted"},
       {grpc::StatusCode::RESOURCE_EXHAUSTED, scry::ErrorCategory::resource_limit, false,
        "llamad call exceeded a gRPC message size limit", "llamad:resource_exhausted"},
-      {grpc::StatusCode::INVALID_ARGUMENT, scry::ErrorCategory::invalid_config, false,
+      // A refused request is protocol, as an HTTP 4xx is: a prompt too long for
+      // the context arrives as INVALID_ARGUMENT and is no configuration error.
+      {grpc::StatusCode::INVALID_ARGUMENT, scry::ErrorCategory::protocol, false,
        "llamad rejected the request", "llamad:invalid_argument"},
-      {grpc::StatusCode::FAILED_PRECONDITION, scry::ErrorCategory::invalid_config,
-       false, "llamad rejected the request", "llamad:failed_precondition"},
-      {grpc::StatusCode::UNIMPLEMENTED, scry::ErrorCategory::invalid_config, false,
+      {grpc::StatusCode::FAILED_PRECONDITION, scry::ErrorCategory::protocol, false,
+       "llamad rejected the request", "llamad:failed_precondition"},
+      {grpc::StatusCode::UNIMPLEMENTED, scry::ErrorCategory::protocol, false,
        "llamad rejected the request", "llamad:unimplemented"},
       {grpc::StatusCode::CANCELLED, scry::ErrorCategory::network, true,
        "llamad cancelled the call", "llamad:cancelled"},
@@ -517,7 +541,7 @@ TEST_CASE("a silent llamad stream fails with a retryable timeout after the idle 
           "bound") {
   auto config = llamad_config("");
   config.timeouts.idle = 200ms;
-  config.timeouts.shutdown = 2s;
+  config.timeouts.shutdown = 10s;
   const auto started = std::chrono::steady_clock::now();
 
   const auto error = failed_turn(std::move(config), {FakeRound{.hang = true}});
@@ -527,9 +551,46 @@ TEST_CASE("a silent llamad stream fails with a retryable timeout after the idle 
   CHECK(error.retryable);
   CHECK(error.message == "transfer timed out");
   CHECK(error.provider_detail == "llamad:idle_timeout");
-  // The idle bound, not the two-second shutdown poll, decides when it fires.
+  // The idle bound, not the ten-second shutdown poll, decides when it fires.
+  // The clock includes starting the fake daemon and connecting, so the upper
+  // bound is loose enough for sanitizer builds.
   CHECK(elapsed >= 200ms);
-  CHECK(elapsed < 1500ms);
+  CHECK(elapsed < 5s);
+}
+
+TEST_CASE("llamad timeouts of milliseconds::max() neither overflow nor fire") {
+  constexpr auto forever = std::chrono::milliseconds::max();
+  auto round = text_round({"Hello ", "world"});
+  FakeDaemon daemon{{round}};
+  auto config = llamad_config(daemon.target());
+  config.timeouts.connect = forever;
+  config.timeouts.idle = forever;
+  config.timeouts.transfer = forever;
+  config.timeouts.shutdown = forever;
+  auto harness = unwrap(scry::Harness::create(std::move(config)));
+  auto conversation = unwrap(scry::Conversation::create());
+
+  const auto outcome = run_turn(harness, conversation, "hi");
+
+  REQUIRE(*outcome.result);
+  CHECK((*outcome.result)->text == "Hello world");
+  CHECK(daemon.calls() == 1);
+}
+
+TEST_CASE("a llamad idle bound still fires promptly with a shutdown poll of "
+          "milliseconds::max()") {
+  // The idle bound shortens every wait, and once the call is cancelled the
+  // capped shutdown wait ends as soon as gRPC completes the cancelled read,
+  // neither spinning nor waiting out the poll bound.
+  auto config = llamad_config("");
+  config.timeouts.connect = std::chrono::milliseconds::max();
+  config.timeouts.idle = 200ms;
+  config.timeouts.shutdown = std::chrono::milliseconds::max();
+
+  const auto error = failed_turn(std::move(config), {FakeRound{.hang = true}});
+
+  CHECK(error.category == scry::ErrorCategory::network);
+  CHECK(error.provider_detail == "llamad:idle_timeout");
 }
 
 TEST_CASE("a llamad transfer bound ends a long call as a retryable timeout") {
@@ -552,6 +613,17 @@ TEST_CASE("llamad tool arguments over the configured limit fail with resource_li
                                 .arguments = R"({"city":"Llanfairpwllgwyngyll"})"}})});
   CHECK(error.category == scry::ErrorCategory::resource_limit);
   CHECK(error.message == "llamad tool arguments exceed the configured byte limit");
+}
+
+TEST_CASE("one llamad chunk over max_response_bytes fails with resource_limit") {
+  // gRPC's receive cap refuses the message before Scry's own accounting sees
+  // it; either way the category is resource_limit.
+  auto config = llamad_config("");
+  config.limits.max_response_bytes = std::size_t{64} * 1024;
+  const auto error = failed_turn(
+      std::move(config), {text_round({std::string(std::size_t{100} * 1024, 'x')})});
+  CHECK(error.category == scry::ErrorCategory::resource_limit);
+  CHECK_FALSE(error.retryable);
 }
 
 TEST_CASE("llamad responses over the configured byte limit fail with resource_limit") {

@@ -2,12 +2,11 @@
 
 #include "backend/llamad_wire.hpp"
 #include "core/error.hpp"
-#include "core/retry.hpp"
-#include "transport/transport_policy.hpp"
 
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cassert>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -17,7 +16,6 @@
 #include <memory>
 #include <optional>
 #include <stop_token>
-#include <string>
 #include <string_view>
 #include <utility>
 
@@ -26,7 +24,19 @@ namespace {
 
 namespace wire = ::llamad::v1;
 using Clock = std::chrono::steady_clock;
+using llamad_wire::llamad_error;
 using std::chrono::milliseconds;
+
+// Far enough out to mean "no bound", near enough that adding it to any clock
+// reading cannot overflow the clock's nanosecond count. Every configured
+// duration passes through this before it is added to a time point, as the curl
+// transport clamps its durations to what libcurl holds.
+constexpr milliseconds longest_wait =
+    std::chrono::duration_cast<milliseconds>(std::chrono::years{100});
+
+[[nodiscard]] constexpr milliseconds saturated(const milliseconds value) noexcept {
+  return std::min(value, longest_wait);
+}
 
 // What ended an attempt from this side of the wire before the daemon did.
 enum class Abort : std::uint8_t { none, cancelled, shutdown, idle, local };
@@ -47,17 +57,6 @@ struct AttemptControl {
     return Abort::cancelled;
   }
   return Abort::none;
-}
-
-// Retry eligibility follows the category, as the turn machine applies it: every
-// network failure is retryable before output, like an HTTP 5xx, and nothing
-// else is.
-[[nodiscard]] Error llamad_error(const ErrorCategory category, std::string message,
-                                 const std::string_view token) {
-  auto error = make_error(category, std::move(message), is_retryable(category));
-  error.provider_detail =
-      transport_policy::sanitize_provider_detail("llamad:" + std::string{token});
-  return error;
 }
 
 // The texts match the curl transport's, so a host sees one wording for a
@@ -101,9 +100,11 @@ struct AttemptControl {
 // Only fixed texts reach Error::message: the daemon's error_message can carry
 // prompt or engine text, so it is dropped, and the code survives as a token in
 // provider_detail. A daemon-side failure (INTERNAL, UNKNOWN, a cancel the
-// daemon made) is network, retried before output like an HTTP 5xx. gRPC reports
-// an oversized message as RESOURCE_EXHAUSTED, and resending the same request
-// cannot fit it, so that code is a resource limit rather than a rate limit.
+// daemon made) is network, retried before output like an HTTP 5xx. A request
+// the daemon refuses, a prompt too long for its context among them, is
+// protocol, as an HTTP 4xx is. gRPC reports an oversized message as
+// RESOURCE_EXHAUSTED, and resending the same request cannot fit it, so that
+// code is a resource limit rather than a rate limit.
 [[nodiscard]] Error status_error(const grpc::Status& status) {
   const auto code = status.error_code();
   const auto token = status_token(code);
@@ -120,8 +121,7 @@ struct AttemptControl {
   case grpc::StatusCode::INVALID_ARGUMENT:
   case grpc::StatusCode::FAILED_PRECONDITION:
   case grpc::StatusCode::UNIMPLEMENTED:
-    return llamad_error(ErrorCategory::invalid_config, "llamad rejected the request",
-                        token);
+    return llamad_error(ErrorCategory::protocol, "llamad rejected the request", token);
   case grpc::StatusCode::CANCELLED:
     return llamad_error(ErrorCategory::network, "llamad cancelled the call", token);
   default:
@@ -131,12 +131,14 @@ struct AttemptControl {
 
 // Waits for the channel to reach READY, polling in slices of the shutdown bound
 // so a cancel or a Harness shutdown is seen promptly. A socket nobody listens on
-// puts the channel in TRANSIENT_FAILURE at once, which fails the attempt at once
-// as a refused connection does over HTTP; only a connection that neither
-// succeeds nor fails is bounded by the connect timeout.
+// puts the channel in TRANSIENT_FAILURE at once, and so does a listener that
+// does not finish the handshake within gRPC's own per-attempt bound (its minimum
+// reconnect backoff); either fails the attempt at once, as a refused connection
+// does over HTTP. The connect timeout bounds only a channel that stays in its
+// connecting state that long.
 [[nodiscard]] Status wait_for_channel(grpc::Channel& channel,
                                       const AttemptControl& control) {
-  const auto deadline = Clock::now() + control.timeouts.connect;
+  const auto deadline = Clock::now() + saturated(control.timeouts.connect);
   auto state = channel.GetState(true);
   while (state != GRPC_CHANNEL_READY) {
     if (state == GRPC_CHANNEL_TRANSIENT_FAILURE || state == GRPC_CHANNEL_SHUTDOWN) {
@@ -153,7 +155,7 @@ struct AttemptControl {
     }
     const auto slice =
         std::min(std::chrono::duration_cast<milliseconds>(deadline - now),
-                 control.timeouts.shutdown);
+                 saturated(control.timeouts.shutdown));
     static_cast<void>(channel.WaitForStateChange(
         state, std::chrono::system_clock::now() + std::max(slice, milliseconds{1})));
     state = channel.GetState(true);
@@ -172,7 +174,7 @@ public:
     context_.set_wait_for_ready(false);
     if (control.timeouts.transfer) {
       context_.set_deadline(std::chrono::system_clock::now() +
-                            *control.timeouts.transfer);
+                            saturated(*control.timeouts.transfer));
     }
   }
 
@@ -229,14 +231,14 @@ private:
   }
 
   // Cancels the call once when the turn is cancelled, the Harness shuts down,
-  // or the stream has been silent for the idle bound.
+  // or the stream has been silent for the idle bound. The silence is compared
+  // in milliseconds, so a huge bound is never scaled up to nanoseconds.
   void check_abort() {
     if (abort_ != Abort::none) {
       return;
     }
     auto cause = requested_abort(control_);
-    if (cause == Abort::none &&
-        Clock::now() - last_activity_ >= control_.timeouts.idle) {
+    if (cause == Abort::none && silence() >= control_.timeouts.idle) {
       cause = Abort::idle;
     }
     if (cause != Abort::none) {
@@ -244,16 +246,18 @@ private:
     }
   }
 
+  [[nodiscard]] milliseconds silence() const {
+    return std::chrono::duration_cast<milliseconds>(Clock::now() - last_activity_);
+  }
+
   // Until the call is cancelled, a wait lasts no longer than the idle bound
   // still has to run, nor longer than the shutdown poll bound.
   [[nodiscard]] milliseconds next_wait() const {
+    const auto poll = saturated(control_.timeouts.shutdown);
     if (abort_ != Abort::none) {
-      return control_.timeouts.shutdown;
+      return poll;
     }
-    const auto silent =
-        std::chrono::duration_cast<milliseconds>(Clock::now() - last_activity_);
-    return std::clamp(control_.timeouts.idle - silent, milliseconds{1},
-                      control_.timeouts.shutdown);
+    return std::clamp(control_.timeouts.idle - silence(), milliseconds{1}, poll);
   }
 
   // Waits for the one outstanding operation and returns its ok flag. A
@@ -269,6 +273,10 @@ private:
         return ok;
       }
       if (status == grpc::CompletionQueue::SHUTDOWN) {
+        // Only the destructor shuts the queue down, after run() has returned,
+        // so no wait can see it. Should one ever, ending the stream is the
+        // one safe answer: waiting again would spin.
+        assert(false && "llamad completion queue shut down during a call");
         return false;
       }
     }

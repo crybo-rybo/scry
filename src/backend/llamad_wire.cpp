@@ -2,7 +2,9 @@
 
 #include "core/error.hpp"
 #include "core/json_codec.hpp"
+#include "core/retry.hpp"
 #include "provider/shared.hpp"
+#include "transport/transport_policy.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -173,6 +175,16 @@ void encode_sampling(const SamplingConfig& sampling, wire::SamplingParams& out) 
 
 } // namespace
 
+// Every network failure is retryable before output, like an HTTP 5xx, and
+// nothing else is.
+Error llamad_error(const ErrorCategory category, std::string message,
+                   const std::string_view token) {
+  auto error = make_error(category, std::move(message), is_retryable(category));
+  error.provider_detail =
+      transport_policy::sanitize_provider_detail("llamad:" + std::string{token});
+  return error;
+}
+
 Status encode_chat_request(const ModelRequest& request, wire::ChatRequest& out) {
   if (!request.system_prompt.empty()) {
     auto* system = out.add_messages();
@@ -267,9 +279,13 @@ Status StreamDecoder::consume_final(const wire::GenerateChunk& chunk) {
     return finish_without_tools(chunk, FinishReason::length);
   case wire::FINISH_REASON_TOOL_CALLS:
     return finish_with_tools(chunk);
+  // Scry's own cancel stops decoding before any later chunk, so a decoded
+  // CANCELLED is the daemon's: a daemon-side failure, like a CANCELLED status,
+  // and never the host-cancellation path.
   case wire::FINISH_REASON_CANCELLED:
-    return std::unexpected(
-        make_error(ErrorCategory::cancelled, "llamad cancelled the generation"));
+    return std::unexpected(llamad_error(ErrorCategory::network,
+                                        "llamad cancelled the generation",
+                                        "cancelled_generation"));
   default:
     return protocol_error("llamad stream ended with an unknown finish reason");
   }

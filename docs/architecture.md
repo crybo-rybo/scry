@@ -422,9 +422,9 @@ embedded text is still rejected with `invalid_config`.
 
 | Setting | Anthropic Messages | OpenAI-compatible Chat Completions | llamad |
 |---|---|---|---|
-| Endpoint | `/v1/messages` | `/v1/chat/completions` | `unix:` gRPC target, such as `unix:/run/user/1000/llamad.sock` |
+| Endpoint | `/v1/messages` | `/v1/chat/completions` | `unix:` gRPC target, such as `unix:/run/user/1000/llamad.sock`; socket path at most 107 bytes |
 | Authentication | Required `x-api-key` | Optional bearer token | None; `api_key` must be empty |
-| Headers, proxy, CA bundle | Allowed | Allowed | Must be empty |
+| Headers, proxy, CA bundle, TLS verification | Allowed | Allowed | Headers, proxy, and CA bundle must be empty; `tls_verify_peer` must stay true |
 | `model` | Sent | Sent | Required non-empty but not sent; the daemon serves one model |
 | `temperature` | 0–1 | 0–2 | 0–2; 0 is greedy |
 | `top_p` | Greater than 0, at most 1 | 0–1 | 0–1 |
@@ -488,8 +488,10 @@ The daemon promises zero or more text chunks, then exactly one final chunk with 
 finish reason and token counts, and tool calls whole on that final chunk only.
 Text on any chunk streams to `on_text_delta` as it arrives and accumulates into
 the response text. `EOG` and `STOP` finish as `completed`, `LENGTH` as `length`,
-and `TOOL_CALLS` with its calls as `tool_use`; a final `CANCELLED` fails the attempt
-as cancelled. A stream that ends without a final chunk, sends anything after it,
+and `TOOL_CALLS` with its calls as `tool_use`. A final `CANCELLED` can only be the
+daemon's, since Scry stops decoding once it cancels a call, so it fails the attempt
+as a retryable `network` error with `provider_detail` `llamad:cancelled_generation`,
+not as a host cancellation. A stream that ends without a final chunk, sends anything after it,
 carries tool calls with another reason or on a text chunk, reports `TOOL_CALLS`
 with none, or names an unknown reason fails with `protocol`, as does a tool call
 without an ID or name or with arguments that are not a JSON object. Arguments over
@@ -503,24 +505,38 @@ A failed call's gRPC status maps to a fixed message; the daemon's own error text
 is never surfaced, and the status code is kept in `provider_detail` as a token such
 as `llamad:invalid_argument`. `UNAVAILABLE`, `DEADLINE_EXCEEDED`, and `ABORTED` are
 retryable `network` failures. `INVALID_ARGUMENT`, `FAILED_PRECONDITION`, and
-`UNIMPLEMENTED` are `invalid_config`: the daemon rejected the request or cannot
-serve it. `RESOURCE_EXHAUSTED` is `resource_limit`, because gRPC reports a message
+`UNIMPLEMENTED` are `protocol` errors, "llamad rejected the request", as an HTTP 4xx
+is: the daemon rejected the request or cannot serve it. The daemon's reason is not
+surfaced beyond the status token, and a prompt too long for the loaded context
+arrives this way, as `llamad:invalid_argument`. `RESOURCE_EXHAUSTED` is `resource_limit`, because gRPC reports a message
 over a size limit with it and resending cannot fit. `CANCELLED` after Scry
 cancelled the call is the ordinary cancellation; any other `CANCELLED`, and
 `INTERNAL`, `UNKNOWN`, or another code, are `network` failures, which like an HTTP
 5xx are retried only before output.
 
-`connect` bounds the wait for the channel to reach the socket; a socket nobody
-listens on fails at once as a retryable `network` error, as a refused HTTP
-connection does. The channel retries its connection at most a second apart, so a
-restarted daemon is found again quickly. `idle` is measured exactly, as time since
+`connect` bounds the wait for the channel to report an outcome. The channel
+itself bounds each connection attempt: a socket nobody listens on, or a listener
+that does not complete the gRPC handshake within the channel's own attempt bound
+(its minimum reconnect backoff, 100 ms here), reports failure, and the attempt
+then fails at once as a retryable `network` error, as a refused HTTP connection
+does. So `connect` is reached only when the channel stays in its connecting state
+for that long, which a local socket does not do in practice. The channel retries
+its connection at most a second apart, so a restarted daemon is found again
+quickly. After a failed connection gRPC keeps the channel in its failure state
+for up to that reconnect backoff, so a retry inside the window fails as
+unreachable even if the daemon is back; a `RetryPolicy` whose `initial_backoff`
+is a second or more avoids it. `idle` is measured exactly, as time since
 the call started or the last message arrived, and fails the attempt as a retryable
 `network` error with `provider_detail` `llamad:idle_timeout`. llamad sends nothing
 while it processes the prompt or waits behind another client's request, so a long
 prompt needs a long `idle`. `transfer`, when set, is the call's gRPC deadline.
 Cancellation, shutdown, and the idle bound are checked between messages and at
 least every `timeouts.shutdown`; each cancels the call and waits for gRPC to
-release it before the attempt returns.
+release it before the attempt returns. With a huge `shutdown`, a cancel or
+shutdown during a silent stream or a pending connection is therefore seen only
+when the `idle` or `connect` bound next ends the wait, as a huge `shutdown` also
+lengthens curl's poll. Each duration is capped at 100 years before it is added to
+a clock, so even `milliseconds::max()` neither overflows nor fires early.
 
 A program cannot also link another copy of llamad's generated code, such as
 llamad's own `llamad::proto` or client library: both would define and register

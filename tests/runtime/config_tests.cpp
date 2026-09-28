@@ -4,6 +4,7 @@
 #include <array>
 #include <catch2/catch_test_macros.hpp>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <new>
@@ -106,6 +107,8 @@ constexpr std::string_view llamad_max_tokens =
 constexpr std::string_view llamad_local_only =
     "llamad proxy and ca_bundle_path must be empty; the daemon is reached over a "
     "local socket";
+constexpr std::string_view llamad_long_path =
+    "llamad socket path must be at most 107 bytes";
 
 } // namespace
 
@@ -211,7 +214,8 @@ TEST_CASE("configuration rejects each invalid field with its own message") {
       {"Anthropic max_tokens zero", with([](Config& c) { c.sampling.max_tokens = 0; }),
        anthropic_max_tokens},
       {"Anthropic seed", with([](Config& c) { c.sampling.seed = 42; }),
-       "seed requires the OpenAI-compatible provider dialect"},
+       "the Anthropic Messages API has no seed; use the OpenAI-compatible or llamad "
+       "dialect"},
       // OpenAI-compatible sampling.
       {"OpenAI temperature NaN",
        with([](Config& c) { c.sampling.temperature = not_a_number; }, openai_config()),
@@ -337,12 +341,24 @@ TEST_CASE("an HTTP dialect refuses a unix: gRPC target") {
 
 #if SCRY_WITH_LLAMAD
 
+namespace {
+
+// A `unix:` target whose absolute socket path is exactly `bytes` long.
+[[nodiscard]] std::string unix_target_of_length(const std::size_t bytes) {
+  return "unix:/" + std::string(bytes - 1, 's');
+}
+
+} // namespace
+
 TEST_CASE("a build with the llamad backend accepts every valid llamad shape") {
   const Config accepted[] = {
       llamad_config(),
       with([](Config& c) { c.base_url = "unix:///tmp/llamad.sock"; }, llamad_config()),
       with([](Config& c) { c.base_url = "unix:relative/llamad.sock"; },
            llamad_config()),
+      with([](Config& c) { c.base_url = "unix:///abs.sock"; }, llamad_config()),
+      // sun_path holds 107 bytes and a terminator.
+      with([](Config& c) { c.base_url = unix_target_of_length(107); }, llamad_config()),
       // 0 is greedy decoding on llamad.
       with([](Config& c) { c.sampling.temperature = 0.0; }, llamad_config()),
       with([](Config& c) { c.sampling.temperature = 2.0; }, llamad_config()),
@@ -355,7 +371,6 @@ TEST_CASE("a build with the llamad backend accepts every valid llamad shape") {
             c.sampling.seed = std::numeric_limits<std::uint32_t>::max();
           },
           llamad_config()),
-      with([](Config& c) { c.tls_verify_peer = false; }, llamad_config()),
   };
   for (const auto& config : accepted) {
     CHECK(scry::detail::validate_config(config));
@@ -369,6 +384,15 @@ TEST_CASE("a build with the llamad backend rejects each invalid llamad field") {
        llamad_target},
       {"scheme only", with([](Config& c) { c.base_url = "unix:"; }, llamad_config()),
        llamad_target},
+      {"URI form without a path",
+       with([](Config& c) { c.base_url = "unix://"; }, llamad_config()), llamad_target},
+      {"URI form with an authority",
+       with([](Config& c) { c.base_url = "unix://host/llamad.sock"; }, llamad_config()),
+       llamad_target},
+      {"path longer than sun_path",
+       with([](Config& c) { c.base_url = unix_target_of_length(108); },
+            llamad_config()),
+       llamad_long_path},
       {"HTTP URL",
        with([](Config& c) { c.base_url = "http://127.0.0.1:8080"; }, llamad_config()),
        llamad_target},
@@ -418,6 +442,10 @@ TEST_CASE("a build with the llamad backend rejects each invalid llamad field") {
       {"CA bundle",
        with([](Config& c) { c.ca_bundle_path = "/etc/ssl/ca.pem"; }, llamad_config()),
        llamad_local_only},
+      {"TLS verification disabled",
+       with([](Config& c) { c.tls_verify_peer = false; }, llamad_config()),
+       "llamad tls_verify_peer must stay true; the daemon is reached over a local "
+       "socket without TLS"},
       {"zero idle timeout",
        with([](Config& c) { c.timeouts.idle = {}; }, llamad_config()), bad_timeouts},
   };
