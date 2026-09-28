@@ -1,7 +1,6 @@
 #include "runtime/worker.hpp"
 
 #include "core/retry.hpp"
-#include "protocol/sse.hpp"
 
 #include <algorithm>
 #include <cassert>
@@ -77,14 +76,13 @@ void redact_sensitive_fields(Error& error, const std::string_view secret) {
 
 } // namespace
 
-WorkerActor::WorkerActor(Config config, std::unique_ptr<ProviderAdapter> provider,
-                         std::unique_ptr<Transport> transport,
+WorkerActor::WorkerActor(Config config, std::unique_ptr<ModelBackend> backend,
                          std::shared_ptr<CommandQueue> commands,
                          std::shared_ptr<EventQueue> events,
                          WorkerEnvironment environment)
-    : config_(std::move(config)), provider_(std::move(provider)),
-      transport_(std::move(transport)), commands_(std::move(commands)),
-      events_(std::move(events)), retry_jitter_seed_(environment.retry_jitter_seed),
+    : config_(std::move(config)), backend_(std::move(backend)),
+      commands_(std::move(commands)), events_(std::move(events)),
+      retry_jitter_seed_(environment.retry_jitter_seed),
       time_(std::move(environment.time)) {
   // An empty member means production: the real steady clock and the real
   // deadline wait on the command queue.
@@ -98,21 +96,6 @@ WorkerActor::WorkerActor(Config config, std::unique_ptr<ProviderAdapter> provide
     };
   }
 }
-
-struct WorkerActor::AttemptState {
-  explicit AttemptState(const ResourceLimits& limits)
-      : parser(limits.max_sse_event_bytes),
-        decode{.max_tool_arguments_bytes = limits.max_tool_arguments_bytes} {}
-
-  SseParser parser;
-  ProviderDecodeState decode{};
-  std::optional<ModelResponse> completed{};
-  // Both sinks live for the whole attempt and are cleared, never reallocated,
-  // per chunk and per event, so the streaming path allocates once instead of
-  // once per received event.
-  std::vector<SseEvent> sse_events{};
-  std::vector<ProviderEvent> provider_events{};
-};
 
 void WorkerActor::run(const std::stop_token& stopped) noexcept {
   while (!stopped.stop_requested()) {
@@ -250,85 +233,26 @@ TransitionResult WorkerActor::failed_attempt(TurnMachine& machine, Error error,
 }
 
 // Takes the issued command by value because it holds the only request snapshot
-// outside the machine. Everything after encoding reads the TransportRequest, so
-// the snapshot is dropped at once: the machine is then its sole owner and a
-// completion moves the transcript out instead of copying it.
+// outside the machine. The snapshot is dropped as soon as the backend returns,
+// so the machine is then its sole owner and a completion moves the transcript
+// out instead of copying it.
 TransitionResult
 WorkerActor::perform_attempt(TurnMachine& machine, IssueModelRequest issue,
                              const std::shared_ptr<std::atomic<bool>>& cancelled,
                              const std::stop_token& stopped) {
-  auto request = provider_->make_request(config_, *issue.request);
+  ProviderEventSink sink{[this, &machine](ProviderEvent event) -> Status {
+    return publish_provider_event(machine, std::move(event));
+  }};
+  auto response = backend_->perform(config_, *issue.request, stopped, *cancelled, sink);
   issue.request.reset();
-  if (!request) {
-    return failed_attempt(machine, std::move(request.error()), issue.turn_id);
-  }
-
-  AttemptState state{config_.limits};
-  BodyChunkSink body_sink{
-      [this, &machine, &state](const std::string_view chunk) -> Status {
-        return consume_stream_chunk(machine, state, chunk);
-      }};
-
-  auto result = transport_->perform(*request, stopped, *cancelled, body_sink);
-  if (!result) {
-    return failed_attempt(machine, std::move(result.error()), issue.turn_id);
-  }
-  auto response = finish_stream(machine, state);
   if (!response) {
     return failed_attempt(machine, std::move(response.error()), issue.turn_id);
   }
-  return complete_attempt(machine, std::move(*response), *result);
-}
-
-Status WorkerActor::consume_stream_chunk(TurnMachine& machine, AttemptState& state,
-                                         const std::string_view chunk) {
-  state.sse_events.clear();
-  if (auto status = state.parser.push(chunk, state.sse_events); !status) {
-    return status;
-  }
-  return consume_sse_events(machine, state);
-}
-
-Status WorkerActor::consume_sse_events(TurnMachine& machine, AttemptState& state) {
-  for (const auto& event : state.sse_events) {
-    state.provider_events.clear();
-    if (auto status = provider_->parse_stream_event(
-            event.name, event.data, state.decode, state.provider_events);
-        !status) {
-      return status;
-    }
-    auto status = publish_stream_events(machine, state.provider_events, state.completed,
-                                        state.decode.semantic_output_consumed);
-    if (!status) {
-      return status;
-    }
-  }
-  return {};
-}
-
-Result<ModelResponse> WorkerActor::finish_stream(TurnMachine& machine,
-                                                 AttemptState& state) {
-  state.sse_events.clear();
-  if (auto status = state.parser.finish(state.sse_events); !status) {
-    return std::unexpected(std::move(status.error()));
-  }
-  if (auto status = consume_sse_events(machine, state); !status) {
-    return std::unexpected(std::move(status.error()));
-  }
-  if (!state.completed) {
-    return std::unexpected(
-        worker_error(ErrorCategory::protocol,
-                     "provider stream ended without a completion event", TurnId{}));
-  }
-  return std::move(*state.completed);
+  return complete_attempt(machine, std::move(*response));
 }
 
 TransitionResult WorkerActor::complete_attempt(TurnMachine& machine,
-                                               ModelResponse response,
-                                               const TransportResult& result) {
-  if (response.provider_request_id.empty()) {
-    response.provider_request_id = result.provider_request_id;
-  }
+                                               ModelResponse response) {
   if (contains_secret(response.provider_request_id, config_.api_key)) {
     response.provider_request_id.clear();
   }
@@ -400,32 +324,10 @@ WorkerActor::handle_tool_wait_command(TurnMachine& machine, WorkerCommand comman
   return std::nullopt;
 }
 
-// Provider events and machine commands are consumed exactly once, so both take
-// ownership of their payloads and streamed text moves through to the event queue.
-// The event sink is the attempt's, so its elements are moved from and the vector
-// is reused.
-Status
-WorkerActor::publish_stream_events(TurnMachine& machine,
-                                   std::vector<ProviderEvent>& provider_events,
-                                   std::optional<ModelResponse>& completed_response,
-                                   const bool semantic_output_consumed) {
-  // The machine accepts semantic output whenever an attempt is in flight, so
-  // the transition cannot be refused here; the phase check only skips a no-op.
-  if (semantic_output_consumed && machine.phase() == MachinePhase::awaiting_model) {
-    static_cast<void>(machine.apply(ModelSemanticOutput{}));
-  }
-  for (auto& event : provider_events) {
-    auto status = publish_provider_event(machine, std::move(event), completed_response);
-    if (!status) {
-      return status;
-    }
-  }
-  return {};
-}
-
-Status
-WorkerActor::publish_provider_event(TurnMachine& machine, ProviderEvent event,
-                                    std::optional<ModelResponse>& completed_response) {
+// The backend's event sink. Provider events and machine commands are consumed
+// exactly once, so both take ownership of their payloads and streamed text moves
+// through to the event queue.
+Status WorkerActor::publish_provider_event(TurnMachine& machine, ProviderEvent event) {
   if (auto* text = std::get_if<ProviderTextDelta>(&event)) {
     auto transition = machine.apply(ModelTextDelta{.text = std::move(text->text)});
     for (auto& command : transition.commands) {
@@ -442,16 +344,17 @@ WorkerActor::publish_provider_event(TurnMachine& machine, ProviderEvent event,
     }
     return {};
   }
-  if (auto* completed = std::get_if<ProviderCompleted>(&event)) {
-    if (completed_response) {
-      return std::unexpected(
-          worker_error(ErrorCategory::protocol,
-                       "provider stream emitted more than one completion", TurnId{}));
+  if (std::holds_alternative<ProviderSemanticOutput>(event)) {
+    // The machine accepts semantic output whenever an attempt is in flight, so
+    // the transition cannot be refused here; the phase check only skips a no-op.
+    if (machine.phase() == MachinePhase::awaiting_model) {
+      static_cast<void>(machine.apply(ModelSemanticOutput{}));
     }
-    completed_response = std::move(completed->response);
     return {};
   }
-  return {};
+  // A completion is the backend's return value, never a streamed event.
+  return std::unexpected(worker_error(
+      ErrorCategory::protocol, "model backend streamed a completion event", TurnId{}));
 }
 
 Status WorkerActor::publish_tool_batch(PublishToolCall first,

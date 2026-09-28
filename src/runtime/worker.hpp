@@ -1,11 +1,12 @@
 #pragma once
 
+#include "core/backend.hpp"
 #include "core/provider.hpp"
-#include "core/transport.hpp"
 #include "machine/turn_machine.hpp"
-#include "protocol/sse.hpp"
 #include "runtime/queue.hpp"
 
+#include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <deque>
 #include <memory>
@@ -13,8 +14,6 @@
 #include <scry/config.hpp>
 #include <scry/unique_function.hpp>
 #include <stop_token>
-#include <string_view>
-#include <vector>
 
 namespace scry::detail {
 
@@ -40,16 +39,13 @@ struct WorkerEnvironment {
 
 class WorkerActor final {
 public:
-  WorkerActor(Config config, std::unique_ptr<ProviderAdapter> provider,
-              std::unique_ptr<Transport> transport,
+  WorkerActor(Config config, std::unique_ptr<ModelBackend> backend,
               std::shared_ptr<CommandQueue> commands,
               std::shared_ptr<EventQueue> events, WorkerEnvironment environment = {});
 
   void run(const std::stop_token& stopped) noexcept;
 
 private:
-  struct AttemptState;
-
   void accept_command(WorkerCommand command);
   void process_turn(SendTurnCommand&& command, const std::stop_token& stopped);
   void process_machine_command(TurnMachine& machine, MachineCommand command,
@@ -72,20 +68,10 @@ private:
   [[nodiscard]] std::optional<TransitionResult>
   handle_tool_wait_command(TurnMachine& machine, WorkerCommand command,
                            const SendTurnCommand& turn);
-  [[nodiscard]] Status consume_stream_chunk(TurnMachine& machine, AttemptState& state,
-                                            std::string_view chunk);
-  [[nodiscard]] Status consume_sse_events(TurnMachine& machine, AttemptState& state);
-  [[nodiscard]] Result<ModelResponse> finish_stream(TurnMachine& machine,
-                                                    AttemptState& state);
   [[nodiscard]] TransitionResult complete_attempt(TurnMachine& machine,
-                                                  ModelResponse response,
-                                                  const TransportResult& result);
-  [[nodiscard]] Status publish_stream_events(
-      TurnMachine& machine, std::vector<ProviderEvent>& provider_events,
-      std::optional<ModelResponse>& completed_response, bool semantic_output_consumed);
-  [[nodiscard]] Status
-  publish_provider_event(TurnMachine& machine, ProviderEvent event,
-                         std::optional<ModelResponse>& completed_response);
+                                                  ModelResponse response);
+  [[nodiscard]] Status publish_provider_event(TurnMachine& machine,
+                                              ProviderEvent event);
   [[nodiscard]] Status publish_tool_batch(PublishToolCall first,
                                           std::deque<MachineCommand>& pending_commands);
   [[nodiscard]] Status publish_text_delta(PublishTextDelta delta);
@@ -95,8 +81,7 @@ private:
   [[nodiscard]] std::size_t streamed_event_limit() const noexcept;
 
   Config config_{};
-  std::unique_ptr<ProviderAdapter> provider_{};
-  std::unique_ptr<Transport> transport_{};
+  std::unique_ptr<ModelBackend> backend_{};
   std::shared_ptr<CommandQueue> commands_{};
   std::shared_ptr<EventQueue> events_{};
   std::uint64_t retry_jitter_seed_{};

@@ -104,6 +104,7 @@ endif()
 add_library(
   scry
   STATIC
+    src/backend/http_backend.cpp
     src/core/error.cpp
     src/core/json_codec.cpp
     src/core/json_view.cpp

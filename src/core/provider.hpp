@@ -22,8 +22,16 @@ struct ProviderCompleted {
   ModelResponse response{};
 };
 
+// Marks the point where an attempt first consumed text or tool-call content,
+// which ends its retry eligibility. Tool-call fragments set
+// ProviderDecodeState::semantic_output_consumed without producing an event of
+// their own, so a ModelBackend reports that transition with this. Provider
+// adapters never emit it.
+struct ProviderSemanticOutput {};
+
 // Unknown optional events are ignored without producing an event.
-using ProviderEvent = std::variant<ProviderTextDelta, ProviderCompleted>;
+using ProviderEvent =
+    std::variant<ProviderTextDelta, ProviderCompleted, ProviderSemanticOutput>;
 
 struct AnthropicProviderDecodeState {
   std::optional<std::size_t> active_content_index{};

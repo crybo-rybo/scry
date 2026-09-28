@@ -33,7 +33,8 @@ selected Clang compiler with a libFuzzer runtime.
 - `include/scry/` — public headers, each compiling standalone with no third-party
   types; reflection lives here, in `detail/reflection_*.hpp`.
 - `src/` by layer — `core/` (neutral model, seams, JSON codec), `machine/`
-  (sans-I/O turn machine), `protocol/` (SSE), `provider/` (Anthropic,
+  (sans-I/O turn machine), `backend/` (the `ModelBackend` seam's HTTP+SSE
+  implementation), `protocol/` (SSE), `provider/` (Anthropic,
   OpenAI-compatible), `runtime/` (worker, pump, registry, conversation),
   `transport/` (curl), `reflection/` (JSON bridge).
 - `tests/`, `examples/`, `extras/showcase/` (a standalone project the root build

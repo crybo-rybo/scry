@@ -44,15 +44,16 @@ built it; `Harness::create()` adopts it and leaves the source inactive. All
 callbacks and tool handlers run inside `update()` on its calling thread; they
 can access host state owned by that thread directly.
 
-One worker per Harness owns the network transfers, provider decoding, and turn
-machine. It processes accepted turns in FIFO order, with one active turn at a
-time. Later turns wait while the active turn retries or waits for tool results.
+One worker per Harness owns the model backend, which performs the network
+transfers and provider decoding, and the turn machine. It processes accepted
+turns in FIFO order, with one active turn at a time. Later turns wait while the
+active turn retries or waits for tool results.
 Separate Harness instances have separate workers and runtime state.
 
 ```mermaid
 flowchart LR
     App["Host: send / cancel"] --> Commands["Command queue"]
-    Commands --> Worker["Worker: turn machine / provider / curl"]
+    Commands --> Worker["Worker: turn machine / model backend"]
     Worker --> Events["Event queue"]
     Events --> Pump["Host: update"]
     Pump --> Callbacks["Callbacks and tool handlers"]
@@ -119,7 +120,8 @@ handle is retained; the handle then reports identity and status only. Moved-from
 handles and handles whose Harness is gone also report true. Dropping a Conversation
 handle does not cancel an accepted turn: the runtime retains its state.
 
-Harness destruction waits for the worker. The transport checks shutdown between
+Harness destruction waits for the worker, and a backend returns from an attempt
+promptly once shutdown is requested. The curl transport checks shutdown between
 curl operations and limits each curl poll wait using `timeouts.shutdown`; this
 setting is not a timed join or a hard wall-clock deadline for the destructor.
 
@@ -382,6 +384,23 @@ The internal JSON codec uses Glaze and canonicalizes object keys in lexical orde
 No Glaze type or header is exposed to consumers.
 
 ## Providers and transport
+
+The worker reaches a model through one internal seam, `ModelBackend` in
+`src/core/backend.hpp`. One call performs one attempt of one model request: it
+streams the attempt's text deltas back to the worker as they decode, together
+with a single marker the first time it consumes text or tool-call content, and
+returns the completed response or the attempt's error. The marker is what ends
+retry eligibility, including for tool-call fragments that stream no text. A
+backend returns promptly when the turn is cancelled or the Harness shuts down.
+Retry scheduling and jitter, API-key redaction, the turn machine, and event
+publication stay in the worker, so they behave the same whatever the backend.
+
+The one backend today, `HttpStreamBackend` in `src/backend/`, composes a provider
+adapter, the incremental SSE parser, and the curl transport. The adapter encodes
+the request, the transport streams the response body into the parser, and the
+adapter decodes each server-sent event. A completion must arrive exactly once. When
+the stream carries no request identifier, the transport's response header supplies
+it.
 
 The public `Message` model contains user and assistant roles with text, tool-call,
 and tool-result blocks. Provider adapters translate this model into HTTP requests

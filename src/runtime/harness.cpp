@@ -1,3 +1,5 @@
+#include "backend/http_backend.hpp"
+#include "core/backend.hpp"
 #include "core/error.hpp"
 #include "core/provider.hpp"
 #include "core/retry.hpp"
@@ -53,23 +55,20 @@ public:
   /// Starts a Harness from components whose entry-point-specific checks have
   /// already succeeded.
   [[nodiscard]] static Result<Harness>
-  start(Config config, std::unique_ptr<detail::ProviderAdapter> provider,
-        std::unique_ptr<detail::Transport> transport, ToolRegistry tools,
-        detail::WorkerEnvironment environment);
+  start(Config config, std::unique_ptr<detail::ModelBackend> backend,
+        ToolRegistry tools, detail::WorkerEnvironment environment);
 
-  Impl(Config config, std::unique_ptr<detail::ProviderAdapter> provider,
-       std::unique_ptr<detail::Transport> transport, ToolRegistry tools,
+  Impl(Config config, std::unique_ptr<detail::ModelBackend> backend, ToolRegistry tools,
        detail::WorkerEnvironment environment)
       : config_(std::move(config)), commands_(std::make_shared<detail::CommandQueue>()),
         events_(std::make_shared<detail::EventQueue>()), pump_(events_),
         tools_(std::move(tools)),
-        worker_([config = config_, provider = std::move(provider),
-                 transport = std::move(transport), commands = commands_,
+        worker_([config = config_, backend = std::move(backend), commands = commands_,
                  events = events_, environment = std::move(environment)](
                     const std::stop_token& stopped) mutable {
-          detail::WorkerActor actor{std::move(config),    std::move(provider),
-                                    std::move(transport), std::move(commands),
-                                    std::move(events),    std::move(environment)};
+          detail::WorkerActor actor{std::move(config), std::move(backend),
+                                    std::move(commands), std::move(events),
+                                    std::move(environment)};
           actor.run(stopped);
         }) {
     // An adopted registry that was already moved from would otherwise leave
@@ -182,16 +181,14 @@ private:
 };
 
 Result<Harness> Harness::Impl::start(Config config,
-                                     std::unique_ptr<detail::ProviderAdapter> provider,
-                                     std::unique_ptr<detail::Transport> transport,
+                                     std::unique_ptr<detail::ModelBackend> backend,
                                      ToolRegistry tools,
                                      detail::WorkerEnvironment environment) {
   return detail::translate_worker_start_failure<Harness>(
-      [config = std::move(config), provider = std::move(provider),
-       transport = std::move(transport), tools = std::move(tools),
-       environment = std::move(environment)]() mutable {
-        return Harness{std::make_unique<Impl>(std::move(config), std::move(provider),
-                                              std::move(transport), std::move(tools),
+      [config = std::move(config), backend = std::move(backend),
+       tools = std::move(tools), environment = std::move(environment)]() mutable {
+        return Harness{std::make_unique<Impl>(std::move(config), std::move(backend),
+                                              std::move(tools),
                                               std::move(environment))};
       });
 }
@@ -206,14 +203,16 @@ Result<Harness> Harness::create(Config config, ToolRegistry tools) {
   if (auto status = detail::validate_config(config); !status) {
     return std::unexpected(std::move(status.error()));
   }
-  auto provider = detail::make_provider_adapter(config.dialect);
   auto transport = std::make_unique<detail::CurlTransport>();
   if (auto status = transport->status(); !status) {
     return std::unexpected(std::move(status.error()));
   }
+  // The transport's address stays the seed's allocation identity, as it was
+  // before the backend seam wrapped it.
   const auto retry_jitter_seed = make_retry_jitter_seed(transport.get());
-  return Impl::start(std::move(config), std::move(provider), std::move(transport),
-                     std::move(tools),
+  auto backend = std::make_unique<detail::HttpStreamBackend>(
+      detail::make_provider_adapter(config.dialect), std::move(transport));
+  return Impl::start(std::move(config), std::move(backend), std::move(tools),
                      detail::WorkerEnvironment{.retry_jitter_seed = retry_jitter_seed});
 }
 
@@ -317,8 +316,23 @@ Result<Harness> HarnessTestAccess::create(Config config,
         detail::make_error(ErrorCategory::invalid_config,
                            "provider and transport components must not be empty"));
   }
-  return Harness::Impl::start(std::move(config), std::move(provider),
-                              std::move(transport), std::move(tools),
+  return create_with_backend(
+      std::move(config),
+      std::make_unique<HttpStreamBackend>(std::move(provider), std::move(transport)),
+      retry_jitter_seed, std::move(time), std::move(tools));
+}
+
+Result<Harness> HarnessTestAccess::create_with_backend(
+    Config config, std::unique_ptr<ModelBackend> backend,
+    const std::uint64_t retry_jitter_seed, WorkerTimeSource time, ToolRegistry tools) {
+  if (auto status = validate_config(config); !status) {
+    return std::unexpected(std::move(status.error()));
+  }
+  if (!backend) {
+    return std::unexpected(detail::make_error(ErrorCategory::invalid_config,
+                                              "model backend must not be empty"));
+  }
+  return Harness::Impl::start(std::move(config), std::move(backend), std::move(tools),
                               WorkerEnvironment{.retry_jitter_seed = retry_jitter_seed,
                                                 .time = std::move(time)});
 }
