@@ -56,6 +56,19 @@ lacks std::expected for the tooling compiler"
   OFF
 )
 option(SCRY_BUILD_FUZZERS "Build short protocol fuzz targets" OFF)
+option(
+  SCRY_WITH_LLAMAD
+  "Build the llamad backend (ProviderDialect::llamad, gRPC over a Unix socket); \
+needs gRPC and Protobuf"
+  OFF
+)
+set(
+  SCRY_LLAMAD_SOURCE_DIR
+  ""
+  CACHE PATH
+  "Local llamad checkout that supplies proto/llamad/v1/llamad.proto instead of \
+the pinned fetch; used only with SCRY_WITH_LLAMAD"
+)
 
 set(
   SCRY_SANITIZER
@@ -158,8 +171,17 @@ target_include_directories(
     "${PROJECT_SOURCE_DIR}/src"
 )
 target_include_directories(scry SYSTEM PRIVATE "${SCRY_GLAZE_INCLUDE_DIR}")
+# Always defined, to 0 or 1, so sources test it with #if and the dialect switch
+# stays exhaustive in every build.
+target_compile_definitions(
+  scry
+  PRIVATE "SCRY_WITH_LLAMAD=$<BOOL:${SCRY_WITH_LLAMAD}>"
+)
 
 include(ScryDeveloperTools)
+if(SCRY_WITH_LLAMAD)
+  include(ScryLlamad)
+endif()
 
 target_link_libraries(
   scry

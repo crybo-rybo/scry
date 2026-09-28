@@ -52,6 +52,23 @@ struct PackageArguments {
 }
 #endif
 
+#if defined(SCRY_CONSUMER_HAS_LLAMAD)
+// An install built with SCRY_WITH_LLAMAD accepts the dialect, and a Harness for
+// it links the gRPC backend from the installed archive. Creating one does not
+// connect, so no daemon is needed.
+[[nodiscard]] bool llamad_smoke() {
+  const auto config = scry::Config{
+      .base_url = "unix:/tmp/scry-package-consumer-llamad.sock",
+      .model = "package-smoke",
+      .dialect = scry::ProviderDialect::llamad,
+  };
+  if (!scry::Harness::validate(config)) {
+    return false;
+  }
+  return scry::Harness::create(config).has_value();
+}
+#endif
+
 } // namespace
 
 int main() {
@@ -103,6 +120,12 @@ int main() {
 #if defined(SCRY_CONSUMER_HAS_TESTING)
   if (!scripted_turn_smoke()) {
     return 5;
+  }
+#endif
+
+#if defined(SCRY_CONSUMER_HAS_LLAMAD)
+  if (!llamad_smoke()) {
+    return 6;
   }
 #endif
 

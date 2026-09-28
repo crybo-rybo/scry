@@ -34,6 +34,14 @@ using scry::Config;
   return config;
 }
 
+[[nodiscard]] Config llamad_config() {
+  return {
+      .base_url = "unix:/run/user/1000/llamad.sock",
+      .model = "local",
+      .dialect = scry::ProviderDialect::llamad,
+  };
+}
+
 constexpr double not_a_number = std::numeric_limits<double>::quiet_NaN();
 constexpr double infinite = std::numeric_limits<double>::infinity();
 
@@ -83,6 +91,21 @@ void require_rejected(const Config& config, const std::string_view message) {
   CHECK(status.error().category == scry::ErrorCategory::invalid_config);
   CHECK(status.error().message == message);
 }
+
+constexpr std::string_view llamad_unavailable =
+    "the llamad provider dialect requires a Scry build with SCRY_WITH_LLAMAD=ON";
+constexpr std::string_view llamad_target =
+    "llamad base_url must be a unix: gRPC target, such as "
+    "unix:/run/user/1000/llamad.sock";
+constexpr std::string_view llamad_temperature =
+    "llamad temperature must be finite and between 0 and 2";
+constexpr std::string_view llamad_top_p =
+    "llamad top_p must be finite and between 0 and 1";
+constexpr std::string_view llamad_max_tokens =
+    "llamad max_tokens must be greater than 0 and at most 2147483647 when set";
+constexpr std::string_view llamad_local_only =
+    "llamad proxy and ca_bundle_path must be empty; the daemon is reached over a "
+    "local socket";
 
 } // namespace
 
@@ -303,6 +326,132 @@ TEST_CASE("Harness::validate runs the create-time configuration checks") {
 
   CHECK_FALSE(scry::Harness::validate(Config{}));
 }
+
+TEST_CASE("an HTTP dialect refuses a unix: gRPC target") {
+  require_rejected(
+      with([](Config& c) { c.base_url = "unix:/run/user/1000/llamad.sock"; }), bad_url);
+  require_rejected(
+      with([](Config& c) { c.base_url = "unix:/tmp/llamad.sock"; }, openai_config()),
+      bad_url);
+}
+
+#if SCRY_WITH_LLAMAD
+
+TEST_CASE("a build with the llamad backend accepts every valid llamad shape") {
+  const Config accepted[] = {
+      llamad_config(),
+      with([](Config& c) { c.base_url = "unix:///tmp/llamad.sock"; }, llamad_config()),
+      with([](Config& c) { c.base_url = "unix:relative/llamad.sock"; },
+           llamad_config()),
+      // 0 is greedy decoding on llamad.
+      with([](Config& c) { c.sampling.temperature = 0.0; }, llamad_config()),
+      with([](Config& c) { c.sampling.temperature = 2.0; }, llamad_config()),
+      with([](Config& c) { c.sampling.top_p = 0.0; }, llamad_config()),
+      with([](Config& c) { c.sampling.top_p = 1.0; }, llamad_config()),
+      with([](Config& c) { c.sampling.max_tokens.reset(); }, llamad_config()),
+      with([](Config& c) { c.sampling.max_tokens = 2'147'483'647U; }, llamad_config()),
+      with(
+          [](Config& c) {
+            c.sampling.seed = std::numeric_limits<std::uint32_t>::max();
+          },
+          llamad_config()),
+      with([](Config& c) { c.tls_verify_peer = false; }, llamad_config()),
+  };
+  for (const auto& config : accepted) {
+    CHECK(scry::detail::validate_config(config));
+    CHECK(scry::Harness::validate(config));
+  }
+}
+
+TEST_CASE("a build with the llamad backend rejects each invalid llamad field") {
+  const Rejection rejections[] = {
+      {"empty target", with([](Config& c) { c.base_url.clear(); }, llamad_config()),
+       llamad_target},
+      {"scheme only", with([](Config& c) { c.base_url = "unix:"; }, llamad_config()),
+       llamad_target},
+      {"HTTP URL",
+       with([](Config& c) { c.base_url = "http://127.0.0.1:8080"; }, llamad_config()),
+       llamad_target},
+      {"bare path",
+       with([](Config& c) { c.base_url = "/run/llamad.sock"; }, llamad_config()),
+       llamad_target},
+      {"line break",
+       with([](Config& c) { c.base_url = "unix:/tmp/a\nb.sock"; }, llamad_config()),
+       llamad_target},
+      {"empty model", with([](Config& c) { c.model.clear(); }, llamad_config()),
+       "model must not be empty"},
+      {"api key", with([](Config& c) { c.api_key = "secret"; }, llamad_config()),
+       "llamad api_key must be empty; the daemon takes no credential"},
+      {"reasoning disabled",
+       with([](Config& c) { c.reasoning_mode = scry::ReasoningMode::disabled; },
+            llamad_config()),
+       "reasoning_mode = disabled requires the OpenAI-compatible provider dialect"},
+      {"temperature NaN",
+       with([](Config& c) { c.sampling.temperature = not_a_number; }, llamad_config()),
+       llamad_temperature},
+      {"temperature negative",
+       with([](Config& c) { c.sampling.temperature = -0.01; }, llamad_config()),
+       llamad_temperature},
+      {"temperature above 2",
+       with([](Config& c) { c.sampling.temperature = 2.01; }, llamad_config()),
+       llamad_temperature},
+      {"top_p infinite",
+       with([](Config& c) { c.sampling.top_p = infinite; }, llamad_config()),
+       llamad_top_p},
+      {"top_p negative",
+       with([](Config& c) { c.sampling.top_p = -0.01; }, llamad_config()),
+       llamad_top_p},
+      {"top_p above 1",
+       with([](Config& c) { c.sampling.top_p = 1.01; }, llamad_config()), llamad_top_p},
+      {"max_tokens zero",
+       with([](Config& c) { c.sampling.max_tokens = 0; }, llamad_config()),
+       llamad_max_tokens},
+      {"max_tokens above int32",
+       with([](Config& c) { c.sampling.max_tokens = 2'147'483'648U; }, llamad_config()),
+       llamad_max_tokens},
+      {"extra header",
+       with([](Config& c) { c.extra_headers = {{"x-scry", "1"}}; }, llamad_config()),
+       "llamad extra_headers must be empty; the daemon takes no headers"},
+      {"proxy",
+       with([](Config& c) { c.proxy = "http://proxy.internal:3128"; }, llamad_config()),
+       llamad_local_only},
+      {"CA bundle",
+       with([](Config& c) { c.ca_bundle_path = "/etc/ssl/ca.pem"; }, llamad_config()),
+       llamad_local_only},
+      {"zero idle timeout",
+       with([](Config& c) { c.timeouts.idle = {}; }, llamad_config()), bad_timeouts},
+  };
+  for (const auto& rejection : rejections) {
+    INFO(rejection.name);
+    require_rejected(rejection.config, rejection.message);
+    const auto validated = scry::Harness::validate(rejection.config);
+    REQUIRE_FALSE(validated);
+    CHECK(validated.error().message == rejection.message);
+  }
+}
+
+#else
+
+TEST_CASE("a build without the llamad backend rejects the llamad dialect") {
+  // Every llamad field is valid here, so only the missing build option can refuse it,
+  // and it is named before any field is read.
+  require_rejected(llamad_config(), llamad_unavailable);
+  require_rejected(
+      with([](Config& c) { c.base_url = "http://127.0.0.1:8080"; }, llamad_config()),
+      llamad_unavailable);
+
+  const auto validated = scry::Harness::validate(llamad_config());
+  REQUIRE_FALSE(validated);
+  CHECK(validated.error().category == scry::ErrorCategory::invalid_config);
+  CHECK(validated.error().message == llamad_unavailable);
+
+  const auto created = scry::Harness::create(llamad_config());
+  REQUIRE_FALSE(created);
+  CHECK(created.error().category == scry::ErrorCategory::invalid_config);
+  CHECK(created.error().message == llamad_unavailable);
+}
+
+#endif
 
 TEST_CASE(
     "worker thread startup failures are translated without hiding allocation failure") {

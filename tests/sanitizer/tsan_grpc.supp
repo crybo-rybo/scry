@@ -1,0 +1,13 @@
+# ThreadSanitizer suppressions for the llamad backend tests only.
+#
+# gRPC, Protobuf, and Abseil come from distribution packages that are not built
+# with -fsanitize=thread. Their synchronization (absl::Mutex futex waits, gRPC's
+# epoll event engine) is invisible to TSan, which then reports those libraries'
+# own state as racing. Each pattern names a library module, so a report is
+# suppressed only when one of its stacks runs through that library; races
+# confined to Scry's instrumented code still fail the run.
+race:libgrpc.so
+race:libgrpc++.so
+race:libgpr.so
+race:libabsl_
+race:libprotobuf.so

@@ -4,6 +4,15 @@ include(CMakeFindDependencyMacro)
 find_dependency(CURL 7.84)
 find_dependency(Threads)
 
+# Recorded when this package was built: whether scry::scry carries the llamad
+# backend (ProviderDialect::llamad), which links gRPC and Protobuf. Protobuf is
+# found the way the build found it, CONFIG package or FindProtobuf module.
+set(scry_WITH_LLAMAD @SCRY_WITH_LLAMAD@)
+if(scry_WITH_LLAMAD)
+  find_dependency(Protobuf @SCRY_LLAMAD_PROTOBUF_FIND_ARGS@)
+  find_dependency(gRPC CONFIG)
+endif()
+
 include("${CMAKE_CURRENT_LIST_DIR}/scryTargets.cmake")
 
 # The optional "testing" component is scry::testing, the scripted-transport

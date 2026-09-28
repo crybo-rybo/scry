@@ -3,8 +3,9 @@
 # Live gates: the warning-clean Doxygen site plus format (pinned
 # clang-format-18), core build matrix with warnings-as-errors plus complexity,
 # contract tests, and the install/package-consumer audit via ci-local.sh,
-# ASan/UBSan/TSan, clang-tidy, and fuzz corpus replay. Long fuzz runs, the
-# showcase, and the local-model smoke live in nightly.yml.
+# ASan/UBSan/TSan, clang-tidy, fuzz corpus replay, and the optional llamad
+# backend via ci-llamad.sh. Long fuzz runs, the showcase, and the local-model
+# smoke live in nightly.yml.
 #
 # The main build and analysis gates share scripts with preflight; the hosted
 # documentation job also runs the pinned clang-format check. Scry's public API is C++26
@@ -95,6 +96,27 @@ jobs:
         run: python3 -m pip install --user --break-system-packages lizard==1.24.0
       - name: Run local-equivalent CI
         run: ./scripts/ci-local.sh
+
+  llamad:
+    # The optional llamad backend (SCRY_WITH_LLAMAD=ON): gRPC over a Unix socket
+    # against a scripted fake daemon, plus the installed-package consumer with
+    # the gRPC dependencies. No daemon or model is needed.
+    name: llamad backend (Linux GCC 16)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      CC: gcc-16
+      CXX: g++-16
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install the Linux GCC 16 environment
+        uses: ./.github/actions/gcc16-env
+      - name: Install gRPC and Protobuf
+        run: >
+          sudo apt-get install -y
+          libgrpc++-dev libprotobuf-dev protobuf-compiler protobuf-compiler-grpc
+      - name: Run the llamad leg
+        run: ./scripts/ci-llamad.sh
 
   static-analysis:
     name: clang-tidy

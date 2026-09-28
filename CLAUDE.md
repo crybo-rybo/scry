@@ -22,6 +22,7 @@ ctest --test-dir build/dev --output-on-failure
 ctest --test-dir build/dev -R 'runtime\.'       # one suite, or one case by name
 ./scripts/format.sh --fix                       # --check to verify only
 ./scripts/preflight.sh                          # the full local ring before a PR
+./scripts/ci-llamad.sh                          # SCRY_WITH_LLAMAD=ON build (gRPC)
 ```
 
 The `dev`, `ci`, `asan`, and `tsan` presets select `g++-16`; override with
@@ -34,7 +35,8 @@ selected Clang compiler with a libFuzzer runtime.
   types; reflection lives here, in `detail/reflection_*.hpp`.
 - `src/` by layer — `core/` (neutral model, seams, JSON codec), `machine/`
   (sans-I/O turn machine), `backend/` (the `ModelBackend` seam's HTTP+SSE
-  implementation), `protocol/` (SSE), `provider/` (Anthropic,
+  implementation, and the llamad gRPC backend built only with
+  `SCRY_WITH_LLAMAD=ON`), `protocol/` (SSE), `provider/` (Anthropic,
   OpenAI-compatible), `runtime/` (worker, pump, registry, conversation),
   `transport/` (curl), `reflection/` (JSON bridge).
 - `tests/`, `examples/`, `extras/showcase/` (a standalone project the root build

@@ -26,6 +26,13 @@ static_assert(
     std::same_as<decltype(scry::SamplingConfig::seed), std::optional<std::uint32_t>>);
 static_assert(std::is_aggregate_v<scry::HttpHeader>);
 static_assert(std::is_enum_v<scry::ReasoningMode>);
+// Every dialect exists in every build, SCRY_WITH_LLAMAD or not, and a new one is
+// appended so a stored value keeps its meaning.
+static_assert(
+    std::same_as<std::underlying_type_t<scry::ProviderDialect>, std::uint8_t>);
+static_assert(std::to_underlying(scry::ProviderDialect::anthropic) == 0);
+static_assert(std::to_underlying(scry::ProviderDialect::openai_compatible) == 1);
+static_assert(std::to_underlying(scry::ProviderDialect::llamad) == 2);
 static_assert(std::is_aggregate_v<scry::Error>);
 static_assert(std::same_as<decltype(scry::Error::model_message), std::string>);
 static_assert(std::same_as<decltype(scry::tool_error(std::string{})), scry::Error>);

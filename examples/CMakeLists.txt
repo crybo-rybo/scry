@@ -26,3 +26,13 @@ target_link_libraries(
   scry_seeded_trials_example
   PRIVATE scry::scry scry_project_options
 )
+
+# The llamad dialect exists in every build, but only a SCRY_WITH_LLAMAD build
+# accepts it, so its example is compiled only there.
+if(SCRY_WITH_LLAMAD)
+  add_executable(scry_llamad_chat_example llamad_chat.cpp)
+  target_link_libraries(
+    scry_llamad_chat_example
+    PRIVATE scry::scry scry_project_options
+  )
+endif()

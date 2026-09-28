@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 
 # Local equivalent of the per-commit CI ring: documentation, formatting, core,
-# clang-tidy, sanitizers, and the fuzz corpus replay. Long fuzz runs, the
-# showcase, and the local-model smoke live in the scheduled/manual nightly
-# workflow.
+# clang-tidy, sanitizers, the fuzz corpus replay, and the llamad backend. Long
+# fuzz runs, the showcase, and the local-model smoke live in the
+# scheduled/manual nightly workflow.
 #
 # Every gate runs the same script the hosted leg runs (scripts/format.sh or a
 # scripts/ci-*.sh leg); the only thing that lives here is the host-capability
@@ -117,6 +117,33 @@ run_fuzz_replay() {
   ./scripts/ci-fuzz-replay.sh
 }
 
+# The llamad leg needs gRPC and Protobuf, which the core toolchain does not
+# bring. The probe asks CMake the way the build does, so a host where the leg
+# could not even configure reports unavailable rather than failing.
+run_llamad() {
+  local probe_dir=""
+  probe_dir="$(mktemp -d)" || return 1
+  cat >"${probe_dir}/CMakeLists.txt" <<'CMAKE'
+cmake_minimum_required(VERSION 3.28)
+project(scry_llamad_probe LANGUAGES CXX)
+find_package(Protobuf CONFIG QUIET)
+if(NOT Protobuf_FOUND)
+  find_package(Protobuf REQUIRED)
+endif()
+find_package(gRPC CONFIG REQUIRED)
+CMAKE
+  local status=0
+  cmake -S "${probe_dir}" -B "${probe_dir}/build" \
+    -DCMAKE_CXX_COMPILER="${CXX:-g++-16}" >/dev/null 2>&1 || status=1
+  rm -rf "${probe_dir}"
+  if [[ "${status}" -ne 0 ]]; then
+    echo "gRPC or Protobuf is unavailable; the hosted llamad leg is \
+authoritative" >&2
+    return 77
+  fi
+  ./scripts/ci-llamad.sh
+}
+
 cd "${root_dir}"
 run_gate "Doxygen API site" run_docs
 run_gate "format" ./scripts/format.sh --check
@@ -127,6 +154,7 @@ run_gate "ASan + UBSan" run_sanitizer_leg asan -fsanitize=address,undefined
 # on that leg.
 run_gate "TSan" run_sanitizer_leg tsan -fsanitize=thread
 run_gate "fuzz corpus replay" run_fuzz_replay
+run_gate "llamad backend" run_llamad
 
 if [[ -n "${skipped_gates}" ]]; then
   echo

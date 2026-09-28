@@ -54,11 +54,19 @@ message, every tool round, and the final reply land together. A failed or
 cancelled turn leaves history untouched. Conversations save to and load from
 JSON, so you own where they are stored.
 
-**Two provider dialects, selected by configuration.**
+**Provider dialects, selected by configuration.**
 Anthropic Messages, and the Chat Completions API that OpenAI-compatible
 servers such as Ollama serve. Local servers with no API key work.
 TLS verification is on by default, with settings for a CA bundle, a proxy, and
 extra headers.
+
+**Optionally, a local llamad daemon over gRPC.**
+Built with `-DSCRY_WITH_LLAMAD=ON` (which needs gRPC and Protobuf), Scry also
+speaks to [llamad](https://github.com/crybo-rybo/llamad), a daemon that serves
+one llama.cpp model over a Unix socket: set `.dialect =
+scry::ProviderDialect::llamad` and `.base_url = "unix:/path/to/llamad.sock"`.
+The same tool loop, streaming, cancellation, and history run over it; no HTTP
+request is made and libcurl is never initialized.
 
 **Errors are values, limits are explicit.**
 Fallible calls return `std::expected`. Byte limits on payloads, tool arguments,
@@ -214,6 +222,8 @@ target_link_libraries(app PRIVATE scry::scry)
   run several times against a local model with a fixed sampling seed.
 - [examples/testing_scripted.cpp](examples/testing_scripted.cpp) — a downstream
   test with a scripted provider and no network.
+- [examples/llamad_chat.cpp](examples/llamad_chat.cpp) — one question and one
+  reflected tool against a local llamad daemon (built with `SCRY_WITH_LLAMAD=ON`).
 - [extras/showcase](extras/showcase) — a standalone Dear ImGui chat panel and a
   grid world where the model drives an NPC through tools.
 - [Architecture](docs/architecture.md) — how it is built, what it guarantees,

@@ -35,7 +35,9 @@ class ScriptedTransport;
 /// is retried only with a small initial_backoff and max_backoff, or the test
 /// pays the production backoff in wall-clock seconds.
 /// @param config Provider, retry, timeout, and resource configuration. The
-/// dialect selects which provider encoder and decoder the turn runs through.
+/// dialect selects which provider encoder and decoder the turn runs through;
+/// it must be an HTTP dialect, because ProviderDialect::llamad has no HTTP
+/// transfer to script and is rejected with ErrorCategory::invalid_config.
 /// @param transport Script the worker performs its transfers against.
 /// @param tools Registry to adopt, exactly as Harness::create adopts it.
 /// @param retry_jitter_seed Seed for the per-attempt backoff jitter.

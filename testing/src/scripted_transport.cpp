@@ -239,6 +239,13 @@ void ScriptedTransport::release() { impl_->release(); }
 Result<Harness> create_harness(Config config, ScriptedTransport& transport,
                                ToolRegistry tools,
                                const std::uint64_t retry_jitter_seed) {
+  if (config.dialect == ProviderDialect::llamad) {
+    return std::unexpected(Error{
+        .category = ErrorCategory::invalid_config,
+        .message = "scry::testing scripts HTTP dialects only; llamad has no HTTP "
+                   "transfer to script",
+    });
+  }
   auto provider = detail::make_provider_adapter(config.dialect);
   return detail::HarnessTestAccess::create(
       std::move(config), std::move(provider),

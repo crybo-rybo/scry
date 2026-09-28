@@ -20,7 +20,7 @@ instructions.
 | `Harness` | Configured runtime, worker thread, registry, and callback pump |
 
 `Harness::validate(config)` runs the configuration checks used by `create()`
-without initializing libcurl or starting a worker. Successful validation does
+without initializing libcurl, opening a channel, or starting a worker. Successful validation does
 not guarantee that runtime initialization succeeds. Fallible operations return
 `Result<T>` (`std::expected<T, Error>`) or `Status` (`Result<void>`).
 
@@ -122,8 +122,10 @@ handle does not cancel an accepted turn: the runtime retains its state.
 
 Harness destruction waits for the worker, and a backend returns from an attempt
 promptly once shutdown is requested. The curl transport checks shutdown between
-curl operations and limits each curl poll wait using `timeouts.shutdown`; this
-setting is not a timed join or a hard wall-clock deadline for the destructor.
+curl operations and limits each curl poll wait using `timeouts.shutdown`; the
+llamad backend limits each completion-queue and connection wait the same way and
+cancels its call when it sees shutdown or the turn's cancel. This setting is not
+a timed join or a hard wall-clock deadline for the destructor.
 
 ## Turn processing and retries
 
@@ -395,12 +397,14 @@ backend returns promptly when the turn is cancelled or the Harness shuts down.
 Retry scheduling and jitter, API-key redaction, the turn machine, and event
 publication stay in the worker, so they behave the same whatever the backend.
 
-The one backend today, `HttpStreamBackend` in `src/backend/`, composes a provider
-adapter, the incremental SSE parser, and the curl transport. The adapter encodes
-the request, the transport streams the response body into the parser, and the
-adapter decodes each server-sent event. A completion must arrive exactly once. When
-the stream carries no request identifier, the transport's response header supplies
-it.
+Two backends live in `src/backend/`. `HttpStreamBackend` serves the Anthropic and
+OpenAI-compatible dialects: it composes a provider adapter, the incremental SSE
+parser, and the curl transport. The adapter encodes the request, the transport
+streams the response body into the parser, and the adapter decodes each
+server-sent event. A completion must arrive exactly once. When the stream carries
+no request identifier, the transport's response header supplies it. The llamad
+backend serves `ProviderDialect::llamad` over gRPC and is described
+[below](#llamad-over-grpc); it is compiled only with `SCRY_WITH_LLAMAD=ON`.
 
 The public `Message` model contains user and assistant roles with text, tool-call,
 and tool-result blocks. Provider adapters translate this model into HTTP requests
@@ -416,15 +420,17 @@ registration already produced, so a retry or a tool round re-encodes only the
 request's own frame and never rebuilds history as a document tree. Malformed
 embedded text is still rejected with `invalid_config`.
 
-| Setting | Anthropic Messages | OpenAI-compatible Chat Completions |
-|---|---|---|
-| Endpoint | `/v1/messages` | `/v1/chat/completions` |
-| Authentication | Required `x-api-key` | Optional bearer token |
-| `temperature` | 0–1 | 0–2 |
-| `top_p` | Greater than 0, at most 1 | 0–1 |
-| `max_tokens` | Required, positive | Optional; positive when set |
-| `seed` | Rejected during validation | Optional; sent when set |
-| Disabled reasoning | Rejected during validation | Sends `reasoning_effort: "none"` |
+| Setting | Anthropic Messages | OpenAI-compatible Chat Completions | llamad |
+|---|---|---|---|
+| Endpoint | `/v1/messages` | `/v1/chat/completions` | `unix:` gRPC target, such as `unix:/run/user/1000/llamad.sock` |
+| Authentication | Required `x-api-key` | Optional bearer token | None; `api_key` must be empty |
+| Headers, proxy, CA bundle | Allowed | Allowed | Must be empty |
+| `model` | Sent | Sent | Required non-empty but not sent; the daemon serves one model |
+| `temperature` | 0–1 | 0–2 | 0–2; 0 is greedy |
+| `top_p` | Greater than 0, at most 1 | 0–1 | 0–1 |
+| `max_tokens` | Required, positive | Optional; positive when set | Optional; 1 to 2147483647 when set |
+| `seed` | Rejected during validation | Optional; sent when set | Optional; sent when set |
+| Disabled reasoning | Rejected during validation | Sends `reasoning_effort: "none"` | Rejected during validation |
 
 `SamplingConfig::seed` is passed through, not enforced. Scry sends the same value
 with every request, retries and tool rounds included, and nothing more; whether
@@ -456,6 +462,70 @@ allowed before `[DONE]`. Missing, duplicate, or early terminal markers and
 semantic content after finish are protocol errors. Anthropic streams decode
 Messages content blocks, usage, stop reasons, and tool-use arguments.
 
+### llamad over gRPC
+
+The llamad dialect talks to a local [llamad](https://github.com/crybo-rybo/llamad)
+daemon, which serves one llama.cpp model over gRPC on a Unix domain socket. Scry
+compiles llamad's wire contract, `proto/llamad/v1/llamad.proto`, into its own
+archive and calls the generated `llamad.v1.Llama/Chat` stub directly; it does not
+use llamad's client library. Each Harness opens one channel to `base_url` at
+`create()` and keeps it for every attempt, turn, and tool round. The channel
+connects lazily, so `create()` succeeds whether or not a daemon is listening.
+
+Each attempt sends one `ChatRequest`: the system prompt as a leading `system`
+message, then the history and the turn's messages. A user message is either text,
+sent as one `user` message with its text blocks joined, or a run of tool results,
+each sent as its own `tool` message with its `tool_call_id` and the result JSON as
+its content, in call order. A tool result's `is_error` has no wire field; the error
+result's JSON already carries `{"error": ...}`. An assistant message carries its
+text and its tool calls with their IDs, names, and arguments. Registered tools are
+sent with their name, description, and input schema; `temperature` is always sent
+and `top_p`, `seed`, and `max_tokens` when set. `response_json_schema` is left
+empty. A request shape the wire cannot carry fails with `invalid_config`, as the
+HTTP encoders do.
+
+The daemon promises zero or more text chunks, then exactly one final chunk with a
+finish reason and token counts, and tool calls whole on that final chunk only.
+Text on any chunk streams to `on_text_delta` as it arrives and accumulates into
+the response text. `EOG` and `STOP` finish as `completed`, `LENGTH` as `length`,
+and `TOOL_CALLS` with its calls as `tool_use`; a final `CANCELLED` fails the attempt
+as cancelled. A stream that ends without a final chunk, sends anything after it,
+carries tool calls with another reason or on a text chunk, reports `TOOL_CALLS`
+with none, or names an unknown reason fails with `protocol`, as does a tool call
+without an ID or name or with arguments that are not a JSON object. Arguments over
+`max_tool_arguments_bytes` fail with `resource_limit`, and so does a stream whose
+serialized messages exceed `max_response_bytes`, which also caps any single
+received gRPC message. Token counts become `usage`, negative values as zero. Tool
+calls count as semantic output even with no text, so a failure after them is not
+retried. There is no request identifier.
+
+A failed call's gRPC status maps to a fixed message; the daemon's own error text
+is never surfaced, and the status code is kept in `provider_detail` as a token such
+as `llamad:invalid_argument`. `UNAVAILABLE`, `DEADLINE_EXCEEDED`, and `ABORTED` are
+retryable `network` failures. `INVALID_ARGUMENT`, `FAILED_PRECONDITION`, and
+`UNIMPLEMENTED` are `invalid_config`: the daemon rejected the request or cannot
+serve it. `RESOURCE_EXHAUSTED` is `resource_limit`, because gRPC reports a message
+over a size limit with it and resending cannot fit. `CANCELLED` after Scry
+cancelled the call is the ordinary cancellation; any other `CANCELLED`, and
+`INTERNAL`, `UNKNOWN`, or another code, are `network` failures, which like an HTTP
+5xx are retried only before output.
+
+`connect` bounds the wait for the channel to reach the socket; a socket nobody
+listens on fails at once as a retryable `network` error, as a refused HTTP
+connection does. The channel retries its connection at most a second apart, so a
+restarted daemon is found again quickly. `idle` is measured exactly, as time since
+the call started or the last message arrived, and fails the attempt as a retryable
+`network` error with `provider_detail` `llamad:idle_timeout`. llamad sends nothing
+while it processes the prompt or waits behind another client's request, so a long
+prompt needs a long `idle`. `transfer`, when set, is the call's gRPC deadline.
+Cancellation, shutdown, and the idle bound are checked between messages and at
+least every `timeouts.shutdown`; each cancels the call and waits for gRPC to
+release it before the attempt returns.
+
+A program cannot also link another copy of llamad's generated code, such as
+llamad's own `llamad::proto` or client library: both would define and register
+the same protobuf messages.
+
 The incremental SSE parser handles arbitrary byte splits. A CR, LF, or CRLF ends
 a line as soon as it arrives; a blank line ended by a lone CR dispatches its event
 without waiting for the next byte. Unknown optional events
@@ -466,8 +536,9 @@ The transport uses libcurl through an internal injectable interface. Each Harnes
 retains a curl multi handle and its connection cache across retries, tool rounds,
 and turns, while running one transfer at a time. Curl objects use RAII, and C
 callbacks catch exceptions. Process-wide curl initialization is attempted once;
-its result is cached. Startup requires libcurl 7.84 or newer with thread-safe
-global initialization and asynchronous DNS.
+its result is cached. Startup of an HTTP dialect requires libcurl 7.84 or newer
+with thread-safe global initialization and asynchronous DNS. A llamad Harness
+never initializes libcurl.
 
 TLS peer and hostname verification are enabled by default. `ca_bundle_path`
 selects a CA bundle; `proxy` selects a proxy. Empty values preserve curl's trust
@@ -529,6 +600,8 @@ but uses a rolling average and can report a stall later than the configured
 interval. It is not an exact timer between chunks. Optional `transfer` sets a
 hard duration limit on one HTTP transfer. Timeout failures are retryable network
 errors subject to the turn's retry eligibility. `shutdown` caps curl poll waits.
+The llamad dialect applies the same four settings to its gRPC call, with an exact
+idle bound; see [llamad over gRPC](#llamad-over-grpc).
 
 ## Completion, errors, and history
 
@@ -636,6 +709,18 @@ depend only on `<scry/*>`, and its retry waits are real time bounded by the
 libcurl is a linked dependency. Glaze is a private header-only build dependency,
 resolved from an installed package or a pinned FetchContent checkout. The
 installed package exports no Glaze target; it discovers curl and Threads.
+
+The llamad backend is optional and off by default. `SCRY_WITH_LLAMAD=ON` requires
+gRPC (its CMake package) and Protobuf (its CMake package, or CMake's FindProtobuf
+module where the distribution ships no package), and takes llamad's
+`proto/llamad/v1/llamad.proto` from a pinned FetchContent checkout of llamad,
+without its submodules, or from the checkout `SCRY_LLAMAD_SOURCE_DIR` names.
+llamad's own CMake project is never added. The generated stubs compile into
+`scry::scry`, which then links gRPC and Protobuf; the installed package records
+that and finds both, and sets `scry_WITH_LLAMAD` for the consumer. The option is
+unavailable in the `SCRY_CLANG_TOOLING` build. The `ProviderDialect::llamad`
+enumerator exists in every build; without the option, validation rejects it with
+`invalid_config` naming `SCRY_WITH_LLAMAD`.
 Catch2 is used by tests, and Dear ImGui is confined to the standalone showcase.
 Public headers use Scry-owned types and move-only `UniqueFunction` callables;
 stateful handles use PImpl. Build, test, and packaging gates are described in

@@ -14,6 +14,9 @@ std::unique_ptr<ProviderAdapter> make_provider_adapter(const ProviderDialect dia
     return std::make_unique<AnthropicAdapter>();
   case ProviderDialect::openai_compatible:
     return std::make_unique<OpenAiAdapter>();
+  case ProviderDialect::llamad:
+    // llamad is gRPC, not HTTP: it has its own ModelBackend and no adapter.
+    return nullptr;
   }
   std::unreachable();
 }

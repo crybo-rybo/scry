@@ -16,6 +16,17 @@ enum class ProviderDialect : std::uint8_t {
   anthropic,
   /// The supported OpenAI-compatible Chat Completions subset.
   openai_compatible,
+  /// A local llamad daemon over gRPC on a Unix domain socket.
+  ///
+  /// Config::base_url is the gRPC target and must start with `unix:`, for example
+  /// `unix:/run/user/1000/llamad.sock`. Config::model must still be non-empty, but
+  /// the daemon serves the one model it loaded and ignores it. The daemon takes no
+  /// credential, headers, proxy, or CA bundle, so those fields must stay empty.
+  ///
+  /// The backend is compiled only when Scry is built with `SCRY_WITH_LLAMAD=ON`;
+  /// without it, Harness::validate() and Harness::create() reject this dialect with
+  /// ErrorCategory::invalid_config.
+  llamad,
 };
 
 /// Controls whether a provider may use its default reasoning behavior.
@@ -23,7 +34,8 @@ enum class ReasoningMode : std::uint8_t {
   /// Omit reasoning controls and use the provider or model default.
   provider_default,
   /// Request that reasoning be disabled. Only the OpenAI-compatible dialect
-  /// supports this; Harness::create() rejects it for the Anthropic dialect.
+  /// supports this; Harness::create() rejects it for the Anthropic and llamad
+  /// dialects.
   disabled,
 };
 
@@ -43,21 +55,22 @@ enum class ToolRoundLimitPolicy : std::uint8_t {
 ///
 /// Values are validated by Harness::create() for the selected provider dialect.
 struct SamplingConfig {
-  /// Sampling temperature.
+  /// Sampling temperature. The llamad dialect treats 0 as greedy decoding.
   double temperature{1.0};
   /// Optional nucleus-sampling probability.
   std::optional<double> top_p{};
   /// Optional maximum number of output tokens requested from the provider.
   ///
   /// The Anthropic Messages API requires this field, so the Anthropic dialect
-  /// rejects an unset value. It is optional for the OpenAI-compatible dialect:
-  /// when unset the field is omitted from the request and the server default
-  /// applies. Zero is rejected by both dialects.
+  /// rejects an unset value. It is optional for the OpenAI-compatible and llamad
+  /// dialects: when unset the field is omitted from the request and the server
+  /// default applies. Zero is rejected by every dialect, and llamad also rejects
+  /// a value above 2147483647, the largest its wire field holds.
   std::optional<std::uint32_t> max_tokens{1024};
   /// Optional sampling seed, for repeatable experiments against one server.
   ///
-  /// The OpenAI-compatible dialect sends it as `seed` when set and omits the field
-  /// when unset. The Anthropic Messages API has no seed, so the Anthropic dialect
+  /// The OpenAI-compatible and llamad dialects send it when set and omit it when
+  /// unset. The Anthropic Messages API has no seed, so the Anthropic dialect
   /// rejects a set value rather than drop it silently. Repeatability is the
   /// server's to provide, not Scry's: the same seed, model, prompt, and sampling
   /// values often reproduce an output on one server, but servers treat the seed as
@@ -82,6 +95,8 @@ struct RetryPolicy {
 /// Time bounds for Scry-owned network and shutdown operations.
 struct TransportTimeouts {
   /// Maximum time allowed to establish a connection, including name resolution.
+  /// For llamad it bounds the wait for the channel to connect to the socket; a
+  /// socket nobody is listening on fails at once rather than after this bound.
   std::chrono::milliseconds connect{10'000};
   /// Maximum time the response may stay silent. The transfer fails when no bytes
   /// arrive for this long, including while waiting for the first byte. Curl applies
@@ -91,13 +106,17 @@ struct TransportTimeouts {
   ///
   /// Local servers can spend minutes processing a long prompt before the first
   /// token; raise this bound for that deployment rather than disabling it.
+  ///
+  /// The llamad dialect measures this exactly, as the time since the last stream
+  /// message arrived (or since the call started), without rounding.
   std::chrono::milliseconds idle{120'000};
-  /// Optional maximum time for one whole HTTP transfer. Unset means the transfer is
-  /// bounded only by `idle`, `connect`, and the configured byte limits, which is the
-  /// right default for streaming responses of unknown length.
+  /// Optional maximum time for one whole HTTP transfer or llamad call. Unset means
+  /// the transfer is bounded only by `idle`, `connect`, and the configured byte
+  /// limits, which is the right default for streaming responses of unknown length.
   std::optional<std::chrono::milliseconds> transfer{};
-  /// Maximum duration of one curl poll wait before checking shutdown again.
-  /// This is not a hard deadline for the Harness destructor's worker join.
+  /// Maximum duration of one curl poll wait, or one llamad completion-queue or
+  /// connection wait, before checking shutdown and cancellation again. This is not
+  /// a hard deadline for the Harness destructor's worker join.
   std::chrono::milliseconds shutdown{2'000};
 };
 
@@ -109,7 +128,8 @@ struct ResourceLimits {
   std::size_t max_pending_turns{64};
   /// Maximum bytes in one decoded server-sent event.
   std::size_t max_sse_event_bytes{std::size_t{256} * 1024};
-  /// Maximum cumulative response bytes accepted for one HTTP transfer.
+  /// Maximum cumulative response bytes accepted for one HTTP transfer or llamad
+  /// call. For llamad it also caps the size of any one received gRPC message.
   std::size_t max_response_bytes{std::size_t{8} * 1024 * 1024};
   /// Maximum serialized argument bytes across a tool call.
   std::size_t max_tool_arguments_bytes{std::size_t{1024} * 1024};
@@ -140,7 +160,8 @@ struct HttpHeader {
 /// This is a designated-initializer-friendly value type. Changing dialects or pointing
 /// at a local OpenAI-compatible server requires configuration changes only.
 struct Config {
-  /// Provider base URL or supported full endpoint.
+  /// Provider base URL or supported full endpoint, or for ProviderDialect::llamad
+  /// a `unix:` gRPC target.
   std::string base_url{};
   /// Provider credential. May be empty for an unauthenticated local server.
   std::string api_key{};

@@ -95,7 +95,9 @@ target_include_directories(
 # checked-in corpora through the JSON codec under the GCC build as well.
 target_compile_definitions(
   scry_runtime_tests
-  PRIVATE "SCRY_FUZZ_CORPUS_DIR=\"${PROJECT_SOURCE_DIR}/tests/fuzz/corpus\""
+  PRIVATE
+    "SCRY_FUZZ_CORPUS_DIR=\"${PROJECT_SOURCE_DIR}/tests/fuzz/corpus\""
+    "SCRY_WITH_LLAMAD=$<BOOL:${SCRY_WITH_LLAMAD}>"
 )
 target_link_libraries(
   scry_runtime_tests

@@ -161,6 +161,23 @@ TEST_CASE("scripted OpenAI-compatible text turn runs the other dialect") {
   CHECK(requests.front().url == "http://127.0.0.1:1/v1/chat/completions");
 }
 
+TEST_CASE("a scripted Harness refuses the llamad dialect, which has no HTTP transfer") {
+  ScriptedTransport transport;
+  const auto harness = scry::testing::create_harness(
+      scry::Config{
+          .base_url = "unix:/tmp/llamad.sock",
+          .model = "local",
+          .dialect = scry::ProviderDialect::llamad,
+      },
+      transport);
+  REQUIRE_FALSE(harness);
+  CHECK(harness.error().category == scry::ErrorCategory::invalid_config);
+  CHECK(harness.error().message ==
+        "scry::testing scripts HTTP dialects only; llamad has no HTTP transfer to "
+        "script");
+  CHECK(transport.calls() == 0);
+}
+
 TEST_CASE("scripted tool turn dispatches a reflected tool across two rounds") {
   ScriptedTransport transport;
   transport.enqueue(answer(scry::testing::anthropic_tool_stream({

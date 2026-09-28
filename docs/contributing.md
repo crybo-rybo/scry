@@ -41,6 +41,21 @@ with `-DCMAKE_CXX_COMPILER=...`. Select a versioned formatter with
 `CLANG_FORMAT=clang-format-18 ./scripts/format.sh --check`. Doxygen and Graphviz
 are needed for the documentation gate; Doxygen 1.9.8 is the minimum.
 
+The optional llamad backend (`SCRY_WITH_LLAMAD=ON`) and its gate need gRPC and
+Protobuf development packages, including `protoc` and `grpc_cpp_plugin`. The
+hosted leg runs on Linux only; on Ubuntu 24.04:
+
+```sh
+sudo apt-get install -y libgrpc++-dev libprotobuf-dev protobuf-compiler \
+  protobuf-compiler-grpc
+```
+
+gRPC and Protobuf must be built against the same C++ standard library as GCC 16
+uses; Homebrew's bottles are built with Apple Clang and libc++, so they are not a
+supported pairing. The configure step fetches `llamad.proto` from a pinned llamad
+commit; pass `-DSCRY_LLAMAD_SOURCE_DIR=/path/to/llamad` to use a local checkout
+instead, for example offline.
+
 The optional clang-tidy gate needs Clang and clang-tidy on `PATH`. CI uses
 version 18; on macOS that is the `llvm@18` export above. Fuzzing needs a Clang
 installation with libFuzzer; the hosted fuzz legs use Clang 21.
@@ -93,11 +108,15 @@ with a separate translation unit per header.
 | `SCRY_CLANG_TOOLING_LIBCXX` | Off | Select libc++ in Clang tooling mode |
 | `SCRY_BUILD_FUZZERS` | Off | Build libFuzzer targets with Clang |
 | `SCRY_SANITIZER` | `none` | Select `none`, `address-undefined`, or `thread` |
+| `SCRY_WITH_LLAMAD` | Off | Build the llamad gRPC backend for `ProviderDialect::llamad`; needs gRPC and Protobuf |
+| `SCRY_LLAMAD_SOURCE_DIR` | Empty | A llamad checkout to take `proto/llamad/v1/llamad.proto` from instead of the pinned fetch |
 
 Tests, examples, and warnings-as-errors default to off when Scry is embedded.
 Clang tooling mode disables examples and ordinary tests. Fuzzers require that
 mode and are registered separately under `tests/fuzz/`, even when
-`SCRY_BUILD_TESTS=OFF`. The consumer build always includes reflection in
+`SCRY_BUILD_TESTS=OFF`. `SCRY_WITH_LLAMAD` is refused in Clang tooling mode;
+with it on, the llamad backend tests (under `backend.`) and
+`examples/llamad_chat.cpp` are added to the build. The consumer build always includes reflection in
 `scry::scry`.
 
 ## The loop
@@ -109,7 +128,7 @@ ctest --test-dir build/dev --output-on-failure    # just test
 ```
 
 Catch2 suites are registered with ctest under a per-suite prefix (`runtime.`,
-`machine.`, `protocol.`, `provider.`, `transport.`, `integration.`,
+`backend.`, `machine.`, `protocol.`, `provider.`, `transport.`, `integration.`,
 `reflection.`, `testing.`); `public-api-contract` is a plain executable test.
 
 ```sh
@@ -142,6 +161,7 @@ commands. CodeQL and release publication have workflow-specific steps.
 | clang-tidy | `./scripts/ci-tidy.sh -DSCRY_CLANG_TOOLING_LIBCXX=ON`, because Ubuntu 24.04's libstdc++ `<expected>` is newer than clang 18 can parse |
 | ASan + UBSan, TSan | `./scripts/ci-sanitizer.sh asan` and `... tsan` |
 | Fuzz corpus replay | `./scripts/ci-fuzz-replay.sh` |
+| llamad backend, Linux GCC 16 | `./scripts/ci-llamad.sh`: a `SCRY_WITH_LLAMAD=ON` build in `build/llamad`, the `backend.` and `runtime.` suites against a scripted fake daemon, and the package consumer with `SCRY_CONSUMER_LLAMAD=ON` against a staged install |
 
 **Weekly, Mondays** (`.github/workflows/nightly.yml`): CodeQL; a long fuzz run on
 each of the five targets (`./scripts/ci-nightly-fuzz.sh <target>`); and the
@@ -158,9 +178,10 @@ Run the whole per-commit ring locally before every pull request:
 ./scripts/preflight.sh    # just ci
 ```
 
-It runs documentation, format, core, clang-tidy, sanitizers, and fuzz replay,
-and continues after failures. Missing documentation, tidy, sanitizer, or fuzz
-capabilities are reported as `SKIP` and listed in the closing summary. The format
+It runs documentation, format, core, clang-tidy, sanitizers, fuzz replay, and
+the llamad backend, and continues after failures. Missing documentation, tidy,
+sanitizer, fuzz, or gRPC and Protobuf capabilities are reported as `SKIP` and
+listed in the closing summary. The format
 and core gates are always attempted: a missing formatter fails the format gate,
 and a missing compiler or complexity checker fails the core gate. Each sanitizer
 leg probes its own flag with `g++-16` first, because GCC ships no
@@ -187,7 +208,7 @@ SCRY_NIGHTLY_FUZZ_SECONDS=1200 ./scripts/ci-nightly-fuzz.sh sse
 ## Testing
 
 - **Test behavior at seams, not implementation inside them.** Tests target the
-  machine, adapter, and transport interfaces. If refactoring internals breaks a
+  machine, adapter, transport, and model-backend interfaces. If refactoring internals breaks a
   test, the test was coupled to the wrong thing.
 - **Fakes over mocks.** A hand-written fake transport with scriptable responses
   beats mock-framework expectations: fakes survive refactors and read as
@@ -200,7 +221,9 @@ SCRY_NIGHTLY_FUZZ_SECONDS=1200 ./scripts/ci-nightly-fuzz.sh sse
 - **Choose the relevant seam.** Machine tests cover transitions, adapters cover
   wire mapping, runtime tests cover the pump and handles, and reflection tests
   cover schemas and codecs. Transport and integration tests also use local
-  loopback HTTP/TLS servers; the optional local-model smoke uses a live model.
+  loopback HTTP/TLS servers, the llamad backend tests a scripted gRPC fake of the
+  daemon on a private Unix socket (`tests/support/llamad/`), and the optional
+  local-model smoke uses a live model.
 
 ## Testing downstream with `scry::testing`
 

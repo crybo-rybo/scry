@@ -12,6 +12,10 @@
 #include "runtime/worker.hpp"
 #include "transport/curl_transport.hpp"
 
+#if SCRY_WITH_LLAMAD
+#include "backend/llamad_backend.hpp"
+#endif
+
 #include <atomic>
 #include <cassert>
 #include <chrono>
@@ -46,6 +50,51 @@ namespace {
     seed ^= std::uint64_t{0xD1B54A32D192ED03};
   }
   return detail::mix_seed(seed);
+}
+
+struct BuiltBackend {
+  std::unique_ptr<detail::ModelBackend> backend{};
+  std::uint64_t retry_jitter_seed{};
+};
+
+[[nodiscard]] Result<BuiltBackend> build_http_backend(const Config& config) {
+  auto transport = std::make_unique<detail::CurlTransport>();
+  if (auto status = transport->status(); !status) {
+    return std::unexpected(std::move(status.error()));
+  }
+  // The transport's address stays the seed's allocation identity, as it was
+  // before the backend seam wrapped it.
+  const auto retry_jitter_seed = make_retry_jitter_seed(transport.get());
+  return BuiltBackend{
+      .backend = std::make_unique<detail::HttpStreamBackend>(
+          detail::make_provider_adapter(config.dialect), std::move(transport)),
+      .retry_jitter_seed = retry_jitter_seed,
+  };
+}
+
+// Only the HTTP dialects touch libcurl: a llamad Harness never initializes it.
+// validate_config has already refused a dialect this build does not carry, so
+// the fallthrough is reached only by a value outside the enumeration.
+[[nodiscard]] Result<BuiltBackend> build_backend(const Config& config) {
+  switch (config.dialect) {
+  case ProviderDialect::anthropic:
+  case ProviderDialect::openai_compatible:
+    return build_http_backend(config);
+  case ProviderDialect::llamad:
+#if SCRY_WITH_LLAMAD
+  {
+    auto backend = detail::make_llamad_backend(config);
+    const auto retry_jitter_seed = make_retry_jitter_seed(backend.get());
+    return BuiltBackend{.backend = std::move(backend),
+                        .retry_jitter_seed = retry_jitter_seed};
+  }
+#else
+    break;
+#endif
+  }
+  return std::unexpected(
+      detail::make_error(ErrorCategory::invalid_config,
+                         "the configured provider dialect is not available"));
 }
 
 } // namespace
@@ -203,17 +252,13 @@ Result<Harness> Harness::create(Config config, ToolRegistry tools) {
   if (auto status = detail::validate_config(config); !status) {
     return std::unexpected(std::move(status.error()));
   }
-  auto transport = std::make_unique<detail::CurlTransport>();
-  if (auto status = transport->status(); !status) {
-    return std::unexpected(std::move(status.error()));
+  auto built = build_backend(config);
+  if (!built) {
+    return std::unexpected(std::move(built.error()));
   }
-  // The transport's address stays the seed's allocation identity, as it was
-  // before the backend seam wrapped it.
-  const auto retry_jitter_seed = make_retry_jitter_seed(transport.get());
-  auto backend = std::make_unique<detail::HttpStreamBackend>(
-      detail::make_provider_adapter(config.dialect), std::move(transport));
-  return Impl::start(std::move(config), std::move(backend), std::move(tools),
-                     detail::WorkerEnvironment{.retry_jitter_seed = retry_jitter_seed});
+  return Impl::start(
+      std::move(config), std::move(built->backend), std::move(tools),
+      detail::WorkerEnvironment{.retry_jitter_seed = built->retry_jitter_seed});
 }
 
 Status Harness::validate(const Config& config) {

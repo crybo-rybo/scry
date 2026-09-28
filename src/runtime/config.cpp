@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
+#include <limits>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -43,8 +45,36 @@ namespace {
   return !value.substr(scheme_size, value.find('/', scheme_size) - scheme_size).empty();
 }
 
+// A gRPC Unix-domain target: `unix:` then a non-empty path. gRPC resolves the
+// path itself, so only what can never name a socket is refused here.
+[[nodiscard]] bool valid_unix_target(const std::string_view value) noexcept {
+  constexpr auto scheme = std::string_view{"unix:"};
+  constexpr auto control = std::string_view{"\0\r\n", 3};
+  return value.starts_with(scheme) && value.size() > scheme.size() &&
+         value.find_first_of(control) == std::string_view::npos;
+}
+
+// A dialect the build does not carry is refused before any of its fields are
+// read, so the message names the missing build option rather than a field.
+[[nodiscard]] Status validate_dialect_available(const Config& config) {
+#if !SCRY_WITH_LLAMAD
+  if (config.dialect == ProviderDialect::llamad) {
+    return invalid("the llamad provider dialect requires a Scry build with "
+                   "SCRY_WITH_LLAMAD=ON");
+  }
+#else
+  static_cast<void>(config);
+#endif
+  return {};
+}
+
 [[nodiscard]] Status validate_endpoint(const Config& config) {
-  if (!valid_http_url(config.base_url)) {
+  if (config.dialect == ProviderDialect::llamad) {
+    if (!valid_unix_target(config.base_url)) {
+      return invalid("llamad base_url must be a unix: gRPC target, such as "
+                     "unix:/run/user/1000/llamad.sock");
+    }
+  } else if (!valid_http_url(config.base_url)) {
     return invalid("base_url must be an absolute HTTP or HTTPS URL");
   }
   if (config.model.empty()) {
@@ -59,6 +89,9 @@ namespace {
   }
   if (config.dialect == ProviderDialect::anthropic && config.api_key.empty()) {
     return invalid("Anthropic api_key must be present");
+  }
+  if (config.dialect == ProviderDialect::llamad && !config.api_key.empty()) {
+    return invalid("llamad api_key must be empty; the daemon takes no credential");
   }
   return {};
 }
@@ -116,6 +149,27 @@ namespace {
   return {};
 }
 
+// llamad sends these as protobuf float and int32 fields. Temperature takes the
+// OpenAI range, where 0 is greedy decoding, which also keeps it finite as a float.
+[[nodiscard]] Status validate_llamad_sampling(const SamplingConfig& sampling) {
+  if (!std::isfinite(sampling.temperature) || sampling.temperature < 0.0 ||
+      sampling.temperature > 2.0) {
+    return invalid("llamad temperature must be finite and between 0 and 2");
+  }
+  if (sampling.top_p && (!std::isfinite(*sampling.top_p) || *sampling.top_p < 0.0 ||
+                         *sampling.top_p > 1.0)) {
+    return invalid("llamad top_p must be finite and between 0 and 1");
+  }
+  constexpr auto maximum_tokens =
+      static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max());
+  if (sampling.max_tokens &&
+      (*sampling.max_tokens == 0 || *sampling.max_tokens > maximum_tokens)) {
+    return invalid(
+        "llamad max_tokens must be greater than 0 and at most 2147483647 when set");
+  }
+  return {};
+}
+
 [[nodiscard]] Status validate_provider(const Config& config) {
   auto auth = validate_auth(config);
   if (!auth) {
@@ -130,6 +184,8 @@ namespace {
     return validate_anthropic_sampling(config.sampling);
   case ProviderDialect::openai_compatible:
     return validate_openai_sampling(config.sampling);
+  case ProviderDialect::llamad:
+    return validate_llamad_sampling(config.sampling);
   }
   return invalid("the configured provider dialect is not available");
 }
@@ -175,7 +231,23 @@ namespace {
   });
 }
 
+// The daemon is reached over a local socket with no HTTP layer, so a value in
+// any of these would be silently ignored; refusing it keeps the Config honest.
+[[nodiscard]] Status validate_llamad_network_options(const Config& config) {
+  if (!config.extra_headers.empty()) {
+    return invalid("llamad extra_headers must be empty; the daemon takes no headers");
+  }
+  if (!config.proxy.empty() || !config.ca_bundle_path.empty()) {
+    return invalid("llamad proxy and ca_bundle_path must be empty; the daemon is "
+                   "reached over a local socket");
+  }
+  return {};
+}
+
 [[nodiscard]] Status validate_network_options(const Config& config) {
+  if (config.dialect == ProviderDialect::llamad) {
+    return validate_llamad_network_options(config);
+  }
   if (!transport_policy::validate_headers(config.extra_headers)) {
     return invalid("extra header name or value is invalid");
   }
@@ -198,6 +270,9 @@ namespace {
 } // namespace
 
 Status validate_config(const Config& config) {
+  if (auto status = validate_dialect_available(config); !status) {
+    return status;
+  }
   if (auto status = validate_endpoint(config); !status) {
     return status;
   }

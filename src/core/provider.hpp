@@ -85,6 +85,8 @@ public:
                      std::vector<ProviderEvent>& out) const = 0;
 };
 
+// The adapter for an HTTP dialect; null for ProviderDialect::llamad, which is
+// not HTTP and runs through its own ModelBackend.
 [[nodiscard]] std::unique_ptr<ProviderAdapter>
 make_provider_adapter(ProviderDialect dialect);
 
