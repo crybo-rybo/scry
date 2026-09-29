@@ -2,10 +2,10 @@
 #include "kernel/json/codec.hpp"
 #include "provider/anthropic.hpp"
 #include "provider/shared.hpp"
-#include "provider/wire_json.hpp"
 
 #include <cstdint>
 #include <optional>
+#include <scry/annotations.hpp>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -13,68 +13,60 @@
 #include <vector>
 
 namespace scry::detail {
+namespace {
 
-// The Messages API request as wire structs; see the note in provider/shared.hpp
-// for why they are ordered, named, and placed the way they are.
-struct AnthropicText {
-  std::string_view text{};
-  std::string_view type{"text"};
+// The Messages API request as reflected wire structs; see the note in
+// provider/shared.hpp for what they borrow.
+struct[[= reflection::tag{"text"}]] AnthropicText {
+  std::string_view text;
 };
 
-struct AnthropicToolUse {
-  std::string_view id{};
-  JsonText input{};
-  std::string_view name{};
-  std::string_view type{"tool_use"};
+struct[[= reflection::tag{"tool_use"}]] AnthropicToolUse {
+  std::string_view id;
+  std::string_view name;
+  const Json& input;
 };
 
 // `content` is a JSON string holding the result document, not the document
-// itself, which is why it is a string_view and `input` above is JsonText.
-struct AnthropicToolResult {
-  std::string_view content{};
-  bool is_error{};
-  std::string_view tool_use_id{};
-  std::string_view type{"tool_result"};
+// itself, which is why it is a string_view and `input` above is a Json.
+struct[[= reflection::tag{"tool_result"}]] AnthropicToolResult {
+  std::string_view tool_use_id;
+  std::string_view content;
+  bool is_error;
 };
 
 using AnthropicBlock =
     std::variant<AnthropicText, AnthropicToolUse, AnthropicToolResult>;
 
 struct AnthropicMessage {
-  std::vector<AnthropicBlock> content{};
-  std::string_view role{};
+  std::string_view role;
+  std::vector<AnthropicBlock> content;
 };
 
 struct AnthropicTool {
-  std::string_view description{};
-  JsonText input_schema{};
-  std::string_view name{};
+  std::string_view name;
+  std::string_view description;
+  const Json& input_schema;
 };
 
-struct AnthropicBody {
-  std::optional<std::uint32_t> max_tokens{};
-  std::vector<AnthropicMessage> messages{};
-  std::string_view model{};
-  bool stream{true};
-  std::optional<std::string_view> system{};
-  double temperature{};
-  std::optional<std::vector<AnthropicTool>> tools{};
-  std::optional<double> top_p{};
+struct[[= reflection::skip_null]] AnthropicBody {
+  std::string_view model;
+  std::optional<std::uint32_t> max_tokens;
+  std::optional<std::string_view> system;
+  std::vector<AnthropicMessage> messages;
+  std::optional<std::vector<AnthropicTool>> tools;
+  Json temperature;
+  std::optional<Json> top_p;
+  bool stream;
 };
-
-namespace {
 
 [[nodiscard]] Result<AnthropicBlock> encode_tool_call(const ToolCallBlock& block) {
-  if (auto status = embedded_json_object(block.arguments.text,
+  if (auto status = embedded_object_root(block.arguments.text,
                                          "Tool input must be a JSON object");
       !status) {
     return std::unexpected(std::move(status.error()));
   }
-  return AnthropicToolUse{
-      .id = block.id,
-      .input = JsonText{block.arguments.text},
-      .name = block.name,
-  };
+  return AnthropicToolUse{.id = block.id, .name = block.name, .input = block.arguments};
 }
 
 [[nodiscard]] Result<AnthropicBlock> encode_tool_result(const ToolResultBlock& block) {
@@ -84,9 +76,9 @@ namespace {
     return std::unexpected(std::move(status.error()));
   }
   return AnthropicToolResult{
+      .tool_use_id = block.tool_call_id,
       .content = block.result.text,
       .is_error = block.is_error,
-      .tool_use_id = block.tool_call_id,
   };
 }
 
@@ -109,7 +101,7 @@ namespace {
                                     const Message& message) {
   const std::string_view role = message.role == Role::user ? "user" : "assistant";
   if (encoded.empty() || encoded.back().role != role) {
-    encoded.push_back(AnthropicMessage{.role = role});
+    encoded.push_back(AnthropicMessage{.role = role, .content = {}});
   }
   auto& content = encoded.back().content;
   for (const auto& block : message.content) {
@@ -117,9 +109,7 @@ namespace {
     if (!wire) {
       return std::unexpected(std::move(wire.error()));
     }
-    // A wire block borrows every byte it carries, so it is trivially copyable
-    // and there is nothing for a move to steal.
-    content.push_back(*wire);
+    content.push_back(std::move(*wire));
   }
   return {};
 }
@@ -146,15 +136,15 @@ encode_tools(const ModelRequest& request) {
   std::vector<AnthropicTool> encoded{};
   encoded.reserve(request.tools->size());
   for (const auto& tool : *request.tools) {
-    if (auto status = embedded_json_object(tool.input_schema.text,
+    if (auto status = embedded_object_root(tool.input_schema.text,
                                            "Tool input schema must be a JSON object");
         !status) {
       return std::unexpected(std::move(status.error()));
     }
     encoded.push_back(AnthropicTool{
-        .description = tool.description,
-        .input_schema = JsonText{tool.input_schema.text},
         .name = tool.name,
+        .description = tool.description,
+        .input_schema = tool.input_schema,
     });
   }
   return encoded;
@@ -183,19 +173,20 @@ encode_tools(const ModelRequest& request) {
   // Validation rejects an unset max_tokens for this dialect, so the optional is
   // always engaged here; carrying it through keeps the encoder from reading an
   // empty one when a request is assembled by hand.
+  const auto& sampling = request.sampling;
   const AnthropicBody body{
-      .max_tokens = request.sampling.max_tokens,
-      .messages = std::move(*messages),
       .model = config.model,
+      .max_tokens = sampling.max_tokens,
       .system = request.system_prompt.empty()
                     ? std::nullopt
                     : std::optional<std::string_view>{request.system_prompt},
-      .temperature = request.sampling.temperature,
+      .messages = std::move(*messages),
       .tools = std::move(*tools),
-      .top_p = request.sampling.top_p,
+      .temperature = canonical_json_number(sampling.temperature),
+      .top_p = sampling.top_p.transform(canonical_json_number),
+      .stream = true,
   };
-  return write_wire_json(body, ErrorCategory::invalid_config,
-                         "Anthropic request body could not be encoded");
+  return encode_request_body(body, "Anthropic");
 }
 
 } // namespace

@@ -54,6 +54,12 @@ using JsonValue = glz::generic_sorted_u64;
 
 [[nodiscard]] Json make_json_error_object(std::string_view message);
 
+// A double spelled as the canonical writer spells it. That is the shortest
+// round-trip digits, as std::to_chars writes them, but laid out positionally for
+// decimal exponents from -4 to 15 and otherwise as `1E-7`, where std::to_chars
+// chooses by length and writes `1e-07`. A non-finite value is written as null.
+[[nodiscard]] Json canonical_json_number(double value);
+
 [[nodiscard]] const JsonValue* json_field(const JsonValue& value,
                                           std::string_view name) noexcept;
 

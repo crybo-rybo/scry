@@ -11,8 +11,8 @@ namespace {
 
 // Options for every write here. Glaze's default writer has no \u00XX form for a
 // control byte outside \b \f \n \r \t and puts two NUL bytes in its place, which
-// is not JSON; this option writes the escape instead. provider/wire_json.hpp
-// carries the same option for the request encoders.
+// is not JSON; this option writes the escape instead, with upper-case digits,
+// which the reflected codec's string writer matches.
 struct JsonWriteOptions : glz::opts {
   bool escape_control_characters = true;
 };
@@ -118,6 +118,13 @@ Json make_json_error_object(const std::string_view message) {
   std::string quoted{};
   static_cast<void>(glz::write<json_write_options>(message, quoted));
   return Json{.text = "{\"error\":" + quoted + "}"};
+}
+
+Json canonical_json_number(const double value) {
+  // Writing one number into a growable buffer cannot fail.
+  std::string text{};
+  static_cast<void>(glz::write<json_write_options>(value, text));
+  return Json{.text = std::move(text)};
 }
 
 const JsonValue* json_field(const JsonValue& value,

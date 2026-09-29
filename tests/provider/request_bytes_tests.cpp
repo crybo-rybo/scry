@@ -1,10 +1,14 @@
 #include "core/provider.hpp"
+#include "kernel/json/codec.hpp"
 #include "request_bytes_cases.hpp"
 
 #include <array>
 #include <catch2/catch_test_macros.hpp>
 #include <cstddef>
+#include <limits>
+#include <string>
 #include <string_view>
+#include <utility>
 
 namespace {
 
@@ -187,4 +191,41 @@ TEST_CASE("request encoders write byte-identical bodies") {
     REQUIRE(encoded);
     CHECK(encoded->body == request_bytes[index]);
   }
+}
+
+TEST_CASE("sampling numbers keep the canonical spelling in request bodies") {
+  // The reflected codec writes a double in std::to_chars' shortest form, which
+  // differs from the canonical writer's for small and large exponents, and a
+  // request body is not canonicalized after encoding. The sampling values reach
+  // the body pre-spelled instead.
+  constexpr std::array cases{
+      std::pair{0.7, "0.7"},
+      std::pair{1.0, "1"},
+      std::pair{0.1, "0.1"},
+      std::pair{1e-7, "1E-7"},
+      std::pair{0.0, "0"},
+      std::pair{0.0001, "0.0001"},
+      std::pair{1e-5, "1E-5"},
+      std::pair{0.00012, "0.00012"},
+      std::pair{2.0, "2"},
+      std::pair{0.30000000000000004, "0.30000000000000004"},
+      std::pair{5e-324, "5E-324"},
+      std::pair{1e16, "1E16"},
+  };
+  for (const auto& [value, spelling] : cases) {
+    INFO(spelling);
+    CHECK(scry::detail::canonical_json_number(value).text == spelling);
+    auto request = scry::test_fixtures::bytes_text_request("t");
+    request.sampling.temperature = value;
+    for (const auto& config : {scry::test_fixtures::anthropic_config(),
+                               scry::test_fixtures::openai_config()}) {
+      const auto adapter = scry::detail::make_provider_adapter(config.dialect);
+      const auto encoded = adapter->make_request(config, request);
+      REQUIRE(encoded);
+      // Without top_p, temperature is the body's last member in either dialect.
+      CHECK(encoded->body.ends_with(std::string{"\"temperature\":"} + spelling + "}"));
+    }
+  }
+  CHECK(scry::detail::canonical_json_number(std::numeric_limits<double>::quiet_NaN())
+            .text == "null");
 }
