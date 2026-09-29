@@ -12,8 +12,7 @@
 
 namespace {
 
-// The exact bodies the Glaze-backed request encoders wrote before the wire
-// structs moved to the reflected codec, captured once from that encoder. The
+// The exact bodies the request encoders write for request_bytes_cases(). The
 // fixtures in tests/fixtures compare JSON meaning; these pin every byte,
 // including key order, string escapes, and number spelling.
 constexpr std::array<std::string_view, 34> request_bytes{

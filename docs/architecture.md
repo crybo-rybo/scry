@@ -482,7 +482,9 @@ viewed value alone. Invalid input returns `invalid_argument`.
 `escape_json_string()` produces a quoted JSON string for hand-built results.
 The internal JSON codec, in the kernel under `src/kernel/json/`, uses Glaze and
 canonicalizes object keys in lexical order. No Glaze type or header is exposed to
-consumers.
+consumers, and none reaches the library outside the kernel: the rest of `src/`
+reads parsed JSON through `JsonView` and maps its own data shapes with the
+reflected codec.
 
 ## Providers and transport
 
@@ -492,14 +494,30 @@ and decode streaming replies. Provider code lives under `src/provider/`, split
 into request encoding, stream decoding, and content helpers. Per-attempt decode
 state is separate from the adapter.
 
-Request encoding writes typed wire structs straight to JSON text rather than
-building a document tree, through Glaze's reflection over those structs
-(`src/provider/wire_json.hpp`). Each embedded payload — tool-call arguments, tool
-results, and tool input schemas — is checked by one allocation-free validation
-scan and spliced in as the canonical text the turn machine, tool dispatch, and
-registration already produced, so a retry or a tool round re-encodes only the
-request's own frame and never rebuilds history as a document tree. Malformed
-embedded text is still rejected with `invalid_config`.
+Request encoding describes each body as reflected wire structs and writes them
+straight to JSON text with the reflected codec, rather than building a document
+tree. The structs borrow what they write: text as `std::string_view`, and
+tool-call arguments and tool input schemas as `const Json&` members. Each
+embedded payload, including tool results, which travel as JSON strings, is
+checked by one allocation-free validation scan and used as the canonical text
+the turn machine, tool dispatch, and registration already produced, so a retry
+or a tool round re-encodes only the request's own frame and never rebuilds
+history as a document tree. Malformed embedded text is still rejected with
+`invalid_config`. A body is not canonicalized after it is written, so it relies
+on the codec writing keys in canonical order and strings with the canonical
+escapes; `temperature` and `top_p` are spelled by the canonical writer before
+the encode, because the codec's shortest spelling of a double differs from it
+for small and large exponents (`1e-07` against `1E-7`).
+
+Stream decoding parses each SSE `data` payload once and decodes it with the
+reflected codec into event types that ignore members they do not declare, since
+providers add fields: a tagged variant keyed on `type` for Anthropic, and one
+chunk type for OpenAI. A shape the codec rejects is a `protocol` error naming
+the JSON path. The protocol lifecycle stays hand-written: event order, block
+indices, finish reasons, usage accumulation, and the argument byte limit. So do
+the error-token and request-identifier reads, which are best-effort: each value
+is independently optional, and one of the wrong type reads as absent rather
+than failing the event.
 
 | Setting | Anthropic Messages | OpenAI-compatible Chat Completions |
 |---|---|---|
@@ -689,7 +707,15 @@ for the invocation; `on_finished` receives its result by value.
 
 `to_json()` writes the system prompt and committed message blocks as a canonical
 versioned document. `from_json()` rejects malformed JSON, unknown fields or
-versions, and invalid block shapes or roles with `invalid_config`. Saving while
+versions, and invalid block shapes or roles with `invalid_config`. The document
+is a reflected type holding `messages`, `system_prompt`, and `version`, decoded
+by the reflected codec after its `version` alone, so another version is
+reported as unsupported rather than by its shape. A shape failure names its
+JSON path, as in `Conversation document at $.messages[0].role is a required
+member`. The rules the codec does not express are checked after it: every
+member of every message and block is present, tool calls appear only in
+assistant messages and tool results only in user messages, text, identifiers,
+names, and content are nonempty, and arguments are a JSON object. Saving while
 busy captures the last committed boundary; active work, callbacks, turn IDs, and
 tools are excluded. Scry performs no persistence file I/O. The host owns storage
 and any input-size limit before loading.
