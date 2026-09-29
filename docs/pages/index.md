@@ -57,6 +57,11 @@ while (application_is_running()) {
 Every callback and tool handler runs inside `scry::Harness::update()` on the
 thread that calls it; `scry::Harness::send()` never waits for network I/O.
 
+A turn can also end with a C++ value instead of text. `scry::Harness::ask()`
+blocks for one, and `scry::Harness::send()` with an answer type delivers it in
+`scry::Completion::structured`; `scry::ResponseFormat` is the dynamic form, and
+`examples/typed_answer.cpp` shows both.
+
 `examples/main_loop.cpp` in the source repository is a complete program. The
 threading and lifetime rules, tool registration (reflected and dynamic),
 and the error and history model are specified in `docs/architecture.md`. The

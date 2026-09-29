@@ -43,6 +43,12 @@ going until the model produces a final answer. Bad arguments, unknown tools, and
 handler failures become error messages the model can read and recover from,
 rather than crashes or aborted turns.
 
+**Answers as C++ values.**
+Ask for a struct instead of prose: `ask<Verdict>()` offers the model a
+`respond` tool whose schema is generated from `Verdict`, requires it to call a
+tool, and decodes the answer strictly. A malformed answer goes back to the model
+with a message naming the field at fault, and the model tries again.
+
 **You decide what the model may do.**
 A per-turn hook sees every tool call before it runs and can refuse it with a
 message the model reads. Caps on tool rounds and tool calls per turn bound the
@@ -157,6 +163,27 @@ from them. `tools.add<StatusArguments>({.name = ..., .description = ...},
 callable)` registers a lambda instead. Pass a `std::shared_ptr` to `add()` to
 keep a handle on the toolbox the tools act on.
 
+## Typed answers
+
+A turn can end with a value instead of text:
+
+```cpp
+struct Verdict {
+  [[= scry::reflection::description{"Is the claim supported?"}]] bool supported{};
+  std::string reason{};
+};
+
+auto verdict = harness->ask<Verdict>(*conversation, "Is the moon made of cheese?");
+if (verdict) {
+  std::cout << (verdict->value.supported ? "yes: " : "no: ") << verdict->value.reason;
+}
+```
+
+`ask()` blocks like `send_and_wait()`. In a main loop, `send<Verdict>(conversation,
+text, callbacks)` delivers the answer's canonical JSON in
+`Completion::structured`, and `scry::reflection::decode<Verdict>()` turns it back
+into the value. The model can still call your tools before it answers.
+
 ## How it fits into your application
 
 - **Your thread stays in charge.** One worker thread per `Harness` does the
@@ -237,6 +264,9 @@ target_link_libraries(app PRIVATE scry::scry)
 - [examples/typed_values.cpp](examples/typed_values.cpp) — the reflected codec
   on its own: an annotated answer type, its schema, a strict decode, and the
   error text a model would be sent back.
+- [examples/typed_answer.cpp](examples/typed_answer.cpp) — a turn that ends
+  with a C++ value: `ask<T>()` for a blocking question, `send<T>()` in a main
+  loop with a tool the model calls first.
 - [examples/testing_scripted.cpp](examples/testing_scripted.cpp) — a downstream
   test with a scripted provider and no network.
 - [extras/showcase](extras/showcase) — a standalone Dear ImGui chat panel and a
