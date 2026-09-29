@@ -13,10 +13,6 @@ target_include_directories(
   scry_provider_tests
   PRIVATE "${PROJECT_SOURCE_DIR}/src"
 )
-target_include_directories(
-  scry_provider_tests
-  SYSTEM PRIVATE "${SCRY_GLAZE_INCLUDE_DIR}"
-)
 target_compile_definitions(
   scry_provider_tests
   PRIVATE

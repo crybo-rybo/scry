@@ -5,6 +5,7 @@
 // skip pass before a plain read.
 
 #include "kernel/json/codec.hpp"
+#include "kernel/json/document.hpp"
 
 #include <array>
 #include <catch2/catch_test_macros.hpp>

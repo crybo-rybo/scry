@@ -3,7 +3,9 @@
 #include "kernel/json/codec.hpp"
 
 #include "kernel/error.hpp"
+#include "kernel/json/document.hpp"
 
+#include <string>
 #include <utility>
 
 namespace scry::detail {
@@ -50,12 +52,6 @@ struct JsonSkipOptions : glz::opts {
   bool validate_trailing_whitespace = true;
 };
 constexpr JsonSkipOptions json_skip_options{{.null_terminated = false}};
-
-[[nodiscard]] Error field_error(const std::string_view name,
-                                const std::string_view expected) {
-  return make_error(ErrorCategory::protocol, "JSON field '" + std::string{name} +
-                                                 "' must be " + std::string{expected});
-}
 
 } // namespace
 
@@ -135,57 +131,6 @@ const JsonValue* json_field(const JsonValue& value,
   const auto& object = value.get_object();
   const auto found = object.find(name);
   return found == object.end() ? nullptr : &found->second;
-}
-
-Result<std::string_view> required_json_string(const JsonValue& value,
-                                              const std::string_view name) {
-  const auto* field = json_field(value, name);
-  if (field == nullptr || !field->is_string()) {
-    return std::unexpected(field_error(name, "a string"));
-  }
-  return field->get_string();
-}
-
-Result<const JsonValue::array_t*> required_json_array(const JsonValue& value,
-                                                      const std::string_view name) {
-  const auto* field = json_field(value, name);
-  if (field == nullptr || !field->is_array()) {
-    return std::unexpected(field_error(name, "an array"));
-  }
-  return &field->get_array();
-}
-
-Result<const JsonValue*> required_json_object(const JsonValue& value,
-                                              const std::string_view name) {
-  const auto* field = json_field(value, name);
-  if (field == nullptr || !field->is_object()) {
-    return std::unexpected(field_error(name, "an object"));
-  }
-  return field;
-}
-
-Result<std::optional<std::string_view>>
-optional_json_string(const JsonValue& value, const std::string_view name) {
-  const auto* field = json_field(value, name);
-  if (field == nullptr || field->is_null()) {
-    return std::optional<std::string_view>{};
-  }
-  if (!field->is_string()) {
-    return std::unexpected(field_error(name, "a string or null"));
-  }
-  return std::optional<std::string_view>{field->get_string()};
-}
-
-Result<std::optional<std::uint64_t>> optional_json_uint(const JsonValue& value,
-                                                        const std::string_view name) {
-  const auto* field = json_field(value, name);
-  if (field == nullptr || field->is_null()) {
-    return std::optional<std::uint64_t>{};
-  }
-  if (!field->is_uint64()) {
-    return std::unexpected(field_error(name, "an unsigned integer"));
-  }
-  return std::optional<std::uint64_t>{field->get<std::uint64_t>()};
 }
 
 Status validate_json(const std::string_view input, const ErrorCategory category,

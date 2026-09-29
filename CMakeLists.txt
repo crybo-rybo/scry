@@ -219,7 +219,9 @@ target_include_directories(
   PRIVATE
     "${PROJECT_SOURCE_DIR}/src"
 )
-target_include_directories(scry SYSTEM PRIVATE "${SCRY_GLAZE_INCLUDE_DIR}")
+# Glaze is the kernel codec's implementation, compiled into the kernel objects
+# above; scry's own sources are compiled without its headers, so none of them
+# can reach the kernel's document type.
 
 target_link_libraries(
   scry

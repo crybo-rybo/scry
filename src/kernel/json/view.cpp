@@ -1,6 +1,6 @@
 #include "kernel/kernel.hpp"
 
-#include "kernel/json/codec.hpp"
+#include "kernel/json/document.hpp"
 
 #include <iterator>
 #include <memory>

@@ -3,7 +3,7 @@
 #include "kernel/transport/transport_policy.hpp"
 
 #include "kernel/error.hpp"
-#include "kernel/json/codec.hpp"
+#include "kernel/json/document.hpp"
 
 #include <algorithm>
 #include <cctype>

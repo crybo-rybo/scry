@@ -305,12 +305,11 @@ TEST_CASE("private JSON codec canonicalizes values and validates object roots") 
 TEST_CASE("private JSON codec safely quotes model-visible error strings") {
   const auto encoded = scry::detail::make_json_error_object("bad \"quote\"\nline\t\\");
   CHECK(encoded.text == R"({"error":"bad \"quote\"\nline\t\\"})");
-  auto parsed = scry::detail::parse_json(encoded.text, scry::ErrorCategory::tool,
-                                         "invalid error object");
+  auto parsed = scry::JsonView::parse(encoded);
   REQUIRE(parsed);
-  REQUIRE(parsed->is_object());
-  REQUIRE(parsed->contains("error"));
-  CHECK((*parsed)["error"].get_string() == "bad \"quote\"\nline\t\\");
+  REQUIRE(parsed->kind() == scry::JsonKind::object);
+  REQUIRE(parsed->find("error"));
+  CHECK(parsed->find("error")->string() == "bad \"quote\"\nline\t\\");
 }
 
 TEST_CASE("Conversation::from_json rejects a document truncated after a token") {

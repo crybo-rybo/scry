@@ -64,10 +64,6 @@ function(scry_add_fuzz_replay target corpus)
     ${SCRY_REPLAY_SOURCES}
   )
   target_include_directories("${target}" PRIVATE "${PROJECT_SOURCE_DIR}/src")
-  target_include_directories(
-    "${target}"
-    SYSTEM PRIVATE "${SCRY_GLAZE_INCLUDE_DIR}"
-  )
   target_link_libraries(
     "${target}"
     PRIVATE scry_project_options ${SCRY_REPLAY_LINK_LIBRARIES}
