@@ -61,8 +61,8 @@ struct MoveResult {
 
 int main() {
   scry::ToolRegistry tools;
-  if (const auto registered = scry::reflection::add<MoveArguments>(
-          tools, {.name = "move", .description = "Step one room in a direction"}, move);
+  if (const auto registered = tools.add<MoveArguments>(
+          {.name = "move", .description = "Step one room in a direction"}, move);
       !registered) {
     std::cerr << registered.error().message << '\n';
     return 1;

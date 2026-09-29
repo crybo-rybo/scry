@@ -9,24 +9,12 @@
 #include <scry/detail/reflection_model.hpp>
 #include <scry/error.hpp>
 #include <scry/json.hpp>
-#include <scry/tool_registry.hpp>
+#include <scry/tool.hpp>
 #include <string>
 #include <string_view>
 #include <type_traits>
 #include <utility>
 #include <vector>
-
-namespace scry::reflection {
-
-/// Provider-visible metadata for a reflected tool registration.
-struct ToolMetadata {
-  /// Unique tool name exposed to the model.
-  std::string name{};
-  /// Human-readable description exposed to the model.
-  std::string description{};
-};
-
-} // namespace scry::reflection
 
 namespace scry::reflection::detail {
 
@@ -251,6 +239,10 @@ private:
                      "carries scry::reflection::name or emit_null, which apply to "
                      "data members");
     }
+    if (has_annotation(type, ^^tool)) {
+      return problem(path, type,
+                     "carries scry::reflection::tool, which applies to functions");
+    }
     return {};
   }
 
@@ -306,6 +298,10 @@ private:
     if (has_annotation(member, ^^tag) || has_annotation(member, ^^ignore_unknown_t)) {
       return at_path(here, "carries scry::reflection::tag or ignore_unknown, which "
                            "apply to class types");
+    }
+    if (has_annotation(member, ^^tool)) {
+      return at_path(here, "carries scry::reflection::tool, which applies to "
+                           "functions");
     }
     return {};
   }
@@ -443,26 +439,41 @@ template <typename Value> struct expected_traits<std::expected<Value, scry::Erro
   using value_type = Value;
 };
 
+// A result that tells the model only that the call succeeded: `void`, or a
+// Status that may instead carry the handler's error. Either is sent as `{}`.
+consteval bool is_acknowledgement(const std::meta::info result) {
+  const auto type = plain_type(result);
+  return type == (^^void) || type == plain_type(^^scry::Status);
+}
+
+// Why a tool's return type cannot be sent to the model; empty when it can. The
+// text follows "returns", so it completes a sentence about the handler.
+consteval std::string result_type_problem(const std::meta::info result) {
+  if (std::meta::is_reference_type(result)) {
+    return "the reference " + display(result) + "; a reflected tool returns a value";
+  }
+  if (is_acknowledgement(result)) {
+    return {};
+  }
+  const auto type = plain_type(result);
+  const bool is_result =
+      is_specialization_of(type, ^^std::expected) &&
+      plain_type(std::meta::template_arguments_of(type)[1]) == (^^scry::Error);
+  const auto reason =
+      value_problem(is_result ? std::meta::template_arguments_of(type)[0] : result,
+                    value_family::supported);
+  if (reason.empty()) {
+    return {};
+  }
+  return display(result) +
+         ", which is not void, scry::Status, a SupportedValue, or a Result of one: " +
+         reason;
+}
+
 template <typename Result>
 consteval std::string handler_result_problem(const std::string& handler) {
-  if constexpr (std::is_reference_v<Result>) {
-    return handler + " returns the reference " + display(^^Result) +
-           "; a reflected handler returns a value";
-  } else {
-    using Return = std::remove_cvref_t<Result>;
-    std::string reason{};
-    if constexpr (expected_traits<Return>::recognized) {
-      reason = value_problem(^^typename expected_traits<Return>::value_type,
-                             value_family::supported);
-    } else {
-      reason = value_problem(^^Return, value_family::supported);
-    }
-    if (reason.empty()) {
-      return {};
-    }
-    return handler + " returns " + display(^^Result) +
-           ", which is not a SupportedValue or a Result of one: " + reason;
-  }
+  const auto reason = result_type_problem(^^Result);
+  return reason.empty() ? std::string{} : handler + " returns " + reason;
 }
 
 template <typename Handler, typename Args>

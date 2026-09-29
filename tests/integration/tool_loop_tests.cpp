@@ -30,34 +30,34 @@ TEST_CASE("two-tool turn snapshots tools, resends results, and commits atomicall
 
   // The contextual overload: the handler learns which call it is servicing
   // before the observer is told anything about it.
-  REQUIRE(harness.tools().add(ordinal_tool_definition("first_tool"),
-                              [&](const scry::ToolCallContext& context,
-                                  scry::Json arguments) -> scry::Result<scry::Json> {
-                                timeline.emplace_back("handler:first");
-                                callback_threads.push_back(std::this_thread::get_id());
-                                first_arguments = std::move(arguments.text);
-                                // The context's views borrow from the call block being
-                                // dispatched, so only owning copies survive past this
-                                // frame.
-                                first_context_turn = context.turn_id;
-                                first_context_call_id = std::string{context.call_id};
-                                first_context_tool_name =
-                                    std::string{context.tool_name};
-                                first_context_round = context.round;
-                                first_context_index = context.index;
-                                reentrant_registration_succeeded =
-                                    static_cast<bool>(harness.tools().add(
-                                        ordinal_tool_definition("reentrant_tool"),
+  REQUIRE(harness.tools().add_dynamic(
+      ordinal_tool_definition("first_tool"),
+      [&](const scry::ToolCallContext& context,
+          scry::Json arguments) -> scry::Result<scry::Json> {
+        timeline.emplace_back("handler:first");
+        callback_threads.push_back(std::this_thread::get_id());
+        first_arguments = std::move(arguments.text);
+        // The context's views borrow from the call block being
+        // dispatched, so only owning copies survive past this
+        // frame.
+        first_context_turn = context.turn_id;
+        first_context_call_id = std::string{context.call_id};
+        first_context_tool_name = std::string{context.tool_name};
+        first_context_round = context.round;
+        first_context_index = context.index;
+        reentrant_registration_succeeded = static_cast<bool>(
+            harness.tools().add_dynamic(ordinal_tool_definition("reentrant_tool"),
                                         static_handler(R"({"handled":"reentrant"})")));
-                                return scry::Json{.text = R"({"handled":"first"})"};
-                              }));
-  REQUIRE(harness.tools().add(ordinal_tool_definition("second_tool"),
-                              [&](scry::Json arguments) -> scry::Result<scry::Json> {
-                                timeline.emplace_back("handler:second");
-                                callback_threads.push_back(std::this_thread::get_id());
-                                second_arguments = std::move(arguments.text);
-                                return scry::Json{.text = R"({"handled":"second"})"};
-                              }));
+        return scry::Json{.text = R"({"handled":"first"})"};
+      }));
+  REQUIRE(harness.tools().add_dynamic(
+      ordinal_tool_definition("second_tool"),
+      [&](scry::Json arguments) -> scry::Result<scry::Json> {
+        timeline.emplace_back("handler:second");
+        callback_threads.push_back(std::this_thread::get_id());
+        second_arguments = std::move(arguments.text);
+        return scry::Json{.text = R"({"handled":"second"})"};
+      }));
 
   std::optional<scry::Completion> completion;
   auto turn_result =
@@ -86,8 +86,8 @@ TEST_CASE("two-tool turn snapshots tools, resends results, and commits atomicall
                    });
   REQUIRE(turn_result);
 
-  REQUIRE(harness.tools().add(ordinal_tool_definition("after_send_tool"),
-                              static_handler(R"({"handled":"after-send"})")));
+  REQUIRE(harness.tools().add_dynamic(ordinal_tool_definition("after_send_tool"),
+                                      static_handler(R"({"handled":"after-send"})")));
 
   CHECK(conversation.empty());
   REQUIRE(pump_one_until(harness, [&] { return timeline.size() >= 2; }));
@@ -178,15 +178,15 @@ TEST_CASE("a failing tool handler reaches the observer as an error result") {
   auto& harness = fixture.harness;
   auto& conversation = fixture.conversation;
 
-  REQUIRE(harness.tools().add(ordinal_tool_definition("first_tool"),
-                              [](scry::Json) -> scry::Result<scry::Json> {
-                                return std::unexpected(scry::Error{
-                                    .category = scry::ErrorCategory::tool,
-                                    .message = "handler said no",
-                                });
-                              }));
-  REQUIRE(harness.tools().add(ordinal_tool_definition("second_tool"),
-                              static_handler(R"({"handled":"second"})")));
+  REQUIRE(harness.tools().add_dynamic(ordinal_tool_definition("first_tool"),
+                                      [](scry::Json) -> scry::Result<scry::Json> {
+                                        return std::unexpected(scry::Error{
+                                            .category = scry::ErrorCategory::tool,
+                                            .message = "handler said no",
+                                        });
+                                      }));
+  REQUIRE(harness.tools().add_dynamic(ordinal_tool_definition("second_tool"),
+                                      static_handler(R"({"handled":"second"})")));
 
   std::vector<scry::ToolCall> observed;
   bool finished = false;
@@ -229,10 +229,10 @@ TEST_CASE("a queued turn waits for the active turn's app-thread tool round") {
   fake->enqueue(scripted_exchange(final_stream, "second-final-request"));
   auto harness = unwrap(scry::detail::HarnessTestAccess::create(
       test_config(), provider(), std::move(fake)));
-  REQUIRE(harness.tools().add(ordinal_tool_definition("first_tool"),
-                              static_handler(R"({"queue":1})")));
-  REQUIRE(harness.tools().add(ordinal_tool_definition("second_tool"),
-                              static_handler(R"({"queue":2})")));
+  REQUIRE(harness.tools().add_dynamic(ordinal_tool_definition("first_tool"),
+                                      static_handler(R"({"queue":1})")));
+  REQUIRE(harness.tools().add_dynamic(ordinal_tool_definition("second_tool"),
+                                      static_handler(R"({"queue":2})")));
 
   auto first_conversation = scry::Conversation::create();
   auto second_conversation = scry::Conversation::create();
@@ -287,8 +287,8 @@ TEST_CASE("tool call batches fail atomically at the event queue boundary") {
     ++handler_calls;
     return scry::Json{.text = "{}"};
   };
-  REQUIRE(harness.tools().add(ordinal_tool_definition(first_name), handler));
-  REQUIRE(harness.tools().add(ordinal_tool_definition(second_name), handler));
+  REQUIRE(harness.tools().add_dynamic(ordinal_tool_definition(first_name), handler));
+  REQUIRE(harness.tools().add_dynamic(ordinal_tool_definition(second_name), handler));
   std::optional<scry::Error> failure;
   auto turn = harness.send(conversation, "run an oversized batch",
                            {
@@ -322,7 +322,7 @@ TEST_CASE("a tool result larger than the queue limit still completes when it fit
                              {{.id = "call-1", .name = "large", .arguments = "{}"}}),
                          "tool-request"),
        scripted_exchange(anthropic_text_stream("done"), "final-request")});
-  REQUIRE(fixture.harness.tools().add(
+  REQUIRE(fixture.harness.tools().add_dynamic(
       scry::ToolDefinition{
           .name = "large",
           .description = "Returns a result larger than the event queue limit",
@@ -351,8 +351,8 @@ TEST_CASE("Harness destruction stops a worker awaiting an app-thread tool result
     ++handler_calls;
     return scry::Json{.text = "{}"};
   };
-  REQUIRE(harness.tools().add(ordinal_tool_definition("first_tool"), handler));
-  REQUIRE(harness.tools().add(ordinal_tool_definition("second_tool"), handler));
+  REQUIRE(harness.tools().add_dynamic(ordinal_tool_definition("first_tool"), handler));
+  REQUIRE(harness.tools().add_dynamic(ordinal_tool_definition("second_tool"), handler));
   std::size_t callbacks = 0;
   auto turn = harness.send(
       conversation, "destroy during app-thread tool wait",
@@ -392,7 +392,7 @@ TEST_CASE("a tool handler that disconnects suppresses its own observer") {
   std::optional<scry::Turn> turn;
   bool disconnect_reported = false;
   std::size_t observer_calls = 0;
-  REQUIRE(harness.tools().add(
+  REQUIRE(harness.tools().add_dynamic(
       scry::ToolDefinition{
           .name = "disconnect_me",
           .description = "Disconnects the turn from inside its own handler",
@@ -430,16 +430,18 @@ TEST_CASE(
 
   std::size_t first_calls = 0;
   std::size_t second_calls = 0;
-  REQUIRE(harness.tools().add(ordinal_tool_definition("first_tool"),
-                              [&first_calls](scry::Json) -> scry::Result<scry::Json> {
-                                ++first_calls;
-                                return scry::Json{.text = R"({"handled":"first"})"};
-                              }));
-  REQUIRE(harness.tools().add(ordinal_tool_definition("second_tool"),
-                              [&second_calls](scry::Json) -> scry::Result<scry::Json> {
-                                ++second_calls;
-                                return scry::Json{.text = R"({"handled":"second"})"};
-                              }));
+  REQUIRE(harness.tools().add_dynamic(
+      ordinal_tool_definition("first_tool"),
+      [&first_calls](scry::Json) -> scry::Result<scry::Json> {
+        ++first_calls;
+        return scry::Json{.text = R"({"handled":"first"})"};
+      }));
+  REQUIRE(harness.tools().add_dynamic(
+      ordinal_tool_definition("second_tool"),
+      [&second_calls](scry::Json) -> scry::Result<scry::Json> {
+        ++second_calls;
+        return scry::Json{.text = R"({"handled":"second"})"};
+      }));
 
   std::vector<bool> observed_errors;
   std::optional<scry::Completion> completion;
@@ -495,16 +497,18 @@ TEST_CASE("the per-turn call limit counts across rounds and admits exactly its b
 
   std::size_t first_calls = 0;
   std::size_t second_calls = 0;
-  REQUIRE(harness.tools().add(ordinal_tool_definition("first_tool"),
-                              [&first_calls](scry::Json) -> scry::Result<scry::Json> {
-                                ++first_calls;
-                                return scry::Json{.text = R"({"handled":"first"})"};
-                              }));
-  REQUIRE(harness.tools().add(ordinal_tool_definition("second_tool"),
-                              [&second_calls](scry::Json) -> scry::Result<scry::Json> {
-                                ++second_calls;
-                                return scry::Json{.text = R"({"handled":"second"})"};
-                              }));
+  REQUIRE(harness.tools().add_dynamic(
+      ordinal_tool_definition("first_tool"),
+      [&first_calls](scry::Json) -> scry::Result<scry::Json> {
+        ++first_calls;
+        return scry::Json{.text = R"({"handled":"first"})"};
+      }));
+  REQUIRE(harness.tools().add_dynamic(
+      ordinal_tool_definition("second_tool"),
+      [&second_calls](scry::Json) -> scry::Result<scry::Json> {
+        ++second_calls;
+        return scry::Json{.text = R"({"handled":"second"})"};
+      }));
 
   std::vector<bool> observed_errors;
   std::vector<std::uint32_t> observed_rounds;
@@ -554,13 +558,14 @@ TEST_CASE("an admission hook's refusal text reaches the model on the wire") {
   auto& conversation = fixture.conversation;
 
   std::size_t second_calls = 0;
-  REQUIRE(harness.tools().add(ordinal_tool_definition("first_tool"),
-                              static_handler(R"({"handled":"first"})")));
-  REQUIRE(harness.tools().add(ordinal_tool_definition("second_tool"),
-                              [&second_calls](scry::Json) -> scry::Result<scry::Json> {
-                                ++second_calls;
-                                return scry::Json{.text = R"({"handled":"second"})"};
-                              }));
+  REQUIRE(harness.tools().add_dynamic(ordinal_tool_definition("first_tool"),
+                                      static_handler(R"({"handled":"first"})")));
+  REQUIRE(harness.tools().add_dynamic(
+      ordinal_tool_definition("second_tool"),
+      [&second_calls](scry::Json) -> scry::Result<scry::Json> {
+        ++second_calls;
+        return scry::Json{.text = R"({"handled":"second"})"};
+      }));
 
   // The "accept this result, then stop" pattern: a host flag the hook consults,
   // so the turn completes and commits instead of rolling back.
@@ -610,13 +615,14 @@ TEST_CASE("cancelling from the admission hook runs no handler and commits nothin
   auto& conversation = fixture.conversation;
 
   std::size_t handler_calls = 0;
-  REQUIRE(harness.tools().add(ordinal_tool_definition("first_tool"),
-                              [&handler_calls](scry::Json) -> scry::Result<scry::Json> {
-                                ++handler_calls;
-                                return scry::Json{.text = R"({"handled":"first"})"};
-                              }));
-  REQUIRE(harness.tools().add(ordinal_tool_definition("second_tool"),
-                              static_handler(R"({"handled":"second"})")));
+  REQUIRE(harness.tools().add_dynamic(
+      ordinal_tool_definition("first_tool"),
+      [&handler_calls](scry::Json) -> scry::Result<scry::Json> {
+        ++handler_calls;
+        return scry::Json{.text = R"({"handled":"first"})"};
+      }));
+  REQUIRE(harness.tools().add_dynamic(ordinal_tool_definition("second_tool"),
+                                      static_handler(R"({"handled":"second"})")));
 
   const auto messages_before = conversation.message_count();
   std::size_t admissions = 0;
@@ -681,16 +687,18 @@ TEST_CASE("the soft round limit commits one round and keeps the history sendable
 
   std::size_t first_calls = 0;
   std::size_t second_calls = 0;
-  REQUIRE(harness.tools().add(ordinal_tool_definition("first_tool"),
-                              [&first_calls](scry::Json) -> scry::Result<scry::Json> {
-                                ++first_calls;
-                                return scry::Json{.text = R"({"handled":"first"})"};
-                              }));
-  REQUIRE(harness.tools().add(ordinal_tool_definition("second_tool"),
-                              [&second_calls](scry::Json) -> scry::Result<scry::Json> {
-                                ++second_calls;
-                                return scry::Json{.text = R"({"handled":"second"})"};
-                              }));
+  REQUIRE(harness.tools().add_dynamic(
+      ordinal_tool_definition("first_tool"),
+      [&first_calls](scry::Json) -> scry::Result<scry::Json> {
+        ++first_calls;
+        return scry::Json{.text = R"({"handled":"first"})"};
+      }));
+  REQUIRE(harness.tools().add_dynamic(
+      ordinal_tool_definition("second_tool"),
+      [&second_calls](scry::Json) -> scry::Result<scry::Json> {
+        ++second_calls;
+        return scry::Json{.text = R"({"handled":"second"})"};
+      }));
 
   std::optional<scry::Completion> completion;
   REQUIRE(harness.send(conversation, "Run the tool",
@@ -774,8 +782,8 @@ TEST_CASE("large dropped calls reach the host intact") {
                          });
   auto& harness = fixture.harness;
   auto& conversation = fixture.conversation;
-  REQUIRE(harness.tools().add(ordinal_tool_definition("first_tool"),
-                              static_handler(R"({"handled":"first"})")));
+  REQUIRE(harness.tools().add_dynamic(ordinal_tool_definition("first_tool"),
+                                      static_handler(R"({"handled":"first"})")));
 
   std::optional<scry::Completion> completion;
   REQUIRE(harness.send(conversation, "Run the tool",

@@ -37,6 +37,7 @@ list(
   "${SCRY_ROOT_DIR}/include/scry/detail/reflection_meta.hpp"
   "${SCRY_ROOT_DIR}/include/scry/detail/reflection_registration.hpp"
   "${SCRY_ROOT_DIR}/include/scry/detail/reflection_schema.hpp"
+  "${SCRY_ROOT_DIR}/include/scry/detail/reflection_tools.hpp"
 )
 list(TRANSFORM SCRY_DOCUMENTED_HEADERS PREPEND "\"")
 list(TRANSFORM SCRY_DOCUMENTED_HEADERS APPEND "\"")

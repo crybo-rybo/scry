@@ -88,8 +88,7 @@ int main() {
   }
   auto harness = std::move(*created);
 
-  const auto registration = scry::reflection::add<PackageArguments>(
-      harness.tools(),
+  const auto registration = harness.tools().add<PackageArguments>(
       {
           .name = "package_smoke",
           .description = "Prove the installed reflected API is linkable",

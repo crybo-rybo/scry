@@ -43,7 +43,9 @@ namespace scry {
 
 class ToolRegistry::Impl final {
 public:
-  [[nodiscard]] Status add(ToolDefinition definition, ContextualToolHandler handler);
+  // Validates every entry, then inserts all of them or none: names must be
+  // distinct from each other and from every registration already present.
+  [[nodiscard]] Status add(std::vector<detail::ToolEntry> entries);
   [[nodiscard]] detail::FrozenToolSnapshot snapshot();
   [[nodiscard]] const detail::ToolSnapshot& entries() const noexcept {
     return entries_;

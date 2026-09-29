@@ -8,7 +8,7 @@
 #include <scry/error.hpp>
 #include <scry/json.hpp>
 #include <scry/message.hpp>
-#include <scry/tool_registry.hpp>
+#include <scry/tool.hpp>
 #include <scry/turn_id.hpp>
 #include <scry/unique_function.hpp>
 #include <string>

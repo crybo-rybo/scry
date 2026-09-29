@@ -13,12 +13,11 @@ struct ForecastArgs {
 };
 
 void register_tool(scry::ToolRegistry& registry) {
-  const auto status =
-      scry::reflection::add<ForecastArgs>(registry,
-                                          {
-                                              .name = "forecast",
-                                              .description = "Must not compile",
-                                          },
-                                          [](ForecastArgs) { return 0; });
+  const auto status = registry.add<ForecastArgs>(
+      {
+          .name = "forecast",
+          .description = "Must not compile",
+      },
+      [](ForecastArgs) { return 0; });
   (void)status;
 }

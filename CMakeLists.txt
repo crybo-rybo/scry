@@ -245,6 +245,7 @@ set(
   include/scry/detail/reflection_model.hpp
   include/scry/detail/reflection_registration.hpp
   include/scry/detail/reflection_schema.hpp
+  include/scry/detail/reflection_tools.hpp
   include/scry/error.hpp
   include/scry/events.hpp
   include/scry/harness.hpp
@@ -252,6 +253,7 @@ set(
   include/scry/message.hpp
   include/scry/reflection.hpp
   include/scry/scry.hpp
+  include/scry/tool.hpp
   include/scry/tool_registry.hpp
   include/scry/turn.hpp
   include/scry/turn_id.hpp

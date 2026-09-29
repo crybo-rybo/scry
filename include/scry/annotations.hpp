@@ -3,14 +3,14 @@
 #include <cstddef>
 #include <string_view>
 
-/// Annotation vocabulary for Scry's reflected codec.
+/// Annotation vocabulary for Scry's reflected codec and reflected tools.
 ///
 /// Every type here is a plain C++23 structural type, so this header needs neither
 /// `<meta>` nor a reflection-enabled compiler; only writing a P3394 annotation,
-/// `[[= value]]`, requires C++26. Member annotations are written before the member
-/// declaration. Class annotations are written between the class-key and the class
-/// name, `struct [[= scry::reflection::tag{"text"}]] TextBlock { ... };`, which is
-/// the placement that appertains to the class itself.
+/// `[[= value]]`, requires C++26. Member and function annotations are written
+/// before the declaration. Class annotations are written between the class-key and the
+/// class name, `struct [[= scry::reflection::tag{"text"}]] TextBlock { ... };`, which
+/// is the placement that appertains to the class itself.
 namespace scry::reflection {
 
 template <std::size_t Size> struct description;
@@ -71,12 +71,14 @@ template <const std::string_view& View> [[nodiscard]] consteval auto description
   return annotation{typename annotation::view_tag{}, View};
 }
 
-/// Overrides the JSON key of one data member.
+/// Overrides the JSON key of one data member, or the name of one tool function.
 ///
-/// The key replaces the member's identifier in encoding, decoding, generated
-/// schemas, and decode-failure paths. Objects are written in lexical order of these
-/// final keys, and two members of one class that end with the same key are a
-/// compile-time error. Usage: `[[= scry::reflection::name{"max_tokens"}]]`.
+/// On a data member the key replaces the member's identifier in encoding,
+/// decoding, generated schemas, and decode-failure paths. Objects are written in
+/// lexical order of these final keys, and two members of one class that end with
+/// the same key are a compile-time error. On a function annotated with
+/// scry::reflection::tool it replaces the function's identifier as the tool name
+/// the model sees. Usage: `[[= scry::reflection::name{"max_tokens"}]]`.
 /// @tparam Size Character-array extent including the null terminator.
 template <std::size_t Size> struct name {
   static_assert(Size > 1, "scry::reflection::name must not be empty");
@@ -136,6 +138,43 @@ template <std::size_t Size> struct tag {
 /// Deduces a tag extent from a string literal.
 /// @param value Discriminator text whose extent is deduced.
 template <std::size_t Size> tag(const char (&value)[Size]) -> tag<Size>;
+
+/// Declares a function as a model-callable tool and supplies its description.
+///
+/// Applies to namespace-scope functions, static member functions, and member
+/// functions of a toolbox class. The tool is named after the function's
+/// identifier unless a scry::reflection::name annotation on the same function
+/// overrides it, and its argument schema is generated from the parameter list.
+/// ToolRegistry::add<^^function>() registers one such function,
+/// ToolRegistry::add<^^namespace>() every one declared in a namespace, and
+/// ToolRegistry::add(toolbox) every one a class declares, bound to that object.
+/// Usage: `[[= scry::reflection::tool{"Move the NPC one tile"}]] Position
+/// step(Direction direction);`.
+/// @tparam Size Character-array extent including the null terminator.
+template <std::size_t Size> struct tool {
+  static_assert(Size > 1, "scry::reflection::tool needs a description for the model");
+
+  /// Owned null-terminated description text.
+  char text[Size]{};
+
+  /// Captures a string literal at compile time.
+  /// @param value Null-terminated description text.
+  consteval tool(const char (&value)[Size]) {
+    for (std::size_t index = 0; index < Size; ++index) {
+      text[index] = value[index];
+    }
+  }
+
+  /// Returns the description without its null terminator.
+  /// @return Non-owning view into text.
+  [[nodiscard]] constexpr std::string_view view() const noexcept {
+    return {text, Size - 1};
+  }
+};
+
+/// Deduces a tool description extent from a string literal.
+/// @param value Description text whose extent is deduced.
+template <std::size_t Size> tool(const char (&value)[Size]) -> tool<Size>;
 
 /// Type of the skip_null annotation.
 struct skip_null_t {};

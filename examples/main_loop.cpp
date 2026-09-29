@@ -90,8 +90,7 @@ struct StatusResult {
 
 // Registers one reflected tool and one explicit-schema tool.
 [[nodiscard]] scry::Status register_tools(scry::ToolRegistry& tools, Application& app) {
-  if (auto reflected = scry::reflection::add<StatusArguments>(
-          tools,
+  if (auto reflected = tools.add<StatusArguments>(
           {
               .name = "get_application_status",
               .description =
@@ -112,7 +111,7 @@ struct StatusResult {
       !reflected) {
     return reflected;
   }
-  return tools.add(
+  return tools.add_dynamic(
       scry::ToolDefinition{
           .name = "echo",
           .description = "Return the supplied text unchanged",

@@ -5,11 +5,20 @@
 #endif
 
 #include <scry/annotations.hpp>
-#include <scry/detail/reflection_registration.hpp>
+#include <scry/detail/reflection_decode.hpp>
+#include <scry/detail/reflection_encode.hpp>
+#include <scry/detail/reflection_json.hpp>
+#include <scry/detail/reflection_meta.hpp>
+#include <scry/detail/reflection_schema.hpp>
+#include <scry/error.hpp>
+#include <scry/json.hpp>
+#include <scry/tool_registry.hpp>
 #include <string_view>
 #include <utility>
 
-/// Core C++26 typed-tool API built on P2996 reflection.
+/// Scry's reflected codec and the vocabulary of reflected tools, built on P2996.
+///
+/// Tools themselves are registered through scry::ToolRegistry::add().
 namespace scry::reflection {
 
 /// Encodes a reflected value as Scry's canonical JSON.

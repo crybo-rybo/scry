@@ -246,3 +246,61 @@ scry_add_reflection_compile_fail_test(
   unsupported_nested_member.cpp
   "does not satisfy scry::reflection::ToolArguments: ForecastArgs::window.when: std::chrono::duration<"
 )
+
+# Reflected tool declarations: each rejection names the function, member, or
+# namespace at fault and the reason.
+scry_add_reflection_compile_fail_test(
+  toolbox-without-tools
+  toolbox_without_tools.cpp
+  "Lamp does not satisfy scry::reflection::Toolbox: Lamp declares no function annotated with scry::reflection::tool"
+)
+scry_add_reflection_compile_fail_test(
+  tool-on-non-function
+  tool_on_non_function.cpp
+  "scry::ToolRegistry::add<^^lamp_tools>(): lamp_tools::brightness carries scry::reflection::tool, which applies to functions"
+)
+scry_add_reflection_compile_fail_test(
+  tool-on-data-member
+  tool_on_data_member.cpp
+  "Arguments::city: carries scry::reflection::tool, which applies to functions"
+)
+scry_add_reflection_compile_fail_test(
+  namespace-without-tools
+  namespace_without_tools.cpp
+  "scry::ToolRegistry::add<^^lamp_tools>(): namespace lamp_tools declares no function annotated with scry::reflection::tool"
+)
+scry_add_reflection_compile_fail_test(
+  unnamed-parameter
+  unnamed_parameter.cpp
+  "lamp_tools::dim has the unnamed parameter 2; an argument synthesized from a parameter is named after it"
+)
+scry_add_reflection_compile_fail_test(
+  unsupported-parameter
+  unsupported_parameter.cpp
+  "lamp_tools::label has parameter `initial`: char is a character type"
+)
+scry_add_reflection_compile_fail_test(
+  mutable-reference-parameter
+  mutable_reference_parameter.cpp
+  "lamp_tools::rename has parameter `name` of type"
+)
+scry_add_reflection_compile_fail_test(
+  unsupported-tool-result
+  unsupported_tool_result.cpp
+  "Lamp::describe returns scry::Json, which is not void, scry::Status, a SupportedValue, or a Result of one"
+)
+scry_add_reflection_compile_fail_test(
+  duplicate-tool-name
+  duplicate_tool_name.cpp
+  "bool Lamp::toggle() and bool Lamp::switch_off() are both tools named \"toggle\""
+)
+scry_add_reflection_compile_fail_test(
+  borrowed-toolbox
+  borrowed_toolbox.cpp
+  "Lamp is passed as an lvalue: ToolRegistry::add(Toolbox&&) takes ownership of a toolbox"
+)
+scry_add_reflection_compile_fail_test(
+  unbound-member-tool
+  unbound_member_tool.cpp
+  "Lamp::toggle is a non-static member function; register an object of Lamp as a toolbox"
+)

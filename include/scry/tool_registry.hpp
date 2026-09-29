@@ -1,70 +1,51 @@
 #pragma once
 
+#if !defined(__cpp_impl_reflection)
+#error "Scry requires a compiler implementing P2996 (GCC 16 or newer)"
+#endif
+
 #include <cstddef>
-#include <cstdint>
 #include <memory>
+#include <meta>
+#include <scry/detail/reflection_meta.hpp>
+#include <scry/detail/reflection_registration.hpp>
+#include <scry/detail/reflection_schema.hpp>
+#include <scry/detail/reflection_tools.hpp>
 #include <scry/error.hpp>
 #include <scry/json.hpp>
-#include <scry/turn_id.hpp>
-#include <scry/unique_function.hpp>
+#include <scry/tool.hpp>
 #include <string>
 #include <string_view>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 namespace scry {
 
 namespace detail {
 class ToolRegistryAccess;
+
+template <typename Type> inline constexpr bool is_shared_ptr_v = false;
+template <typename Type>
+inline constexpr bool is_shared_ptr_v<std::shared_ptr<Type>> = true;
+
+// add(Toolbox&&) takes any class object other than a shared_ptr, which has its
+// own overload; whether it is a valid toolbox is reported by a diagnostic.
+template <typename Type>
+concept owned_toolbox_candidate = std::is_class_v<std::remove_cvref_t<Type>> &&
+                                  !is_shared_ptr_v<std::remove_cvref_t<Type>>;
 } // namespace detail
 
-/// Provider-visible definition of an explicitly registered tool.
-struct ToolDefinition {
-  /// Unique tool name exposed to the model.
-  std::string name{};
-  /// Human-readable description exposed to the model.
-  std::string description{};
-  /// JSON Schema object describing the tool's arguments.
-  Json input_schema{};
-};
-
-/// Identity of the tool call a handler is servicing.
-///
-/// A handler that needs to know which turn, round, or call it is running for takes
-/// one of these as its leading parameter. Both string views are borrowed from the
-/// live call block and are valid only for the duration of the invocation; a handler
-/// that keeps either beyond its return must copy it.
-struct ToolCallContext {
-  /// Turn the call belongs to.
-  TurnId turn_id{};
-  /// Provider-assigned identifier of this call, matching ToolCall::id.
-  std::string_view call_id{};
-  /// Registered name of the tool being invoked.
-  std::string_view tool_name{};
-  /// One-based tool round within the turn.
-  std::uint32_t round{};
-  /// Zero-based position of this call in its round's batch.
-  std::uint32_t index{};
-};
-
-/// Move-only type-erased explicit tool handler.
-///
-/// The input is a canonical JSON object: Scry has checked that the arguments parse
-/// and form an object, and nothing more. They are not checked against the registered
-/// input_schema, because Scry does not perform general JSON Schema validation; the
-/// handler owns that check, and returning scry::tool_error() tells the model what was
-/// wrong so it can correct the call. A successful return must contain valid JSON.
-/// Typed C++ handlers can instead use scry::reflection, whose generated decoder
-/// enforces the schema it generates.
-using ToolHandler = UniqueFunction<Result<Json>(Json)>;
-
-/// Move-only type-erased explicit tool handler that also receives its call identity.
-///
-/// Identical to ToolHandler apart from the leading ToolCallContext, whose string
-/// views are borrowed for the invocation only.
-using ContextualToolHandler =
-    UniqueFunction<Result<Json>(const ToolCallContext&, Json)>;
-
 /// Additive registry of model-callable tools.
+///
+/// Tools are declared in C++ and registered by reflection: the argument schema,
+/// the strict argument decoder, and the result encoder are generated from the
+/// declaration. add() takes a typed argument aggregate and a callable, a function
+/// annotated with scry::reflection::tool, every such function of a namespace, or
+/// a toolbox object whose annotated member functions become tools bound to it.
+/// add_dynamic() is the escape hatch for tools known only at runtime, such as
+/// bridged or scripted ones: a hand-written JSON schema and a handler that takes
+/// and returns JSON.
 ///
 /// A registry is a standalone value: build one and export its manifest without a
 /// Harness, provider configuration, or network stack. Harness::create() takes
@@ -73,9 +54,13 @@ using ContextualToolHandler =
 /// inactive and every operation on it reports emptiness or
 /// ErrorCategory::invalid_state.
 ///
+/// Every registration call is atomic: a call that registers several tools checks
+/// all of them, including their names against each other and against the
+/// registry, before it inserts any, so a failed call changes nothing.
 /// Registrations are snapshotted when a turn is accepted. Adding a tool therefore
-/// affects only later turns. Duplicate names are rejected and registrations cannot be
-/// replaced or removed. Use one registry from one host thread.
+/// affects only later turns. Duplicate names are rejected and registrations cannot
+/// be replaced or removed. Use one registry from one host thread; every handler
+/// runs on that thread, inside Harness::update().
 class ToolRegistry final {
 public:
   /// Creates an empty, active registry that any host thread can populate.
@@ -97,16 +82,94 @@ public:
   /// Registries are not copy-assignable.
   ToolRegistry& operator=(const ToolRegistry&) = delete;
 
-  /// Registers an explicit-schema tool.
+  /// Registers a callable whose arguments are a reflected aggregate.
   ///
-  /// The handler executes synchronously inside Harness::update() on its calling thread.
+  /// The argument schema is generated as scry::reflection::input_schema_v<Args>,
+  /// incoming JSON is decoded strictly into `Args`, and the typed return is
+  /// encoded back to JSON. A handler may take a leading const ToolCallContext& to
+  /// learn which turn, round, and call it is running for; the context is borrowed
+  /// for the invocation only. It may return a supported value, a Result of one,
+  /// `void`, or scry::Status; the last two send `{}` on success.
+  ///
+  /// The template is unconstrained so that a rejected type fails with a diagnostic
+  /// naming the offending member and the reason; scry::reflection::ToolArguments
+  /// and scry::reflection::ToolHandlerFor are the SFINAE-friendly form of the same
+  /// checks.
+  /// @tparam Args Complete reflected argument aggregate satisfying ToolArguments.
+  /// @tparam Handler Move-constructible callable satisfying ToolHandlerFor<Handler,
+  /// Args>.
+  /// @param metadata Provider-visible tool name and description.
+  /// @param handler Callable invoked with Args moved by value, optionally preceded
+  /// by a const ToolCallContext& naming the call being serviced.
+  /// @return Success, an immediate validation/duplicate-name error, or
+  /// ErrorCategory::invalid_state for an inactive registry.
+  template <typename Args, typename Handler>
+  [[nodiscard]] Status add(ToolMetadata metadata, Handler&& handler);
+
+  /// Registers one annotated function, or every annotated function of a namespace.
+  ///
+  /// `tools.add<^^forecast>()` registers a function declared with
+  /// `[[= scry::reflection::tool{"description"}]]`; `tools.add<^^npc_tools>()`
+  /// registers every function so declared directly in that namespace, in
+  /// declaration order. A tool is named after the function unless a
+  /// scry::reflection::name annotation overrides it. Its parameters, after an
+  /// optional leading const ToolCallContext&, are either nothing (the tool takes
+  /// `{}`), one plain aggregate (the argument object, as for add<Args>()), or any
+  /// other list of named parameters of supported types, which is synthesized into
+  /// an argument object with one required member per parameter. It returns what
+  /// an add<Args>() handler may return. A function that breaks these rules fails
+  /// to compile with its name and the reason.
+  /// @tparam Entity Reflection of a tool function, a static member function, or a
+  /// namespace.
+  /// @return Success, an immediate validation/duplicate-name error, or
+  /// ErrorCategory::invalid_state for an inactive registry. A namespace is
+  /// registered all or nothing.
+  template <std::meta::info Entity> [[nodiscard]] Status add();
+
+  /// Registers a shared toolbox: every tool member function of `Toolbox`, bound to
+  /// this object.
+  ///
+  /// The member functions follow the rules of add<^^function>(). Each registration
+  /// holds a copy of the pointer, so the toolbox lives while the registry, or any
+  /// turn that snapshotted these tools, still holds one, and the last of those is
+  /// released on the host thread. Handlers run on that thread inside
+  /// Harness::update(), so the toolbox's state needs no locking. A `const`
+  /// toolbox admits only const member functions.
+  /// @tparam Toolbox Class satisfying scry::reflection::Toolbox.
+  /// @param toolbox Non-null toolbox to share.
+  /// @return Success, ErrorCategory::invalid_argument for a null toolbox or an
+  /// immediate validation/duplicate-name error, or ErrorCategory::invalid_state
+  /// for an inactive registry. The toolbox is registered all or nothing.
+  template <typename Toolbox>
+  [[nodiscard]] Status add(std::shared_ptr<Toolbox> toolbox);
+
+  /// Registers an owned toolbox: moves it into the registry, then registers it as
+  /// add(std::shared_ptr<Toolbox>) would.
+  ///
+  /// The registry owns the only reference, so the toolbox's state is reachable
+  /// only through its tools. Share it through std::shared_ptr instead when the
+  /// host needs to see that state too.
+  /// @tparam Toolbox Movable class satisfying scry::reflection::Toolbox, passed as
+  /// an rvalue.
+  /// @param toolbox Toolbox to take ownership of.
+  /// @return As add(std::shared_ptr<Toolbox>).
+  template <typename Toolbox>
+    requires detail::owned_toolbox_candidate<Toolbox>
+  [[nodiscard]] Status add(Toolbox&& toolbox);
+
+  /// Registers a dynamic tool: a hand-written schema and a JSON handler.
+  ///
+  /// This is the escape hatch for tools that exist only at runtime, such as ones
+  /// bridged from a script or another process. Prefer add() for tools declared in
+  /// C++. The handler executes synchronously inside Harness::update() on its
+  /// calling thread and owns validation of its arguments against the schema.
   /// @param definition Valid provider-visible name, description, and object schema.
   /// @param handler Move-only callable that receives canonical argument JSON.
   /// @return Success, an immediate validation/duplicate-name error, or
   /// ErrorCategory::invalid_state for an inactive registry.
-  [[nodiscard]] Status add(ToolDefinition definition, ToolHandler handler);
+  [[nodiscard]] Status add_dynamic(ToolDefinition definition, ToolHandler handler);
 
-  /// Registers an explicit-schema tool whose handler also receives its call identity.
+  /// Registers a dynamic tool whose handler also receives its call identity.
   ///
   /// Behaves exactly like the ToolHandler overload; the handler additionally learns
   /// which turn, round, and call it is servicing. The context is borrowed for the
@@ -116,7 +179,8 @@ public:
   /// argument JSON.
   /// @return Success, an immediate validation/duplicate-name error, or
   /// ErrorCategory::invalid_state for an inactive registry.
-  [[nodiscard]] Status add(ToolDefinition definition, ContextualToolHandler handler);
+  [[nodiscard]] Status add_dynamic(ToolDefinition definition,
+                                   ContextualToolHandler handler);
 
   /// Returns the number of registrations currently available to future turns.
   /// @return Registration count, or 0 for an inactive registry.
@@ -140,7 +204,7 @@ public:
   ///
   /// The version-1 document contains a tools array in registration order. Each
   /// entry contains name, description, and input_schema (a JSON object). Both
-  /// explicit and reflected registrations are included. Export does not invoke
+  /// reflected and dynamic registrations are included. Export does not invoke
   /// handlers or contact a provider, and needs no Harness: a registry built on
   /// its own exports the same manifest a Harness-owned one would. Later
   /// registrations appear only in subsequent exports, independently of any
@@ -152,9 +216,81 @@ public:
 private:
   class Impl;
 
+  // Validates every entry, against each other and against the registry, then
+  // inserts them all; a failure inserts none.
+  [[nodiscard]] Status add_all(std::vector<detail::ToolEntry> entries);
+
   std::unique_ptr<Impl> impl_;
 
   friend class detail::ToolRegistryAccess;
 };
+
+template <typename Args, typename Handler>
+Status ToolRegistry::add(ToolMetadata metadata, Handler&& handler) {
+  constexpr std::string_view arguments_problem =
+      reflection::detail::tool_arguments_diagnostic<Args>();
+  static_assert(arguments_problem.empty(), arguments_problem);
+  if constexpr (!arguments_problem.empty()) {
+    return {};
+  } else {
+    constexpr std::string_view handler_problem =
+        reflection::detail::tool_handler_diagnostic<Handler, Args>();
+    static_assert(handler_problem.empty(), handler_problem);
+    if constexpr (!handler_problem.empty()) {
+      return {};
+    } else {
+      return add_dynamic(
+          ToolDefinition{
+              .name = std::move(metadata.name),
+              .description = std::move(metadata.description),
+              .input_schema =
+                  Json{.text = std::string{reflection::input_schema_v<Args>}},
+          },
+          reflection::detail::make_tool_handler<Args>(std::forward<Handler>(handler)));
+    }
+  }
+}
+
+template <std::meta::info Entity> Status ToolRegistry::add() {
+  constexpr std::string_view problem =
+      reflection::detail::entity_tools_diagnostic<Entity>();
+  static_assert(problem.empty(), problem);
+  if constexpr (!problem.empty()) {
+    return {};
+  } else {
+    return add_all(reflection::detail::entity_entries<Entity>());
+  }
+}
+
+template <typename Toolbox> Status ToolRegistry::add(std::shared_ptr<Toolbox> toolbox) {
+  constexpr std::string_view problem =
+      reflection::detail::toolbox_diagnostic<Toolbox>();
+  static_assert(problem.empty(), problem);
+  if constexpr (!problem.empty()) {
+    return {};
+  } else {
+    if (toolbox == nullptr) {
+      return std::unexpected(Error{
+          .category = ErrorCategory::invalid_argument,
+          .message = "toolbox must not be null",
+      });
+    }
+    return add_all(reflection::detail::toolbox_entries(toolbox));
+  }
+}
+
+template <typename Toolbox>
+  requires detail::owned_toolbox_candidate<Toolbox>
+Status ToolRegistry::add(Toolbox&& toolbox) {
+  constexpr std::string_view problem =
+      reflection::detail::owned_toolbox_diagnostic<Toolbox>();
+  static_assert(problem.empty(), problem);
+  if constexpr (!problem.empty()) {
+    return {};
+  } else {
+    using Owned = std::remove_cvref_t<Toolbox>;
+    return add(std::make_shared<Owned>(std::forward<Toolbox>(toolbox)));
+  }
+}
 
 } // namespace scry

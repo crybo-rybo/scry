@@ -63,7 +63,7 @@ constexpr std::string_view expected_answer = "NIGHTLY_SMOKE_OK";
   auto harness = std::move(*created);
 
   int tool_call_count = 0;
-  auto registration = harness.tools().add(
+  auto registration = harness.tools().add_dynamic(
       scry::ToolDefinition{
           .name = "nightly_required_check",
           .description =

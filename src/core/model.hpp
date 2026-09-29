@@ -7,7 +7,7 @@
 #include <scry/events.hpp>
 #include <scry/json.hpp>
 #include <scry/message.hpp>
-#include <scry/tool_registry.hpp>
+#include <scry/tool.hpp>
 #include <string>
 #include <variant>
 #include <vector>

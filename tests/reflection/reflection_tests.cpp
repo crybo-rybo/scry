@@ -149,6 +149,16 @@ struct VoidContextHandler {
   void operator()(const scry::ToolCallContext&, PresenceArguments) const {}
 };
 
+// Refuses a call whose required text is "reject" and acknowledges any other.
+struct StatusHandler {
+  scry::Status operator()(PresenceArguments arguments) const {
+    if (arguments.required == "reject") {
+      return std::unexpected(scry::tool_error("rejected by the handler"));
+    }
+    return {};
+  }
+};
+
 template <scry::reflection::SupportedValue Type>
 [[nodiscard]] scry::Result<Type> decode_value(const std::string_view text) {
   auto parsed = scry::JsonView::parse(scry::Json{.text = std::string{text}});
@@ -186,11 +196,13 @@ static_assert(
     scry::reflection::ToolHandlerFor<ConstExpectedHandler, PresenceArguments>);
 static_assert(!scry::reflection::ToolHandlerFor<ReferenceHandler, PresenceArguments>);
 static_assert(!scry::reflection::ToolHandlerFor<RawJsonHandler, PresenceArguments>);
-static_assert(!scry::reflection::ToolHandlerFor<VoidHandler, PresenceArguments>);
+// void and Status acknowledge a call with {}; see the acknowledgement test below.
+static_assert(scry::reflection::ToolHandlerFor<VoidHandler, PresenceArguments>);
 static_assert(scry::reflection::ToolHandlerFor<ContextHandler, PresenceArguments>);
 static_assert(
     !scry::reflection::ToolHandlerFor<ReversedContextHandler, PresenceArguments>);
-static_assert(!scry::reflection::ToolHandlerFor<VoidContextHandler, PresenceArguments>);
+static_assert(scry::reflection::ToolHandlerFor<VoidContextHandler, PresenceArguments>);
+static_assert(scry::reflection::ToolHandlerFor<StatusHandler, PresenceArguments>);
 static_assert(!scry::reflection::ToolArguments<CharacterArguments>);
 static_assert(!scry::reflection::ToolArguments<NestedOptionalArguments>);
 static_assert(!scry::reflection::ToolArguments<PackedBooleanArguments>);
@@ -593,6 +605,27 @@ TEST_CASE("encoding a named reflected error preserves the caller's error") {
   CHECK(value.error().message == "application rejected arguments");
 }
 
+TEST_CASE("reflected handlers returning void or Status acknowledge with an object") {
+  const auto arguments = scry::Json{.text = R"({"nullable":null,"required":"ok"})"};
+  int calls = 0;
+  auto acknowledging = scry::reflection::detail::make_tool_handler<PresenceArguments>(
+      [&calls](PresenceArguments) { ++calls; });
+  auto result = acknowledging({}, arguments);
+  REQUIRE(result);
+  CHECK(result->text == "{}");
+  CHECK(calls == 1);
+
+  auto status =
+      scry::reflection::detail::make_tool_handler<PresenceArguments>(StatusHandler{});
+  result = status({}, arguments);
+  REQUIRE(result);
+  CHECK(result->text == "{}");
+
+  result = status({}, scry::Json{.text = R"({"nullable":null,"required":"reject"})"});
+  REQUIRE_FALSE(result);
+  CHECK(result.error().model_message == "rejected by the handler");
+}
+
 TEST_CASE("reflected erased handlers retain move-only captures and typed errors") {
   auto handler = scry::reflection::detail::make_tool_handler<PresenceArguments>(
       [owned = std::make_unique<std::string>("handled")](
@@ -624,8 +657,7 @@ TEST_CASE("reflected registration lowers into the additive registry") {
   REQUIRE(created);
   auto harness = std::move(*created);
 
-  auto status = scry::reflection::add<PresenceArguments>(
-      harness.tools(),
+  auto status = harness.tools().add<PresenceArguments>(
       {
           .name = "presence",
           .description = "Exercise reflected arguments",
@@ -634,18 +666,17 @@ TEST_CASE("reflected registration lowers into the additive registry") {
   REQUIRE(status);
   CHECK(harness.tools().size() == 1);
 
-  status = scry::reflection::add<PresenceArguments>(harness.tools(),
-                                                    {
-                                                        .name = "presence",
-                                                        .description = "Duplicate",
-                                                    },
-                                                    DirectHandler{});
+  status = harness.tools().add<PresenceArguments>(
+      {
+          .name = "presence",
+          .description = "Duplicate",
+      },
+      DirectHandler{});
   REQUIRE_FALSE(status);
   CHECK(status.error().category == scry::ErrorCategory::invalid_argument);
   CHECK(harness.tools().size() == 1);
 
-  status = scry::reflection::add<PresenceArguments>(
-      harness.tools(),
+  status = harness.tools().add<PresenceArguments>(
       {
           .name = "second_presence",
           .description = "Exercise a second reflected registration",
@@ -658,10 +689,9 @@ TEST_CASE("reflected registration lowers into the additive registry") {
 TEST_CASE("tool manifests include reflected and explicit contracts together") {
   auto harness = scry::Harness::create(scry::test_support::test_config());
   REQUIRE(harness);
-  REQUIRE(scry::reflection::add<PresenceArguments>(
-      harness->tools(), {.name = "presence", .description = "Reflected arguments"},
-      DirectHandler{}));
-  REQUIRE(harness->tools().add(
+  REQUIRE(harness->tools().add<PresenceArguments>(
+      {.name = "presence", .description = "Reflected arguments"}, DirectHandler{}));
+  REQUIRE(harness->tools().add_dynamic(
       {.name = "explicit",
        .description = "Explicit arguments",
        .input_schema = {.text = R"({"type":"object"})"}},
@@ -683,8 +713,7 @@ TEST_CASE("reflected handlers may take the call context as a leading parameter")
 
   std::string observed_call_id;
   std::string observed_tool_name;
-  REQUIRE(scry::reflection::add<PresenceArguments>(
-      harness.tools(),
+  REQUIRE(harness.tools().add<PresenceArguments>(
       {
           .name = "contextual",
           .description = "Record the call it was invoked for",
@@ -695,12 +724,12 @@ TEST_CASE("reflected handlers may take the call context as a leading parameter")
         observed_tool_name = std::string{context.tool_name};
         return NestedResult{.label = std::move(arguments.required)};
       }));
-  REQUIRE(scry::reflection::add<PresenceArguments>(harness.tools(),
-                                                   {
-                                                       .name = "plain",
-                                                       .description = "Ignore the call",
-                                                   },
-                                                   DirectHandler{}));
+  REQUIRE(harness.tools().add<PresenceArguments>(
+      {
+          .name = "plain",
+          .description = "Ignore the call",
+      },
+      DirectHandler{}));
   CHECK(harness.tools().size() == 2);
 
   const auto snapshot =

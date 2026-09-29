@@ -245,8 +245,8 @@ static_assert(!std::is_copy_constructible_v<scry::ToolHandler>);
 static_assert(std::is_move_constructible_v<scry::ContextualToolHandler>);
 static_assert(!std::is_copy_constructible_v<scry::ContextualToolHandler>);
 
-// The two add() overloads are separated by the handler's arity alone, so each
-// lambda shape has to reach exactly one of them. A converting constructor that
+// The two add_dynamic() overloads are separated by the handler's arity alone, so
+// each lambda shape has to reach exactly one of them. A converting constructor that
 // did not constrain on invocability would make both of these ambiguous.
 using PlainToolLambda =
     decltype([](scry::Json input) -> scry::Result<scry::Json> { return input; });
@@ -260,17 +260,51 @@ static_assert(
 static_assert(!std::is_constructible_v<scry::ContextualToolHandler, PlainToolLambda>);
 static_assert(requires(scry::ToolRegistry& registry) {
   {
-    registry.add(scry::ToolDefinition{}, PlainToolLambda{})
+    registry.add_dynamic(scry::ToolDefinition{}, PlainToolLambda{})
   } -> std::same_as<scry::Status>;
   {
-    registry.add(scry::ToolDefinition{}, ContextualToolLambda{})
+    registry.add_dynamic(scry::ToolDefinition{}, ContextualToolLambda{})
   } -> std::same_as<scry::Status>;
   {
-    registry.add(scry::ToolDefinition{}, scry::ToolHandler{})
+    registry.add_dynamic(scry::ToolDefinition{}, scry::ToolHandler{})
   } -> std::same_as<scry::Status>;
   {
-    registry.add(scry::ToolDefinition{}, scry::ContextualToolHandler{})
+    registry.add_dynamic(scry::ToolDefinition{}, scry::ContextualToolHandler{})
   } -> std::same_as<scry::Status>;
+});
+
+// Reflected registration is the primary add(): an argument aggregate with a
+// callable, one annotated function or a namespace of them, and a toolbox shared
+// or owned. The overloads are told apart by their template arguments and arity.
+namespace contract {
+struct CountArguments {
+  std::int32_t by{};
+};
+[[= scry::reflection::tool{"Echo a label"}]] inline std::string
+echo(std::string label) {
+  return label;
+}
+struct Counter {
+  std::int32_t value{};
+  [[= scry::reflection::tool{"Add to the counter"}]] std::int32_t
+  increment(CountArguments arguments) {
+    return value += arguments.by;
+  }
+};
+} // namespace contract
+static_assert(scry::reflection::Toolbox<contract::Counter>);
+// A const toolbox admits only const member tools.
+static_assert(!scry::reflection::Toolbox<const contract::Counter>);
+static_assert(!scry::reflection::Toolbox<contract::CountArguments>);
+static_assert(std::same_as<decltype(scry::ToolMetadata::name), std::string>);
+static_assert(requires(scry::ToolRegistry& registry) {
+  {
+    registry.add<contract::CountArguments>(
+        scry::ToolMetadata{}, [](contract::CountArguments) { return std::int32_t{}; })
+  } -> std::same_as<scry::Status>;
+  { registry.add<^^contract::echo>() } -> std::same_as<scry::Status>;
+  { registry.add(std::make_shared<contract::Counter>()) } -> std::same_as<scry::Status>;
+  { registry.add(contract::Counter{}) } -> std::same_as<scry::Status>;
 });
 static_assert(requires(const scry::Conversation& conversation) {
   { conversation.messages() } -> std::same_as<const std::vector<scry::Message>&>;
