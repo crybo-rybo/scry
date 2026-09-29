@@ -1,6 +1,5 @@
-# Composite action for the pinned Clang 21 + libFuzzer toolchain shared by the
-# per-commit fuzz replay and the scheduled long fuzz runs. The caller must
-# check out the repository first.
+# Composite action for the pinned Clang 21 + libFuzzer toolchain used by the
+# per-commit fuzz replay. The caller must check out the repository first.
 name: Fuzz toolchain
 description: >-
   Install Clang 21 with its libFuzzer runtime from apt.llvm.org and lower ASLR
