@@ -41,6 +41,13 @@ template <typename> inline constexpr bool unhandled_worker_event = false;
 constexpr std::string_view call_limit_message =
     "tool call limit for this turn reached; respond without calling tools";
 
+// Model-visible refusal of a response-tool call that did not come on its own: the
+// turn can only end on a lone answer, so the model is told how to give one.
+[[nodiscard]] std::string misplaced_answer_message(const ToolCallBlock& call) {
+  return "call " + call.name +
+         " exactly once, on its own, after your other tool calls have returned";
+}
+
 // An admission hook that throws is treated exactly like a handler that throws:
 // the call is refused with the same fixed text, and the exception text stays on
 // the host side of the boundary.
@@ -92,8 +99,8 @@ TurnRoute::TurnRoute(const TurnId turn_id, std::shared_ptr<std::atomic<bool>> ca
       tools_(std::move(options.tools)),
       max_tool_result_bytes_(options.max_tool_result_bytes),
       max_conversation_bytes_(options.max_conversation_bytes),
-      max_tool_calls_(options.max_tool_calls),
-      callbacks_(std::move(options.callbacks)) {}
+      max_tool_calls_(options.max_tool_calls), callbacks_(std::move(options.callbacks)),
+      validate_answer_(std::move(options.validate_answer)) {}
 
 TurnId TurnRoute::id() const noexcept { return turn_id_; }
 
@@ -148,6 +155,7 @@ bool TurnRoute::finished() const noexcept {
 // harmless because finished() stays true once the callbacks are gone.
 void TurnRoute::retire() noexcept {
   callbacks_ = TurnCallbacks{};
+  validate_answer_ = AnswerValidator{};
   tools_.reset();
 }
 
@@ -198,6 +206,8 @@ void TurnRoute::invoke(WorkerEvent& event) {
               .tool_call_count = value.tool_call_count,
               .rejected_tool_call_count = rejected_count_,
               .unexecuted_tool_calls = std::move(value.unexecuted_tool_calls),
+              .structured = std::move(value.structured),
+              .answer_attempt_count = value.answer_attempt_count,
           });
         } else if constexpr (std::is_same_v<Event, ErrorEvent>) {
           terminal_delivered_ = true;
@@ -266,11 +276,76 @@ void TurnRoute::dispatch(ToolCallEvent& event) {
   }
   remaining_exchange_bytes_ =
       std::min(remaining_exchange_bytes_, event.remaining_exchange_bytes);
+  if (event.role != ToolCallRole::tool) {
+    settle_answer(event);
+    return;
+  }
   auto produced = produce(event);
   if (!produced) {
     return;
   }
   auto result = std::move(*produced);
+  charge_result(result);
+  if (cancelled_->load(std::memory_order_acquire)) {
+    return;
+  }
+  auto observed = observation(event, result);
+  post(ToolResultCommand{
+      .turn_id = turn_id_,
+      .result = std::move(result),
+  });
+  if (observed) {
+    notify_tool_observer(event, *observed);
+  }
+}
+
+// A response-tool call is Scry's own business, not the host's: it reaches no
+// handler, no per-turn call limit, no on_tool_request, and no on_tool_call, and
+// it is not counted as a host tool call. Only the validator of a lone candidate
+// runs host code, under the same invocation guard and cancellation rules as a
+// handler.
+void TurnRoute::settle_answer(ToolCallEvent& event) {
+  auto rejection =
+      event.role == ToolCallRole::answer
+          ? check_answer(event.call)
+          : std::optional{error_result(event.call, misplaced_answer_message(event.call),
+                                       max_tool_result_bytes_)};
+  if (cancelled_->load(std::memory_order_acquire)) {
+    return;
+  }
+  if (!rejection) {
+    post(AnswerAcceptedCommand{.turn_id = turn_id_,
+                               .call_id = std::move(event.call.id)});
+    return;
+  }
+  charge_result(*rejection);
+  post(ToolResultCommand{.turn_id = turn_id_, .result = std::move(*rejection)});
+}
+
+// The validator is treated as a handler is: its published model_message is what
+// the model reads, and an error without one, or a throw, gives the model the same
+// fixed text a failing handler does.
+std::optional<Result<ToolResultBlock>>
+TurnRoute::check_answer(const ToolCallBlock& call) {
+  if (!validate_answer_) {
+    return std::nullopt;
+  }
+  Status verdict{};
+  try {
+    verdict = validate_answer_(call.arguments);
+  } catch (...) {
+    return error_result(call, handler_failed_message, max_tool_result_bytes_);
+  }
+  if (verdict) {
+    return std::nullopt;
+  }
+  const auto& published = verdict.error().model_message;
+  return error_result(
+      call, published.empty() ? handler_failed_message : std::string_view{published},
+      max_tool_result_bytes_);
+}
+
+void TurnRoute::charge_result(Result<ToolResultBlock>& result) {
   if (result) {
     const auto result_bytes = content_payload_bytes(*result);
     if (result_bytes > remaining_exchange_bytes_) {
@@ -285,18 +360,11 @@ void TurnRoute::dispatch(ToolCallEvent& event) {
   if (!result) {
     tool_dispatch_failed_ = true;
   }
-  if (cancelled_->load(std::memory_order_acquire)) {
-    return;
-  }
-  auto observed = observation(event, result);
+}
+
+void TurnRoute::post(WorkerCommand command) {
   if (const auto commands = commands_.lock()) {
-    commands->push(ToolResultCommand{
-        .turn_id = turn_id_,
-        .result = std::move(result),
-    });
-  }
-  if (observed) {
-    notify_tool_observer(event, *observed);
+    commands->push(std::move(command));
   }
 }
 

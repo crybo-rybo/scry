@@ -25,6 +25,9 @@ struct TurnRouteOptions {
   std::size_t max_conversation_bytes{};
   std::optional<std::uint32_t> max_tool_calls{};
   TurnCallbacks callbacks{};
+  // A typed turn's answer check. It is not a callback: disconnecting leaves it in
+  // place, as it leaves tool handlers, so the turn can still complete.
+  AnswerValidator validate_answer{};
 };
 
 class TurnRoute final {
@@ -58,6 +61,15 @@ private:
   [[nodiscard]] std::optional<Result<ToolResultBlock>>
   produce(const ToolCallEvent& event);
   void dispatch(ToolCallEvent& event);
+  // Answers a call to a typed turn's response tool: accepts or rejects a lone
+  // candidate answer, and refuses one made beside other calls.
+  void settle_answer(ToolCallEvent& event);
+  // Empty when the answer is accepted; otherwise what the model is told.
+  [[nodiscard]] std::optional<Result<ToolResultBlock>>
+  check_answer(const ToolCallBlock& call);
+  // Charges a result against the exchange budget; a failure marks dispatch failed.
+  void charge_result(Result<ToolResultBlock>& result);
+  void post(WorkerCommand command);
   [[nodiscard]] std::optional<ToolCall>
   observation(const ToolCallEvent& event, const Result<ToolResultBlock>& result) const;
   void notify_tool_observer(ToolCallEvent& event, ToolCall& observed);
@@ -84,6 +96,7 @@ private:
   bool terminal_delivered_{false};
   bool tool_dispatch_failed_{false};
   TurnCallbacks callbacks_{};
+  AnswerValidator validate_answer_{};
 };
 
 using PumpClock = UniqueFunction<std::chrono::steady_clock::time_point()>;
