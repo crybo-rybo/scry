@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# One sanitizer leg, run identically by preflight and by hosted CI.
+# One sanitizer leg, run identically by scripts/ci.sh and by hosted CI.
 #
 # Usage: ci-sanitizer.sh {asan|tsan}
 #
@@ -9,7 +9,7 @@
 
 set -euo pipefail
 
-readonly root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+readonly root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly preset="${1:-}"
 
 case "${preset}" in

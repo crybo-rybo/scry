@@ -5,8 +5,7 @@
 # scry_add_fuzzer: a kernel target, built as a libFuzzer binary only under
 # SCRY_BUILD_FUZZERS (the Clang tooling build). Its ctest test replays the seed
 # corpus: -runs=0 makes libFuzzer execute the corpus once and exit, which is a
-# deterministic per-commit replay. The scheduled long searches run the binaries
-# directly (scripts/ci-nightly-fuzz.sh).
+# deterministic per-commit replay.
 #
 # scry_add_fuzz_replay: a target over the reflective side of the library, which
 # links scry and so builds only with GCC. It links tests/fuzz/replay_main.cpp in

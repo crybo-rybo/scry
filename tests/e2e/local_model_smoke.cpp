@@ -9,7 +9,7 @@
 
 namespace {
 
-constexpr std::string_view expected_answer = "NIGHTLY_SMOKE_OK";
+constexpr std::string_view expected_answer = "E2E_SMOKE_OK";
 
 [[nodiscard]] std::string required_environment(const char* name) {
   const char* value = std::getenv(name);
@@ -65,7 +65,7 @@ constexpr std::string_view expected_answer = "NIGHTLY_SMOKE_OK";
   int tool_call_count = 0;
   auto registration = harness.tools().add_dynamic(
       scry::ToolDefinition{
-          .name = "nightly_required_check",
+          .name = "e2e_required_check",
           .description =
               "Required conformance step. Call exactly once with no arguments "
               "before giving any final answer.",
@@ -79,18 +79,17 @@ constexpr std::string_view expected_answer = "NIGHTLY_SMOKE_OK";
         if (arguments.text != "{}") {
           return std::unexpected(scry::Error{
               .category = scry::ErrorCategory::tool,
-              .message = "nightly_required_check expects an empty object",
+              .message = "e2e_required_check expects an empty object",
           });
         }
         if (++tool_call_count != 1) {
           return std::unexpected(scry::Error{
               .category = scry::ErrorCategory::tool,
-              .message = "nightly_required_check must be called exactly once",
+              .message = "e2e_required_check must be called exactly once",
           });
         }
         return scry::Json{
-            .text =
-                R"({"instruction":"Reply exactly NIGHTLY_SMOKE_OK.","status":"ready"})",
+            .text = R"({"instruction":"Reply exactly E2E_SMOKE_OK.","status":"ready"})",
         };
       });
   if (!registration) {
@@ -98,10 +97,9 @@ constexpr std::string_view expected_answer = "NIGHTLY_SMOKE_OK";
   }
 
   auto conversation = scry::Conversation::create({
-      .system_prompt =
-          "You are a deterministic protocol conformance agent. Before any "
-          "final answer, call nightly_required_check exactly once with {}. "
-          "After the tool result, reply with exactly NIGHTLY_SMOKE_OK.",
+      .system_prompt = "You are a deterministic protocol conformance agent. Before any "
+                       "final answer, call e2e_required_check exactly once with {}. "
+                       "After the tool result, reply with exactly E2E_SMOKE_OK.",
   });
   if (!conversation) {
     return report_error("Conversation::create", conversation.error());
@@ -109,7 +107,7 @@ constexpr std::string_view expected_answer = "NIGHTLY_SMOKE_OK";
 
   auto completion = harness.send_and_wait(
       *conversation,
-      "Call nightly_required_check with {} now. After its result, give the exact "
+      "Call e2e_required_check with {} now. After its result, give the exact "
       "final answer.");
   if (!completion) {
     return report_error("Harness::send_and_wait", completion.error());
