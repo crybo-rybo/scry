@@ -201,15 +201,9 @@ three link the whole library, which only GCC compiles, so the ordinary test
 build links each to `tests/fuzz/replay_main.cpp` instead of libFuzzer: every GCC
 leg replays their corpora, with ASan and UBSan under the `asan` preset, but
 nothing runs a coverage-guided search on them. The `json` target needs only the
-kernel, so the GCC build replays its corpus too.
-
-While Scry's JSON layer (`src/kernel/json/document.hpp`) stands beside the
-Glaze-backed codec it is replacing, one more kernel libFuzzer target,
-`scry_json_differential_fuzz` (`kernel.json-differential-fuzz`), runs every
-corpus above through both and requires identical acceptance, trees, and
-canonical bytes, apart from the two number-kind departures
-`tests/fixtures/json/README.md` documents. It goes with Glaze; the golden
-fixtures under `tests/fixtures/json/` are what it leaves behind.
+kernel, so the GCC build replays its corpus too. The JSON layer's acceptance
+boundary and canonical bytes are also pinned by the golden fixtures under
+`tests/fixtures/json/`, which `kernel.` and `runtime.` tests check.
 
 ## End-to-end testing
 

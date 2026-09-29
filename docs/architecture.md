@@ -473,10 +473,11 @@ and `default`.
 
 Decoding recursively rejects unknown or missing fields, incorrect JSON kinds,
 disallowed null, out-of-range or non-finite numbers, unknown enum names, missing
-or unknown variant tags, and incorrect fixed-array lengths. A floating-point JSON
-value such as `1.0` does not decode into an integer member. Canonical parsing
-collapses duplicate object keys before dispatch, so handlers do not see the
-original lexical duplicates.
+or unknown variant tags, and incorrect fixed-array lengths. Only a number spelled
+as digits alone is an integer, so neither `1.0` nor `1e2` decodes into an integer
+member, and neither does `-0`, which is the double -0.0. Canonical parsing
+collapses duplicate object keys before dispatch, the last occurrence winning, so
+handlers do not see the original lexical duplicates.
 
 A decode failure fills `Error::model_message` with the host `message` minus its
 `reflected JSON at ` prefix: the JSON path of the offending value and what the
@@ -634,18 +635,47 @@ Cancellation or a fatal framework failure can suppress this observer.
 document with scalar accessors, `find()`, `at()`, and ordered `key_at()` lookup;
 child views can outlive their parent. `to_json()` writes the canonical text of the
 viewed value alone. Invalid input returns `invalid_argument`.
-`escape_json_string()` produces a quoted JSON string for hand-built results.
-The internal JSON codec, in the kernel under `src/kernel/json/`, uses Glaze and
-canonicalizes object keys in lexical order. No Glaze type or header is exposed to
-consumers, and none reaches the library outside the kernel: the rest of `src/`
-reads parsed JSON through `JsonView` and maps its own data shapes with the
-reflected codec.
+`escape_json_string()` produces a quoted JSON string for hand-built results,
+escaped exactly as the canonical writer escapes: `\"`, `\\`, the short escapes
+`\b \f \n \r \t`, and `\u00XX` with uppercase hexadecimal digits for any
+other byte below 0x20; every other byte, `/` and non-ASCII included, passes
+through unchanged.
 
-Beside it, `src/kernel/json/document.hpp` is Scry's own strict JSON layer,
-which is to replace Glaze and which nothing uses yet: its header states what it
-accepts and how it writes canonical text, and differential fuzzing and the
-golden fixtures under `tests/fixtures/json/` hold it to the codec's behavior
-except where that header says otherwise.
+JSON is parsed and written by Scry's own code, the kernel's JSON layer under
+`src/kernel/json/`; no JSON library is linked or exposed. The rest of `src/`
+reads parsed JSON through `JsonView` and maps its own data shapes with the
+reflected codec. `src/kernel/json/document.hpp` states the contract in full:
+
+- **Accepted text** is RFC 8259 JSON holding exactly one value, surrounded only
+  by space, tab, line feed, and carriage return. Empty or whitespace-only input,
+  a byte order mark, comments, trailing commas, a second value, and trailing
+  bytes, a NUL included, are rejected. A validation pass that allocates nothing
+  accepts exactly what the parser accepts.
+- **Nesting** is limited to 256 arrays and objects open at once, counting an
+  empty one; deeper input is rejected, which bounds recursion.
+- **Strings** must be strictly valid UTF-8 in keys and values: no overlong
+  forms, no encoded surrogates, nothing above U+10FFFF, no truncated sequence.
+  Control characters must be escaped. A `\u` escape of a surrogate must be a
+  high surrogate followed at once by an escaped low one; a lone or reversed
+  surrogate is rejected. `\u0000` decodes to a NUL byte.
+- **Numbers** spelled as an optional `-` and digits alone are integers when they
+  fit: `unsigned_integer` for a non-negative value within 64 bits,
+  `signed_integer` for a negative one. Everything else, a fraction or an
+  exponent included (`1.0`, `1e2`), is a correctly rounded double, and so is
+  `-0`, which is not negative and keeps its sign as -0.0. A number whose
+  magnitude rounds to infinity, or a nonzero one that rounds to zero, is
+  rejected.
+- **Duplicate keys** collapse to the last occurrence, at every level.
+- **Canonical text** has no insignificant whitespace, object keys in lexical
+  byte order, the string escapes above, integers in plain digits, and doubles
+  in the shortest spelling that reads back as the same double: positional for a
+  decimal exponent from -4 through 15 (`0.0001`, `1`, `1500000000000000`),
+  otherwise scientific with an uppercase `E`, no `+`, and no leading exponent
+  zeros (`1E-5`, `1E20`). Zero is `0` and negative zero `-0`. Canonical text
+  reads back as the same tree and writes back as itself.
+
+Golden fixtures under `tests/fixtures/json/` pin the acceptance boundary and the
+canonical bytes.
 
 ## Typed completions
 

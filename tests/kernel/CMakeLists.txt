@@ -11,6 +11,7 @@ target_include_directories(
   PRIVATE
     "${PROJECT_SOURCE_DIR}/include"
     "${PROJECT_SOURCE_DIR}/src"
+    "${PROJECT_SOURCE_DIR}/tests"
 )
 # The fixtures pin the canonical form; the corpora supply the prefixes the
 # truncation replay walks.

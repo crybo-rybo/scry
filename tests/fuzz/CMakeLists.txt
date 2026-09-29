@@ -27,15 +27,3 @@ scry_add_fuzzer(
   SOURCES json_fuzz.cpp
   LINK_LIBRARIES scry_kernel
 )
-
-# Scry's JSON layer against the Glaze-backed codec it replaces, over every
-# checked-in corpus. It goes when Glaze does.
-scry_add_fuzzer(
-  scry_json_differential_fuzz
-  json
-  TEST_PREFIX "kernel."
-  TEST_NAME "json-differential-fuzz"
-  SOURCES json_differential_fuzz.cpp
-  SEED_CORPORA anthropic conversation openai response_policy sse
-  LINK_LIBRARIES scry_kernel
-)

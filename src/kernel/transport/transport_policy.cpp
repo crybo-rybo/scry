@@ -3,14 +3,16 @@
 #include "kernel/transport/transport_policy.hpp"
 
 #include "kernel/error.hpp"
-#include "kernel/json/glaze_document.hpp"
+#include "kernel/json/document.hpp"
 
 #include <algorithm>
 #include <cctype>
 #include <charconv>
 #include <chrono>
 #include <cstdint>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace scry::detail::transport_policy {
@@ -132,15 +134,15 @@ struct HeaderField {
 
 // Returns the provider's own error identifier: the string at error.type, or
 // error.code when type is absent or not a string.
-[[nodiscard]] std::string_view error_token(const JsonValue& document) noexcept {
-  const auto* error = json_field(document, "error");
-  if (error == nullptr || !error->is_object()) {
+[[nodiscard]] std::string_view error_token(const json::Value& document) noexcept {
+  const auto* error = document.find("error");
+  if (error == nullptr) {
     return {};
   }
   for (const auto name : {"type", "code"}) {
-    const auto* field = json_field(*error, name);
-    if (field != nullptr && field->is_string()) {
-      return field->get_string();
+    const auto* field = error->find(name);
+    if (const auto token = field == nullptr ? std::nullopt : field->string()) {
+      return *token;
     }
   }
   return {};
@@ -273,8 +275,7 @@ std::string http_error_detail(const std::string_view body,
   if (provider_namespace.empty() || body.empty()) {
     return {};
   }
-  const auto document = parse_json(body, ErrorCategory::protocol,
-                                   "provider error body could not be decoded");
+  const auto document = json::parse(body);
   if (!document) {
     return {};
   }

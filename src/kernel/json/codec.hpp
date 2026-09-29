@@ -7,15 +7,17 @@
 #include <string_view>
 
 // The JSON codec's text-level operations, which the rest of src/ uses. The
-// document type behind them, and Glaze with it, stay inside the kernel
-// (kernel/json/glaze_document.hpp); outside it, parsed JSON is read through the
-// public JsonView and reflected types through the reflected codec.
+// document type behind them stays inside the kernel (kernel/json/document.hpp,
+// which states what is accepted and how canonical text is written); outside it,
+// parsed JSON is read through the public JsonView and reflected types through
+// the reflected codec.
 namespace scry::detail {
 
 // Validates JSON text without materializing a document: one allocation-free
-// skip pass over every byte that rejects malformed interiors, truncation,
-// trailing garbage, and a second document. The object variant also requires the
-// root to be an object. Surrounding whitespace is accepted, as any parser would.
+// pass that accepts exactly what the parser accepts, rejecting malformed
+// interiors, truncation, trailing garbage, and a second document. The object variant
+// also requires the root to be an object. Surrounding whitespace is accepted, as any
+// parser would.
 [[nodiscard]] Status validate_json(std::string_view input, ErrorCategory category,
                                    std::string_view failure_message);
 

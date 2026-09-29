@@ -1,5 +1,5 @@
 # The differential fuzzer's corpus after 45 minutes of search against the
-# Glaze-backed codec, merged to the inputs that each reached code or features no
+# previous codec, merged to the inputs that each reached code or features no
 # other did, kept to those of at most 512 bytes and ordered by length. None of
 # them showed a divergence; they pin the boundary the search explored. Format:
 # README.md.

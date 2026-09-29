@@ -100,22 +100,19 @@ add_executable(
 target_include_directories(
   scry_runtime_tests PRIVATE "${PROJECT_SOURCE_DIR}/src" "${PROJECT_SOURCE_DIR}/tests"
 )
-target_include_directories(
-  scry_runtime_tests
-  SYSTEM PRIVATE "${SCRY_GLAZE_INCLUDE_DIR}"
-)
-# runtime/json_codec_validation_tests.cpp replays every checked-in fuzz corpus
-# through the JSON codec under the GCC build as well, including the kernel
-# targets' corpora, whose libFuzzer binaries need Clang.
+# runtime/json_codec_validation_tests.cpp holds the codec entry points and
+# JsonView to the JSON golden fixtures, and replays every prefix of every
+# checked-in fuzz corpus through them.
 target_compile_definitions(
   scry_runtime_tests
-  PRIVATE "SCRY_FUZZ_CORPUS_DIR=\"${PROJECT_SOURCE_DIR}/tests/fuzz/corpus\""
+  PRIVATE
+    "SCRY_FUZZ_CORPUS_DIR=\"${PROJECT_SOURCE_DIR}/tests/fuzz/corpus\""
+    "SCRY_JSON_FIXTURE_DIR=\"${PROJECT_SOURCE_DIR}/tests/fixtures/json\""
 )
 target_link_libraries(
   scry_runtime_tests
   PRIVATE
     Catch2::Catch2WithMain
-    glaze::glaze
     scry::scry
     scry_project_options
 )

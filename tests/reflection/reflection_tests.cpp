@@ -348,6 +348,10 @@ TEST_CASE("reflected signed integer decoding covers every strict boundary") {
   CHECK_FALSE(decode_value<std::int16_t>("-32769"));
   CHECK_FALSE(decode_value<std::int16_t>("32768"));
   CHECK_FALSE(decode_value<std::int16_t>("1.0"));
+  // An exponent makes a number a double even when its value is whole, and -0 is
+  // the double -0.0, so neither is an integer (docs/architecture.md).
+  CHECK_FALSE(decode_value<std::int16_t>("1e2"));
+  CHECK_FALSE(decode_value<std::int16_t>("-0"));
 
   CHECK(decode_value<std::int32_t>("-2147483648") ==
         std::numeric_limits<std::int32_t>::lowest());
@@ -360,7 +364,8 @@ TEST_CASE("reflected signed integer decoding covers every strict boundary") {
 
 TEST_CASE("reflected unsigned integer decoding covers signs and boundaries") {
   CHECK(decode_value<std::uint16_t>("0") == std::uint16_t{0});
-  CHECK(decode_value<std::uint16_t>("-0") == std::uint16_t{0});
+  CHECK_FALSE(decode_value<std::uint16_t>("-0"));
+  CHECK_FALSE(decode_value<std::uint16_t>("1E+2"));
   CHECK(decode_value<std::uint16_t>("65535") == std::uint16_t{65535});
   CHECK_FALSE(decode_value<std::uint16_t>("-1"));
   CHECK_FALSE(decode_value<std::uint16_t>("65536"));
@@ -437,7 +442,8 @@ TEST_CASE("reflected encoding uses Scry canonical number spelling") {
   REQUIRE(negative_zero);
   CHECK(fraction->text == "0.1");
   CHECK(exponent->text == "1E20");
-  CHECK(negative_zero->text == "0");
+  // Canonical text keeps negative zero's sign (docs/architecture.md).
+  CHECK(negative_zero->text == "-0");
 }
 
 TEST_CASE("reflected sequence encoding propagates fallible element errors") {

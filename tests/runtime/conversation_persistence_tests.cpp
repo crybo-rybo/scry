@@ -313,9 +313,8 @@ TEST_CASE("private JSON codec safely quotes model-visible error strings") {
 }
 
 TEST_CASE("Conversation::from_json rejects a document truncated after a token") {
-  // A snapshot cut after a complete token is still a broken snapshot. Glaze's
-  // generic reader takes one as a whole document, so the codec's own completeness
-  // check is what rejects it.
+  // A snapshot cut after a complete token is still a broken snapshot: a prefix
+  // that stops inside a container must never read as a whole document.
   const auto complete =
       document(R"([{"role":"user","content":[{"type":"text","text":"hi"}]}])");
   REQUIRE(scry::Conversation::from_json(scry::Json{.text = complete}));
@@ -355,11 +354,10 @@ TEST_CASE("a history ending in tool results round-trips through persistence") {
 }
 
 TEST_CASE("private JSON codec escapes control characters without a short escape") {
-  // Glaze's default writer has no \u00XX form for a control byte outside
-  // \b \f \n \r \t and writes two NUL bytes in its place, which would turn a tool
-  // argument or an ANSI-coloured user string into invalid JSON on the way out.
-  // Every write path here must emit the escape instead, and the reflected codec,
-  // which writes request bodies, must spell it the same way.
+  // A control byte outside \b \f \n \r \t has only the \u00XX form; writing it
+  // any other way would turn a tool argument or an ANSI-coloured user string into
+  // invalid JSON on the way out. Every write path here must emit the escape, and
+  // the reflected codec, which writes request bodies, must spell it the same way.
   const scry::Json input{.text = R"({"a":"\u0001x\u001b"})"};
   auto canonical = scry::detail::canonicalize_json(
       input, scry::ErrorCategory::invalid_argument, "invalid JSON");
