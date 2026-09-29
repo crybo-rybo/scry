@@ -136,7 +136,8 @@ struct CommitCompletion {
   std::vector<ToolCallBlock> unexecuted_tool_calls{};
   // True when the turn ended on an accepted answer. The transcript's final
   // assistant message then ends with a text block holding the answer's canonical
-  // JSON, which stands in for the response-tool call.
+  // JSON, which stands in for the response-tool call, and the transcript holds no
+  // rejected attempt.
   bool answered{false};
   std::uint32_t answer_attempt_count{};
 };
@@ -253,7 +254,9 @@ private:
   [[nodiscard]] TransitionResult
   complete_turn(ModelResponse response, std::vector<ToolCallBlock> unexecuted = {});
   // Ends the turn on an accepted answer: the response-tool call becomes a text
-  // block holding its arguments, so no call is committed without a result.
+  // block holding its arguments, so no call is committed without a result, and
+  // rejected attempts leave the transcript, so no committed block names the
+  // response tool.
   [[nodiscard]] TransitionResult complete_with_answer(AwaitingToolState& awaiting);
   // Appends the final assistant message, already reserved, and publishes the
   // commit.

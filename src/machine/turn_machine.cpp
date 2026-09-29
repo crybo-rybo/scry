@@ -108,6 +108,46 @@ void drop_empty_text_blocks(std::vector<ContentBlock>& content) {
   content.erase(removed.begin(), removed.end());
 }
 
+// Removes a message's blocks that belong to a response-tool call: the call
+// itself in an assistant message, its result in a user message.
+void erase_answer_blocks(Message& message, const std::string_view answer_tool,
+                         const std::vector<std::string>& answer_ids) {
+  std::erase_if(message.content, [&](const ContentBlock& block) {
+    if (const auto* call = std::get_if<ToolCallBlock>(&block)) {
+      return call->name == answer_tool;
+    }
+    const auto* result = std::get_if<ToolResultBlock>(&block);
+    return result != nullptr && std::ranges::contains(answer_ids, result->tool_call_id);
+  });
+}
+
+// Takes every rejected answer attempt out of an answered turn's transcript: the
+// response-tool calls, their error results, and any message left empty. The
+// response tool is offered only to typed turns, so committed history that named
+// it would reach a later request that does not define it, and a provider may
+// refuse tool blocks for a tool the request does not declare. Real tool calls and
+// their results stay, so every committed call still has its result.
+void strip_answer_attempts(std::vector<Message>& transcript,
+                           const std::string_view answer_tool) {
+  std::vector<std::string> answer_ids;
+  for (const auto& message : transcript) {
+    for (const auto& block : message.content) {
+      const auto* call = std::get_if<ToolCallBlock>(&block);
+      if (call != nullptr && call->name == answer_tool) {
+        answer_ids.push_back(call->id);
+      }
+    }
+  }
+  if (answer_ids.empty()) {
+    return;
+  }
+  for (auto& message : transcript) {
+    erase_answer_blocks(message, answer_tool, answer_ids);
+  }
+  std::erase_if(transcript,
+                [](const Message& message) { return message.content.empty(); });
+}
+
 } // namespace
 
 TurnMachine::TurnMachine(TurnId turn_id, ModelRequest request, RetryPolicy retry_policy,
@@ -484,7 +524,9 @@ TransitionResult TurnMachine::complete_turn(ModelResponse response,
 // text block. A tool call committed without its result would make the history
 // invalid on the next request of either dialect, and a result for it would leave
 // the transcript ending on a user message. The text block is never larger than
-// the call it replaces, which the round already reserved.
+// the call it replaces, which the round already reserved. Earlier rejected
+// attempts are taken out of the transcript, so committed history never names the
+// response tool.
 TransitionResult TurnMachine::complete_with_answer(AwaitingToolState& awaiting) {
   auto assistant = std::move(awaiting.assistant);
   auto& content = assistant.content;
@@ -494,6 +536,7 @@ TransitionResult TurnMachine::complete_with_answer(AwaitingToolState& awaiting) 
   auto answer = std::move(std::get<ToolCallBlock>(*call).arguments.text);
   content.erase(call);
   content.emplace_back(TextBlock{.text = std::move(answer)});
+  strip_answer_attempts(mutable_request().messages, answer_tool_);
   return commit_transcript(std::move(assistant), FinishReason::completed,
                            std::move(awaiting.provider_request_id), {}, true);
 }

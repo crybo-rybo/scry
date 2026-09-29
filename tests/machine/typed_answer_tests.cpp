@@ -112,7 +112,10 @@ TEST_CASE("a rejected answer costs a round and the corrected answer completes") 
   CHECK(commit.tool_call_count == 0);
   CHECK(commit.answer_attempt_count == 2);
   CHECK(commit.attempt_count == 2);
-  REQUIRE(commit.transcript.size() == 4);
+  // The model saw its rejected attempt, but history keeps only the question and
+  // the accepted answer: no committed block names the response tool.
+  REQUIRE(commit.transcript.size() == 2);
+  CHECK(commit.transcript.front().role == Role::user);
   const auto& reply = commit.transcript.back();
   REQUIRE(reply.content.size() == 1);
   CHECK(std::get<TextBlock>(reply.content.front()).text == R"({"a":false,"z":2})");
@@ -145,6 +148,14 @@ TEST_CASE("an answer beside real tool calls is refused and the real calls dispat
   CHECK(commit.tool_round_count == 1);
   CHECK(commit.tool_call_count == 1);
   CHECK(commit.answer_attempt_count == 2);
+  // The real call and its result stay; the refused answer and its error go.
+  REQUIRE(commit.transcript.size() == 4);
+  const auto& round = commit.transcript[1];
+  REQUIRE(round.content.size() == 1);
+  CHECK(std::get<ToolCallBlock>(round.content.front()).id == "call-1");
+  const auto& results = commit.transcript[2];
+  REQUIRE(results.content.size() == 1);
+  CHECK(std::get<ToolResultBlock>(results.content.front()).tool_call_id == "call-1");
 }
 
 TEST_CASE("two answers in one response are both refused") {
@@ -152,10 +163,27 @@ TEST_CASE("two answers in one response are both refused") {
   begin(machine);
   const auto calls = published_calls(machine.apply(ModelCompleted{
       .response =
-          answer_response({answer_call("answer-1"), answer_call("answer-2")})}));
+          answer_response({TextBlock{.text = "Either of these."},
+                           answer_call("answer-1"), answer_call("answer-2")})}));
   REQUIRE(calls.size() == 2);
   CHECK(calls[0].role == ToolCallRole::misplaced_answer);
   CHECK(calls[1].role == ToolCallRole::misplaced_answer);
+
+  static_cast<void>(machine.apply(rejection("answer-1")));
+  only_command<IssueModelRequest>(machine.apply(rejection("answer-2")));
+  only_command<PublishToolCall>(machine.apply(
+      ModelCompleted{.response = answer_response({answer_call("answer-3")})}));
+  const auto accepted = machine.apply(AnswerAccepted{.call_id = "answer-3"});
+  const auto& commit = only_command<CommitCompletion>(accepted);
+  CHECK(commit.answer_attempt_count == 3);
+  // The round's prose survives the refused calls; the results message they left
+  // empty does not, so two assistant messages follow each other.
+  REQUIRE(commit.transcript.size() == 3);
+  CHECK(commit.transcript[1].role == Role::assistant);
+  REQUIRE(commit.transcript[1].content.size() == 1);
+  CHECK(std::get<TextBlock>(commit.transcript[1].content.front()).text ==
+        "Either of these.");
+  CHECK(commit.transcript[2].role == Role::assistant);
 }
 
 TEST_CASE("a typed turn whose response calls no tool fails with protocol") {
