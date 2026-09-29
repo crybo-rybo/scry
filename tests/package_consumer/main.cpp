@@ -1,4 +1,4 @@
-// Downstream smoke for the installed package: the explicit-schema surface and
+// Downstream smoke for the installed package: the dynamic-tool surface and
 // the reflected surface must both be usable through scry::scry alone.
 #include <scry/config.hpp>
 #include <scry/error.hpp>
@@ -13,11 +13,34 @@
 #include <string_view>
 #include <utility>
 
+[[= scry::reflection::tool{"Echo a readiness flag"}]] inline bool
+package_ready(const bool ready) {
+  return ready;
+}
+
 namespace {
 
 struct PackageArguments {
   bool ready{};
 };
+
+// Each reflected registration form, as a downstream project would declare it.
+struct PackageToolbox {
+  int calls{};
+
+  [[= scry::reflection::tool{"Count one call"}]] int count() { return ++calls; }
+};
+
+[[nodiscard]] bool registration_smoke(scry::ToolRegistry& tools) {
+  const auto dynamic = tools.add_dynamic(
+      {
+          .name = "package_dynamic",
+          .description = "Prove the installed dynamic API is linkable",
+          .input_schema = {.text = R"({"type":"object"})"},
+      },
+      [](scry::Json input) -> scry::Result<scry::Json> { return input; });
+  return dynamic && tools.add<^^package_ready>() && tools.add(PackageToolbox{});
+}
 
 [[nodiscard]] bool encode_smoke() {
   const auto encoded = scry::reflection::encode(PackageArguments{.ready = true});
@@ -95,7 +118,8 @@ int main() {
       },
       [](PackageArguments arguments) { return arguments.ready; });
 
-  if (!registration || harness.tools().size() != 1 || !encode_smoke()) {
+  if (!registration || !registration_smoke(harness.tools()) ||
+      harness.tools().size() != 4 || !encode_smoke()) {
     return 4;
   }
 

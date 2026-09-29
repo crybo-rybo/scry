@@ -33,7 +33,7 @@ cmake -E remove_directory "${stage_dir}"
 cmake --install "${build_dir}" --prefix "${stage_dir}"
 
 # The installed package must be usable by a downstream project: the consumer
-# exercises the explicit-schema surface and the reflected surface through
+# exercises the dynamic-tool surface and the reflected surface through
 # scry::scry alone, so the reflected API cannot silently stop being installed.
 cmake -E remove_directory "${consumer_dir}"
 cmake \
