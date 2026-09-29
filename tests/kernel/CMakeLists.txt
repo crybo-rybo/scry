@@ -3,6 +3,7 @@
 add_executable(
   scry_kernel_json_tests
   json_document_tests.cpp
+  json_fixture_tests.cpp
 )
 target_compile_features(scry_kernel_json_tests PRIVATE cxx_std_23)
 target_include_directories(
@@ -10,6 +11,14 @@ target_include_directories(
   PRIVATE
     "${PROJECT_SOURCE_DIR}/include"
     "${PROJECT_SOURCE_DIR}/src"
+)
+# The fixtures pin the canonical form; the corpora supply the prefixes the
+# truncation replay walks.
+target_compile_definitions(
+  scry_kernel_json_tests
+  PRIVATE
+    "SCRY_JSON_FIXTURE_DIR=\"${PROJECT_SOURCE_DIR}/tests/fixtures/json\""
+    "SCRY_FUZZ_CORPUS_DIR=\"${PROJECT_SOURCE_DIR}/tests/fuzz/corpus\""
 )
 target_link_libraries(
   scry_kernel_json_tests

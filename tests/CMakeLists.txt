@@ -151,6 +151,15 @@ scry_add_fuzz_replay(
   SOURCES provider/openai_fuzz.cpp
   LINK_LIBRARIES scry::scry
 )
+# The JSON layer's property target is a kernel libFuzzer target too; replaying
+# its corpus here as well runs it under GCC and the GCC sanitizer presets.
+scry_add_fuzz_replay(
+  scry_json_fuzz_replay
+  json
+  TEST_PREFIX "kernel."
+  SOURCES fuzz/json_fuzz.cpp
+  LINK_LIBRARIES scry_kernel
+)
 scry_add_fuzz_replay(
   scry_conversation_fuzz_replay
   conversation

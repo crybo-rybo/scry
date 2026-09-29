@@ -184,13 +184,14 @@ consumer.
 The showcase is a standalone project under `extras/showcase/` that the root build
 never configures; `./.github/scripts/ci-showcase.sh` (`just showcase`) only builds it.
 
-There are five fuzz targets, each with a checked-in seed corpus under
+There are six fuzz targets, each with a checked-in seed corpus under
 `tests/fuzz/corpus/` that it replays per commit.
 
 | Target | Exercises | Built as | Per-commit test |
 |---|---|---|---|
 | `sse` | Kernel SSE parser | libFuzzer, `fuzz` preset | `protocol.sse-fuzz` |
 | `response_policy` | Kernel transport response policy | libFuzzer, `fuzz` preset | `transport.response_policy-fuzz` |
+| `json` | Kernel JSON layer: parse and validate agree, canonical text round-trips and is idempotent | libFuzzer, `fuzz` preset; also GCC corpus replay | `kernel.json-fuzz`, `kernel.json-fuzz-replay` |
 | `anthropic` | Anthropic stream decoder | GCC corpus replay | `provider.anthropic-fuzz-replay` |
 | `openai` | OpenAI-compatible stream decoder | GCC corpus replay | `provider.openai-fuzz-replay` |
 | `conversation` | Conversation persistence | GCC corpus replay | `runtime.conversation-fuzz-replay` |
@@ -199,7 +200,16 @@ The kernel targets run under `.github/scripts/ci-fuzz-replay.sh`. The other
 three link the whole library, which only GCC compiles, so the ordinary test
 build links each to `tests/fuzz/replay_main.cpp` instead of libFuzzer: every GCC
 leg replays their corpora, with ASan and UBSan under the `asan` preset, but
-nothing runs a coverage-guided search on them.
+nothing runs a coverage-guided search on them. The `json` target needs only the
+kernel, so the GCC build replays its corpus too.
+
+While Scry's JSON layer (`src/kernel/json/document.hpp`) stands beside the
+Glaze-backed codec it is replacing, one more kernel libFuzzer target,
+`scry_json_differential_fuzz` (`kernel.json-differential-fuzz`), runs every
+corpus above through both and requires identical acceptance, trees, and
+canonical bytes, apart from the two number-kind departures
+`tests/fixtures/json/README.md` documents. It goes with Glaze; the golden
+fixtures under `tests/fixtures/json/` are what it leaves behind.
 
 ## End-to-end testing
 

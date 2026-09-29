@@ -641,6 +641,12 @@ consumers, and none reaches the library outside the kernel: the rest of `src/`
 reads parsed JSON through `JsonView` and maps its own data shapes with the
 reflected codec.
 
+Beside it, `src/kernel/json/document.hpp` is Scry's own strict JSON layer,
+which is to replace Glaze and which nothing uses yet: its header states what it
+accepts and how it writes canonical text, and differential fuzzing and the
+golden fixtures under `tests/fixtures/json/` hold it to the codec's behavior
+except where that header says otherwise.
+
 ## Typed completions
 
 A turn can be asked to end with a structured answer instead of free text. The
@@ -1059,9 +1065,9 @@ are archived into `scry::scry`; it is not a separate installed target.
 The split keeps the layer that sees untrusted bytes within reach of Clang
 tooling, which cannot compile reflection. `SCRY_CLANG_TOOLING` mode builds the
 kernel alone with Clang, for clang-tidy and for libFuzzer targets over the SSE
-parser and the transport response policy; it excludes the rest of the library,
-`scry::testing`, examples, and ordinary tests, and is a tooling build, not a
-supported consumer configuration. Fuzz targets over the provider stream decoders
+parser, the transport response policy, and the JSON layer; it excludes the rest
+of the library, `scry::testing`, examples, and ordinary tests, and is a tooling
+build, not a supported consumer configuration. Fuzz targets over the provider stream decoders
 and conversation persistence link the whole library, so the GCC test build
 replays their seed corpora instead of searching from them.
 
