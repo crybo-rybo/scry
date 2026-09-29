@@ -1,9 +1,11 @@
-#include "transport/curl_transport.hpp"
+#include "kernel/kernel.hpp"
 
-#include "core/error.hpp"
-#include "transport/curl_error.hpp"
-#include "transport/curl_global.hpp"
-#include "transport/transport_policy.hpp"
+#include "kernel/transport/curl_transport.hpp"
+
+#include "kernel/error.hpp"
+#include "kernel/transport/curl_error.hpp"
+#include "kernel/transport/curl_global.hpp"
+#include "kernel/transport/transport_policy.hpp"
 
 #include <algorithm>
 #include <chrono>

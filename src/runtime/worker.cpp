@@ -1,7 +1,7 @@
 #include "runtime/worker.hpp"
 
-#include "core/retry.hpp"
-#include "protocol/sse.hpp"
+#include "kernel/retry.hpp"
+#include "kernel/sse.hpp"
 
 #include <algorithm>
 #include <cassert>

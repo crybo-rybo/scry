@@ -1,6 +1,6 @@
-#include "core/json_codec.hpp"
 #include "core/model.hpp"
 #include "fixture_support.hpp"
+#include "kernel/json/codec.hpp"
 #include "provider/anthropic.hpp"
 #include "provider/anthropic_content.hpp"
 #include "provider/shared.hpp"

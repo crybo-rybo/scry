@@ -4,9 +4,6 @@ add_executable(
   tool_budget_tests.cpp
   tool_loop_tests.cpp
   turn_machine_tests.cpp
-  "${PROJECT_SOURCE_DIR}/src/core/error.cpp"
-  "${PROJECT_SOURCE_DIR}/src/core/json_codec.cpp"
-  "${PROJECT_SOURCE_DIR}/src/core/retry.cpp"
   "${PROJECT_SOURCE_DIR}/src/machine/turn_machine.cpp"
 )
 target_include_directories(
@@ -22,6 +19,6 @@ target_include_directories(
 )
 target_link_libraries(
   scry_turn_machine_tests
-  PRIVATE Catch2::Catch2WithMain scry_project_options
+  PRIVATE Catch2::Catch2WithMain scry_kernel scry_project_options
 )
 catch_discover_tests(scry_turn_machine_tests TEST_PREFIX "machine.")

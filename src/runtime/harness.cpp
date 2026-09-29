@@ -1,6 +1,7 @@
-#include "core/error.hpp"
 #include "core/provider.hpp"
-#include "core/retry.hpp"
+#include "kernel/error.hpp"
+#include "kernel/retry.hpp"
+#include "kernel/transport/curl_transport.hpp"
 #include "runtime/config.hpp"
 #include "runtime/pump.hpp"
 #include "runtime/startup.hpp"
@@ -8,7 +9,6 @@
 #include "runtime/tool_registry_impl.hpp"
 #include "runtime/turn_impl.hpp"
 #include "runtime/worker.hpp"
-#include "transport/curl_transport.hpp"
 
 #include <atomic>
 #include <cassert>

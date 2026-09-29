@@ -56,6 +56,16 @@ target_link_libraries(
 )
 add_test(NAME public-api-contract COMMAND scry_public_api_contract)
 
+# The kernel's include boundary: allowlisted public headers only, no non-kernel
+# src/ header, and the reflection guard in every file (src/kernel/kernel.hpp).
+add_test(
+  NAME kernel.include-boundary
+  COMMAND
+    "${CMAKE_COMMAND}"
+    "-DSCRY_SOURCE_DIR=${PROJECT_SOURCE_DIR}/src"
+    -P "${PROJECT_SOURCE_DIR}/cmake/CheckKernelBoundary.cmake"
+)
+
 if(SCRY_SANITIZER STREQUAL "address-undefined")
   add_executable(
     scry_ubsan_fatal_probe
@@ -91,8 +101,9 @@ target_include_directories(
   scry_runtime_tests
   SYSTEM PRIVATE "${SCRY_GLAZE_INCLUDE_DIR}"
 )
-# The fuzz targets need Clang, so runtime/json_codec_validation_tests.cpp replays the
-# checked-in corpora through the JSON codec under the GCC build as well.
+# runtime/json_codec_validation_tests.cpp replays every checked-in fuzz corpus
+# through the JSON codec under the GCC build as well, including the kernel
+# targets' corpora, whose libFuzzer binaries need Clang.
 target_compile_definitions(
   scry_runtime_tests
   PRIVATE "SCRY_FUZZ_CORPUS_DIR=\"${PROJECT_SOURCE_DIR}/tests/fuzz/corpus\""
@@ -116,6 +127,33 @@ add_subdirectory(protocol)
 add_subdirectory(provider)
 add_subdirectory(transport)
 add_subdirectory(integration)
+
+# The fuzz targets over the reflective side of the library link scry, so they
+# cannot be libFuzzer binaries; this build replays their seed corpora instead
+# (cmake/ScryFuzz.cmake). The kernel targets are libFuzzer binaries in the Clang
+# tooling build (tests/fuzz/CMakeLists.txt).
+include(ScryFuzz)
+scry_add_fuzz_replay(
+  scry_anthropic_fuzz_replay
+  anthropic
+  TEST_PREFIX "provider."
+  SOURCES provider/anthropic_fuzz.cpp
+  LINK_LIBRARIES scry::scry
+)
+scry_add_fuzz_replay(
+  scry_openai_fuzz_replay
+  openai
+  TEST_PREFIX "provider."
+  SOURCES provider/openai_fuzz.cpp
+  LINK_LIBRARIES scry::scry
+)
+scry_add_fuzz_replay(
+  scry_conversation_fuzz_replay
+  conversation
+  TEST_PREFIX "runtime."
+  SOURCES runtime/conversation_fuzz.cpp
+  LINK_LIBRARIES scry::scry
+)
 
 file(
   GLOB

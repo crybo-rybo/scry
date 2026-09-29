@@ -1,7 +1,7 @@
 #pragma once
 
-#include "core/json_codec.hpp"
 #include "core/model.hpp"
+#include "kernel/json/codec.hpp"
 
 #include <optional>
 #include <string_view>

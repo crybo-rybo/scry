@@ -1,4 +1,4 @@
-#include "core/json_codec.hpp"
+#include "kernel/json/codec.hpp"
 
 #include <scry/detail/reflection_json.hpp>
 

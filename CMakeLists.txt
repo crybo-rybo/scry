@@ -41,11 +41,15 @@ option(
   "Build and install scry::testing, the scripted-transport package component"
   ON
 )
-option(SCRY_ENABLE_CLANG_TIDY "Run clang-tidy while compiling" OFF)
+option(
+  SCRY_ENABLE_CLANG_TIDY
+  "Run clang-tidy over the kernel (src/kernel/) while compiling"
+  OFF
+)
 option(SCRY_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ${PROJECT_IS_TOP_LEVEL})
 option(
   SCRY_CLANG_TOOLING
-  "Build only the portable C++23 implementation with a Clang compiler, for \
+  "Build only the C++23 kernel (src/kernel/) with a Clang compiler, for \
 clang-tidy and libFuzzer. Not a supported consumer build."
   OFF
 )
@@ -55,7 +59,11 @@ option(
 lacks std::expected for the tooling compiler"
   OFF
 )
-option(SCRY_BUILD_FUZZERS "Build short protocol fuzz targets" OFF)
+option(
+  SCRY_BUILD_FUZZERS
+  "Build the kernel's libFuzzer targets; requires SCRY_CLANG_TOOLING"
+  OFF
+)
 
 set(
   SCRY_SANITIZER
@@ -101,15 +109,75 @@ if(NOT SCRY_GLAZE_INCLUDE_DIR)
   message(FATAL_ERROR "Could not determine the Glaze include directory")
 endif()
 
+# The kernel is the reflection-free layer under the library: the JSON codec, the
+# SSE parser, retry delay arithmetic, and the transport seam with its libcurl
+# implementation, which is everything that parses untrusted bytes. It is compiled
+# as C++23 without -freflection in every build, so the same sources are what
+# clang-tidy and libFuzzer see in the SCRY_CLANG_TOOLING build.
+# It never links scry, so scry's PUBLIC C++26 and -freflection cannot reach it.
+# src/kernel/kernel.hpp states the include boundary; the kernel.include-boundary
+# test checks it.
+add_library(
+  scry_kernel
+  OBJECT
+    src/kernel/error.cpp
+    src/kernel/json/codec.cpp
+    src/kernel/json/view.cpp
+    src/kernel/retry.cpp
+    src/kernel/sse.cpp
+    src/kernel/transport/curl_error.cpp
+    src/kernel/transport/curl_global.cpp
+    src/kernel/transport/curl_transport.cpp
+    src/kernel/transport/transport_policy.cpp
+)
+target_compile_features(scry_kernel PRIVATE cxx_std_23)
+# In C++23 mode GCC rejects a reflection operator outright but accepts a P3394
+# annotation with only a -Wc++26-extensions warning, so that warning is an error
+# for the kernel even when SCRY_WARNINGS_AS_ERRORS is off. Clang rejects both.
+target_compile_options(
+  scry_kernel
+  PRIVATE "$<$<CXX_COMPILER_ID:GNU>:-Werror=c++26-extensions>"
+)
+set_target_properties(
+  scry_kernel
+  PROPERTIES
+    CXX_STANDARD 23
+    CXX_STANDARD_REQUIRED ON
+    CXX_EXTENSIONS OFF
+    POSITION_INDEPENDENT_CODE ON
+)
+target_include_directories(
+  scry_kernel
+  PRIVATE
+    "${PROJECT_SOURCE_DIR}/include"
+    "${PROJECT_SOURCE_DIR}/src"
+)
+target_include_directories(scry_kernel SYSTEM PRIVATE "${SCRY_GLAZE_INCLUDE_DIR}")
+# A target that links the kernel objects directly, such as a kernel fuzz target
+# or test, also needs libcurl and Threads at link time. scry takes the objects
+# through $<TARGET_OBJECTS:...> instead and declares both dependencies itself.
+target_link_libraries(
+  scry_kernel
+  PUBLIC CURL::libcurl Threads::Threads
+  PRIVATE scry_project_options
+)
+
+include(ScryDeveloperTools)
+
+# The tooling build is the kernel alone, plus the libFuzzer targets over it:
+# everything else under src/ may use C++26 reflection, which only GCC compiles.
+if(SCRY_CLANG_TOOLING)
+  if(SCRY_BUILD_FUZZERS)
+    include(CTest)
+    add_subdirectory(tests/fuzz)
+  endif()
+  return()
+endif()
+
 add_library(
   scry
   STATIC
-    src/core/error.cpp
-    src/core/json_codec.cpp
-    src/core/json_view.cpp
-    src/core/retry.cpp
     src/machine/turn_machine.cpp
-    src/protocol/sse.cpp
     src/provider/anthropic_content.cpp
     src/provider/anthropic_request.cpp
     src/provider/anthropic_stream.cpp
@@ -128,25 +196,20 @@ add_library(
     src/runtime/turn.cpp
     src/runtime/turn_route.cpp
     src/runtime/worker.cpp
-    src/transport/curl_error.cpp
-    src/transport/curl_global.cpp
-    src/transport/curl_transport.cpp
-    src/transport/transport_policy.cpp
 )
+# The kernel's objects are archived into scry as sources rather than linked as a
+# target, so scry_kernel never becomes a dependency of the installed export set.
+target_sources(scry PRIVATE $<TARGET_OBJECTS:scry_kernel>)
 add_library(scry::scry ALIAS scry)
 set_target_properties(
   scry
   PROPERTIES
     EXPORT_NAME scry
     POSITION_INDEPENDENT_CODE ON
+    CXX_EXTENSIONS OFF
 )
-if(SCRY_CLANG_TOOLING)
-  target_compile_features(scry PUBLIC cxx_std_23)
-else()
-  target_compile_features(scry PUBLIC cxx_std_26)
-  target_compile_options(scry PUBLIC -freflection)
-  set_target_properties(scry PROPERTIES CXX_EXTENSIONS OFF)
-endif()
+target_compile_features(scry PUBLIC cxx_std_26)
+target_compile_options(scry PUBLIC -freflection)
 target_include_directories(
   scry
   PUBLIC
@@ -157,8 +220,6 @@ target_include_directories(
     "${PROJECT_SOURCE_DIR}/src"
 )
 target_include_directories(scry SYSTEM PRIVATE "${SCRY_GLAZE_INCLUDE_DIR}")
-
-include(ScryDeveloperTools)
 
 target_link_libraries(
   scry
@@ -216,15 +277,10 @@ if(SCRY_BUILD_EXAMPLES)
   add_subdirectory(examples)
 endif()
 
-# CTest must be enabled here so ctest can discover either set of targets.
-if(SCRY_BUILD_TESTS OR SCRY_BUILD_FUZZERS)
-  include(CTest)
-endif()
+# CTest is enabled from this top-level file so ctest runs from the build root.
 if(SCRY_BUILD_TESTS)
+  include(CTest)
   add_subdirectory(tests)
-endif()
-if(SCRY_BUILD_FUZZERS)
-  add_subdirectory(tests/fuzz)
 endif()
 
 configure_package_config_file(

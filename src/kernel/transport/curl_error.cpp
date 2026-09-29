@@ -1,7 +1,9 @@
-#include "transport/curl_error.hpp"
+#include "kernel/kernel.hpp"
 
-#include "core/error.hpp"
-#include "transport/transport_policy.hpp"
+#include "kernel/transport/curl_error.hpp"
+
+#include "kernel/error.hpp"
+#include "kernel/transport/transport_policy.hpp"
 
 #include <algorithm>
 #include <ctime>

@@ -1,4 +1,6 @@
-#include "core/json_codec.hpp"
+#include "kernel/kernel.hpp"
+
+#include "kernel/json/codec.hpp"
 
 #include <iterator>
 #include <memory>

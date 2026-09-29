@@ -4,7 +4,7 @@
 // replay of the fuzz corpora against a two-pass oracle that runs the validating
 // skip pass before a plain read.
 
-#include "core/json_codec.hpp"
+#include "kernel/json/codec.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 #include <filesystem>

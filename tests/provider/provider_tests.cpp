@@ -1,7 +1,7 @@
-#include "core/json_codec.hpp"
 #include "core/model.hpp"
 #include "core/provider.hpp"
 #include "fixture_support.hpp"
+#include "kernel/json/codec.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 #include <memory>

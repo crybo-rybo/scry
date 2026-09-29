@@ -1,4 +1,4 @@
-#include "protocol/sse.hpp"
+#include "kernel/sse.hpp"
 
 #include <algorithm>
 #include <cstddef>

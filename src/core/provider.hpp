@@ -1,7 +1,7 @@
 #pragma once
 
 #include "core/model.hpp"
-#include "core/transport.hpp"
+#include "kernel/transport/transport.hpp"
 
 #include <limits>
 #include <memory>

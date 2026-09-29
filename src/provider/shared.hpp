@@ -8,18 +8,18 @@
 // in declaration order, so the members are declared alphabetically and the body
 // still leaves the encoder in the codec's canonical key order. Every
 // std::string_view borrows from a literal, the Config, or the ModelRequest, all
-// of which outlive the encode, and every JsonText splices stored canonical JSON
-// verbatim rather than re-parsing it. The names are dialect-qualified and the types
-// deliberately sit outside the unnamed namespace: Glaze derives each member's
-// name from a pointer into an `extern` object of the type, which a type with no
-// linkage cannot have, and GCC mangles every translation unit's unnamed
+// of which outlive the encode, and every JsonText (provider/wire_json.hpp) splices
+// stored canonical JSON verbatim rather than re-parsing it. The names are
+// dialect-qualified and the types deliberately sit outside the unnamed namespace: Glaze
+// derives each member's name from a pointer into an `extern` object of the type, which
+// a type with no linkage cannot have, and GCC mangles every translation unit's unnamed
 // namespace identically, so two same-named wire structs in the two request files
 // would have their key tables merged by the linker and each dialect would
 // serialize with the other's keys.
 
-#include "core/error.hpp"
-#include "core/json_codec.hpp"
 #include "core/provider.hpp"
+#include "kernel/error.hpp"
+#include "kernel/json/codec.hpp"
 
 #include <algorithm>
 #include <cctype>

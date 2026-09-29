@@ -1,4 +1,6 @@
-#include "protocol/sse.hpp"
+#include "kernel/kernel.hpp"
+
+#include "kernel/sse.hpp"
 
 #include <utility>
 

@@ -1,7 +1,9 @@
-#include "transport/transport_policy.hpp"
+#include "kernel/kernel.hpp"
 
-#include "core/error.hpp"
-#include "core/json_codec.hpp"
+#include "kernel/transport/transport_policy.hpp"
+
+#include "kernel/error.hpp"
+#include "kernel/json/codec.hpp"
 
 #include <algorithm>
 #include <cctype>

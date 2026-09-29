@@ -1,4 +1,4 @@
-#include "core/retry.hpp"
+#include "kernel/retry.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 #include <chrono>

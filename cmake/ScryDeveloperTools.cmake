@@ -1,4 +1,4 @@
-# Include after ScryCompilerChecks.cmake and add_library(scry ...).
+# Include after ScryCompilerChecks.cmake and add_library(scry_kernel ...).
 add_library(scry_project_options INTERFACE)
 # ScryCompilerChecks admits only GCC and Clang-family compilers, and every
 # project that links this target compiles C++ alone.
@@ -10,8 +10,8 @@ target_compile_options(
 # A tooling compiler older than the host's libstdc++ cannot parse its headers —
 # clang 18 against Ubuntu 24.04's <expected>, for one — so the tooling build can
 # select libc++ instead. No consumer build is affected: SCRY_CLANG_TOOLING is
-# not one. Every tooling target, scry included, links scry_project_options, so
-# the flags ride on it alone.
+# not one. Every tooling target, scry_kernel included, links
+# scry_project_options, so the flags ride on it alone.
 if(SCRY_CLANG_TOOLING_LIBCXX)
   target_compile_options(scry_project_options INTERFACE -stdlib=libc++)
   target_link_options(scry_project_options INTERFACE -stdlib=libc++)
@@ -49,11 +49,12 @@ elseif(NOT SCRY_SANITIZER STREQUAL "none")
   message(FATAL_ERROR "Unsupported SCRY_SANITIZER: ${SCRY_SANITIZER}")
 endif()
 
-# libFuzzer can only steer through code carrying SanitizerCoverage, and targets
-# like scry_conversation_fuzz link the whole library, so without this every
-# mutation past the fuzz entry point would be blind. The "-no-link" spelling adds
-# the instrumentation without libFuzzer's main, which ordinary test executables
-# must not link; the fuzz targets add plain -fsanitize=fuzzer themselves.
+# libFuzzer can only steer through code carrying SanitizerCoverage, and the fuzz
+# targets link the scry_kernel objects rather than compiling the code under test
+# themselves, so without this every mutation past the fuzz entry point would be
+# blind. The "-no-link" spelling adds the instrumentation without libFuzzer's
+# main, which the kernel objects must not carry; the fuzz targets add plain
+# -fsanitize=fuzzer themselves.
 if(SCRY_BUILD_FUZZERS)
   target_compile_options(
     scry_project_options
@@ -61,10 +62,12 @@ if(SCRY_BUILD_FUZZERS)
   )
 endif()
 
+# clang-tidy analyzes the kernel only: the rest of src/ is C++26 and may use
+# reflection, which clang-tidy cannot parse.
 if(SCRY_ENABLE_CLANG_TIDY)
   find_program(SCRY_CLANG_TIDY_EXECUTABLE NAMES clang-tidy REQUIRED)
   set_property(
-    TARGET scry
+    TARGET scry_kernel
     PROPERTY
       CXX_CLANG_TIDY
         "${SCRY_CLANG_TIDY_EXECUTABLE};--warnings-as-errors=*"

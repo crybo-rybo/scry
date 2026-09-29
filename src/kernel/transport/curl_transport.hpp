@@ -1,6 +1,6 @@
 #pragma once
 
-#include "core/transport.hpp"
+#include "kernel/transport/transport.hpp"
 
 namespace scry::detail {
 

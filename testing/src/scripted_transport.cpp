@@ -1,7 +1,7 @@
 #include "core/provider.hpp"
-#include "core/transport.hpp"
+#include "kernel/transport/transport.hpp"
+#include "kernel/transport/transport_policy.hpp"
 #include "runtime/test_access.hpp"
-#include "transport/transport_policy.hpp"
 
 #include <atomic>
 #include <chrono>

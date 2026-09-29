@@ -1,7 +1,7 @@
 #pragma once
 
-#include "core/json_codec.hpp"
 #include "core/provider.hpp"
+#include "kernel/json/codec.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 #include <fstream>

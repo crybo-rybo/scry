@@ -1,6 +1,6 @@
 #pragma once
 
-#include "core/retry.hpp"
+#include "kernel/retry.hpp"
 #include "machine/turn_machine.hpp"
 
 #include <catch2/catch_test_macros.hpp>

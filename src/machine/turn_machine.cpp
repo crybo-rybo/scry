@@ -1,7 +1,7 @@
 #include "machine/turn_machine.hpp"
 
-#include "core/json_codec.hpp"
-#include "core/retry.hpp"
+#include "kernel/json/codec.hpp"
+#include "kernel/retry.hpp"
 
 #include <algorithm>
 #include <array>

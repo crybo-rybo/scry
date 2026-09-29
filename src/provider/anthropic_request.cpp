@@ -1,7 +1,8 @@
-#include "core/error.hpp"
-#include "core/json_codec.hpp"
+#include "kernel/error.hpp"
+#include "kernel/json/codec.hpp"
 #include "provider/anthropic.hpp"
 #include "provider/shared.hpp"
+#include "provider/wire_json.hpp"
 
 #include <cstdint>
 #include <optional>

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "core/error.hpp"
+#include "kernel/error.hpp"
 
 #include <cstdint>
 #include <glaze/glaze.hpp>
@@ -16,35 +16,6 @@ namespace scry::detail {
 // re-serialized document in a single canonical key order, so equal documents
 // always produce equal bytes no matter which layer parsed them.
 using JsonValue = glz::generic_sorted_u64;
-
-// Stored JSON text spliced into a larger document as a nested value rather than
-// re-parsed into a JsonValue first. A member of this type writes its bytes
-// verbatim; a std::string_view member next to it writes the same bytes as a
-// quoted, escaped JSON string.
-using JsonText = glz::raw_json_view;
-
-// Options for every write in the library. Glaze's default writer has no \u00XX
-// form for a control byte outside \b \f \n \r \t and puts two NUL bytes in its
-// place, which is not JSON; this option writes the escape instead.
-struct JsonWriteOptions : glz::opts {
-  bool escape_control_characters = true;
-};
-inline constexpr JsonWriteOptions json_write_options{};
-
-// Encodes a typed wire aggregate straight to JSON text. Glaze reflects a plain
-// aggregate member by member in declaration order, so a wire struct whose
-// members are declared alphabetically leaves the encoder in the same canonical
-// key order a JsonValue would have produced - without building the tree.
-template <class Wire>
-[[nodiscard]] Result<std::string>
-write_wire_json(const Wire& wire, const ErrorCategory category,
-                const std::string_view failure_message) {
-  std::string text{};
-  if (glz::write<json_write_options>(wire, text)) {
-    return std::unexpected(make_error(category, std::string{failure_message}));
-  }
-  return text;
-}
 
 // Validates JSON text without materializing a document: one allocation-free
 // skip pass over every byte that rejects malformed interiors, truncation,

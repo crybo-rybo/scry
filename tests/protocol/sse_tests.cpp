@@ -1,4 +1,4 @@
-#include "protocol/sse.hpp"
+#include "kernel/sse.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 #include <cstddef>

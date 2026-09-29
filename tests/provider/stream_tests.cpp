@@ -1,7 +1,7 @@
 #include "core/model.hpp"
 #include "core/provider.hpp"
 #include "fixture_support.hpp"
-#include "protocol/sse.hpp"
+#include "kernel/sse.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 #include <memory>

@@ -1,5 +1,5 @@
-#include "core/json_codec.hpp"
 #include "fixture_support.hpp"
+#include "kernel/json/codec.hpp"
 
 #include <array>
 #include <catch2/catch_test_macros.hpp>

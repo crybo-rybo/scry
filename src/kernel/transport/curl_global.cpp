@@ -1,6 +1,8 @@
-#include "transport/curl_global.hpp"
+#include "kernel/kernel.hpp"
 
-#include "core/error.hpp"
+#include "kernel/transport/curl_global.hpp"
+
+#include "kernel/error.hpp"
 
 #include <curl/curl.h>
 

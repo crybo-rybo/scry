@@ -1,11 +1,22 @@
-#include "core/json_codec.hpp"
+#include "kernel/kernel.hpp"
 
-#include "core/error.hpp"
+#include "kernel/json/codec.hpp"
+
+#include "kernel/error.hpp"
 
 #include <utility>
 
 namespace scry::detail {
 namespace {
+
+// Options for every write here. Glaze's default writer has no \u00XX form for a
+// control byte outside \b \f \n \r \t and puts two NUL bytes in its place, which
+// is not JSON; this option writes the escape instead. provider/wire_json.hpp
+// carries the same option for the request encoders.
+struct JsonWriteOptions : glz::opts {
+  bool escape_control_characters = true;
+};
+constexpr JsonWriteOptions json_write_options{};
 
 // Input always arrives as a string_view, so Glaze reads it without a NUL sentinel
 // and reports a value that ended with the buffer as the non-error code

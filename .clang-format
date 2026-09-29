@@ -5,3 +5,14 @@ PointerAlignment: Left
 SortIncludes: CaseSensitive
 IncludeBlocks: Regroup
 NamespaceIndentation: None
+# LLVM's default categories plus one: a kernel source includes
+# "kernel/kernel.hpp", the reflection guard, before its own header.
+IncludeCategories:
+  - Regex: '^"kernel/kernel\.hpp"$'
+    Priority: -1
+  - Regex: '^"(llvm|llvm-c|clang|clang-c)/'
+    Priority: 2
+  - Regex: '^(<|"(gtest|gmock|isl|json)/)'
+    Priority: 3
+  - Regex: '.*'
+    Priority: 1

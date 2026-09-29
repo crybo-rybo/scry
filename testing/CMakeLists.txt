@@ -1,8 +1,7 @@
 # scry::testing drives the shipping runtime over a scripted transport, so it
-# links the library rather than recompiling any part of it. It carries no
-# reflection syntax and reaches the transport seam through private headers,
-# which is exactly what the SCRY_CLANG_TOOLING build can still compile, so it is
-# built there too.
+# links the library rather than recompiling any part of it. It reaches the
+# kernel's transport seam through private headers. Like scry, it is built only
+# by GCC; the SCRY_CLANG_TOOLING build defines neither.
 add_library(scry_testing STATIC src/scripted_transport.cpp)
 add_library(scry::testing ALIAS scry_testing)
 set_target_properties(
