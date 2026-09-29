@@ -87,6 +87,7 @@ add_executable(
   runtime/conversation_persistence_tests.cpp
   runtime/json_codec_validation_tests.cpp
   runtime/json_view_tests.cpp
+  runtime/message_reflection_tests.cpp
   runtime/pump_regression_tests.cpp
   runtime/queue_tests.cpp
   runtime/runtime_tests.cpp

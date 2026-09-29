@@ -428,6 +428,16 @@ both on one member; more than one `name`, `description`, or `tag` on one entity;
 and `tag` or `ignore_unknown` on a data member, or `name` or `emit_null` on a
 class.
 
+The public message model is reflected too. `TextBlock`, `ToolCallBlock`, and
+`ToolResultBlock` carry the tags `text`, `tool_call`, and `tool_result`, so
+`ContentBlock` is a tagged variant and a host can pass a `Message`, or a vector
+of them, to `reflection::encode()` and `decode()`. The encoding is the
+per-message shape of the `Conversation::to_json()` document. Every member of the
+model has an initializer, so `decode()` reads an absent member as its initial
+value, while `Conversation::from_json()` requires every member. Because the
+blocks carry annotations, including `<scry/message.hpp>` needs a C++26
+compiler, as the rest of the public API does.
+
 ### Explicit-schema tools
 
 `ToolRegistry::add(ToolDefinition, ToolHandler)` accepts a JSON schema object and

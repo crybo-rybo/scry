@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <scry/annotations.hpp>
 #include <scry/json.hpp>
 #include <string>
 #include <variant>
@@ -17,13 +18,13 @@ enum class Role : std::uint8_t {
 };
 
 /// Plain text content.
-struct TextBlock {
+struct[[= scry::reflection::tag{"text"}]] TextBlock {
   /// UTF-8 text.
   std::string text{};
 };
 
 /// A model-issued tool call, which appears only in assistant messages.
-struct ToolCallBlock {
+struct[[= scry::reflection::tag{"tool_call"}]] ToolCallBlock {
   /// Provider-assigned call identifier, unique within the turn.
   std::string id{};
   /// Tool name requested by the model.
@@ -34,7 +35,7 @@ struct ToolCallBlock {
 
 /// The result returned to the model for one tool call, which appears only in user
 /// messages.
-struct ToolResultBlock {
+struct[[= scry::reflection::tag{"tool_result"}]] ToolResultBlock {
   /// Identifier of the ToolCallBlock this result answers.
   std::string tool_call_id{};
   /// Canonical JSON result sent back to the model.
@@ -44,6 +45,11 @@ struct ToolResultBlock {
 };
 
 /// One piece of a message's content.
+///
+/// This is a reflected tagged variant: scry::reflection::encode() writes a block as
+/// an object whose `"type"` member is its alternative's tag (`"text"`,
+/// `"tool_call"`, or `"tool_result"`), and scry::reflection::decode() selects the
+/// alternative by that member.
 using ContentBlock = std::variant<TextBlock, ToolCallBlock, ToolResultBlock>;
 
 /// One committed conversation message.
@@ -51,6 +57,14 @@ using ContentBlock = std::variant<TextBlock, ToolCallBlock, ToolResultBlock>;
 /// Messages are committed transactionally at a turn's successful terminal event, so a
 /// message observed through Conversation::messages() is already part of the history
 /// the next request will send.
+///
+/// A Message is a reflected value: a host can write one with
+/// scry::reflection::encode() and read it back with scry::reflection::decode(). That
+/// encoding is the per-message shape of the Conversation::to_json() document, with
+/// `arguments` and `result` spliced as JSON values rather than quoted. Every member
+/// has an initializer, so decode() reads an absent member as its initial value;
+/// Conversation::from_json() also requires every member and checks the role and
+/// block rules the codec does not express.
 struct Message {
   /// Author of this message.
   Role role{Role::user};
