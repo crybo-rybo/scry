@@ -30,11 +30,11 @@ jobs:
       - name: Install complexity checker
         run: python3 -m pip install --user --break-system-packages lizard==1.24.0
       - name: Build, test, install, and audit the package
-        run: ./scripts/ci-local.sh
+        run: ./.github/scripts/ci-local.sh
       - name: Install documentation toolchain
         run: sudo apt-get install -y doxygen graphviz
       - name: Build the API documentation
-        run: ./scripts/ci-docs.sh
+        run: ./.github/scripts/ci-docs.sh
       - name: Package the API documentation
         run: |
           cd build/docs

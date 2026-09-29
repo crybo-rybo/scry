@@ -21,7 +21,9 @@ cmake --preset dev && cmake --build build/dev   # presets: dev ci asan tsan fuzz
 ctest --test-dir build/dev --output-on-failure
 ctest --test-dir build/dev -R 'runtime\.'       # one suite, or one case by name
 ./scripts/format.sh --fix                       # --check to verify only
-./scripts/preflight.sh                          # the full local ring before a PR
+./scripts/test.sh                              # build and run unit/integration tests
+./scripts/test-e2e.sh                           # live model; requires URL and model
+./scripts/ci.sh                                 # all local CI checks before a PR
 ```
 
 The `dev`, `ci`, `asan`, and `tsan` presets select `g++-16`; override with
@@ -37,7 +39,8 @@ selected Clang compiler with a libFuzzer runtime.
   (sans-I/O turn machine), `provider/` (Anthropic, OpenAI-compatible),
   `runtime/` (worker, pump, registry, conversation), `reflection/` (JSON bridge).
 - `tests/`, `examples/`, `extras/showcase/` (a standalone project the root build
-  never configures), `scripts/` (one per CI leg), `cmake/`, `docs/`.
+  never configures), `scripts/` (local commands), `.github/scripts/` (CI helpers),
+  `cmake/`, `docs/`.
 
 ## Guardrails
 
