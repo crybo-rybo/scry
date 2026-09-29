@@ -12,6 +12,10 @@
 # Compiling the kernel as C++23 is the real enforcement for reflection syntax;
 # this audit keeps the dependency direction explicit and cheap to check.
 
+# Script mode starts with every policy unset, and CMake before 4.0 then treats
+# IN_LIST as a plain word rather than an operator.
+cmake_minimum_required(VERSION 3.28)
+
 set(
   SCRY_KERNEL_PUBLIC_HEADERS
   scry/config.hpp
