@@ -1,5 +1,6 @@
 #include "kernel/error.hpp"
 #include "kernel/json/codec.hpp"
+#include "reflection/codec.hpp"
 #include "runtime/tool_registry_impl.hpp"
 
 #include <algorithm>
@@ -35,6 +36,18 @@ namespace scry {
 namespace {
 
 constexpr std::uint64_t tool_manifest_version = 1;
+
+// The ToolRegistry::to_json() document, borrowed from the registered definitions.
+struct ToolManifestEntry {
+  std::string_view name;
+  std::string_view description;
+  const Json& input_schema;
+};
+
+struct ToolManifest {
+  std::vector<ToolManifestEntry> tools;
+  std::uint64_t version;
+};
 
 [[nodiscard]] Error inactive_registry() {
   return detail::make_error(ErrorCategory::invalid_state, "ToolRegistry is not active");
@@ -137,31 +150,28 @@ Result<Json> ToolRegistry::to_json() const {
     return std::unexpected(inactive_registry());
   }
 
-  detail::JsonValue::array_t tools{};
-  tools.reserve(impl_->entries().size());
+  ToolManifest manifest{.tools = {}, .version = tool_manifest_version};
+  manifest.tools.reserve(impl_->entries().size());
   for (const auto& entry : impl_->entries()) {
     const auto& definition = entry->definition;
-    detail::JsonValue tool{};
-    tool["name"] = definition.name;
-    tool["description"] = definition.description;
-    // Registration already canonicalized the schema. Preserve a diagnostic if
-    // that invariant is broken instead of exporting a null or partial schema.
-    if (auto status =
-            detail::parse_json_into(tool["input_schema"], definition.input_schema.text,
-                                    ErrorCategory::invalid_state,
-                                    "Registered schema for tool '" + definition.name +
-                                        "' could not be encoded");
-        !status) {
-      return std::unexpected(std::move(status.error()));
-    }
-    tools.push_back(std::move(tool));
+    manifest.tools.push_back(ToolManifestEntry{
+        .name = definition.name,
+        .description = definition.description,
+        .input_schema = definition.input_schema,
+    });
   }
-
-  detail::JsonValue root{};
-  root["tools"].data = std::move(tools);
-  root["version"] = tool_manifest_version;
-  return detail::write_json(root, ErrorCategory::invalid_state,
-                            "Tool manifest could not be encoded");
+  // Registration already canonicalized each schema. The codec validates it as it
+  // splices it, so a broken invariant is a diagnostic rather than a null or
+  // partial schema, and the final pass keeps the manifest canonical regardless.
+  auto encoded = detail::encode_text(manifest);
+  if (!encoded) {
+    return std::unexpected(
+        detail::make_error(ErrorCategory::invalid_state,
+                           "Tool manifest at " + detail::describe(encoded.error())));
+  }
+  return detail::canonicalize_json(Json{.text = std::move(*encoded)},
+                                   ErrorCategory::invalid_state,
+                                   "Tool manifest could not be encoded");
 }
 
 } // namespace scry
