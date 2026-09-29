@@ -27,7 +27,8 @@ pumping for you.
 **Tools from ordinary structs.**
 Declare arguments and results as aggregates. Scry derives the schema, decodes
 the model's arguments strictly, and encodes the return value, using C++26
-reflection. Nested structs, vectors, arrays, optionals, and enums are supported.
+reflection. Nested structs, vectors, arrays, optionals, enums, and tagged
+variants are supported.
 Parameter descriptions are annotations on the members. If you already have a
 JSON schema, register that instead with a handler that takes and returns JSON.
 
@@ -212,6 +213,9 @@ target_link_libraries(app PRIVATE scry::scry)
   rejects a move with a message the model reads, so the model tries again.
 - [examples/seeded_trials.cpp](examples/seeded_trials.cpp) — the same prompt
   run several times against a local model with a fixed sampling seed.
+- [examples/typed_values.cpp](examples/typed_values.cpp) — the reflected codec
+  on its own: an annotated answer type, its schema, a strict decode, and the
+  error text a model would be sent back.
 - [examples/testing_scripted.cpp](examples/testing_scripted.cpp) — a downstream
   test with a scripted provider and no network.
 - [extras/showcase](extras/showcase) — a standalone Dear ImGui chat panel and a

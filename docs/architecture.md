@@ -247,7 +247,8 @@ unknown fields.
 `scry::reflection::add<Args>()` registers a typed callable at runtime using a
 compile-time schema, `input_schema_v<Args>`, and generated argument decoding and
 result encoding. It lowers to the same registry as explicit-schema tools and
-preserves move-only handler captures.
+preserves move-only handler captures. The schema, the decoder, and the encoder are
+the [reflected codec](#reflected-codec) applied to the argument and result types.
 
 ```cpp
 struct ForecastArgs {
@@ -299,34 +300,53 @@ Supported member and result values are:
 - `std::vector<T, Allocator>` except `vector<bool, Allocator>`; `std::array<T, N>`;
   and recursively supported aggregates. Containers must support default
   construction, move construction, and move assignment.
+- `std::variant<A, B, ...>` whose alternatives are supported aggregates, each
+  with a distinct `scry::reflection::tag`. An untagged variant, or one with a
+  non-aggregate alternative, is not supported.
 
-Only a default member initializer permits omission. Only `std::optional<T>`
-permits JSON `null`. Thus `std::optional<int> value;` is required and nullable,
-while `int value = 1;` is omittable and non-null. Omission preserves the C++
-initializer.
+Only a default member initializer, or `skip_null` on a `std::optional<T>` member,
+permits omission. Only `std::optional<T>` permits JSON `null`. Thus
+`std::optional<int> value;` is required and nullable, while `int value = 1;` is
+omittable and non-null. Omission preserves the C++ initializer, except that an
+omitted `skip_null` member decodes as disengaged.
 
 Generated schemas use closed inline objects, numeric range bounds, exact array
 lengths, and a provider-neutral JSON Schema subset. Their keywords are
 `additionalProperties`, `anyOf`, `description`, `enum`, `items`, `maxItems`,
 `minItems`, `minimum`, `maximum`, `properties`, `required`, and `type`.
-Object keys and required names are sorted; enum values keep declaration order.
-Schemas omit `$schema`, references, definitions, `title`, and `default`.
+Object keys and required names are sorted by final JSON key; enum values and
+variant alternatives keep declaration order. A tagged variant is an `anyOf` of
+its alternatives' object schemas, each with a required `type` property whose
+`enum` holds that alternative's tag; an optional variant adds `{"type":"null"}`
+to the same `anyOf`. Schemas omit `$schema`, references, definitions, `title`,
+and `default`.
 
 Decoding recursively rejects unknown or missing fields, incorrect JSON kinds,
-disallowed null, out-of-range or non-finite numbers, unknown enum names, and
-incorrect fixed-array lengths. A floating-point JSON value such as `1.0` does
-not decode into an integer member. Canonical parsing collapses duplicate object
-keys before dispatch, so handlers do not see the original lexical duplicates.
+disallowed null, out-of-range or non-finite numbers, unknown enum names, missing
+or unknown variant tags, and incorrect fixed-array lengths. A floating-point JSON
+value such as `1.0` does not decode into an integer member. Canonical parsing
+collapses duplicate object keys before dispatch, so handlers do not see the
+original lexical duplicates.
 
 A decode failure fills `Error::model_message` with the host `message` minus its
 `reflected JSON at ` prefix: the JSON path of the offending value and what the
 schema required there, plus the declared enumerator names when an enum value is
+unrecognized, or the declared tags when a variant's `type` is missing or
 unrecognized. Argument text that is not JSON at all reports `tool arguments are
 not valid JSON`. Every word of it is derived from the schema the model was
 already given, so the model can correct itself without learning anything new. A
 result-encoding failure fills no `model_message`: it describes the handler's own
 result type, whose schema the model never sees, so the model receives the fixed
 diagnostic.
+
+A type outside these rules fails to compile at `add`, `schema_v`, or
+`input_schema_v` with a `static_assert` that names the member path and the
+reason, for example `ForecastArgs does not satisfy
+scry::reflection::ToolArguments: ForecastArgs::window.when:
+std::chrono::duration<long int> is not a supported reflected value`. Those entry
+points are unconstrained so that this text is what the compiler prints; the
+concepts `SupportedValue`, `ToolArguments`, and `ToolHandlerFor` are the
+SFINAE-friendly form of the same checks.
 
 Handlers are invoked with moved arguments and return a supported value or
 `Result` of one. A handler may declare a leading `const ToolCallContext&`
@@ -338,6 +358,75 @@ result types. The returned object is encoded without an
 additional copy or move, including aggregates whose user-declared destructor
 suppresses an implicit move constructor. `reflection::encode(value)` uses the
 same value encoder without requiring registration.
+
+### Reflected codec
+
+The reflection layer is Scry's serialization engine, and reflected tools are its
+first consumer. One compile-time model of a type (its shape, its fields in
+canonical key order, and its annotations) drives schema generation, encoding,
+and decoding, so the three cannot disagree about a key, an omission, or a tag.
+
+Three concepts name what it accepts. `SupportedValue` is the closed family of the
+previous section: every value has a schema, encodes, and decodes. `Encodable`
+adds two encode-only leaves: `std::string_view`, written as a JSON string, for
+wire text borrowed from elsewhere, and `scry::Json`, which is checked by the
+validation scan request encoding uses and spliced verbatim. Because encoding
+only reads, an `Encodable` aggregate need not be default-constructible or
+movable and may have `const` members. `Decodable` adds `scry::Json`, which
+captures the canonical text of whatever value sits at its position, `null`
+included, as `JsonView::to_json()` writes it; `std::optional<scry::Json>` reads
+`null` as disengaged. Neither leaf has a schema, so neither may appear in tool
+arguments, handler results, or `schema_v`.
+
+`reflection::encode(value)` accepts any `Encodable` value and returns canonical
+JSON. The writer emits object keys in canonical order and numbers in the
+shortest spelling that reads back as the same value of their own type, so a
+`float` 0.7 is written `0.7`; the result then passes once through the canonical
+writer, which settles exponent spelling and canonicalizes spliced `Json` text.
+It fails with `tool` and the value's path for a non-finite number, an undeclared
+enumerator value, `Json` text that is not JSON, or a variant left valueless by an
+exception. `reflection::decode<T>(json)` and `decode<T>(view)` accept any
+`Decodable` `T` and apply the decoding rules of the previous section. They
+report a failure as `invalid_argument`, with the same path-based `message` and
+`model_message` a tool-argument failure carries, so a host can hand a typed
+answer's failure back to the model; text that is not JSON reports `reflected
+JSON text is not valid JSON`. The tool path keeps `ErrorCategory::tool`. A type
+outside the family fails to compile with the member path and the reason, and
+`Encodable` and `Decodable` are the SFINAE-friendly checks.
+
+Annotations are declared in `<scry/annotations.hpp>`, which does not need a
+reflection-enabled compiler to include: its types are plain structural types,
+and only writing `[[= ...]]` requires C++26. A class annotation goes between the
+class-key and the class name, `struct [[= scry::reflection::tag{"text"}]]
+TextBlock { ... };`. Several annotations on one entity each take their own `=`,
+in one bracket, `[[= a, = b]]`, or in separate ones.
+
+| Annotation | Applies to | Effect |
+|---|---|---|
+| `description{"..."}` | Data member | The member schema's `description` |
+| `name{"key"}` | Data member | Replaces the member's JSON key in encoding, decoding, schemas, and failure paths |
+| `tag{"value"}` | Class | The class's `type` value as a variant alternative; no effect elsewhere |
+| `skip_null` | Class, or a `std::optional` member | A disengaged optional is omitted, and its absence decodes as disengaged |
+| `emit_null` | `std::optional` member | Restores `null` output for one member of a `skip_null` class |
+| `ignore_unknown` | Class | Decoding ignores members the class does not declare |
+
+Objects are written in lexical byte order of their final keys. A variant
+alternative's object carries `"type":"<tag>"` at its sorted position. Decoding
+reads `type` first and dispatches on it, and the tag is not an unknown member of
+the alternative. A tagged class outside a variant neither writes nor accepts
+`type`. A `skip_null` member is left out of the schema's `required` list, and
+its absence overrides its initializer, so every encoded value decodes to itself.
+`ignore_unknown` relaxes only the class it annotates: its members' values and
+any enclosing class stay strict, and its schema stays closed, because a schema
+describes what a producer should send.
+
+Each of these fails to compile with a diagnostic naming the class or member: two
+members of one class with one final key; a variant alternative that is not an
+aggregate, has no tag, shares its tag, or has a member whose final key is
+`type`; `skip_null` or `emit_null` on a member that is not a `std::optional`, or
+both on one member; more than one `name`, `description`, or `tag` on one entity;
+and `tag` or `ignore_unknown` on a data member, or `name` or `emit_null` on a
+class.
 
 ### Explicit-schema tools
 
@@ -376,7 +465,8 @@ Cancellation or a fatal framework failure can suppress this observer.
 
 `Json` owns serialized text. `JsonView::parse()` creates a shared immutable parsed
 document with scalar accessors, `find()`, `at()`, and ordered `key_at()` lookup;
-child views can outlive their parent. Invalid input returns `invalid_argument`.
+child views can outlive their parent. `to_json()` writes the canonical text of the
+viewed value alone. Invalid input returns `invalid_argument`.
 `escape_json_string()` produces a quoted JSON string for hand-built results.
 The internal JSON codec, in the kernel under `src/kernel/json/`, uses Glaze and
 canonicalizes object keys in lexical order. No Glaze type or header is exposed to
