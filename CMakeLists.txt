@@ -231,12 +231,16 @@ target_link_libraries(
 
 set(
   SCRY_CORE_PUBLIC_HEADERS
+  include/scry/annotations.hpp
   include/scry/config.hpp
   include/scry/conversation.hpp
   include/scry/detail/reflection_codec.hpp
+  include/scry/detail/reflection_decode.hpp
+  include/scry/detail/reflection_encode.hpp
   include/scry/detail/reflection_json.hpp
   include/scry/detail/reflection_json_string.hpp
   include/scry/detail/reflection_meta.hpp
+  include/scry/detail/reflection_model.hpp
   include/scry/detail/reflection_registration.hpp
   include/scry/detail/reflection_schema.hpp
   include/scry/error.hpp

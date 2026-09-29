@@ -2,20 +2,22 @@
 
 #include <concepts>
 #include <functional>
-#include <scry/detail/reflection_codec.hpp>
+#include <scry/detail/reflection_decode.hpp>
+#include <scry/detail/reflection_encode.hpp>
 #include <scry/detail/reflection_meta.hpp>
 #include <scry/detail/reflection_schema.hpp>
 #include <scry/error.hpp>
 #include <scry/json.hpp>
 #include <scry/tool_registry.hpp>
 #include <scry/unique_function.hpp>
+#include <string_view>
 #include <type_traits>
 #include <utility>
 
 namespace scry::reflection::detail {
 
 template <typename Return>
-  requires(supported_handler_result_impl<std::remove_cvref_t<Return>>())
+  requires(handler_result_problem<std::remove_cvref_t<Return>>({}).empty())
 [[nodiscard]] Result<Json> encode_handler_result(Return&& result) {
   using ResultType = std::remove_cvref_t<Return>;
   if constexpr (expected_traits<ResultType>::recognized) {
@@ -62,7 +64,11 @@ namespace scry::reflection {
 /// same additive ToolRegistry that explicit-schema tools use. A handler may take a
 /// leading const ToolCallContext& to learn which turn, round, and call it is running
 /// for; the context is borrowed for the invocation only.
-/// @tparam Args Complete reflected argument aggregate.
+///
+/// The template is unconstrained so that a rejected type fails with a diagnostic
+/// naming the offending member and the reason; ToolArguments and ToolHandlerFor are
+/// the SFINAE-friendly form of the same checks.
+/// @tparam Args Complete reflected argument aggregate satisfying ToolArguments.
 /// @tparam Handler Move-constructible callable satisfying ToolHandlerFor<Handler,
 /// Args>.
 /// @param registry Registry that receives the tool.
@@ -70,17 +76,30 @@ namespace scry::reflection {
 /// @param handler Callable invoked with Args moved by value, optionally preceded by
 /// a const ToolCallContext& naming the call being serviced.
 /// @return Success, or the immediate error ToolRegistry::add() reports.
-template <ToolArguments Args, typename Handler>
-  requires ToolHandlerFor<Handler, Args>
+template <typename Args, typename Handler>
 [[nodiscard]] Status add(ToolRegistry& registry, ToolMetadata metadata,
                          Handler&& handler) {
-  return registry.add(
-      ToolDefinition{
-          .name = std::move(metadata.name),
-          .description = std::move(metadata.description),
-          .input_schema = Json{.text = std::string{input_schema_v<Args>}},
-      },
-      detail::make_tool_handler<Args>(std::forward<Handler>(handler)));
+  constexpr std::string_view arguments_problem =
+      detail::tool_arguments_diagnostic<Args>();
+  static_assert(arguments_problem.empty(), arguments_problem);
+  if constexpr (!arguments_problem.empty()) {
+    return {};
+  } else {
+    constexpr std::string_view handler_problem =
+        detail::tool_handler_diagnostic<Handler, Args>();
+    static_assert(handler_problem.empty(), handler_problem);
+    if constexpr (!handler_problem.empty()) {
+      return {};
+    } else {
+      return registry.add(
+          ToolDefinition{
+              .name = std::move(metadata.name),
+              .description = std::move(metadata.description),
+              .input_schema = Json{.text = std::string{input_schema_v<Args>}},
+          },
+          detail::make_tool_handler<Args>(std::forward<Handler>(handler)));
+    }
+  }
 }
 
 } // namespace scry::reflection

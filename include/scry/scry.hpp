@@ -1,5 +1,6 @@
 #pragma once
 
+#include <scry/annotations.hpp>
 #include <scry/config.hpp>
 #include <scry/conversation.hpp>
 #include <scry/error.hpp>

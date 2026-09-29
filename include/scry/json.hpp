@@ -106,6 +106,14 @@ public:
   /// member.
   [[nodiscard]] std::optional<JsonView> find(std::string_view name) const noexcept;
 
+  /// Serializes the viewed value as canonical JSON text.
+  ///
+  /// The text is Scry's canonical form of the value alone, with object keys in
+  /// lexicographic order; it does not reproduce the original spelling. A
+  /// default-constructed view serializes as `null`.
+  /// @return The value's canonical JSON text.
+  [[nodiscard]] Json to_json() const;
+
 private:
   explicit JsonView(std::shared_ptr<const void> value) noexcept;
 

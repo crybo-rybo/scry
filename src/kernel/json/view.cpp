@@ -152,6 +152,18 @@ std::optional<JsonView> JsonView::find(const std::string_view name) const noexce
   return JsonView{std::shared_ptr<const void>{value_, &found->second}};
 }
 
+Json JsonView::to_json() const {
+  const auto* value = node(value_.get());
+  if (value == nullptr) {
+    return Json{.text = "null"};
+  }
+  // Every node came out of the parser, and the writer accepts everything the
+  // parser produces, so the fallback is unreachable; it keeps the function total.
+  auto written = detail::write_json(*value, ErrorCategory::invalid_argument,
+                                    "JSON value could not be serialized");
+  return written ? std::move(*written) : Json{.text = "null"};
+}
+
 std::string escape_json_string(const std::string_view value) {
   std::string output{};
   output.reserve(value.size() + 2U);
