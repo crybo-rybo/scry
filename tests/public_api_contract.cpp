@@ -574,23 +574,14 @@ int main() {
     return 1;
   }
 
-  if (!move_only_callback_works()) {
-    return 1;
-  }
-
-  if (!nonvoid_callable_in_void_signature_works()) {
-    return 1;
-  }
-
-  if (!null_pointer_callables_are_empty()) {
-    return 1;
-  }
-
-  if (!json_view_reads_a_parsed_document()) {
-    return 1;
-  }
-
-  if (!response_format_for_a_type_works()) {
+  // The runtime checks that live in their own functions, run in one pass so
+  // main stays within the complexity limit as the list grows.
+  constexpr std::array runtime_checks{
+      &move_only_callback_works,         &nonvoid_callable_in_void_signature_works,
+      &null_pointer_callables_are_empty, &json_view_reads_a_parsed_document,
+      &response_format_for_a_type_works,
+  };
+  if (!std::ranges::all_of(runtime_checks, [](const auto check) { return check(); })) {
     return 1;
   }
 
