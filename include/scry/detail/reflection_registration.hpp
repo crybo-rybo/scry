@@ -89,6 +89,12 @@ template <ToolArguments Args, typename Handler>
 
 // ---- Reflected functions -----------------------------------------------------
 
+// The call helpers below are keyed on the function alone, or on the function and
+// its argument object: their code depends only on the function's type, which is
+// the same in every translation unit, and on `Args`, whose identity already
+// carries the tool's parameter names. Only the templates keyed on a bound_tool
+// read facts that can differ between units.
+
 // Calls a tool function, on `object` when it is a non-static member function.
 template <std::meta::info Function, typename Object, typename... Values>
 decltype(auto) call_on_object([[maybe_unused]] Object* object, Values&&... values) {
@@ -117,7 +123,7 @@ decltype(auto) call_tool_function(Object* object,
 
 // Spreads a decoded argument object over the function's parameter list: nothing,
 // the whole object, or one synthesized member per parameter. `Args` is deduced
-// rather than spelled tool_arguments_t<Function>, because GCC 16 cannot mangle a
+// rather than spelled tool_arguments_t<Tool>, because GCC 16 cannot mangle a
 // function template whose signature contains a splice.
 template <std::meta::info Function, typename Object, typename Args>
 decltype(auto) invoke_tool_function(Object* object, const ToolCallContext& context,
@@ -139,66 +145,48 @@ decltype(auto) invoke_tool_function(Object* object, const ToolCallContext& conte
 // The handler of one reflected function. `object` is the toolbox a member tool
 // is bound to; the handler shares ownership of it, so the toolbox lives as long
 // as the registration and every turn snapshot holding it.
-template <std::meta::info Function, typename Object>
+template <typename Tool, typename Object>
 [[nodiscard]] ContextualToolHandler
 make_function_handler(std::shared_ptr<Object> object) {
-  using Args = tool_arguments_t<Function>;
-  return ContextualToolHandler{
-      [object = std::move(object)](const ToolCallContext& context,
-                                   Json input) -> Result<Json> {
-        auto arguments = decode_arguments<Args>(input);
-        if (!arguments) {
-          return std::unexpected(std::move(arguments.error()));
-        }
-        return run_tool([&]() -> decltype(auto) {
-          return invoke_tool_function<Function>(object.get(), context, *arguments);
-        });
-      }};
+  using Args = tool_arguments_t<Tool>;
+  return ContextualToolHandler{[object =
+                                    std::move(object)](const ToolCallContext& context,
+                                                       Json input) -> Result<Json> {
+    auto arguments = decode_arguments<Args>(input);
+    if (!arguments) {
+      return std::unexpected(std::move(arguments.error()));
+    }
+    return run_tool([&]() -> decltype(auto) {
+      return invoke_tool_function<Tool::function>(object.get(), context, *arguments);
+    });
+  }};
 }
 
-template <std::meta::info Function, typename Object>
+// The entry of one bound_tool, named and described as the registering unit saw
+// the function.
+template <typename Tool, typename Object>
 [[nodiscard]] scry::detail::ToolEntry
 make_function_entry(std::shared_ptr<Object> object) {
-  static constexpr std::string_view name = tool_name_of(Function);
-  static constexpr std::string_view description = tool_description_of(Function);
-  static constexpr std::string_view schema = input_schema_v<tool_arguments_t<Function>>;
+  static constexpr std::string_view schema = input_schema_v<tool_arguments_t<Tool>>;
   scry::detail::ToolEntry entry{};
-  entry.definition.name = std::string{name};
-  entry.definition.description = std::string{description};
+  entry.definition.name = std::string{Tool::name};
+  entry.definition.description = std::string{Tool::description};
   entry.definition.input_schema = Json{.text = std::string{schema}};
-  entry.handler = make_function_handler<Function>(std::move(object));
+  entry.handler = make_function_handler<Tool>(std::move(object));
   return entry;
 }
 
-// Every tool function of a toolbox class, in declaration order.
-template <std::meta::info Scope, typename Object>
+// The entries one registration call registers, in order: free functions bound to
+// no object (a null `object`), or a toolbox's member functions bound to it.
+// Their code depends on nothing but the bound_tools named here, so every
+// translation unit that sees the same tools instantiates the same code.
+template <typename... Tools, typename Object>
 [[nodiscard]] std::vector<scry::detail::ToolEntry>
-scope_entries(const std::shared_ptr<Object>& object) {
+tool_set_entries(tool_set<Tools...>, const std::shared_ptr<Object>& object) {
   std::vector<scry::detail::ToolEntry> entries{};
-  constexpr std::size_t count = tool_functions_v<Scope>.size();
-  entries.reserve(count);
-  template for (constexpr std::meta::info function : tool_functions_v<Scope>) {
-    entries.push_back(make_function_entry<function>(object));
-  }
+  entries.reserve(sizeof...(Tools));
+  (entries.push_back(make_function_entry<Tools>(object)), ...);
   return entries;
-}
-
-// The entries add<^^Entity>() registers: free functions, bound to no object.
-// They depend on nothing but the functions named here, so every translation unit
-// that registers the same set instantiates the same code.
-template <std::meta::info... Functions>
-[[nodiscard]] std::vector<scry::detail::ToolEntry>
-tool_set_entries(tool_set<Functions...>) {
-  std::vector<scry::detail::ToolEntry> entries{};
-  entries.reserve(sizeof...(Functions));
-  (entries.push_back(make_function_entry<Functions>(std::shared_ptr<void>{})), ...);
-  return entries;
-}
-
-template <typename Toolbox>
-[[nodiscard]] std::vector<scry::detail::ToolEntry>
-toolbox_entries(const std::shared_ptr<Toolbox>& toolbox) {
-  return scope_entries<plain_type(^^Toolbox)>(toolbox);
 }
 
 } // namespace scry::reflection::detail

@@ -293,11 +293,7 @@ with `scry::reflection::tool`. `add<^^npc_tools>()` registers every such functio
 declared directly in the namespace `npc_tools`, in declaration order; nested
 namespaces are not searched, and a namespace's tools should be declared before
 the call that registers them, since reflection sees the namespace as it stands
-at that point. A namespace is open, so two translation units can see different
-tools in it; each registers the tools it sees. The set found at the call site is
-a defaulted template argument of `add()`, so units with different sets
-instantiate different specializations, which the linker cannot merge into one.
-A static member function registers as a free function does. A non-static
+at that point. A static member function registers as a free function does. A non-static
 member function needs an object, so it is registered through its class as a
 toolbox.
 
@@ -312,6 +308,22 @@ std::string advice(Crop crop);
 auto one = tools.add<^^almanac::advice>();
 auto all = tools.add<^^almanac>();  // both, or neither
 ```
+
+Registration reads the declarations that precede the call in the calling
+translation unit, and two units can see different ones. A namespace is open, so
+each unit sees the tools declared in it so far. A function's `tool` and `name`
+annotations accumulate across its redeclarations, and its parameter names are
+the ones its declarations so far give it, so two units that declare one function
+differently see a different description, tool name, or synthesized argument
+object. An out-of-class definition of a toolbox member can likewise add
+annotations, including `tool` itself, that only the units containing it see.
+Each unit registers what it sees. The tools found at the call site, each with its
+name, description, and synthesized parameter names, are a defaulted template
+argument of every `add()` overload that registers reflected declarations, and
+the code generated for a tool reads those facts from that argument and from the
+function's type, never again from its declarations. Units that see different
+declarations therefore instantiate differently named specializations, which the
+linker cannot merge into one.
 
 **An argument aggregate and a callable.** `add<Args>(ToolMetadata, handler)`
 registers any callable that takes `Args`, which suits a lambda capturing host
