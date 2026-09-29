@@ -8,6 +8,7 @@ add_executable(
   request_encoding_tests.cpp
   stream_tests.cpp
   tool_boundary_tests.cpp
+  request_bytes_tests.cpp
 )
 target_include_directories(
   scry_provider_tests
