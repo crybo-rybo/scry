@@ -1,13 +1,10 @@
 #!/usr/bin/env bash
 
-# Local equivalent of the per-commit CI ring: documentation, formatting, core,
-# clang-tidy, sanitizers, and the kernel's libFuzzer corpus replay. Long fuzz runs, the
-# showcase, and the local-model smoke live in the scheduled/manual nightly
-# workflow.
+# Run the CI checks locally: documentation, formatting, core, clang-tidy,
+# sanitizers, kernel fuzz corpus replay, and the standalone showcase build.
 #
-# Every gate runs the same script the hosted leg runs (scripts/format.sh or a
-# scripts/ci-*.sh leg); the only thing that lives here is the host-capability
-# probe in front of it.
+# Every gate runs scripts/format.sh or a helper under .github/scripts/;
+# the only thing that lives here is the host-capability probe in front of it.
 #
 # A leg whose toolchain this host cannot provide is reported as SKIP rather than
 # FAIL, and named again in the summary, so a reader can see exactly which hosted
@@ -15,7 +12,8 @@
 
 set -uo pipefail
 
-readonly root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" || exit 1
+readonly root_dir
 failures=0
 # Newline-separated so gate names containing spaces survive; bash 3.2 makes
 # empty arrays under `set -u` more trouble than they are worth.
@@ -53,7 +51,7 @@ run_tidy() {
 compiler and the hosted leg is authoritative" >&2
     return 77
   fi
-  ./scripts/ci-tidy.sh
+  ./.github/scripts/ci-tidy.sh
 }
 
 # Doxygen renders the API site through dot, and neither ships with the compiler
@@ -64,7 +62,7 @@ run_docs() {
 authoritative" >&2
     return 77
   fi
-  ./scripts/ci-docs.sh
+  ./.github/scripts/ci-docs.sh
 }
 
 # links_with <compiler> <flag> <source>: whether <compiler> compiles and links
@@ -99,12 +97,12 @@ run_sanitizer_leg() {
 host; the hosted Linux legs are authoritative" >&2
     return 77
   fi
-  ./scripts/ci-sanitizer.sh "${leg}"
+  ./.github/scripts/ci-sanitizer.sh "${leg}"
 }
 
 # libFuzzer needs a runtime the compiler must ship; AppleClang does not, so the
 # gate reports host-unavailable instead of failing a local preflight. The
-# probe uses the same compiler default as scripts/ci-fuzz-replay.sh.
+# probe uses the same compiler default as .github/scripts/ci-fuzz-replay.sh.
 readonly fuzzer_probe='#include <cstddef>
 #include <cstdint>
 extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t*, std::size_t) { return 0; }'
@@ -114,19 +112,20 @@ run_fuzz_replay() {
     echo "${CXX:-clang++} cannot link -fsanitize=fuzzer; the hosted fuzz replay leg is authoritative" >&2
     return 77
   fi
-  ./scripts/ci-fuzz-replay.sh
+  ./.github/scripts/ci-fuzz-replay.sh
 }
 
-cd "${root_dir}"
+cd "${root_dir}" || exit 1
 run_gate "Doxygen API site" run_docs
 run_gate "format" ./scripts/format.sh --check
-run_gate "core" ./scripts/ci-local.sh
+run_gate "core" ./.github/scripts/ci-local.sh
 run_gate "clang-tidy" run_tidy
 run_gate "ASan + UBSan" run_sanitizer_leg asan -fsanitize=address,undefined
 # TSan is where nondeterminism surfaces; ci-sanitizer.sh puts the repeat runs
 # on that leg.
 run_gate "TSan" run_sanitizer_leg tsan -fsanitize=thread
 run_gate "kernel fuzz corpus replay" run_fuzz_replay
+run_gate "showcase build" ./.github/scripts/ci-showcase.sh
 
 if [[ -n "${skipped_gates}" ]]; then
   echo
@@ -138,9 +137,9 @@ fi
 
 if [[ "${failures}" -ne 0 ]]; then
   echo
-  echo "Preflight failed in ${failures} gate(s)." >&2
+  echo "CI checks failed in ${failures} gate(s)." >&2
   exit 1
 fi
 
 echo
-echo "Preflight passed."
+echo "CI checks passed."

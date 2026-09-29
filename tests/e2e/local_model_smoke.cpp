@@ -10,7 +10,7 @@
 
 namespace {
 
-constexpr std::string_view expected_answer = "NIGHTLY_SMOKE_OK";
+constexpr std::string_view expected_answer = "E2E_SMOKE_OK";
 
 [[nodiscard]] std::string required_environment(const char* name) {
   const char* value = std::getenv(name);
@@ -30,7 +30,7 @@ constexpr std::string_view expected_answer = "NIGHTLY_SMOKE_OK";
 // server has to honor the forced tool choice and fill the whole schema.
 struct SmokeAnswer {
   [[= scry::reflection::description{
-      "Copy this exactly: NIGHTLY_SMOKE_OK"}]] std::string token{};
+      "Copy this exactly: E2E_SMOKE_OK"}]] std::string token{};
   [[= scry::reflection::description{"The sum of 2 and 3"}]] std::int32_t sum{};
 };
 
@@ -52,7 +52,7 @@ struct SmokeAnswer {
     return report_error("Conversation::create", conversation.error());
   }
   auto answered = harness.ask<SmokeAnswer>(
-      *conversation, "Set token to NIGHTLY_SMOKE_OK and sum to the sum of 2 and 3.");
+      *conversation, "Set token to E2E_SMOKE_OK and sum to the sum of 2 and 3.");
   if (!answered) {
     return report_error("Harness::ask", answered.error());
   }
@@ -107,7 +107,7 @@ struct SmokeAnswer {
   int tool_call_count = 0;
   auto registration = harness.tools().add_dynamic(
       scry::ToolDefinition{
-          .name = "nightly_required_check",
+          .name = "e2e_required_check",
           .description =
               "Required conformance step. Call exactly once with no arguments "
               "before giving any final answer.",
@@ -121,18 +121,17 @@ struct SmokeAnswer {
         if (arguments.text != "{}") {
           return std::unexpected(scry::Error{
               .category = scry::ErrorCategory::tool,
-              .message = "nightly_required_check expects an empty object",
+              .message = "e2e_required_check expects an empty object",
           });
         }
         if (++tool_call_count != 1) {
           return std::unexpected(scry::Error{
               .category = scry::ErrorCategory::tool,
-              .message = "nightly_required_check must be called exactly once",
+              .message = "e2e_required_check must be called exactly once",
           });
         }
         return scry::Json{
-            .text =
-                R"({"instruction":"Reply exactly NIGHTLY_SMOKE_OK.","status":"ready"})",
+            .text = R"({"instruction":"Reply exactly E2E_SMOKE_OK.","status":"ready"})",
         };
       });
   if (!registration) {
@@ -140,10 +139,9 @@ struct SmokeAnswer {
   }
 
   auto conversation = scry::Conversation::create({
-      .system_prompt =
-          "You are a deterministic protocol conformance agent. Before any "
-          "final answer, call nightly_required_check exactly once with {}. "
-          "After the tool result, reply with exactly NIGHTLY_SMOKE_OK.",
+      .system_prompt = "You are a deterministic protocol conformance agent. Before any "
+                       "final answer, call e2e_required_check exactly once with {}. "
+                       "After the tool result, reply with exactly E2E_SMOKE_OK.",
   });
   if (!conversation) {
     return report_error("Conversation::create", conversation.error());
@@ -151,7 +149,7 @@ struct SmokeAnswer {
 
   auto completion = harness.send_and_wait(
       *conversation,
-      "Call nightly_required_check with {} now. After its result, give the exact "
+      "Call e2e_required_check with {} now. After its result, give the exact "
       "final answer.");
   if (!completion) {
     return report_error("Harness::send_and_wait", completion.error());

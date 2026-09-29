@@ -218,6 +218,11 @@ Glaze is a private header-only dependency that CMake finds or fetches. Tests
 additionally fetch Catch2. See [Contributing](docs/contributing.md) for the
 development toolchain.
 
+Run the unit and integration suites with `./scripts/test.sh`. For a live-model
+end-to-end test, use `./scripts/test-e2e.sh` with the server URL and model set
+as described in [Contributing](docs/contributing.md#end-to-end-testing).
+`./scripts/ci.sh` runs all local CI checks and the showcase build.
+
 ## Install
 
 Build and install from the repository root:
@@ -278,7 +283,7 @@ target_link_libraries(app PRIVATE scry::scry)
   and its operating limits. Read this before relying on a specific behavior.
 - [Contributing](docs/contributing.md) — toolchain setup, presets, gates, and
   what a change needs before it lands.
-- API reference: `./scripts/ci-docs.sh` writes the Doxygen site to
+- API reference: `./.github/scripts/ci-docs.sh` writes the Doxygen site to
   `build/docs/html/index.html`.
 
 ## License

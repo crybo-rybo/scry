@@ -54,7 +54,7 @@ Build directories live under `build/<preset>`, Ninja, with
 | Preset | For |
 |---|---|
 | `dev` | Debug. The everyday edit-build-test loop. |
-| `ci` | RelWithDebInfo. What `ci-local.sh` builds, installs, and audits. |
+| `ci` | RelWithDebInfo. What `.github/scripts/ci-local.sh` builds, installs, and audits. |
 | `asan` | Debug plus ASan and non-recovering UBSan. |
 | `tsan` | Debug plus TSan for race detection. |
 | `fuzz` | Clang with `SCRY_CLANG_TOOLING`: the kernel's libFuzzer targets, ASan and UBSan. |
@@ -106,6 +106,18 @@ build always includes reflection in `scry::scry`.
 
 ## The loop
 
+Build and run the unit and integration tests with one command. These tests
+need no live model; transport suites use local loopback servers.
+
+```sh
+./scripts/test.sh                           # just test
+./scripts/test.sh -R 'runtime\.'            # filter ctest cases
+```
+
+The script configures and builds the `dev` preset, then runs ctest. Set
+`CXX=/path/to/g++-16` when the compiler has a different name. The individual
+steps remain available:
+
 ```sh
 cmake --preset dev                                # just configure
 cmake --build build/dev                           # just build
@@ -133,57 +145,47 @@ tracked and untracked C++ sources, excluding ignored files:
 
 ## Gates
 
-The core, documentation, clang-tidy, sanitizer, fuzz, showcase, and local-model
-checks have scripts under `scripts/`. Workflows supply their toolchains and
-invoke those scripts. Formatting uses `scripts/format.sh` in both CI and local
-commands. CodeQL and release publication have workflow-specific steps.
+CI helpers live under `.github/scripts/`. Workflows supply their toolchains
+and invoke those helpers; `scripts/ci.sh` runs them locally. User commands
+live under `scripts/`, including formatting and the two test entry points.
 
 **Per commit** (`.github/workflows/ci.yml`):
 
 | Job | Runs |
 |---|---|
-| Doxygen API site + clang-format | `./scripts/ci-docs.sh`, then `CLANG_FORMAT=clang-format-18 ./scripts/format.sh --check` |
-| Core, Linux GCC 16 and macOS GCC 16 | `./scripts/ci-local.sh` |
-| clang-tidy | `./scripts/ci-tidy.sh -DSCRY_CLANG_TOOLING_LIBCXX=ON`, because Ubuntu 24.04's libstdc++ `<expected>` is newer than clang 18 can parse |
-| ASan + UBSan, TSan | `./scripts/ci-sanitizer.sh asan` and `... tsan` |
-| Kernel fuzz corpus replay | `./scripts/ci-fuzz-replay.sh` |
-
-**Weekly, Mondays** (`.github/workflows/nightly.yml`): CodeQL; a long fuzz run on
-each kernel libFuzzer target (`./scripts/ci-nightly-fuzz.sh <target>`); and the
-showcase gate (`./scripts/ci-showcase.sh`). The end-to-end smoke against a real
-local model (`./scripts/ci-local-model.sh`) is `workflow_dispatch` only — it
-exercises a live model, so it does not gate pull requests.
+| Doxygen API site + clang-format | `./.github/scripts/ci-docs.sh`, then `CLANG_FORMAT=clang-format-18 ./scripts/format.sh --check` |
+| Core, Linux GCC 16 and macOS GCC 16 | `./.github/scripts/ci-local.sh` |
+| clang-tidy | `./.github/scripts/ci-tidy.sh -DSCRY_CLANG_TOOLING_LIBCXX=ON`, because Ubuntu 24.04's libstdc++ `<expected>` is newer than clang 18 can parse |
+| ASan + UBSan, TSan | `./.github/scripts/ci-sanitizer.sh asan` and `... tsan` |
+| Kernel fuzz corpus replay | `./.github/scripts/ci-fuzz-replay.sh` |
 
 **On a tag** (`release.yml`): `check-release-tag.sh`, the core gate, the API
 site, and the GitHub release built from the checked-in notes.
 
-Run the whole per-commit ring locally before every pull request:
+Run the CI checks and showcase build locally before every pull request:
 
 ```sh
-./scripts/preflight.sh    # just ci
+./scripts/ci.sh    # just ci
 ```
 
-It runs documentation, format, core, clang-tidy, sanitizers, and kernel fuzz
-replay, and continues after failures. Missing documentation, tidy, sanitizer, or fuzz
-capabilities are reported as `SKIP` and listed in the closing summary. The format
+It runs documentation, format, core, clang-tidy, sanitizers, kernel fuzz replay, and
+the showcase build, and continues after failures. Missing documentation, tidy,
+sanitizer, or fuzz capabilities are reported as `SKIP` and listed in the closing
+summary. The format
 and core gates are always attempted: a missing formatter fails the format gate,
 and a missing compiler or complexity checker fails the core gate. Each sanitizer
 leg probes its own flag with `g++-16` first, because GCC ships no
 thread-sanitizer runtime on Apple Silicon, so TSan skips there while ASan still
-runs. `./scripts/ci-local.sh` (`just ci-fast`) is the faster inner loop: a
+runs. `./.github/scripts/ci-local.sh` (`just ci-fast`) is the faster inner loop: a
 whitespace check over the branch against `origin/main`, complexity, unlinked
 TODOs, build, tests, a staged install, and a downstream `find_package(scry)`
 consumer.
 
 The showcase is a standalone project under `extras/showcase/` that the root build
-never configures; `./scripts/ci-showcase.sh` (`just showcase`) only builds it.
-
-The live-model smoke executable is excluded from default builds;
-`ci-local-model.sh` explicitly builds its target when requested.
+never configures; `./.github/scripts/ci-showcase.sh` (`just showcase`) only builds it.
 
 There are five fuzz targets, each with a checked-in seed corpus under
-`tests/fuzz/corpus/` that it replays per commit, so a target cannot rot between
-long runs.
+`tests/fuzz/corpus/` that it replays per commit.
 
 | Target | Exercises | Built as | Per-commit test |
 |---|---|---|---|
@@ -193,16 +195,33 @@ long runs.
 | `openai` | OpenAI-compatible stream decoder | GCC corpus replay | `provider.openai-fuzz-replay` |
 | `conversation` | Conversation persistence | GCC corpus replay | `runtime.conversation-fuzz-replay` |
 
-The kernel targets run under `ci-fuzz-replay.sh`, and the weekly run searches
-from their corpora. The other three link the whole library, which only GCC
-compiles, so the ordinary test build links each to `tests/fuzz/replay_main.cpp`
-instead of libFuzzer: every GCC leg replays their corpora, with ASan and UBSan
-under the `asan` preset, but nothing runs a coverage-guided search on them. For
-a long local search over a kernel target:
+The kernel targets run under `.github/scripts/ci-fuzz-replay.sh`. The other
+three link the whole library, which only GCC compiles, so the ordinary test
+build links each to `tests/fuzz/replay_main.cpp` instead of libFuzzer: every GCC
+leg replays their corpora, with ASan and UBSan under the `asan` preset, but
+nothing runs a coverage-guided search on them.
+
+## End-to-end testing
+
+Start an OpenAI-compatible server and load a model, then run the live-model
+smoke when needed:
 
 ```sh
-SCRY_NIGHTLY_FUZZ_SECONDS=1200 ./scripts/ci-nightly-fuzz.sh sse
+SCRY_LOCAL_MODEL_BASE_URL=http://127.0.0.1:11434/v1 \
+SCRY_LOCAL_MODEL_MODEL=qwen3:8b \
+./scripts/test-e2e.sh                        # just e2e with the same environment
 ```
+
+This builds `scry_local_model_smoke` from `tests/e2e/` and checks a complete
+chat and required tool round through the public API. Set
+`SCRY_LOCAL_MODEL_API_KEY` if the server requires authentication, and use
+`SCRY_LOCAL_MODEL_TIMEOUT_SECONDS` to override the 180-second timeout. GNU
+timeout is required; on macOS, install coreutils. Logs are written to
+`build/e2e-artifacts/local-model-smoke.log`.
+
+The smoke executable is excluded from default builds and ctest registration;
+only `scripts/test-e2e.sh` explicitly builds and runs it. CI checks are
+independent of a live model.
 
 ## Testing
 
@@ -267,7 +286,7 @@ the scripted statuses, failures, held transfers, and stream builders.
 
 ## Definition of done
 
-- `./scripts/preflight.sh` ran, and any skipped legs are named.
+- `./scripts/ci.sh` ran, and any skipped legs are named.
 - Tests are added or updated; a bug fix includes its regression test.
 - [`docs/architecture.md`](architecture.md) is updated when behavior changes.
 - An example compiles the change when the public API changes.
