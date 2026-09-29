@@ -8,8 +8,8 @@
 
 // The JSON codec's text-level operations, which the rest of src/ uses. The
 // document type behind them, and Glaze with it, stay inside the kernel
-// (kernel/json/document.hpp); outside it, parsed JSON is read through the public
-// JsonView and reflected types through the reflected codec.
+// (kernel/json/glaze_document.hpp); outside it, parsed JSON is read through the
+// public JsonView and reflected types through the reflected codec.
 namespace scry::detail {
 
 // Validates JSON text without materializing a document: one allocation-free

@@ -122,6 +122,8 @@ add_library(
   OBJECT
     src/kernel/error.cpp
     src/kernel/json/codec.cpp
+    src/kernel/json/document.cpp
+    src/kernel/json/number.cpp
     src/kernel/json/view.cpp
     src/kernel/retry.cpp
     src/kernel/sse.cpp

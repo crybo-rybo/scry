@@ -124,8 +124,8 @@ cmake --build build/dev                           # just build
 ctest --test-dir build/dev --output-on-failure    # just test
 ```
 
-Catch2 suites are registered with ctest under a per-suite prefix (`runtime.`,
-`machine.`, `protocol.`, `provider.`, `transport.`, `integration.`,
+Catch2 suites are registered with ctest under a per-suite prefix (`kernel.`,
+`runtime.`, `machine.`, `protocol.`, `provider.`, `transport.`, `integration.`,
 `reflection.`, `testing.`); `public-api-contract` is a plain executable test,
 and `kernel.include-boundary` runs `cmake/CheckKernelBoundary.cmake`.
 
