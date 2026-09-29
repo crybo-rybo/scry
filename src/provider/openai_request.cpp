@@ -62,6 +62,9 @@ struct[[= reflection::skip_null]] OpenAiBody {
   std::string_view model;
   std::vector<OpenAiMessage> messages;
   std::optional<std::vector<OpenAiTool>> tools;
+  // "required" makes the model call one of the offered tools; a typed turn sends
+  // it so the model answers through its response tool.
+  std::optional<std::string_view> tool_choice;
   Json temperature;
   std::optional<Json> top_p;
   std::optional<std::uint32_t> max_tokens;
@@ -238,31 +241,42 @@ encode_messages(const ModelRequest& request, JoinedText& joined) {
   return encoded;
 }
 
+[[nodiscard]] Status append_tool(std::vector<OpenAiTool>& encoded,
+                                 const ToolDefinition& tool) {
+  if (tool.name.empty()) {
+    return std::unexpected(invalid_request("OpenAI tools require a nonempty name"));
+  }
+  if (auto status = embedded_object_root(tool.input_schema.text,
+                                         "OpenAI tool schema must be a JSON object");
+      !status) {
+    return status;
+  }
+  encoded.push_back(OpenAiTool{
+      .type = "function",
+      .function =
+          OpenAiToolFunction{
+              .name = tool.name,
+              .description = tool.description,
+              .parameters = tool.input_schema,
+          },
+  });
+  return {};
+}
+
+// The registered tools, then a typed turn's response tool.
 [[nodiscard]] Result<std::optional<std::vector<OpenAiTool>>>
 encode_tools(const ModelRequest& request) {
-  if (!request.tools || request.tools->empty()) {
+  const auto registered = request.tools ? request.tools->size() : 0U;
+  if (registered == 0 && !request.response_tool) {
     return std::nullopt;
   }
   std::vector<OpenAiTool> encoded{};
-  encoded.reserve(request.tools->size());
-  for (const auto& tool : *request.tools) {
-    if (tool.name.empty()) {
-      return std::unexpected(invalid_request("OpenAI tools require a nonempty name"));
-    }
-    if (auto status = embedded_object_root(tool.input_schema.text,
-                                           "OpenAI tool schema must be a JSON object");
-        !status) {
-      return std::unexpected(std::move(status.error()));
-    }
-    encoded.push_back(OpenAiTool{
-        .type = "function",
-        .function =
-            OpenAiToolFunction{
-                .name = tool.name,
-                .description = tool.description,
-                .parameters = tool.input_schema,
-            },
-    });
+  encoded.reserve(registered + 1U);
+  auto status = for_each_request_tool(request, [&encoded](const ToolDefinition& tool) {
+    return append_tool(encoded, tool);
+  });
+  if (!status) {
+    return std::unexpected(std::move(status.error()));
   }
   return encoded;
 }
@@ -296,6 +310,8 @@ encode_tools(const ModelRequest& request) {
       .model = config.model,
       .messages = std::move(*messages),
       .tools = std::move(*tools),
+      .tool_choice = request.response_tool ? std::optional<std::string_view>{"required"}
+                                           : std::nullopt,
       .temperature = canonical_json_number(sampling.temperature),
       .top_p = sampling.top_p.transform(canonical_json_number),
       .max_tokens = sampling.max_tokens,

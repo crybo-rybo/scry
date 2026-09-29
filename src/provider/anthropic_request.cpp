@@ -49,12 +49,19 @@ struct AnthropicTool {
   const Json& input_schema;
 };
 
+// `{"type":"any"}` requires the model to call one of the offered tools; a typed
+// turn sends it so the model answers through its response tool.
+struct AnthropicToolChoice {
+  std::string_view type;
+};
+
 struct[[= reflection::skip_null]] AnthropicBody {
   std::string_view model;
   std::optional<std::uint32_t> max_tokens;
   std::optional<std::string_view> system;
   std::vector<AnthropicMessage> messages;
   std::optional<std::vector<AnthropicTool>> tools;
+  std::optional<AnthropicToolChoice> tool_choice;
   Json temperature;
   std::optional<Json> top_p;
   bool stream;
@@ -128,24 +135,35 @@ encode_messages(const ModelRequest& request) {
   return encoded;
 }
 
+[[nodiscard]] Status append_tool(std::vector<AnthropicTool>& encoded,
+                                 const ToolDefinition& tool) {
+  if (auto status = embedded_object_root(tool.input_schema.text,
+                                         "Tool input schema must be a JSON object");
+      !status) {
+    return status;
+  }
+  encoded.push_back(AnthropicTool{
+      .name = tool.name,
+      .description = tool.description,
+      .input_schema = tool.input_schema,
+  });
+  return {};
+}
+
+// The registered tools, then a typed turn's response tool.
 [[nodiscard]] Result<std::optional<std::vector<AnthropicTool>>>
 encode_tools(const ModelRequest& request) {
-  if (!request.tools || request.tools->empty()) {
+  const auto registered = request.tools ? request.tools->size() : 0U;
+  if (registered == 0 && !request.response_tool) {
     return std::nullopt;
   }
   std::vector<AnthropicTool> encoded{};
-  encoded.reserve(request.tools->size());
-  for (const auto& tool : *request.tools) {
-    if (auto status = embedded_object_root(tool.input_schema.text,
-                                           "Tool input schema must be a JSON object");
-        !status) {
-      return std::unexpected(std::move(status.error()));
-    }
-    encoded.push_back(AnthropicTool{
-        .name = tool.name,
-        .description = tool.description,
-        .input_schema = tool.input_schema,
-    });
+  encoded.reserve(registered + 1U);
+  auto status = for_each_request_tool(request, [&encoded](const ToolDefinition& tool) {
+    return append_tool(encoded, tool);
+  });
+  if (!status) {
+    return std::unexpected(std::move(status.error()));
   }
   return encoded;
 }
@@ -182,6 +200,9 @@ encode_tools(const ModelRequest& request) {
                     : std::optional<std::string_view>{request.system_prompt},
       .messages = std::move(*messages),
       .tools = std::move(*tools),
+      .tool_choice = request.response_tool
+                         ? std::optional<AnthropicToolChoice>{{.type = "any"}}
+                         : std::nullopt,
       .temperature = canonical_json_number(sampling.temperature),
       .top_p = sampling.top_p.transform(canonical_json_number),
       .stream = true,

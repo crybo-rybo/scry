@@ -109,6 +109,17 @@ struct RequestBytesCase {
   };
 }
 
+[[nodiscard]] inline std::shared_ptr<const ToolDefinition> bytes_response_tool() {
+  return std::make_shared<const ToolDefinition>(ToolDefinition{
+      .name = "respond",
+      .description = "Give the \"final\" answer",
+      .input_schema =
+          Json{.text = R"({"additionalProperties":false,"properties":{"supported":)"
+                       R"({"type":"boolean"}},"required":["supported"],)"
+                       R"("type":"object"})"},
+  });
+}
+
 [[nodiscard]] inline std::vector<RequestBytesCase> request_bytes_cases() {
   using namespace scry::detail;
   std::vector<RequestBytesCase> cases{};
@@ -140,6 +151,21 @@ struct RequestBytesCase {
       cases.push_back(
           {dialect + " sampling " + std::to_string(temperature), config, sampled});
     }
+  }
+  // A typed turn's request: the response tool follows the registered ones and the
+  // body requires a tool call. Without a response tool, every body above stays
+  // exactly as it was before typed turns existed.
+  for (const auto& config : {anthropic_config(), openai_config()}) {
+    const std::string dialect =
+        config.dialect == ProviderDialect::anthropic ? "anthropic" : "openai";
+    auto forced = bytes_tool_request();
+    forced.response_tool = bytes_response_tool();
+    cases.push_back(
+        {dialect + " response tool after registered tools", config, forced});
+
+    auto alone = bytes_text_request("Verdict?");
+    alone.response_tool = bytes_response_tool();
+    cases.push_back({dialect + " response tool alone", config, alone});
   }
   return cases;
 }

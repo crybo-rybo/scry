@@ -51,6 +51,25 @@ template <class Encode>
   return {};
 }
 
+// Calls `encode` for every registered tool, then for a typed turn's response
+// tool, stopping at the first failure. Both dialects offer the response tool
+// last, so a request without one lists exactly the registered tools.
+template <class Encode>
+[[nodiscard]] Status for_each_request_tool(const ModelRequest& request,
+                                           Encode&& encode) {
+  if (request.tools) {
+    for (const auto& tool : *request.tools) {
+      if (auto status = encode(tool); !status) {
+        return status;
+      }
+    }
+  }
+  if (request.response_tool) {
+    return encode(*request.response_tool);
+  }
+  return {};
+}
+
 [[nodiscard]] inline std::string trim_trailing_slashes(std::string url) {
   while (!url.empty() && url.back() == '/') {
     url.pop_back();
