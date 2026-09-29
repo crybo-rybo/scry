@@ -361,11 +361,11 @@ static_assert(
                  scry::ResponseFormat>);
 static_assert(requires(scry::Harness& harness, scry::Conversation& conversation) {
   {
-    harness.send(conversation, std::string{}, scry::ResponseFormat{})
+    harness.send_structured(conversation, std::string{}, scry::ResponseFormat{})
   } -> std::same_as<scry::Result<scry::Turn>>;
   {
-    harness.send(conversation, std::string{}, scry::ResponseFormat{},
-                 scry::TurnCallbacks{})
+    harness.send_structured(conversation, std::string{}, scry::ResponseFormat{},
+                            scry::TurnCallbacks{})
   } -> std::same_as<scry::Result<scry::Turn>>;
   {
     harness.send<contract::Verdict>(conversation, std::string{})
@@ -374,12 +374,40 @@ static_assert(requires(scry::Harness& harness, scry::Conversation& conversation)
     harness.send<contract::Verdict>(conversation, std::string{}, scry::TurnCallbacks{})
   } -> std::same_as<scry::Result<scry::Turn>>;
   {
-    harness.send_and_wait(conversation, std::string{}, scry::ResponseFormat{})
+    harness.send_and_wait_structured(conversation, std::string{},
+                                     scry::ResponseFormat{})
   } -> std::same_as<scry::Result<scry::Completion>>;
   {
     harness.ask<contract::Verdict>(conversation, std::string{})
   } -> std::same_as<scry::Result<scry::Answered<contract::Verdict>>>;
 });
+
+// The structured sends have their own names, so the plain overload sets are what
+// they were before typed turns: `{}` as the third argument of send() still names
+// the callbacks, and nothing else is a candidate for it. The absence checks need a
+// dependent type, or the missing overload is a hard error.
+static_assert(requires(scry::Harness& harness, scry::Conversation& conversation) {
+  {
+    harness.send(conversation, std::string{}, {})
+  } -> std::same_as<scry::Result<scry::Turn>>;
+});
+static_assert(
+    std::same_as<decltype(static_cast<scry::Result<scry::Turn> (scry::Harness::*)(
+                              scry::Conversation&, std::string, scry::TurnCallbacks)>(
+                     &scry::Harness::send)),
+                 scry::Result<scry::Turn> (scry::Harness::*)(
+                     scry::Conversation&, std::string, scry::TurnCallbacks)>);
+template <typename H>
+concept sends_a_format_through_send = requires(H& harness, scry::Conversation& c) {
+  harness.send(c, std::string{}, scry::ResponseFormat{});
+};
+template <typename H>
+concept waits_on_a_format_through_send_and_wait =
+    requires(H& harness, scry::Conversation& c) {
+      harness.send_and_wait(c, std::string{}, scry::ResponseFormat{});
+    };
+static_assert(!sends_a_format_through_send<scry::Harness>);
+static_assert(!waits_on_a_format_through_send_and_wait<scry::Harness>);
 
 namespace {
 

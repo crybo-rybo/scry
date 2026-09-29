@@ -59,8 +59,9 @@ thread that calls it; `scry::Harness::send()` never waits for network I/O.
 
 A turn can also end with a C++ value instead of text. `scry::Harness::ask()`
 blocks for one, and `scry::Harness::send()` with an answer type delivers it in
-`scry::Completion::structured`; `scry::ResponseFormat` is the dynamic form, and
-`examples/typed_answer.cpp` shows both.
+`scry::Completion::structured`. `scry::Harness::send_structured()` takes a
+`scry::ResponseFormat`, the dynamic form, and `examples/typed_answer.cpp` shows
+both.
 
 `examples/main_loop.cpp` in the source repository is a complete program. The
 threading and lifetime rules, tool registration (reflected and dynamic),

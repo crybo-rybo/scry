@@ -108,8 +108,8 @@ public:
   /// never reach a handler, TurnCallbacks::on_tool_request,
   /// TurnCallbacks::on_tool_call, or Config::max_tool_calls_per_turn.
   ///
-  /// Passing `{}` for the callbacks is ambiguous with this overload; omit the
-  /// argument instead, since it defaults to no callbacks.
+  /// It has its own name, rather than being another send() overload, so that
+  /// `send(conversation, text, {})` keeps meaning "no callbacks".
   /// @param conversation Conversation that receives the exchange on successful
   /// completion.
   /// @param user_message User text appended transactionally if the turn succeeds.
@@ -118,14 +118,17 @@ public:
   /// @return A controllable Turn handle, or an immediate admission error, including
   /// ErrorCategory::invalid_argument for a format whose name is empty or names a
   /// registered tool, or whose schema is not a JSON object.
-  [[nodiscard]] Result<Turn> send(Conversation& conversation, std::string user_message,
-                                  ResponseFormat format, TurnCallbacks callbacks = {});
+  [[nodiscard]] Result<Turn> send_structured(Conversation& conversation,
+                                             std::string user_message,
+                                             ResponseFormat format,
+                                             TurnCallbacks callbacks = {});
 
   /// Accepts an asynchronous user turn that must end with an `Answer`.
   ///
-  /// This is send() with scry::reflection::response_format<Answer>(): the response
-  /// tool's schema is generated from `Answer` and each candidate answer is decoded
-  /// strictly on the host thread. Decode Completion::structured with
+  /// This is send_structured() with scry::reflection::response_format<Answer>():
+  /// the response tool's schema is generated from `Answer` and each candidate
+  /// answer is decoded strictly on the host thread. `Answer` cannot be deduced, so
+  /// a call without it is always the plain send(). Decode Completion::structured with
   /// scry::reflection::decode<Answer>() to read the answer.
   /// @tparam Answer Reflected answer aggregate satisfying
   /// scry::reflection::ToolArguments; any other type fails to compile with the
@@ -183,21 +186,21 @@ public:
   [[nodiscard]] Result<Completion> send_and_wait(Conversation& conversation,
                                                  std::string user_message);
 
-  /// Runs one structured-answer turn synchronously, as send_and_wait() runs a
-  /// plain one.
+  /// Runs one structured-answer turn synchronously: send_structured() waited on as
+  /// send_and_wait() waits on send(), under the same rules.
   /// @param conversation Conversation that receives the exchange on success.
   /// @param user_message User text sent to the configured model.
   /// @param format Response tool and answer validator for this turn.
   /// @return The successful completion, whose `structured` member holds the
   /// accepted answer, or the terminal error.
-  [[nodiscard]] Result<Completion> send_and_wait(Conversation& conversation,
-                                                 std::string user_message,
-                                                 ResponseFormat format);
+  [[nodiscard]] Result<Completion> send_and_wait_structured(Conversation& conversation,
+                                                            std::string user_message,
+                                                            ResponseFormat format);
 
   /// Asks one question synchronously and decodes the model's typed answer.
   ///
-  /// Runs send_and_wait() with scry::reflection::response_format<Answer>(), so it
-  /// shares that call's rules: it pumps update() for every accepted turn and is
+  /// Runs send_and_wait_structured() with scry::reflection::response_format<Answer>(),
+  /// so it shares that call's rules: it pumps update() for every accepted turn and is
   /// rejected from inside a callback. The completion is returned beside the value
   /// because it carries what the answer alone does not: any prose the model gave
   /// with it, usage, attempts, and tool-round counts.
@@ -242,8 +245,8 @@ private:
 template <typename Answer>
 Result<Turn> Harness::send(Conversation& conversation, std::string user_message,
                            TurnCallbacks callbacks) {
-  return send(conversation, std::move(user_message),
-              reflection::response_format<Answer>(), std::move(callbacks));
+  return send_structured(conversation, std::move(user_message),
+                         reflection::response_format<Answer>(), std::move(callbacks));
 }
 
 template <typename Answer>
@@ -255,8 +258,8 @@ Result<Answered<Answer>> Harness::ask(Conversation& conversation,
   if constexpr (!problem.empty()) {
     return std::unexpected(Error{});
   } else {
-    auto completion = send_and_wait(conversation, std::move(user_message),
-                                    reflection::response_format<Answer>());
+    auto completion = send_and_wait_structured(conversation, std::move(user_message),
+                                               reflection::response_format<Answer>());
     if (!completion) {
       return std::unexpected(std::move(completion.error()));
     }

@@ -358,7 +358,7 @@ TEST_CASE("a dynamic response format names its tool and validates on the host") 
   auto conversation = unwrap(scry::Conversation::create());
 
   std::vector<std::string> validated;
-  const auto completion = unwrap(harness.send_and_wait(
+  const auto completion = unwrap(harness.send_and_wait_structured(
       conversation, "Score the claim.",
       scry::ResponseFormat{
           .name = "verdict",
@@ -380,7 +380,7 @@ TEST_CASE("a dynamic response format names its tool and validates on the host") 
   CHECK(contains(body, "exactly once, on its own"));
 }
 
-TEST_CASE("send rejects a response format that cannot be offered") {
+TEST_CASE("send_structured rejects a response format that cannot be offered") {
   ScriptedTransport transport;
   scry::ToolRegistry tools;
   REQUIRE(tools.add<LookupArguments>({.name = "lookup", .description = "Look it up"},
@@ -390,7 +390,8 @@ TEST_CASE("send rejects a response format that cannot be offered") {
   auto conversation = unwrap(scry::Conversation::create());
 
   const auto rejected = [&](scry::ResponseFormat format) {
-    const auto turn = harness.send(conversation, "question", std::move(format));
+    const auto turn =
+        harness.send_structured(conversation, "question", std::move(format));
     REQUIRE_FALSE(turn);
     CHECK(turn.error().category == scry::ErrorCategory::invalid_argument);
     return turn.error().message;

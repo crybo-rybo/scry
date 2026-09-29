@@ -182,7 +182,10 @@ if (verdict) {
 `ask()` blocks like `send_and_wait()`. In a main loop, `send<Verdict>(conversation,
 text, callbacks)` delivers the answer's canonical JSON in
 `Completion::structured`, and `scry::reflection::decode<Verdict>()` turns it back
-into the value. The model can still call your tools before it answers.
+into the value. The model can still call your tools before it answers. For an
+answer shape known only at runtime, `send_structured()` and
+`send_and_wait_structured()` take a `scry::ResponseFormat`: a hand-written
+schema and an optional validator.
 
 ## How it fits into your application
 

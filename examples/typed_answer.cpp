@@ -4,6 +4,8 @@
 // poll-friendly form for a host that owns its main loop: the answer arrives in
 // Completion::structured inside update(), and the host decodes it with the same
 // reflected codec that generated the schema the model was given.
+// send_structured() and send_and_wait_structured() are the dynamic forms, for an
+// answer schema written by hand.
 
 #include <chrono>
 #include <iostream>
@@ -70,6 +72,37 @@ struct DistanceArguments {
   if (!verdict->completion.text.empty()) {
     std::cout << "the model also said: " << verdict->completion.text << '\n';
   }
+  return 0;
+}
+
+// Dynamic: an answer shape known only at runtime, such as one loaded from a
+// plugin manifest. The schema is hand-written and the validator owns the checks
+// the schema describes; its model_message is what the model reads on a rejection.
+[[nodiscard]] int score_with_a_runtime_schema(scry::Harness& harness) {
+  auto conversation = scry::Conversation::create();
+  if (!conversation) {
+    std::cerr << conversation.error().message << '\n';
+    return 1;
+  }
+  auto completion = harness.send_and_wait_structured(
+      *conversation, "Rate the claim that the moon is made of cheese.",
+      scry::ResponseFormat{
+          .name = "score",
+          .schema = {.text = R"({"type":"object","required":["score"],)"
+                             R"("properties":{"score":{"type":"integer"}}})"},
+          .validate = [](const scry::Json& answer) -> scry::Status {
+            auto parsed = scry::JsonView::parse(answer);
+            if (!parsed || !parsed->find("score")) {
+              return std::unexpected(scry::tool_error("score is required"));
+            }
+            return {};
+          },
+      });
+  if (!completion) {
+    std::cerr << completion.error().message << '\n';
+    return 1;
+  }
+  std::cout << "score: " << completion->structured->text << '\n';
   return 0;
 }
 
@@ -150,6 +183,9 @@ int main() {
     return 1;
   }
   if (const auto status = ask_for_a_verdict(*harness); status != 0) {
+    return status;
+  }
+  if (const auto status = score_with_a_runtime_schema(*harness); status != 0) {
     return status;
   }
   return plan_in_the_main_loop(*harness);

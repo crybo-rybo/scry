@@ -97,7 +97,7 @@ template <typename Type> [[nodiscard]] Result<Type> decode(const Json& json) {
 /// exactly as a reflected tool-argument failure does, so the model can correct
 /// itself. Harness::send<Answer>() and Harness::ask<Answer>() use this; call it
 /// directly to rename the response tool or reword its description before passing
-/// it to Harness::send().
+/// it to Harness::send_structured().
 ///
 /// The template is unconstrained so that a rejected type fails with a diagnostic
 /// naming the offending member and the reason; ToolArguments is the

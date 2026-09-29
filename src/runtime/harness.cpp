@@ -308,8 +308,9 @@ Result<Turn> Harness::send(Conversation& conversation, std::string user_message_
                    std::nullopt);
 }
 
-Result<Turn> Harness::send(Conversation& conversation, std::string user_message_text,
-                           ResponseFormat format, TurnCallbacks callbacks) {
+Result<Turn> Harness::send_structured(Conversation& conversation,
+                                      std::string user_message_text,
+                                      ResponseFormat format, TurnCallbacks callbacks) {
   return send_turn(conversation, std::move(user_message_text), std::move(callbacks),
                    std::move(format));
 }
@@ -334,9 +335,9 @@ Result<Completion> Harness::send_and_wait(Conversation& conversation,
   return wait_for_turn(conversation, std::move(user_message_text), std::nullopt);
 }
 
-Result<Completion> Harness::send_and_wait(Conversation& conversation,
-                                          std::string user_message_text,
-                                          ResponseFormat format) {
+Result<Completion> Harness::send_and_wait_structured(Conversation& conversation,
+                                                     std::string user_message_text,
+                                                     ResponseFormat format) {
   return wait_for_turn(conversation, std::move(user_message_text), std::move(format));
 }
 

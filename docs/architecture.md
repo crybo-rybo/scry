@@ -673,12 +673,14 @@ own, with the final answer), a JSON Schema object `schema`, and an optional
 host-thread `validate` callable. `reflection::response_format<Answer>()` builds
 one whose schema is `input_schema_v<Answer>` and whose validator is
 `reflection::decode<Answer>()`; `send<Answer>()` and `ask<Answer>()` use it, and
-a host that wants another name or description edits the returned value and
-passes it to `send(conversation, text, format, callbacks)` or
-`send_and_wait(conversation, text, format)`. Passing `{}` as the callbacks of
-`send()` is ambiguous between the two overloads; omit the argument instead.
+a host that wants another name or description, or a hand-written schema, passes
+a `ResponseFormat` to `send_structured(conversation, text, format, callbacks)` or
+`send_and_wait_structured(conversation, text, format)`. The dynamic forms have
+their own names so that `send()` and `send_and_wait()` keep exactly their plain
+overloads: `send(conversation, text, {})` still means "no callbacks", and
+`send<Answer>()` is never chosen without its explicit template argument.
 
-Before acceptance, `send()` rejects with `invalid_argument` a format whose name
+Before acceptance, a structured send rejects with `invalid_argument` a format whose name
 is empty or is a registered tool's, or whose schema is not a JSON object, so the
 response tool can always be told apart from the host's tools. The request lists
 the response tool after the registered tools and requires a tool call:
@@ -786,7 +788,7 @@ tool, with `max_tool_rounds` as above, and otherwise exactly as any turn does.
 Cancellation, retries, and persistence behave as for any turn: retries apply
 before semantic output, a failed or cancelled turn commits nothing, and
 `on_finished` remains the single terminal channel. `ask()` reports what
-`send_and_wait()` would, and a decode failure of an accepted answer, which the
+`send_and_wait_structured()` would, and a decode failure of an accepted answer, which the
 validator makes unreachable.
 
 ## Providers and transport
