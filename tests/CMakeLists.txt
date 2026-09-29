@@ -181,6 +181,30 @@ if(SCRY_REFLECTION_TEST_SOURCES)
   catch_discover_tests(scry_reflection_tests TEST_PREFIX "reflection.")
 endif()
 
+# add<^^namespace>() must register what each translation unit can see, however
+# the linker orders the units, so the same program is linked in both orders.
+foreach(SCRY_LINK_ORDER IN ITEMS a_then_b b_then_a)
+  if(SCRY_LINK_ORDER STREQUAL "a_then_b")
+    set(SCRY_INVENTORY_UNITS tools_a.cpp tools_b.cpp)
+  else()
+    set(SCRY_INVENTORY_UNITS tools_b.cpp tools_a.cpp)
+  endif()
+  list(TRANSFORM SCRY_INVENTORY_UNITS PREPEND "reflection/multi_tu/")
+  add_executable(
+    scry_namespace_inventory_${SCRY_LINK_ORDER}
+    reflection/multi_tu/main.cpp
+    ${SCRY_INVENTORY_UNITS}
+  )
+  target_link_libraries(
+    scry_namespace_inventory_${SCRY_LINK_ORDER}
+    PRIVATE scry::scry scry_project_options
+  )
+  add_test(
+    NAME "reflection.namespace-inventory-${SCRY_LINK_ORDER}"
+    COMMAND scry_namespace_inventory_${SCRY_LINK_ORDER}
+  )
+endforeach()
+
 function(
   scry_add_reflection_compile_fail_test
   TEST_NAME

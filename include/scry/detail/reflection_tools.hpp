@@ -55,9 +55,34 @@ consteval std::vector<std::meta::info> tool_functions_of(const std::meta::info s
   return functions;
 }
 
+// Only for a class: a complete class has the same members in every translation
+// unit. A namespace does not, so its functions reach registration as a tool_set.
 template <std::meta::info Scope>
 inline constexpr auto tool_functions_v =
     std::define_static_array(tool_functions_of(Scope));
+
+// The tool functions one add<^^Entity>() registers, as template arguments. The set
+// is part of the registration's identity: a namespace can hold different functions
+// in different translation units, and a specialization computed from the
+// namespace alone would be merged by the linker whatever each unit saw.
+template <std::meta::info... Functions> struct tool_set {};
+
+// Reflects tool_set<...> for an entity: the tool functions a namespace declares
+// before this point, or the one function. Anything else yields an empty set and
+// is rejected by the registration's diagnostic.
+consteval std::meta::info tool_set_of(const std::meta::info entity) {
+  std::vector<std::meta::info> functions{};
+  if (std::meta::is_namespace(entity)) {
+    functions = tool_functions_of(entity);
+  } else if (std::meta::is_function(entity)) {
+    functions.push_back(entity);
+  }
+  std::vector<std::meta::info> arguments{};
+  for (const auto function : functions) {
+    arguments.push_back(std::meta::reflect_constant(function));
+  }
+  return std::meta::substitute(^^tool_set, arguments);
+}
 
 // The tool name the model sees: a name annotation, or else the identifier.
 consteval std::string_view tool_name_of(const std::meta::info function) {

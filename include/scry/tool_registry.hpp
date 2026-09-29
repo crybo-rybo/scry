@@ -119,12 +119,20 @@ public:
   /// an argument object with one required member per parameter. It returns what
   /// an add<Args>() handler may return. A function that breaks these rules fails
   /// to compile with its name and the reason.
+  /// A namespace is open, so the tools registered are the ones declared in it
+  /// before the call, in the calling translation unit. Two translation units that
+  /// see different parts of one namespace each register their own part.
   /// @tparam Entity Reflection of a tool function, a static member function, or a
   /// namespace.
+  /// @tparam Tools Leave defaulted. The tool functions `Entity` holds at the call
+  /// site; it gives each distinct set its own specialization, which the linker
+  /// cannot merge with another translation unit's.
   /// @return Success, an immediate validation/duplicate-name error, or
   /// ErrorCategory::invalid_state for an inactive registry. A namespace is
   /// registered all or nothing.
-  template <std::meta::info Entity> [[nodiscard]] Status add();
+  template <std::meta::info Entity,
+            typename Tools = typename[:reflection::detail::tool_set_of(Entity):]>
+  [[nodiscard]] Status add();
 
   /// Registers a shared toolbox: every tool member function of `Toolbox`, bound to
   /// this object.
@@ -251,14 +259,14 @@ Status ToolRegistry::add(ToolMetadata metadata, Handler&& handler) {
   }
 }
 
-template <std::meta::info Entity> Status ToolRegistry::add() {
+template <std::meta::info Entity, typename Tools> Status ToolRegistry::add() {
   constexpr std::string_view problem =
       reflection::detail::entity_tools_diagnostic<Entity>();
   static_assert(problem.empty(), problem);
   if constexpr (!problem.empty()) {
     return {};
   } else {
-    return add_all(reflection::detail::entity_entries<Entity>());
+    return add_all(reflection::detail::tool_set_entries(Tools{}));
   }
 }
 
