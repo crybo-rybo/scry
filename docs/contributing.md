@@ -165,9 +165,9 @@ commands. CodeQL and release publication have workflow-specific steps.
 
 **Weekly, Mondays** (`.github/workflows/nightly.yml`): CodeQL; a long fuzz run on
 each of the five targets (`./scripts/ci-nightly-fuzz.sh <target>`); and the
-showcase gate (`./scripts/ci-showcase.sh`). The end-to-end smoke against a real
-local model (`./scripts/ci-local-model.sh`) is `workflow_dispatch` only — it
-exercises a live model, so it does not gate pull requests.
+showcase gate (`./scripts/ci-showcase.sh`). The Ollama end-to-end smoke
+(`./scripts/ci-local-model.sh`) is `workflow_dispatch` only there, because it
+needs a live model; see [End-to-end tests](#end-to-end-tests).
 
 **On a tag** (`release.yml`): `check-release-tag.sh`, the core gate, the API
 site, and the GitHub release built from the checked-in notes.
@@ -194,9 +194,6 @@ consumer.
 The showcase is a standalone project under `extras/showcase/` that the root build
 never configures; `./scripts/ci-showcase.sh` (`just showcase`) only builds it.
 
-The live-model smoke executable is excluded from default builds;
-`ci-local-model.sh` explicitly builds its target when requested.
-
 The five fuzz targets are `sse`, `anthropic`, `openai`, `response_policy`, and
 `conversation`. Each replays its checked-in seed corpus per commit, so a target
 cannot rot between long runs. For a long local search:
@@ -204,6 +201,29 @@ cannot rot between long runs. For a long local search:
 ```sh
 SCRY_NIGHTLY_FUZZ_SECONDS=1200 ./scripts/ci-nightly-fuzz.sh sse
 ```
+
+## End-to-end tests
+
+The tests under `tests/e2e/` drive the public API against a real model server.
+No build is guaranteed a model, so they are excluded from default builds, never
+registered with ctest, and gate nothing; each script builds its own target. Run
+them by hand when a change touches a provider path, and say in the pull request
+which ones ran and against what.
+
+| Script | Drives |
+|---|---|
+| `SCRY_LOCAL_MODEL_BASE_URL=... SCRY_LOCAL_MODEL_MODEL=... ./scripts/ci-local-model.sh` (`just e2e-local-model`) | One chat and tool round through `openai_compatible` against a running OpenAI-compatible server such as Ollama. Needs GNU `timeout` (`coreutils` on macOS). |
+| `./scripts/e2e-llamad.sh <llamad checkout> <model.gguf> [Catch2 arguments]` (`just e2e-llamad ...`) | The llamad dialect against a real daemon: chat and prompt-cache reuse, tool rounds, cancellation and Harness destruction mid-stream, the idle and transfer bounds, retries and the reconnect window, gRPC's message limit and context overflow, and a daemon that is absent, restarted, or killed mid-stream. |
+
+`e2e-llamad.sh` takes a built llamad checkout and uses its daemon
+(`build-gpu`, else `build-cpu`, or `$LLAMAD_BINARY`), compiles that checkout's
+`llamad.proto` so both sides speak the same contract, and on macOS takes gRPC
+from the checkout's `build-deps/prefix`. The suite starts, restarts, and kills
+its own daemon on a private socket; the daemon's log and a JUnit report land in
+`build/e2e-llamad-artifacts`. Cases tagged `[tools]` need a model that calls
+tools when asked, such as an 8B Qwen3; pass `'~[tools]'` with a smaller model.
+The rest hold for any chat model: they check what `docs/architecture.md`
+promises, not the model's wording.
 
 ## Testing
 
@@ -222,8 +242,8 @@ SCRY_NIGHTLY_FUZZ_SECONDS=1200 ./scripts/ci-nightly-fuzz.sh sse
   wire mapping, runtime tests cover the pump and handles, and reflection tests
   cover schemas and codecs. Transport and integration tests also use local
   loopback HTTP/TLS servers, the llamad backend tests a scripted gRPC fake of the
-  daemon on a private Unix socket (`tests/support/llamad/`), and the optional
-  local-model smoke uses a live model.
+  daemon on a private Unix socket (`tests/support/llamad/`), and the
+  [end-to-end tests](#end-to-end-tests) use a live model.
 
 ## Testing downstream with `scry::testing`
 

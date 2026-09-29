@@ -36,8 +36,11 @@ tsan:
 fuzz:
     ./scripts/ci-fuzz-replay.sh
 
-nightly-local-model:
+e2e-local-model:
     ./scripts/ci-local-model.sh
+
+e2e-llamad llamad model *args:
+    ./scripts/e2e-llamad.sh {{llamad}} {{model}} {{args}}
 
 showcase:
     ./scripts/ci-showcase.sh

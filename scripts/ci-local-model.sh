@@ -18,5 +18,5 @@ cmake --build build/ci --target scry_local_model_smoke
 
 mkdir -p "${artifact_dir}"
 gnu_timeout "${SCRY_LOCAL_MODEL_TIMEOUT_SECONDS:-180}" \
-  build/ci/tests/nightly/scry_local_model_smoke \
+  build/ci/tests/e2e/scry_local_model_smoke \
   2>&1 | tee "${artifact_dir}/local-model-smoke.log"
