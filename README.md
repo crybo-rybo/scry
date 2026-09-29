@@ -7,9 +7,10 @@ over the main loop. You keep your game loop, GUI event loop, or simulation tick.
 Scry runs the whole conversation in the background and hands you the results
 when you ask for them.
 
-Write a tool as a plain C++ function that takes a struct and returns a struct.
-Scry generates the JSON schema the model sees, checks the arguments the model
-sends back, calls your function, and sends the answer to the model. Everything
+Write a tool as a plain C++ function, or give the model a whole object whose
+annotated member functions are its tools. Scry generates the JSON schema the
+model sees, checks the arguments the model sends back, calls your function, and
+sends the answer to the model. Everything
 the model asks for runs on your thread, at a moment you choose, so tools can
 read and write your application's state directly.
 
@@ -24,13 +25,17 @@ when the turn is done. Give `update()` a time budget and it stops early so your
 frame stays on schedule. For scripts and tests, `send_and_wait()` does the
 pumping for you.
 
-**Tools from ordinary structs.**
-Declare arguments and results as aggregates. Scry derives the schema, decodes
-the model's arguments strictly, and encodes the return value, using C++26
-reflection. Nested structs, vectors, arrays, optionals, enums, and tagged
-variants are supported.
-Parameter descriptions are annotations on the members. If you already have a
-JSON schema, register that instead with a handler that takes and returns JSON.
+**Tools from ordinary C++.**
+Annotate a member function with `[[= scry::reflection::tool{"..."}]]` and
+register the object: every annotated member function becomes a tool bound to
+it, registered all together or not at all. Free functions and whole namespaces
+of them register the same way, and so does a lambda over an argument struct.
+Scry derives the schema from the parameters, decodes the model's arguments
+strictly, and encodes the return value, using C++26 reflection. Nested structs,
+vectors, arrays, optionals, enums, and tagged variants are supported, and
+parameter descriptions are annotations on struct members. For a tool that only
+exists at runtime, such as one bridged from a script, register a hand-written
+JSON schema with a handler that takes and returns JSON.
 
 **The tool loop is handled for you.**
 When the model calls tools, Scry runs them, sends the results back, and keeps
@@ -99,16 +104,20 @@ struct StatusResult {
   std::string state{};
 };
 
+// A toolbox: each member function annotated as a tool becomes one the model can
+// call, named after the function and bound to this object.
+class HostTools {
+public:
+  [[= scry::reflection::tool{
+      "Report whether the host application's main loop is running"}]]
+  StatusResult get_application_status(StatusArguments arguments) const {
+    return {.running = true, .state = arguments.verbose ? "main loop running" : ""};
+  }
+};
+
 int main() {
   scry::ToolRegistry tools;
-  const auto registered = scry::reflection::add<StatusArguments>(
-      tools,
-      {.name = "get_application_status",
-       .description = "Report whether the host application's main loop is running"},
-      [](StatusArguments arguments) {
-        return StatusResult{.running = true,
-                            .state = arguments.verbose ? "main loop running" : ""};
-      });
+  const auto registered = tools.add(HostTools{});
   if (!registered) { std::cerr << registered.error().message << '\n'; return 1; }
 
   // Assumes `ollama serve` is running and `ollama pull qwen3:8b` has completed.
@@ -140,6 +149,14 @@ The model reads the tool's schema, calls it, receives the result, and answers.
 Everything between `send()` and the final callback happens on a worker thread,
 except the tool handler and the callbacks, which run inside `update()`.
 
+The same tool could be a free function, registered with
+`tools.add<^^get_application_status>()`, or one of every tool function in a
+namespace, `tools.add<^^host_tools>()`. A tool function may also take plain
+parameters, `(int dx, std::string reason)`, and Scry builds the argument object
+from them. `tools.add<StatusArguments>({.name = ..., .description = ...},
+callable)` registers a lambda instead. Pass a `std::shared_ptr` to `add()` to
+keep a handle on the toolbox the tools act on.
+
 ## How it fits into your application
 
 - **Your thread stays in charge.** One worker thread per `Harness` does the
@@ -152,9 +169,10 @@ except the tool handler and the callbacks, which run inside `update()`.
 - **The loop is deterministic underneath.** The agentic loop is a pure state
   machine with no I/O and no clock, so retries, cancellation, and multi-round
   tool use are tested without a network.
-- **JSON without a third-party type.** Explicit-schema handlers read arguments
-  through `scry::JsonView` and build results with `scry::escape_json_string()`.
-  No parser library is exposed in the public headers.
+- **JSON without a third-party type.** Dynamic tools, registered with
+  `add_dynamic()`, read arguments through `scry::JsonView` and build results
+  with `scry::escape_json_string()`. No parser library is exposed in the public
+  headers.
 
 ## Requirements
 
@@ -207,8 +225,11 @@ target_link_libraries(app PRIVATE scry::scry)
 ## Learn more
 
 - [examples/main_loop.cpp](examples/main_loop.cpp) — the canonical example:
-  both tool registration paths, a rendered history, and `--tool-manifest` to
-  export the tool contract without a running model.
+  a reflected tool next to a dynamic one, a rendered history, and
+  `--tool-manifest` to export the tool contract without a running model.
+- [examples/toolbox.cpp](examples/toolbox.cpp) — every way to declare a
+  reflected tool: a toolbox class, a namespace of functions, one annotated
+  function, and parameters Scry turns into an argument object.
 - [examples/tool_policy.cpp](examples/tool_policy.cpp) — a handler that
   rejects a move with a message the model reads, so the model tries again.
 - [examples/seeded_trials.cpp](examples/seeded_trials.cpp) — the same prompt

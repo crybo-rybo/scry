@@ -15,7 +15,8 @@ The public surface has five core concepts:
 
 - `scry::Config` selects the provider and defines operational bounds.
 - `scry::Conversation` owns transactionally committed history.
-- `scry::ToolRegistry` holds the tools snapshotted for each accepted turn.
+- `scry::ToolRegistry` holds the tools snapshotted for each accepted turn, declared
+  in C++ and registered by reflection.
 - `scry::Turn` is a move-only handle to one asynchronous exchange: `id()`,
   `finished()`, `cancel()`, and `disconnect()`.
 - `scry::Harness` owns the configured runtime, worker, tools, and callback pump.
@@ -57,7 +58,7 @@ Every callback and tool handler runs inside `scry::Harness::update()` on the
 thread that calls it; `scry::Harness::send()` never waits for network I/O.
 
 `examples/main_loop.cpp` in the source repository is a complete program. The
-threading and lifetime rules, tool registration (reflected and explicit-schema),
+threading and lifetime rules, tool registration (reflected and dynamic),
 and the error and history model are specified in `docs/architecture.md`. The
 optional `scry::testing` package component substitutes a scripted transport for
 the HTTP transfer and nothing else; `examples/testing_scripted.cpp` is a complete

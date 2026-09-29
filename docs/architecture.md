@@ -15,7 +15,7 @@ instructions.
 |---|---|
 | `Config` | Provider endpoint, credentials, model, sampling, retries, timeouts, and resource limits |
 | `Conversation` | System prompt and committed message history |
-| `ToolRegistry` | Standalone additive registry of tool definitions and handlers; a Harness takes ownership at `create()` |
+| `ToolRegistry` | Standalone additive registry of reflected and dynamic tools; a Harness takes ownership at `create()` |
 | `Turn` | Handle to an accepted exchange: identity, completion query, cancellation, and callback disconnection |
 | `Harness` | Configured runtime, worker thread, registry, and callback pump |
 
@@ -165,14 +165,27 @@ and `usage` accumulates usage from completed model responses.
 
 ## Tools and JSON
 
+Tools are declared in C++ and registered by reflection. `ToolRegistry::add()`
+takes a toolbox object, an annotated function or a namespace of them, or an
+argument aggregate with a callable, and generates each tool's argument schema,
+its strict argument decoder, and its result encoder from the declaration.
+[Dynamic tools](#dynamic-tools), registered with `add_dynamic()`, are the escape
+hatch for tools that exist only at runtime.
+
 A registry is a standalone value: a host builds one, `Harness::create(config,
 std::move(tools))` adopts it, and `Harness::tools()` keeps it open for later
 registrations. A registry is additive: duplicate names are rejected and there is
-no replacement or removal operation. Each accepted turn retains the
-registrations visible at `send()`. Immutable registration and schema snapshots
-are reused until another tool is added; handlers stay on the host thread.
+no replacement or removal operation. Every registration call is atomic. A call
+that registers several tools, such as a toolbox or a namespace, validates all
+of them first: each name must be non-empty and distinct from the other names in
+the call and from every tool already registered, each schema must be a JSON
+object, and each handler must be non-empty. Only then does it insert them, so a
+failed call leaves the registry exactly as it was, even when the failure is an
+allocation. Each accepted turn retains the registrations visible at `send()`.
+Immutable registration and schema snapshots are reused until another tool is
+added; handlers stay on the host thread.
 
-Every tool handler, reflected or explicit, comes in two shapes: one that receives
+Every tool handler, reflected or dynamic, comes in two shapes: one that receives
 only its arguments, and one that also receives a `ToolCallContext` naming the call
 it is servicing — the `TurnId`, the provider-assigned `call_id`, the registered
 `tool_name`, the one-based `round`, and the zero-based `index` within that round's
@@ -181,8 +194,8 @@ a handler can correlate its own work with the turn without counting calls itself
 The context is borrowed: both string views point into the call block being
 dispatched and are valid only until the handler returns. A handler that keeps
 either beyond its return must copy the text. Registrations store one handler
-shape internally, so the two paths export an identical tool contract and differ
-in nothing the model can see.
+shape internally, so every registration form exports the same kind of tool
+contract and differs in nothing the model can see.
 
 Before a handler runs, a call passes two admission gates in a fixed order. First
 `Config::max_tool_calls_per_turn`, which bounds the calls one turn may dispatch
@@ -231,24 +244,74 @@ commits.
 in registration order. Every entry contains the registered `name`, `description`,
 and `input_schema` object, including reflected parameter annotations. This is
 the provider-neutral tool contract; provider adapters apply their own wire
-envelopes. The export includes both registration paths, invokes no handlers, and
-makes no provider request. It reads the current registry rather than an active
-turn's frozen snapshot, and returns owned text that later registrations do not
-change. The host owns writing that text to a file or running the export as a
-build step; only tools registered on that execution path are included. Export
-needs no Harness: a registry built on its own exports the same document without
-provider configuration, libcurl, or a worker. The manifest version is independent
-of the library version: incompatible changes to its structure or field meanings
-increment it; additive fields keep the version, and consumers should ignore
-unknown fields.
+envelopes. The export includes reflected and dynamic tools alike, invokes no
+handlers, and makes no provider request. It reads the current registry rather
+than an active turn's frozen snapshot, and returns owned text that later
+registrations do not change. The host owns writing that text to a file or
+running the export as a build step; only tools registered on that execution path
+are included. Export needs no Harness: a registry built on its own exports the
+same document without provider configuration, libcurl, or a worker. The manifest
+version is independent of the library version: incompatible changes to its
+structure or field meanings increment it; additive fields keep the version, and
+consumers should ignore unknown fields.
 
 ### Reflected tools
 
-`scry::reflection::add<Args>()` registers a typed callable at runtime using a
-compile-time schema, `input_schema_v<Args>`, and generated argument decoding and
-result encoding. It lowers to the same registry as explicit-schema tools and
-preserves move-only handler captures. The schema, the decoder, and the encoder are
-the [reflected codec](#reflected-codec) applied to the argument and result types.
+A reflected tool is declared in one of three ways, and each lowers to the same
+registry entry: a name, a description, a schema generated by the
+[reflected codec](#reflected-codec), and a handler that decodes the arguments
+strictly, calls the C++ code, and encodes what it returns. The schema, the
+decoder, and the encoder cannot disagree, because one compile-time model of the
+argument and result types drives all three.
+
+**A toolbox.** `ToolRegistry::add(std::shared_ptr<T>)` registers every member
+function of `T` annotated with `scry::reflection::tool`, each bound to that one
+object. `add(T&&)` moves the object into the registry first and then does the
+same, so the registry owns the only copy.
+
+```cpp
+struct SayArgs {
+  [[= scry::reflection::description{"One short line of dialogue"}]] std::string line;
+  bool shout = false;
+};
+
+class Npc {
+public:
+  [[= scry::reflection::tool{"Report the NPC's position"}]] Position where() const;
+  [[= scry::reflection::tool{"Move the NPC by whole tiles"}]]
+  Position step(std::int32_t dx, std::int32_t dy);
+  [[= scry::reflection::tool{"Make the NPC speak"}]] scry::Status say(SayArgs args);
+};
+
+auto npc = std::make_shared<Npc>();
+auto shared = tools.add(npc);   // the host keeps a handle to the same object
+auto owned = other.add(Npc{});  // or the registry owns it outright
+```
+
+**Annotated functions.** `add<^^forecast>()` registers one function annotated
+with `scry::reflection::tool`. `add<^^npc_tools>()` registers every such function
+declared directly in the namespace `npc_tools`, in declaration order; nested
+namespaces are not searched, and a namespace's tools should be declared before
+the call that registers them, since reflection sees the namespace as it stands
+at that point. A static member function registers as a free function does. A non-static
+member function needs an object, so it is registered through its class as a
+toolbox.
+
+```cpp
+namespace almanac {
+[[= scry::reflection::tool{"Days until the first expected frost"}]]
+std::int32_t days_to_frost();
+[[= scry::reflection::tool{"Planting advice for one crop"}]]
+std::string advice(Crop crop);
+} // namespace almanac
+
+auto one = tools.add<^^almanac::advice>();
+auto all = tools.add<^^almanac>();  // both, or neither
+```
+
+**An argument aggregate and a callable.** `add<Args>(ToolMetadata, handler)`
+registers any callable that takes `Args`, which suits a lambda capturing host
+state. The name and description come from `ToolMetadata`.
 
 ```cpp
 struct ForecastArgs {
@@ -257,16 +320,14 @@ struct ForecastArgs {
 };
 struct Forecast { std::string summary; double temperature_c; };
 
-auto status = scry::reflection::add<ForecastArgs>(
-    tools,
+auto status = tools.add<ForecastArgs>(
     {.name = "forecast", .description = "Return the forecast for one city"},
     [](ForecastArgs args) -> scry::Result<Forecast> {
       return lookup_forecast(std::move(args));
     });
 
 // The same registration, with the call's identity as an optional leading parameter.
-auto traced = scry::reflection::add<ForecastArgs>(
-    tools,
+auto traced = tools.add<ForecastArgs>(
     {.name = "traced_forecast", .description = "Return the forecast for one city"},
     [](const scry::ToolCallContext& context, ForecastArgs args) -> Forecast {
       log(context.turn_id, context.round, context.call_id);
@@ -274,12 +335,91 @@ auto traced = scry::reflection::add<ForecastArgs>(
     });
 ```
 
-The tool name and description come from `ToolMetadata`. Parameter descriptions
-come from P3394 `scry::reflection::description` annotations on members. Duplicate
-Scry description annotations on one member fail at compile time.
-`scry::reflection::description_of<View>()` builds the same annotation from a
-`std::string_view` with static storage duration, so a host can keep its parameter
-text in one catalog instead of in literals spread across aggregates.
+An annotated function is named after its identifier, and a
+`scry::reflection::name{"..."}` annotation on the function replaces it. Its
+description is the `tool` annotation's text, which must not be empty; a
+`description` annotation on a function is an error, since the `tool` text already
+is the description. Tool names within one toolbox or namespace must be distinct,
+which is checked at compile time, and against the registry, which is checked at
+registration.
+
+A toolbox's tools are the member functions its class declares itself; inherited
+member functions are not considered. Each must be public, not deleted, and not
+`&&`-qualified. A toolbox registered as `std::shared_ptr<const T>` admits only
+`const` member functions. Function templates cannot be tools: GCC 16 cannot read
+annotations on a template, so an annotated function template in a namespace or
+class is not seen.
+
+A tool function's parameters, after an optional leading `const ToolCallContext&`,
+take one of three forms:
+
+- **None.** The tool takes no arguments. Its schema is the empty closed object,
+  `{"additionalProperties":false,"properties":{},"required":[],"type":"object"}`,
+  and decoding accepts `{}` alone.
+- **One aggregate.** When exactly one parameter remains and its type, without
+  references and cv-qualifiers, is a plain aggregate class, that class is the
+  argument object, exactly as for `add<Args>()`: its member descriptions,
+  defaults, and optional members all apply. `std::string`, `std::optional`,
+  `std::vector`, `std::array`, and `std::variant` are not aggregate classes in
+  this sense.
+- **Anything else.** Scry synthesizes the argument object with
+  `std::meta::define_aggregate`: one member per parameter, named after the
+  parameter, of the parameter's type without references and cv-qualifiers. Every
+  member is required, and none has a description. Default arguments are ignored.
+  GCC 16 cannot read annotations on function parameters, so a tool whose
+  parameters need descriptions, defaults, or optional members takes an argument
+  aggregate instead. Every parameter must be named, in some declaration of the
+  function, and of a `SupportedValue` type. A single parameter of aggregate type
+  that should be one member of the argument object, rather than the object
+  itself, needs a wrapper aggregate or a second parameter.
+
+The decoded arguments are moved into the call, so each parameter takes a value,
+a `const` reference, or an rvalue reference. A non-const lvalue reference, a
+`volatile` parameter, or a `ToolCallContext` anywhere but first is a compile
+error.
+
+Handlers and tool functions return a supported value, a `Result` of one, `void`,
+or `Status`. A value is encoded as the tool result. `void` and a successful
+`Status` both send `{}`: a tool that acts for its side effects has nothing to
+report beyond success, and an empty object says so without a placeholder result
+type. A failed `Status` or `Result` is a handler error like any other. The
+returned object is encoded without an additional copy or move, including
+aggregates whose user-declared destructor suppresses an implicit move
+constructor. Raw `Json`, references, futures, and awaitables are not reflected
+result types. `reflection::encode(value)` uses the same value encoder without
+requiring registration.
+
+Handlers run synchronously on the host thread, inside `Harness::update()`, so a
+toolbox's state needs no locking and can be the host's own. Each registration
+from a toolbox holds a copy of its `std::shared_ptr`, so the toolbox lives as long
+as the registry's registrations and any turn that snapshotted them still holds
+one; the last of those is released on the host thread, when the registry is
+destroyed (with its Harness) or when the last turn using it finishes. The
+registry never borrows an object: an lvalue passed to `add(T&&)` is a compile
+error. A host that must keep a toolbox somewhere the registry cannot own it can
+pass a `std::shared_ptr` with a no-op deleter and take on the lifetime guarantee
+itself.
+
+Reflection reports a declaration the registry cannot accept at compile time,
+with a `static_assert` that names the function, member, or namespace and the
+reason. Each of these is one: a toolbox class that declares no tool member
+function; a `tool` annotation on anything but a function, such as a variable or
+a data member; a namespace that declares no tool function; a non-static member
+function passed to `add<^^...>()`; an unnamed or unsupported parameter, or one
+passed in a way the decoded arguments cannot bind; an unsupported return type;
+two tools of one toolbox or namespace with one name; more than one `tool` or
+`name` annotation on one function; and an lvalue passed to `add(T&&)`. For
+example, `scry::ToolRegistry::add<^^lamp_tools::label>(): lamp_tools::label has
+parameter `initial`: char is a character type; use std::string for text or a
+fixed-width integer for a number`. The concept `scry::reflection::Toolbox` is the
+SFINAE-friendly form of the toolbox checks.
+
+The rest of this section applies to every reflected form. Parameter
+descriptions come from P3394 `scry::reflection::description` annotations on
+members. Duplicate Scry description annotations on one member fail at compile
+time. `scry::reflection::description_of<View>()` builds the same annotation from
+a `std::string_view` with static storage duration, so a host can keep its
+parameter text in one catalog instead of in literals spread across aggregates.
 
 `scry::reflection::schema_v<Value>` is the same generator over any `SupportedValue`,
 including handler result types; Scry sends only `input_schema_v<Args>` to a provider,
@@ -345,24 +485,20 @@ reason, for example `ForecastArgs does not satisfy
 scry::reflection::ToolArguments: ForecastArgs::window.when:
 std::chrono::duration<long int> is not a supported reflected value`. Those entry
 points are unconstrained so that this text is what the compiler prints; the
-concepts `SupportedValue`, `ToolArguments`, and `ToolHandlerFor` are the
-SFINAE-friendly form of the same checks.
+concepts `SupportedValue`, `ToolArguments`, `ToolHandlerFor`, and `Toolbox` are
+the SFINAE-friendly form of the same checks.
 
-Handlers are invoked with moved arguments and return a supported value or
-`Result` of one. A handler may declare a leading `const ToolCallContext&`
-parameter; `ToolHandlerFor` accepts either arity and checks the result type of
-whichever form is viable, preferring the contextual one. The context must lead:
-a handler that trails it is not a reflected handler and fails to compile. Raw
-`Json`, `void`, `Status`, references, futures, and awaitables are not reflected
-result types. The returned object is encoded without an
-additional copy or move, including aggregates whose user-declared destructor
-suppresses an implicit move constructor. `reflection::encode(value)` uses the
-same value encoder without requiring registration.
+An `add<Args>()` handler is invoked with moved arguments. It may declare a
+leading `const ToolCallContext&` parameter; `ToolHandlerFor` accepts either
+arity and checks the result type of whichever form is viable, preferring the
+contextual one. The context must lead: a handler that trails it is not a
+reflected handler and fails to compile.
 
 ### Reflected codec
 
 The reflection layer is Scry's serialization engine, and reflected tools are its
-first consumer. One compile-time model of a type (its shape, its fields in
+first consumer: their schemas, argument decoding, and result encoding are this
+codec applied to the argument and result types. One compile-time model of a type (its shape, its fields in
 canonical key order, and its annotations) drives schema generation, encoding,
 and decoding, so the three cannot disagree about a key, an omission, or a tag.
 
@@ -406,7 +542,8 @@ in one bracket, `[[= a, = b]]`, or in separate ones.
 | Annotation | Applies to | Effect |
 |---|---|---|
 | `description{"..."}` | Data member | The member schema's `description` |
-| `name{"key"}` | Data member | Replaces the member's JSON key in encoding, decoding, schemas, and failure paths |
+| `name{"key"}` | Data member, or tool function | Replaces the member's JSON key in encoding, decoding, schemas, and failure paths; on a tool function, replaces the tool name |
+| `tool{"..."}` | Function or member function | Declares a [reflected tool](#reflected-tools) and supplies its description |
 | `tag{"value"}` | Class | The class's `type` value as a variant alternative; no effect elsewhere |
 | `skip_null` | Class, or a `std::optional` member | A disengaged optional is omitted, and its absence decodes as disengaged |
 | `emit_null` | `std::optional` member | Restores `null` output for one member of a `skip_null` class |
@@ -427,8 +564,9 @@ members of one class with one final key; a variant alternative that is not an
 aggregate, has no tag, shares its tag, or has a member whose final key is
 `type`; `skip_null` or `emit_null` on a member that is not a `std::optional`, or
 both on one member; more than one `name`, `description`, or `tag` on one entity;
-and `tag` or `ignore_unknown` on a data member, or `name` or `emit_null` on a
-class.
+`tag` or `ignore_unknown` on a data member, or `name` or `emit_null` on a
+class; and `tool` on a data member or a class, which the tool registration
+checks also report for any other entity that is not a function.
 
 The public message model is reflected too. `TextBlock`, `ToolCallBlock`, and
 `ToolResultBlock` carry the tags `text`, `tool_call`, and `tool_result`, so
@@ -440,23 +578,30 @@ value, while `Conversation::from_json()` requires every member. Because the
 blocks carry annotations, including `<scry/message.hpp>` needs a C++26
 compiler, as the rest of the public API does.
 
-### Explicit-schema tools
+### Dynamic tools
 
-`ToolRegistry::add(ToolDefinition, ToolHandler)` accepts a JSON schema object and
-a move-only `Json -> Result<Json>` callable;
-`ToolRegistry::add(ToolDefinition, ContextualToolHandler)` accepts a move-only
-`(const ToolCallContext&, Json) -> Result<Json>` callable instead. The overloads
-are separated by the handler's arity, so a lambda of either shape selects one of
-them without a cast. Registration validates and canonicalizes the schema as a
-JSON object; Scry does not implement general JSON Schema validation. An empty
-handler of either shape is rejected at registration. The handler receives
-canonical object arguments and owns validation against its schema: Scry has
-checked that the arguments parse and form an object, not that they match the
-schema the model was given. A handler that rejects them with
+`ToolRegistry::add_dynamic(ToolDefinition, ToolHandler)` registers a tool from a
+hand-written JSON schema object and a move-only `Json -> Result<Json>` callable;
+`add_dynamic(ToolDefinition, ContextualToolHandler)` accepts a move-only
+`(const ToolCallContext&, Json) -> Result<Json>` callable instead. They are the
+escape hatch for tools that exist only at runtime, such as ones bridged from a
+scripting language, another process, or a plugin manifest, where there is no
+C++ declaration to reflect. A tool declared in C++ belongs on `add()`, where its
+schema and argument checks are generated and cannot drift apart.
+
+The overloads are separated by the handler's arity, so a lambda of either shape
+selects one of them without a cast. Registration validates and canonicalizes the
+schema as a JSON object; Scry does not implement general JSON Schema validation.
+An empty handler of either shape is rejected at registration. The handler
+receives canonical object arguments and owns validation against its schema:
+Scry has checked that the arguments parse and form an object, not that they
+match the schema the model was given. A handler that rejects them with
 `scry::tool_error()` tells the model what was wrong, and the turn continues so
 the model can correct the call; `on_tool_request` can apply the same check
 before any handler runs. A handler must synchronously return valid JSON or an
 error. Asynchronous or deferred tool results are not supported.
+
+### Tool errors
 
 Unknown tools, reflected decode failures, handler errors, exceptions, and invalid
 result JSON produce bounded model-visible error results. A handler error's
