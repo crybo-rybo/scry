@@ -251,6 +251,34 @@ static_assert(!reflection::SupportedValue<scry::Json>);
 static_assert(reflection::Encodable<std::string_view>);
 static_assert(!reflection::Decodable<std::string_view>);
 
+// decode<T>() produces a value, so its target is a cv-unqualified object type, and
+// the concept agrees with the entry point's check.
+static_assert(!reflection::Decodable<const Payload>);
+static_assert(!reflection::Decodable<volatile Payload>);
+static_assert(!reflection::Decodable<Payload&>);
+static_assert(!reflection::Decodable<const Payload&>);
+static_assert(!reflection::Decodable<Payload&&>);
+
+namespace constrained {
+
+// A wrapper constrained on the concept, as the concepts' documentation suggests,
+// never reaches decode<T>() with a target decode<T>() rejects.
+template <typename Type>
+  requires reflection::Decodable<Type>
+scry::Result<Type> decode_checked(const scry::Json& json) {
+  return reflection::decode<Type>(json);
+}
+
+template <typename Type>
+concept checked_decodable =
+    requires(const scry::Json& json) { decode_checked<Type>(json); };
+
+static_assert(checked_decodable<Payload>);
+static_assert(!checked_decodable<const Payload>);
+static_assert(!checked_decodable<Payload&>);
+
+} // namespace constrained
+
 static_assert(!reflection::SupportedValue<std::variant<Unannotated>>);
 static_assert(!reflection::SupportedValue<std::variant<Left, int>>);
 static_assert(!reflection::SupportedValue<std::variant<Left, AlsoLeft>>);
