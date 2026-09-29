@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # Local equivalent of the per-commit CI ring: documentation, formatting, core,
-# clang-tidy, sanitizers, and the fuzz corpus replay. Long fuzz runs, the
+# clang-tidy, sanitizers, and the kernel's libFuzzer corpus replay. Long fuzz runs, the
 # showcase, and the local-model smoke live in the scheduled/manual nightly
 # workflow.
 #
@@ -126,7 +126,7 @@ run_gate "ASan + UBSan" run_sanitizer_leg asan -fsanitize=address,undefined
 # TSan is where nondeterminism surfaces; ci-sanitizer.sh puts the repeat runs
 # on that leg.
 run_gate "TSan" run_sanitizer_leg tsan -fsanitize=thread
-run_gate "fuzz corpus replay" run_fuzz_replay
+run_gate "kernel fuzz corpus replay" run_fuzz_replay
 
 if [[ -n "${skipped_gates}" ]]; then
   echo

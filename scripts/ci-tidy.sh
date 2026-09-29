@@ -2,9 +2,10 @@
 
 # The clang-tidy leg, run identically by preflight and by hosted CI.
 #
-# SCRY_CLANG_TOOLING builds only the portable C++23 implementation, which is
-# the whole Clang-analyzable surface: the public API is C++26 and GCC-only. The
-# ci preset pins g++-16, so the Clang compiler is named explicitly here.
+# SCRY_CLANG_TOOLING builds only the C++23 kernel (src/kernel/), which is the
+# whole Clang-analyzable surface: the public API and the rest of src/ are C++26
+# and GCC-only. The ci preset pins g++-16, so the Clang compiler is named
+# explicitly here.
 #
 # Extra arguments are forwarded to the configure step. The hosted leg passes
 # -DSCRY_CLANG_TOOLING_LIBCXX=ON to build against libc++ instead of the host's

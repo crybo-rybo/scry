@@ -54,12 +54,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # The kernel's libFuzzer targets; the reflective-side targets build only
+        # with GCC and are corpus replays in the per-commit test build.
         target:
           - sse
-          - anthropic
-          - openai
           - response_policy
-          - conversation
     env:
       CC: clang-21
       CXX: clang++-21

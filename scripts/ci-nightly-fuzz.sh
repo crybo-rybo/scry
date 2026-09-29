@@ -9,8 +9,11 @@ readonly fuzz_kind="${1:-}"
 readonly fuzz_seconds="${SCRY_NIGHTLY_FUZZ_SECONDS:-900}"
 readonly per_input_timeout="${SCRY_NIGHTLY_FUZZ_INPUT_TIMEOUT_SECONDS:-10}"
 
+# The kernel's libFuzzer targets. The reflective-side targets build only with
+# GCC and have no coverage-guided search; the ordinary test build replays their
+# corpora (cmake/ScryFuzz.cmake).
 usage() {
-  echo "Usage: $0 {sse|anthropic|openai|response_policy|conversation}" >&2
+  echo "Usage: $0 {sse|response_policy}" >&2
 }
 
 require_positive_integer() {
@@ -28,7 +31,7 @@ if [[ "$#" -ne 1 ]]; then
 fi
 
 case "${fuzz_kind}" in
-  sse | anthropic | openai | response_policy | conversation) ;;
+  sse | response_policy) ;;
   *)
     usage
     exit 2

@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 
-# The per-commit fuzz corpus replay, run identically by preflight and by hosted
-# CI. Each registered fuzz test executes its seed corpus once and exits, which
-# is a deterministic replay rather than a search (cmake/ScryFuzz.cmake). The
-# long searching runs live in scripts/ci-nightly-fuzz.sh.
+# The per-commit libFuzzer corpus replay for the kernel's fuzz targets, run
+# identically by preflight and by hosted CI. Each registered fuzz test executes
+# its seed corpus once and exits, which is a deterministic replay rather than a
+# search (cmake/ScryFuzz.cmake). The long searching runs live in
+# scripts/ci-nightly-fuzz.sh. The fuzz targets over the reflective side of the
+# library are GCC corpus replays in the ordinary test build instead, so the core
+# and sanitizer legs run them.
 #
 # The fuzz preset sets SCRY_CLANG_TOOLING, so the compiler must be a
 # Clang-family one carrying libFuzzer.
