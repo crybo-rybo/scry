@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-readonly root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+readonly root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly build_dir="${root_dir}/build/ci"
 readonly stage_dir="${root_dir}/build/stage"
 readonly consumer_dir="${root_dir}/build/package-consumer"

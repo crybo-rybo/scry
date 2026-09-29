@@ -7,7 +7,10 @@ build:
     cmake --build build/dev
 
 test:
-    ctest --test-dir build/dev --output-on-failure
+    ./scripts/test.sh
+
+e2e:
+    ./scripts/test-e2e.sh
 
 format:
     ./scripts/format.sh --fix
@@ -16,28 +19,25 @@ format-check:
     ./scripts/format.sh --check
 
 ci-fast:
-    ./scripts/ci-local.sh
+    ./.github/scripts/ci-local.sh
 
 ci:
-    ./scripts/preflight.sh
+    ./scripts/ci.sh
 
 docs:
-    ./scripts/ci-docs.sh
+    ./.github/scripts/ci-docs.sh
 
 tidy:
-    ./scripts/ci-tidy.sh
+    ./.github/scripts/ci-tidy.sh
 
 asan:
-    ./scripts/ci-sanitizer.sh asan
+    ./.github/scripts/ci-sanitizer.sh asan
 
 tsan:
-    ./scripts/ci-sanitizer.sh tsan
+    ./.github/scripts/ci-sanitizer.sh tsan
 
 fuzz:
-    ./scripts/ci-fuzz-replay.sh
-
-nightly-local-model:
-    ./scripts/ci-local-model.sh
+    ./.github/scripts/ci-fuzz-replay.sh
 
 showcase:
-    ./scripts/ci-showcase.sh
+    ./.github/scripts/ci-showcase.sh
