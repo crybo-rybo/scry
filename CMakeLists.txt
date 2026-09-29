@@ -1,4 +1,5 @@
-cmake_minimum_required(VERSION 3.28)
+# 3.30 is the first CMake that knows GCC's C++26 mode (cxx_std_26 below).
+cmake_minimum_required(VERSION 3.30)
 
 project(
   scry
@@ -81,34 +82,6 @@ include(ScryCompilerChecks)
 find_package(CURL 7.84 REQUIRED)
 find_package(Threads REQUIRED)
 
-# FIND_PACKAGE_ARGS lets a packaged Glaze (vcpkg, Conan, Homebrew) satisfy the
-# dependency; the pinned fetch is the fallback when find_package(glaze) fails.
-FetchContent_Declare(
-  glaze
-  GIT_REPOSITORY https://github.com/stephenberry/glaze.git
-  GIT_TAG dce5e0f7ec572725ec369a0bc59a00eeb2270a9a
-  SYSTEM
-  EXCLUDE_FROM_ALL
-  FIND_PACKAGE_ARGS
-)
-FetchContent_MakeAvailable(glaze)
-
-# Scry consumes Glaze privately through raw include directories so no
-# glaze::glaze link dependency is ever exported. Where those headers live
-# depends on which of the two paths above provided them.
-if(glaze_SOURCE_DIR)
-  set(SCRY_GLAZE_INCLUDE_DIR "${glaze_SOURCE_DIR}/include")
-else()
-  get_target_property(
-    SCRY_GLAZE_INCLUDE_DIR
-    glaze::glaze
-    INTERFACE_INCLUDE_DIRECTORIES
-  )
-endif()
-if(NOT SCRY_GLAZE_INCLUDE_DIR)
-  message(FATAL_ERROR "Could not determine the Glaze include directory")
-endif()
-
 # The kernel is the reflection-free layer under the library: the JSON codec, the
 # SSE parser, retry delay arithmetic, and the transport seam with its libcurl
 # implementation, which is everything that parses untrusted bytes. It is compiled
@@ -154,7 +127,6 @@ target_include_directories(
     "${PROJECT_SOURCE_DIR}/include"
     "${PROJECT_SOURCE_DIR}/src"
 )
-target_include_directories(scry_kernel SYSTEM PRIVATE "${SCRY_GLAZE_INCLUDE_DIR}")
 # A target that links the kernel objects directly, such as a kernel fuzz target
 # or test, also needs libcurl and Threads at link time. scry takes the objects
 # through $<TARGET_OBJECTS:...> instead and declares both dependencies itself.
@@ -221,10 +193,6 @@ target_include_directories(
   PRIVATE
     "${PROJECT_SOURCE_DIR}/src"
 )
-# Glaze is the kernel codec's implementation, compiled into the kernel objects
-# above; scry's own sources are compiled without its headers, so none of them
-# can reach the kernel's document type.
-
 target_link_libraries(
   scry
   PRIVATE

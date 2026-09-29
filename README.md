@@ -209,13 +209,12 @@ schema and an optional validator.
 - **GCC 16 or newer.** Tools are declared with C++26 reflection, so the public
   headers need `-std=c++26 -freflection`. Clang and MSVC cannot consume the
   library.
-- **CMake 3.31** and **libcurl 7.84** or newer, with development headers. The
-  Glaze revision Scry fetches requires CMake 3.31; Scry's own build files
-  accept 3.28 when CMake finds a packaged Glaze instead.
+- **CMake 3.30** and **libcurl 7.84** or newer, with development headers. 3.30
+  is the first CMake that knows GCC's C++26 mode.
 - **Linux or macOS.** CI runs GCC 16 on Ubuntu 24.04 and macOS 15.
 
-Glaze is a private header-only dependency that CMake finds or fetches. Tests
-additionally fetch Catch2. See [Contributing](docs/contributing.md) for the
+libcurl is the only library dependency; JSON is parsed and written by Scry's
+own code. Tests additionally fetch Catch2. See [Contributing](docs/contributing.md) for the
 development toolchain.
 
 Run the unit and integration suites with `./scripts/test.sh`. For a live-model

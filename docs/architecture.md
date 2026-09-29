@@ -1115,10 +1115,8 @@ stay covered by the loopback transport and integration suites. Its headers
 depend only on `<scry/*>`, and its retry waits are real time bounded by the
 `Config`'s retry policy.
 
-libcurl is a linked dependency. Glaze is a private header-only build dependency,
-resolved from an installed package or a pinned FetchContent checkout. The
-installed package exports no Glaze target; it discovers curl and Threads.
-Catch2 is used by tests, and Dear ImGui is confined to the standalone showcase.
+libcurl is the only linked dependency; JSON is Scry's own kernel code. The
+installed package discovers curl and Threads. Catch2 is used by tests, and Dear ImGui is confined to the standalone showcase.
 Public headers use Scry-owned types and move-only `UniqueFunction` callables;
 stateful handles use PImpl. Build, test, and packaging gates are described in
 [contributing.md](contributing.md).

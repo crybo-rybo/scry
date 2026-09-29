@@ -15,8 +15,8 @@
 // an annotation an error). The check below catches a build that enables reflection
 // for the kernel sources anyway.
 //
-// Kernel code may include only the standard library, libcurl, Glaze, other
-// kernel headers, and the public headers <scry/config.hpp>, <scry/error.hpp>,
+// Kernel code may include only the standard library, libcurl, other kernel
+// headers, and the public headers <scry/config.hpp>, <scry/error.hpp>,
 // <scry/json.hpp>, <scry/turn_id.hpp>, and <scry/unique_function.hpp>. The
 // kernel.include-boundary test (cmake/CheckKernelBoundary.cmake) checks that
 // list and this header's placement.
