@@ -33,6 +33,12 @@ target_link_libraries(
   PRIVATE scry::scry scry_project_options
 )
 
+add_executable(scry_typed_answer_example typed_answer.cpp)
+target_link_libraries(
+  scry_typed_answer_example
+  PRIVATE scry::scry scry_project_options
+)
+
 add_executable(scry_toolbox_example toolbox.cpp)
 target_link_libraries(
   scry_toolbox_example
