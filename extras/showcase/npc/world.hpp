@@ -1,10 +1,10 @@
 #pragma once
 
 #include <cstdint>
-#include <functional>
-#include <memory>
-#include <scry/json.hpp>
-#include <scry/tool_registry.hpp>
+#include <optional>
+#include <scry/annotations.hpp>
+#include <string>
+#include <vector>
 
 namespace scry_showcase::npc {
 
@@ -22,37 +22,56 @@ enum class Direction : std::uint8_t {
   west,
 };
 
-enum class NpcTool : std::uint8_t {
-  look,
-  move_north,
-  move_south,
-  move_east,
-  move_west,
+struct Bounds {
+  std::int32_t width{};
+  std::int32_t height{};
 };
 
-using ToolExecutionObserver = std::function<void(NpcTool)>;
+// What look reports. Scry encodes it from these members, so the model reads
+// {"available_moves":["east",...],"bounds":{...},"position":{...}}.
+struct Observation {
+  std::vector<Direction> available_moves{};
+  Bounds bounds{};
+  Position position{};
+};
 
+// What a move reports. A move that stays inside the grid has no reason, and
+// skip_null leaves the member out rather than writing null.
+struct MoveOutcome {
+  Direction direction{};
+  bool moved{};
+  Position position{};
+  [[= scry::reflection::skip_null]] std::optional<std::string> reason{};
+};
+
+// The NPC's world and its tools. The world is a toolbox: registering it with
+// ToolRegistry::add() makes each annotated member function a tool named after
+// the function, bound to this object, with a schema generated from its
+// parameters (none, here) and a result encoded from its return type. Tools run
+// on the host thread inside Harness::update(), so the state needs no locking.
 class World final {
 public:
   static constexpr std::int32_t width = 5;
   static constexpr std::int32_t height = 5;
 
   [[nodiscard]] Position position() const noexcept;
-  [[nodiscard]] scry::Json look() const;
-  [[nodiscard]] scry::Json move(Direction direction);
+
+  [[= scry::reflection::tool{
+      "Observe the NPC position, bounds, and available moves."}]] Observation
+  look() const;
+
+  [[= scry::reflection::tool{"Move the NPC one cell north."}]] MoveOutcome move_north();
+
+  [[= scry::reflection::tool{"Move the NPC one cell south."}]] MoveOutcome move_south();
+
+  [[= scry::reflection::tool{"Move the NPC one cell east."}]] MoveOutcome move_east();
+
+  [[= scry::reflection::tool{"Move the NPC one cell west."}]] MoveOutcome move_west();
+
+  MoveOutcome move(Direction direction);
 
 private:
   Position position_{.x = 2, .y = 2};
 };
-
-[[nodiscard]] scry::Result<scry::Json> execute_world_tool(World& world, NpcTool tool,
-                                                          scry::Json arguments);
-
-// ToolRegistry is additive-only. Call this with a registry that does not
-// already contain any showcase tool name; a later-name collision can leave
-// earlier registrations installed.
-[[nodiscard]] scry::Status register_world_tools(scry::ToolRegistry& registry,
-                                                std::shared_ptr<World> world,
-                                                ToolExecutionObserver observer = {});
 
 } // namespace scry_showcase::npc
