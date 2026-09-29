@@ -1,12 +1,12 @@
 #include "core/model.hpp"
 #include "core/provider.hpp"
 #include "fixture_support.hpp"
-#include "kernel/json/codec.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 #include <memory>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace {
 
@@ -114,12 +114,6 @@ namespace {
   return model_request;
 }
 
-[[nodiscard]] std::string block_type(const JsonValue& block) {
-  const auto type = required_json_string(block, "type");
-  REQUIRE(type);
-  return std::string{*type};
-}
-
 } // namespace
 
 TEST_CASE("Anthropic request merges consecutive same-role messages") {
@@ -129,21 +123,13 @@ TEST_CASE("Anthropic request merges consecutive same-role messages") {
   const auto encoded =
       adapter->make_request(anthropic_config(), tool_result_history_request());
   REQUIRE(encoded);
-  const auto body =
-      parse_json(encoded->body, ErrorCategory::protocol, "body is not valid JSON");
-  REQUIRE(body);
-  const auto messages = required_json_array(*body, "messages");
-  REQUIRE(messages);
+  const auto body = json_view(encoded->body);
   // user, assistant, then the tool results and the next question as one message.
-  REQUIRE((*messages)->size() == 3);
+  CHECK(member_strings(body, "messages", "role") ==
+        std::vector<std::string>{"user", "assistant", "user"});
 
-  const auto& merged = (**messages)[2];
-  const auto role = required_json_string(merged, "role");
-  REQUIRE(role);
-  CHECK(*role == "user");
-  const auto content = required_json_array(merged, "content");
-  REQUIRE(content);
-  REQUIRE((*content)->size() == 2);
-  CHECK(block_type((**content)[0]) == "tool_result");
-  CHECK(block_type((**content)[1]) == "text");
+  const auto merged = body.find("messages")->at(2);
+  REQUIRE(merged);
+  CHECK(member_strings(*merged, "content", "type") ==
+        std::vector<std::string>{"tool_result", "text"});
 }

@@ -19,10 +19,10 @@
 #include <algorithm>
 #include <cctype>
 #include <cstddef>
-#include <cstdint>
-#include <limits>
+#include <initializer_list>
 #include <optional>
 #include <scry/config.hpp>
+#include <scry/json.hpp>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -140,16 +140,61 @@ sanitize_error_token(const std::string_view value) {
   return safe ? std::optional<std::string>{value} : std::nullopt;
 }
 
+// Parses one SSE `data` payload.
+[[nodiscard]] inline Result<JsonView> parse_payload(const std::string_view data,
+                                                    const std::string_view dialect) {
+  auto root = JsonView::parse(Json{.text = std::string{data}});
+  if (!root) {
+    return std::unexpected(make_error(
+        ErrorCategory::protocol, std::string{dialect} + " SSE data is not valid JSON"));
+  }
+  return root;
+}
+
+// Decodes a provider payload with the reflected codec. A shape the codec rejects
+// is a protocol error naming the path; the path holds only declared keys and
+// indices, never provider text.
+template <typename Payload>
+[[nodiscard]] Result<Payload> decode_payload(const JsonView& view,
+                                             const std::string_view dialect) {
+  auto decoded = decode_value<Payload>(view);
+  if (!decoded) {
+    return std::unexpected(
+        make_error(ErrorCategory::protocol, std::string{dialect} + " stream data at " +
+                                                describe(decoded.error())));
+  }
+  return std::move(*decoded);
+}
+
+// The value at a member path, or nullopt when a step is missing or not an
+// object. Provider error bodies and request identifiers are diagnostics read
+// best-effort: each value is independently optional, and one of the wrong type
+// reads as absent without failing its event or hiding its siblings. The codec
+// decodes an object all or nothing, so these few reads use the view directly.
+[[nodiscard]] inline std::optional<JsonView>
+member_at(const JsonView& root, const std::initializer_list<std::string_view> path) {
+  std::optional<JsonView> value{root};
+  for (const auto key : path) {
+    value = value->find(key);
+    if (!value) {
+      break;
+    }
+  }
+  return value;
+}
+
+// The string at a member path, or nullopt when it is absent or not a string.
+[[nodiscard]] inline std::optional<std::string_view>
+string_at(const JsonView& root, const std::initializer_list<std::string_view> path) {
+  const auto value = member_at(root, path);
+  return value ? value->string() : std::nullopt;
+}
+
 // The sanitized string at `root.error.<field>`, or nullopt when it is absent,
 // not a string, or unsafe.
 [[nodiscard]] inline std::optional<std::string>
-error_token(const JsonValue& root, const std::string_view field) {
-  const auto* error = json_field(root, "error");
-  const auto* value = error == nullptr ? nullptr : json_field(*error, field);
-  if (value == nullptr || !value->is_string()) {
-    return std::nullopt;
-  }
-  return sanitize_error_token(value->get_string());
+error_token(const JsonView& root, const std::string_view field) {
+  return string_at(root, {"error", field}).and_then(sanitize_error_token);
 }
 
 // The error types both dialects share. A dialect with its own aliases checks
@@ -178,21 +223,6 @@ error_category(const std::string_view token) noexcept {
   Error error = make_error(category, std::string{message}, retryable);
   error.provider_detail = std::move(detail);
   return error;
-}
-
-// Reads a required non-negative "index" that fits a std::size_t.
-[[nodiscard]] inline Result<std::size_t>
-required_index(const JsonValue& value, const std::string_view message) {
-  auto parsed = optional_json_uint(value, "index");
-  if (!parsed) {
-    return std::unexpected(std::move(parsed.error()));
-  }
-  const auto index = *parsed;
-  if (!index ||
-      *index > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
-    return std::unexpected(make_error(ErrorCategory::protocol, std::string{message}));
-  }
-  return static_cast<std::size_t>(*index);
 }
 
 // Claims the shared decode state for one dialect. The terminal event moves the

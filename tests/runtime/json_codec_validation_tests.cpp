@@ -6,6 +6,7 @@
 
 #include "kernel/json/codec.hpp"
 
+#include <array>
 #include <catch2/catch_test_macros.hpp>
 #include <filesystem>
 #include <fstream>
@@ -143,6 +144,15 @@ TEST_CASE("the JSON codec rejects every shape of incomplete document") {
     // The two-pass validator is the contract; the single pass must not drift from it.
     CHECK(two_pass_accepts(adversarial.text) == adversarial.accepted);
   }
+}
+
+TEST_CASE("the JSON codec bounds malformed non-null-terminated input") {
+  // A lone brace in a buffer with no terminator after it: the read must stop at
+  // the view's end rather than look for a NUL.
+  constexpr std::array input{'{'};
+  const auto text = std::string_view{input.data(), input.size()};
+  CHECK_FALSE(scry::detail::parse_json(text, scry::ErrorCategory::protocol,
+                                       "invalid test JSON"));
 }
 
 TEST_CASE("the JSON codec still collapses duplicate object keys") {

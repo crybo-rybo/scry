@@ -7,82 +7,43 @@
 namespace scry::detail {
 namespace {
 
-[[nodiscard]] Result<ContentBlock> decode_text(const JsonValue& value) {
-  auto text = required_json_string(value, "text");
-  if (!text) {
-    return std::unexpected(std::move(text.error()));
-  }
-  return ContentBlock{TextBlock{.text = std::string{*text}}};
+[[nodiscard]] Result<ContentBlock> content_block(AnthropicTextContent content, bool) {
+  return ContentBlock{TextBlock{.text = std::move(content.text)}};
 }
 
-[[nodiscard]] Result<ContentBlock> decode_tool_call(const JsonValue& value,
-                                                    const bool streaming_start) {
-  auto id = required_json_string(value, "id");
-  if (!id) {
-    return std::unexpected(std::move(id.error()));
-  }
-  auto name = required_json_string(value, "name");
-  if (!name) {
-    return std::unexpected(std::move(name.error()));
-  }
-
-  const auto* input = json_field(value, "input");
-  if (input == nullptr || !input->is_object()) {
+[[nodiscard]] Result<ContentBlock> content_block(AnthropicToolUseContent content,
+                                                 const bool streaming_start) {
+  // The captured input is canonical text, so an object starts with its brace.
+  if (!content.input.text.starts_with('{')) {
     return std::unexpected(make_error(
         ErrorCategory::protocol, "Anthropic tool_use input must be a JSON object"));
   }
-
-  std::string arguments{};
-  if (!streaming_start) {
-    auto encoded = write_json_text(*input, ErrorCategory::protocol,
-                                   "Anthropic tool input could not be preserved");
-    if (!encoded) {
-      return std::unexpected(std::move(encoded.error()));
-    }
-    arguments = std::move(*encoded);
-  }
-
   return ContentBlock{ToolCallBlock{
-      .id = std::string{*id},
-      .name = std::string{*name},
-      .arguments = Json{.text = std::move(arguments)},
+      .id = std::move(content.id),
+      .name = std::move(content.name),
+      .arguments = streaming_start ? Json{} : std::move(content.input),
   }};
 }
 
 // Deliberately divergent from the OpenAI adapter: Anthropic reports usage
 // incrementally, so a missing field preserves the previously observed count
 // instead of zeroing it.
-[[nodiscard]] Status assign_usage_count(const JsonValue& usage,
-                                        const std::string_view field,
-                                        std::uint64_t& destination) {
-  auto count = optional_json_uint(usage, field);
-  if (!count) {
-    return std::unexpected(std::move(count.error()));
+void assign_usage_count(const std::optional<std::uint64_t>& count,
+                        std::uint64_t& destination) {
+  if (count) {
+    destination = *count;
   }
-  const auto parsed = *count;
-  if (parsed) {
-    destination = *parsed;
-  }
-  return {};
 }
 
 } // namespace
 
-Result<ContentBlock> decode_anthropic_content(const JsonValue& value,
-                                              const bool streaming_start) {
-  auto type = required_json_string(value, "type");
-  if (!type) {
-    return std::unexpected(std::move(type.error()));
-  }
-  if (*type == "text") {
-    return decode_text(value);
-  }
-  if (*type == "tool_use") {
-    return decode_tool_call(value, streaming_start);
-  }
-  return std::unexpected(
-      make_error(ErrorCategory::protocol,
-                 "Anthropic returned an unsupported required content block"));
+Result<ContentBlock> anthropic_content_block(AnthropicContent content,
+                                             const bool streaming_start) {
+  return std::visit(
+      [streaming_start](auto& value) {
+        return content_block(std::move(value), streaming_start);
+      },
+      content);
 }
 
 FinishReason decode_anthropic_finish(const std::optional<std::string_view> reason) {
@@ -101,21 +62,9 @@ FinishReason decode_anthropic_finish(const std::optional<std::string_view> reaso
   return FinishReason::unknown;
 }
 
-Status apply_anthropic_usage(const JsonValue& owner, Usage& usage) {
-  const auto* value = json_field(owner, "usage");
-  if (value == nullptr) {
-    return {};
-  }
-  if (!value->is_object()) {
-    return std::unexpected(
-        make_error(ErrorCategory::protocol, "Anthropic usage must be an object"));
-  }
-
-  auto input = assign_usage_count(*value, "input_tokens", usage.input_tokens);
-  if (!input) {
-    return input;
-  }
-  return assign_usage_count(*value, "output_tokens", usage.output_tokens);
+void apply_anthropic_usage(const AnthropicUsage& reported, Usage& usage) {
+  assign_usage_count(reported.input_tokens, usage.input_tokens);
+  assign_usage_count(reported.output_tokens, usage.output_tokens);
 }
 
 } // namespace scry::detail
