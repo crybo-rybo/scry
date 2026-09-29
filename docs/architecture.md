@@ -378,8 +378,9 @@ Cancellation or a fatal framework failure can suppress this observer.
 document with scalar accessors, `find()`, `at()`, and ordered `key_at()` lookup;
 child views can outlive their parent. Invalid input returns `invalid_argument`.
 `escape_json_string()` produces a quoted JSON string for hand-built results.
-The internal JSON codec uses Glaze and canonicalizes object keys in lexical order.
-No Glaze type or header is exposed to consumers.
+The internal JSON codec, in the kernel under `src/kernel/json/`, uses Glaze and
+canonicalizes object keys in lexical order. No Glaze type or header is exposed to
+consumers.
 
 ## Providers and transport
 
@@ -390,7 +391,8 @@ into request encoding, stream decoding, and content helpers. Per-attempt decode
 state is separate from the adapter.
 
 Request encoding writes typed wire structs straight to JSON text rather than
-building a document tree. Each embedded payload — tool-call arguments, tool
+building a document tree, through Glaze's reflection over those structs
+(`src/provider/wire_json.hpp`). Each embedded payload — tool-call arguments, tool
 results, and tool input schemas — is checked by one allocation-free validation
 scan and spliced in as the canonical text the turn machine, tool dispatch, and
 registration already produced, so a retry or a tool round re-encodes only the
@@ -437,13 +439,16 @@ allowed before `[DONE]`. Missing, duplicate, or early terminal markers and
 semantic content after finish are protocol errors. Anthropic streams decode
 Messages content blocks, usage, stop reasons, and tool-use arguments.
 
-The incremental SSE parser handles arbitrary byte splits. A CR, LF, or CRLF ends
+The incremental SSE parser, in the kernel (`src/kernel/sse.cpp`), handles
+arbitrary byte splits. A CR, LF, or CRLF ends
 a line as soon as it arrives; a blank line ended by a lone CR dispatches its event
 without waiting for the next byte. Unknown optional events
 can be ignored; malformed required content fails with `protocol`. There is no
 non-streaming response path or public logging API.
 
-The transport uses libcurl through an internal injectable interface. Each Harness
+The transport uses libcurl through an internal injectable interface; the
+interface and its libcurl implementation are kernel code under
+`src/kernel/transport/`. Each Harness
 retains a curl multi handle and its connection cache across retries, tool rounds,
 and turns, while running one transfer at a time. Curl objects use RAII, and C
 callbacks catch exceptions. Process-wide curl initialization is attempted once;
@@ -594,11 +599,25 @@ with C++26 reflection and annotation support. CMake probes the P2996/P3394
 features used by the headers. Linux and macOS are the supported platforms.
 API, ABI, and persistence-format stability are not promised before 1.0.
 
-The implementation under `src/` avoids reflection and builds as C++23 in
-`SCRY_CLANG_TOOLING` mode. That mode requires Clang and supports clang-tidy and
-libFuzzer; it excludes examples and ordinary tests. Fuzz targets are registered
-separately from the ordinary test build. It is a tooling build, not
-a supported consumer configuration.
+The implementation is split in two. The kernel under `src/kernel/` is the code
+that parses untrusted bytes or computes retry and transport policy: the JSON
+codec, the SSE parser, retry delays, and the transport seam with its libcurl
+implementation. It is compiled as C++23 without reflection in every build, and
+it may include only the public headers `<scry/error.hpp>`, `<scry/json.hpp>`,
+`<scry/config.hpp>`, `<scry/turn_id.hpp>`, and `<scry/unique_function.hpp>`. The
+rest of `src/` — the turn machine, provider adapters, runtime, and reflection
+bridge — is C++26 and maps Scry's types to and from their wire and JSON shapes,
+using reflection where it replaces hand-written shape code. The kernel's objects
+are archived into `scry::scry`; it is not a separate installed target.
+
+The split keeps the layer that sees untrusted bytes within reach of Clang
+tooling, which cannot compile reflection. `SCRY_CLANG_TOOLING` mode builds the
+kernel alone with Clang, for clang-tidy and for libFuzzer targets over the SSE
+parser and the transport response policy; it excludes the rest of the library,
+`scry::testing`, examples, and ordinary tests, and is a tooling build, not a
+supported consumer configuration. Fuzz targets over the provider stream decoders
+and conversation persistence link the whole library, so the GCC test build
+replays their seed corpora instead of searching from them.
 
 `scry::testing` is an optional second static library, installed as the package
 component `testing` and built unless `SCRY_BUILD_TESTING_SUPPORT` is off. It
