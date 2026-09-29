@@ -300,6 +300,17 @@ scry_add_reflection_compile_fail_test(
   borrowed_toolbox.cpp
   "Lamp is passed as an lvalue: ToolRegistry::add(Toolbox&&) takes ownership of a toolbox"
 )
+# Typed answers are tool inputs, so an answer type is held to ToolArguments.
+scry_add_reflection_compile_fail_test(
+  unsupported-answer
+  unsupported_answer.cpp
+  "Reading does not satisfy scry::reflection::ToolArguments: Reading::unit: char is a character type"
+)
+scry_add_reflection_compile_fail_test(
+  scalar-answer
+  scalar_answer.cpp
+  "int does not satisfy scry::reflection::ToolArguments: int is not a plain aggregate"
+)
 scry_add_reflection_compile_fail_test(
   unbound-member-tool
   unbound_member_tool.cpp

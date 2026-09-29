@@ -1,5 +1,6 @@
 #include "core/provider.hpp"
 #include "kernel/error.hpp"
+#include "kernel/json/codec.hpp"
 #include "kernel/retry.hpp"
 #include "kernel/transport/curl_transport.hpp"
 #include "runtime/config.hpp"
@@ -20,6 +21,7 @@
 #include <random>
 #include <scry/harness.hpp>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <unistd.h>
 #include <utility>
@@ -44,6 +46,55 @@ namespace {
     seed ^= std::uint64_t{0xD1B54A32D192ED03};
   }
   return detail::mix_seed(seed);
+}
+
+// What the model is told the response tool is for when the host leaves the
+// description empty. It says how to answer, not what the answer means; the
+// schema's own descriptions carry that.
+constexpr std::string_view default_response_description =
+    "Give your final answer by calling this tool exactly once, on its own, after "
+    "any other tool calls have returned. Its input is the answer.";
+
+// A typed turn's response tool, validated and frozen for the request, and the
+// validator its route runs.
+struct PreparedResponse {
+  std::shared_ptr<const ToolDefinition> tool{};
+  AnswerValidator validate{};
+};
+
+// A response tool that shared a name with a registered tool could not be told
+// apart from it, so the collision is refused before the turn is accepted.
+[[nodiscard]] Result<PreparedResponse>
+prepare_response(std::optional<ResponseFormat> format, const ToolRegistry& tools) {
+  if (!format) {
+    return PreparedResponse{};
+  }
+  if (format->name.empty()) {
+    return std::unexpected(detail::make_error(
+        ErrorCategory::invalid_argument, "response format name must not be empty"));
+  }
+  if (tools.contains(format->name)) {
+    return std::unexpected(detail::make_error(ErrorCategory::invalid_argument,
+                                              "response format name \"" + format->name +
+                                                  "\" is a registered tool"));
+  }
+  auto schema = detail::canonicalize_json_object(
+      format->schema, ErrorCategory::invalid_argument,
+      "response format schema must be a valid JSON object");
+  if (!schema) {
+    return std::unexpected(std::move(schema.error()));
+  }
+  auto description = format->description.empty()
+                         ? std::string{default_response_description}
+                         : std::move(format->description);
+  return PreparedResponse{
+      .tool = std::make_shared<const ToolDefinition>(ToolDefinition{
+          .name = std::move(format->name),
+          .description = std::move(description),
+          .input_schema = std::move(*schema),
+      }),
+      .validate = std::move(format->validate),
+  };
 }
 
 } // namespace
@@ -90,10 +141,14 @@ public:
 
   [[nodiscard]] Result<std::shared_ptr<detail::TurnRoute>>
   send(const std::shared_ptr<detail::ConversationState>& conversation, std::string text,
-       TurnCallbacks callbacks) {
+       TurnCallbacks callbacks, std::optional<ResponseFormat> format) {
     if (text.empty()) {
       return std::unexpected(detail::make_error(ErrorCategory::invalid_argument,
                                                 "user message must not be empty"));
+    }
+    auto response = prepare_response(std::move(format), tools_);
+    if (!response) {
+      return std::unexpected(std::move(response.error()));
     }
     if (conversation->busy) {
       return std::unexpected(detail::make_error(
@@ -133,12 +188,14 @@ public:
             .max_conversation_bytes = config_.limits.max_conversation_bytes,
             .max_tool_calls = config_.max_tool_calls_per_turn,
             .callbacks = std::move(callbacks),
+            .validate_answer = std::move(response->validate),
         });
     auto request = detail::ModelRequest{
         .system_prompt = conversation->config.system_prompt,
         .history = conversation->messages,
         .messages = std::move(messages),
         .tools = std::move(tools.schemas),
+        .response_tool = std::move(response->tool),
         .sampling = config_.sampling,
     };
 
@@ -247,12 +304,25 @@ const ToolRegistry& Harness::tools() const noexcept {
 
 Result<Turn> Harness::send(Conversation& conversation, std::string user_message_text,
                            TurnCallbacks callbacks) {
+  return send_turn(conversation, std::move(user_message_text), std::move(callbacks),
+                   std::nullopt);
+}
+
+Result<Turn> Harness::send(Conversation& conversation, std::string user_message_text,
+                           ResponseFormat format, TurnCallbacks callbacks) {
+  return send_turn(conversation, std::move(user_message_text), std::move(callbacks),
+                   std::move(format));
+}
+
+Result<Turn> Harness::send_turn(Conversation& conversation,
+                                std::string user_message_text, TurnCallbacks callbacks,
+                                std::optional<ResponseFormat> format) {
   if (impl_ == nullptr || conversation.impl_ == nullptr) {
     return std::unexpected(detail::make_error(
         ErrorCategory::invalid_state, "Harness and Conversation must both be active"));
   }
   auto route = impl_->send(conversation.impl_, std::move(user_message_text),
-                           std::move(callbacks));
+                           std::move(callbacks), std::move(format));
   if (!route) {
     return std::unexpected(std::move(route.error()));
   }
@@ -261,6 +331,18 @@ Result<Turn> Harness::send(Conversation& conversation, std::string user_message_
 
 Result<Completion> Harness::send_and_wait(Conversation& conversation,
                                           std::string user_message_text) {
+  return wait_for_turn(conversation, std::move(user_message_text), std::nullopt);
+}
+
+Result<Completion> Harness::send_and_wait(Conversation& conversation,
+                                          std::string user_message_text,
+                                          ResponseFormat format) {
+  return wait_for_turn(conversation, std::move(user_message_text), std::move(format));
+}
+
+Result<Completion> Harness::wait_for_turn(Conversation& conversation,
+                                          std::string user_message_text,
+                                          std::optional<ResponseFormat> format) {
   if (impl_ != nullptr && impl_->updating()) {
     return std::unexpected(
         detail::make_error(ErrorCategory::invalid_state,
@@ -269,12 +351,13 @@ Result<Completion> Harness::send_and_wait(Conversation& conversation,
   // on_finished is guaranteed exactly once per accepted turn, so it alone decides
   // when this loop stops.
   std::optional<Result<Completion>> outcome;
-  auto turn_result = send(
+  auto turn_result = send_turn(
       conversation, std::move(user_message_text),
       TurnCallbacks{
           .on_finished =
               [&outcome](Result<Completion> result) { outcome = std::move(result); },
-      });
+      },
+      std::move(format));
   if (!turn_result) {
     return std::unexpected(std::move(turn_result.error()));
   }

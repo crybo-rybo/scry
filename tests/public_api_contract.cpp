@@ -322,7 +322,83 @@ static_assert(requires(scry::Harness& harness, scry::Conversation& conversation)
   } -> std::same_as<scry::Result<scry::Turn>>;
 });
 
+// Typed completions: a turn can ask for a structured answer, dynamically through
+// a ResponseFormat or by reflection through send<Answer>() and ask<Answer>().
+namespace contract {
+struct Verdict {
+  [[= scry::reflection::description{"Is the claim supported?"}]] bool supported{};
+  std::string reason{};
+};
+struct Opaque {
+  scry::Json payload{};
+};
+} // namespace contract
+static_assert(
+    std::same_as<decltype(scry::Completion::structured), std::optional<scry::Json>>);
+static_assert(
+    std::same_as<decltype(scry::Completion::answer_attempt_count), std::uint32_t>);
+static_assert(std::is_aggregate_v<scry::ResponseFormat>);
+static_assert(std::is_move_constructible_v<scry::ResponseFormat>);
+static_assert(!std::is_copy_constructible_v<scry::ResponseFormat>);
+static_assert(std::same_as<decltype(scry::ResponseFormat::name), std::string>);
+static_assert(std::same_as<decltype(scry::ResponseFormat::description), std::string>);
+static_assert(std::same_as<decltype(scry::ResponseFormat::schema), scry::Json>);
+static_assert(
+    std::same_as<decltype(scry::ResponseFormat::validate), scry::AnswerValidator>);
+static_assert(std::same_as<scry::AnswerValidator,
+                           scry::UniqueFunction<scry::Status(const scry::Json&)>>);
+static_assert(std::is_aggregate_v<scry::Answered<contract::Verdict>>);
+static_assert(std::same_as<decltype(scry::Answered<contract::Verdict>::value),
+                           contract::Verdict>);
+static_assert(std::same_as<decltype(scry::Answered<contract::Verdict>::completion),
+                           scry::Completion>);
+// An answer is a tool input, so it is an object: ToolArguments is the check.
+static_assert(scry::reflection::ToolArguments<contract::Verdict>);
+static_assert(!scry::reflection::ToolArguments<contract::Opaque>);
+static_assert(!scry::reflection::ToolArguments<bool>);
+static_assert(
+    std::same_as<decltype(scry::reflection::response_format<contract::Verdict>()),
+                 scry::ResponseFormat>);
+static_assert(requires(scry::Harness& harness, scry::Conversation& conversation) {
+  {
+    harness.send(conversation, std::string{}, scry::ResponseFormat{})
+  } -> std::same_as<scry::Result<scry::Turn>>;
+  {
+    harness.send(conversation, std::string{}, scry::ResponseFormat{},
+                 scry::TurnCallbacks{})
+  } -> std::same_as<scry::Result<scry::Turn>>;
+  {
+    harness.send<contract::Verdict>(conversation, std::string{})
+  } -> std::same_as<scry::Result<scry::Turn>>;
+  {
+    harness.send<contract::Verdict>(conversation, std::string{}, scry::TurnCallbacks{})
+  } -> std::same_as<scry::Result<scry::Turn>>;
+  {
+    harness.send_and_wait(conversation, std::string{}, scry::ResponseFormat{})
+  } -> std::same_as<scry::Result<scry::Completion>>;
+  {
+    harness.ask<contract::Verdict>(conversation, std::string{})
+  } -> std::same_as<scry::Result<scry::Answered<contract::Verdict>>>;
+});
+
 namespace {
+
+// response_format<Answer>() carries the generated schema, the default tool name,
+// and a validator that decodes strictly and publishes a schema-derived error.
+bool response_format_for_a_type_works() {
+  auto format = scry::reflection::response_format<contract::Verdict>();
+  if (format.name != "respond" || !format.description.empty() ||
+      format.schema.text != scry::reflection::input_schema_v<contract::Verdict> ||
+      !format.validate) {
+    return false;
+  }
+  const auto accepted =
+      format.validate(scry::Json{.text = R"({"reason":"rock","supported":false})"});
+  const auto rejected = format.validate(scry::Json{.text = R"({"supported":"no"})"});
+  return accepted.has_value() && !rejected.has_value() &&
+         rejected.error().category == scry::ErrorCategory::invalid_argument &&
+         rejected.error().model_message.starts_with("$.");
+}
 
 bool move_only_callback_works() {
   bool callback_ran = false;
@@ -511,6 +587,10 @@ int main() {
   }
 
   if (!json_view_reads_a_parsed_document()) {
+    return 1;
+  }
+
+  if (!response_format_for_a_type_works()) {
     return 1;
   }
 

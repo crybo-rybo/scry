@@ -1,14 +1,18 @@
 #pragma once
 
 #include <memory>
+#include <optional>
 #include <scry/config.hpp>
 #include <scry/conversation.hpp>
 #include <scry/error.hpp>
 #include <scry/events.hpp>
+#include <scry/reflection.hpp>
 #include <scry/tool_registry.hpp>
 #include <scry/turn.hpp>
 #include <scry/turn_id.hpp>
 #include <string>
+#include <string_view>
+#include <utility>
 
 namespace scry {
 
@@ -92,6 +96,49 @@ public:
   [[nodiscard]] Result<Turn> send(Conversation& conversation, std::string user_message,
                                   TurnCallbacks callbacks = {});
 
+  /// Accepts an asynchronous user turn that must end with a structured answer.
+  ///
+  /// Behaves as send() does, and additionally offers the model the format's
+  /// response tool and requires it to call a tool. The turn completes when the
+  /// model calls the response tool on its own and the answer passes
+  /// ResponseFormat::validate on the host thread; Completion::structured then
+  /// holds the answer's canonical JSON. A rejected answer is returned to the model
+  /// as a tool error and costs a tool round, and a response that calls no tool at
+  /// all fails the turn with ErrorCategory::protocol. Calls to the response tool
+  /// never reach a handler, TurnCallbacks::on_tool_request,
+  /// TurnCallbacks::on_tool_call, or Config::max_tool_calls_per_turn.
+  ///
+  /// Passing `{}` for the callbacks is ambiguous with this overload; omit the
+  /// argument instead, since it defaults to no callbacks.
+  /// @param conversation Conversation that receives the exchange on successful
+  /// completion.
+  /// @param user_message User text appended transactionally if the turn succeeds.
+  /// @param format Response tool and answer validator for this turn.
+  /// @param callbacks Optional per-turn observers delivered inside update().
+  /// @return A controllable Turn handle, or an immediate admission error, including
+  /// ErrorCategory::invalid_argument for a format whose name is empty or names a
+  /// registered tool, or whose schema is not a JSON object.
+  [[nodiscard]] Result<Turn> send(Conversation& conversation, std::string user_message,
+                                  ResponseFormat format, TurnCallbacks callbacks = {});
+
+  /// Accepts an asynchronous user turn that must end with an `Answer`.
+  ///
+  /// This is send() with scry::reflection::response_format<Answer>(): the response
+  /// tool's schema is generated from `Answer` and each candidate answer is decoded
+  /// strictly on the host thread. Decode Completion::structured with
+  /// scry::reflection::decode<Answer>() to read the answer.
+  /// @tparam Answer Reflected answer aggregate satisfying
+  /// scry::reflection::ToolArguments; any other type fails to compile with the
+  /// offending member and the reason.
+  /// @param conversation Conversation that receives the exchange on successful
+  /// completion.
+  /// @param user_message User text appended transactionally if the turn succeeds.
+  /// @param callbacks Optional per-turn observers delivered inside update().
+  /// @return A controllable Turn handle, or an immediate admission error.
+  template <typename Answer>
+  [[nodiscard]] Result<Turn> send(Conversation& conversation, std::string user_message,
+                                  TurnCallbacks callbacks = {});
+
   /// Requests cooperative cancellation of one accepted turn by identifier.
   ///
   /// This is Turn::cancel() addressed by id, for hosts that retain TurnId values
@@ -136,6 +183,34 @@ public:
   [[nodiscard]] Result<Completion> send_and_wait(Conversation& conversation,
                                                  std::string user_message);
 
+  /// Runs one structured-answer turn synchronously, as send_and_wait() runs a
+  /// plain one.
+  /// @param conversation Conversation that receives the exchange on success.
+  /// @param user_message User text sent to the configured model.
+  /// @param format Response tool and answer validator for this turn.
+  /// @return The successful completion, whose `structured` member holds the
+  /// accepted answer, or the terminal error.
+  [[nodiscard]] Result<Completion> send_and_wait(Conversation& conversation,
+                                                 std::string user_message,
+                                                 ResponseFormat format);
+
+  /// Asks one question synchronously and decodes the model's typed answer.
+  ///
+  /// Runs send_and_wait() with scry::reflection::response_format<Answer>(), so it
+  /// shares that call's rules: it pumps update() for every accepted turn and is
+  /// rejected from inside a callback. The completion is returned beside the value
+  /// because it carries what the answer alone does not: any prose the model gave
+  /// with it, usage, attempts, and tool-round counts.
+  /// @tparam Answer Reflected answer aggregate satisfying
+  /// scry::reflection::ToolArguments; any other type fails to compile with the
+  /// offending member and the reason.
+  /// @param conversation Conversation that receives the exchange on success.
+  /// @param user_message User text sent to the configured model.
+  /// @return The decoded answer and its completion, or the terminal error.
+  template <typename Answer>
+  [[nodiscard]] Result<Answered<Answer>> ask(Conversation& conversation,
+                                             std::string user_message);
+
   /// Pumps queued events, app-thread tool handlers, and callbacks on the calling
   /// thread.
   ///
@@ -151,9 +226,55 @@ private:
 
   explicit Harness(std::unique_ptr<Impl> impl) noexcept;
 
+  [[nodiscard]] Result<Turn> send_turn(Conversation& conversation,
+                                       std::string user_message,
+                                       TurnCallbacks callbacks,
+                                       std::optional<ResponseFormat> format);
+  [[nodiscard]] Result<Completion> wait_for_turn(Conversation& conversation,
+                                                 std::string user_message,
+                                                 std::optional<ResponseFormat> format);
+
   std::unique_ptr<Impl> impl_;
 
   friend class detail::HarnessTestAccess;
 };
+
+template <typename Answer>
+Result<Turn> Harness::send(Conversation& conversation, std::string user_message,
+                           TurnCallbacks callbacks) {
+  return send(conversation, std::move(user_message),
+              reflection::response_format<Answer>(), std::move(callbacks));
+}
+
+template <typename Answer>
+Result<Answered<Answer>> Harness::ask(Conversation& conversation,
+                                      std::string user_message) {
+  constexpr std::string_view problem =
+      reflection::detail::tool_arguments_diagnostic<Answer>();
+  static_assert(problem.empty(), problem);
+  if constexpr (!problem.empty()) {
+    return std::unexpected(Error{});
+  } else {
+    auto completion = send_and_wait(conversation, std::move(user_message),
+                                    reflection::response_format<Answer>());
+    if (!completion) {
+      return std::unexpected(std::move(completion.error()));
+    }
+    if (!completion->structured) {
+      return std::unexpected(Error{
+          .category = ErrorCategory::invalid_state,
+          .message = "a typed turn completed without an answer",
+      });
+    }
+    auto value = reflection::decode<Answer>(*completion->structured);
+    if (!value) {
+      return std::unexpected(std::move(value.error()));
+    }
+    return Answered<Answer>{
+        .value = std::move(*value),
+        .completion = std::move(*completion),
+    };
+  }
+}
 
 } // namespace scry

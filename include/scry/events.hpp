@@ -237,7 +237,8 @@ using ToolAdmissionCallback =
 /// Callbacks are supplied to Harness::send() and are attached from the moment the turn
 /// is accepted, so no event can precede them. They are detached only by
 /// Turn::disconnect() or Harness::disconnect(), which clears all of them at once and
-/// lets the turn run on undelivered.
+/// lets the turn run on undelivered. The tool hooks see registered and unknown
+/// tools only: calls to a ResponseFormat's response tool reach neither of them.
 struct TurnCallbacks {
   /// Observes coalesced fragments of streamed assistant text.
   TextDeltaCallback on_text_delta{};

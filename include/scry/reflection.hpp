@@ -11,8 +11,10 @@
 #include <scry/detail/reflection_meta.hpp>
 #include <scry/detail/reflection_schema.hpp>
 #include <scry/error.hpp>
+#include <scry/events.hpp>
 #include <scry/json.hpp>
 #include <scry/tool_registry.hpp>
+#include <string>
 #include <string_view>
 #include <utility>
 
@@ -83,6 +85,43 @@ template <typename Type> [[nodiscard]] Result<Type> decode(const Json& json) {
     });
   }
   return decode<Type>(*parsed);
+}
+
+/// Builds the response format a typed turn asks for: the model answers with an
+/// `Answer`.
+///
+/// The response tool is named `respond` and carries Scry's default description,
+/// its input schema is input_schema_v<Answer>, and its validator decodes each
+/// candidate answer strictly with decode<Answer>(). A rejected answer's
+/// model_message names the JSON path at fault and what the schema required there,
+/// exactly as a reflected tool-argument failure does, so the model can correct
+/// itself. Harness::send<Answer>() and Harness::ask<Answer>() use this; call it
+/// directly to rename the response tool or reword its description before passing
+/// it to Harness::send().
+///
+/// The template is unconstrained so that a rejected type fails with a diagnostic
+/// naming the offending member and the reason; ToolArguments is the
+/// SFINAE-friendly form of the same check.
+/// @tparam Answer Complete reflected answer aggregate satisfying ToolArguments,
+/// since a provider's tool input is always a JSON object.
+/// @return The response format.
+template <typename Answer> [[nodiscard]] ResponseFormat response_format() {
+  constexpr std::string_view problem = detail::tool_arguments_diagnostic<Answer>();
+  static_assert(problem.empty(), problem);
+  if constexpr (!problem.empty()) {
+    return {};
+  } else {
+    return ResponseFormat{
+        .schema = Json{.text = std::string{input_schema_v<Answer>}},
+        .validate = [](const Json& answer) -> Status {
+          auto decoded = reflection::decode<Answer>(answer);
+          if (!decoded) {
+            return std::unexpected(std::move(decoded.error()));
+          }
+          return {};
+        },
+    };
+  }
 }
 
 } // namespace scry::reflection
