@@ -9,9 +9,12 @@ constexpr void append_json_literal(Output& output, const std::string_view value)
   output.insert(output.end(), value.begin(), value.end());
 }
 
+// Upper-case digits, as the kernel's canonical writer spells the escape, so text
+// the codec writes without a canonicalizing pass (request bodies) is already in
+// canonical form.
 template <typename Output>
 constexpr void append_json_hex_escape(Output& output, const unsigned char value) {
-  constexpr std::string_view hexadecimal = "0123456789abcdef";
+  constexpr std::string_view hexadecimal = "0123456789ABCDEF";
   append_json_literal(output, "\\u00");
   output.push_back(hexadecimal[value >> 4U]);
   output.push_back(hexadecimal[value & 0x0FU]);

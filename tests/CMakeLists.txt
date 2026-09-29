@@ -83,6 +83,7 @@ endif()
 
 add_executable(
   scry_runtime_tests
+  runtime/codec_internals_tests.cpp
   runtime/config_tests.cpp
   runtime/conversation_persistence_tests.cpp
   runtime/json_codec_validation_tests.cpp

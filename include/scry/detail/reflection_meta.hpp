@@ -268,8 +268,13 @@ private:
     if (std::meta::is_bit_field(member)) {
       return at_path(here, "is a bit-field");
     }
-    if (std::meta::is_reference_type(type) || std::meta::is_volatile_type(type)) {
-      return at_path(here, "is a reference or volatile member");
+    // Encoding only reads, so an encode-only aggregate may borrow a value through
+    // a reference member, as it borrows text through std::string_view.
+    if (decodes() && std::meta::is_reference_type(type)) {
+      return at_path(here, "is a reference member, which decoding cannot assign");
+    }
+    if (std::meta::is_volatile_type(std::meta::remove_reference(type))) {
+      return at_path(here, "is a volatile member");
     }
     if (decodes() && std::meta::is_const_type(type)) {
       return at_path(here, "is a const member, which decoding cannot assign");
@@ -512,8 +517,9 @@ concept SupportedValue =
 ///
 /// `std::string_view` is written as a JSON string, for wire text borrowed from
 /// elsewhere. `scry::Json` is checked for validity and spliced verbatim. Aggregates
-/// here need not be default-constructible, movable, or free of `const` members,
-/// since encoding only reads them. Neither leaf has a schema.
+/// here need not be default-constructible, movable, or free of `const` members, and
+/// may borrow a member through a reference, since encoding only reads them. Neither
+/// leaf has a schema.
 template <typename Type>
 concept Encodable =
     detail::value_problem(^^std::remove_cvref_t<Type>, detail::value_family::encodable)

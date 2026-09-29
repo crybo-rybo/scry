@@ -372,14 +372,16 @@ adds two encode-only leaves: `std::string_view`, written as a JSON string, for
 wire text borrowed from elsewhere, and `scry::Json`, which is checked by the
 validation scan request encoding uses and spliced verbatim. Because encoding
 only reads, an `Encodable` aggregate need not be default-constructible or
-movable and may have `const` members. `Decodable` adds `scry::Json`, which
+movable and may have `const` members or reference members, through which it
+borrows a value it writes. `Decodable` adds `scry::Json`, which
 captures the canonical text of whatever value sits at its position, `null`
 included, as `JsonView::to_json()` writes it; `std::optional<scry::Json>` reads
 `null` as disengaged. Neither leaf has a schema, so neither may appear in tool
 arguments, handler results, or `schema_v`.
 
 `reflection::encode(value)` accepts any `Encodable` value and returns canonical
-JSON. The writer emits object keys in canonical order and numbers in the
+JSON. The writer emits object keys in canonical order, strings with the
+canonical writer's escapes, and numbers in the
 shortest spelling that reads back as the same value of their own type, so a
 `float` 0.7 is written `0.7`; the result then passes once through the canonical
 writer, which settles exponent spelling and canonicalizes spliced `Json` text.
