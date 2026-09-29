@@ -540,11 +540,13 @@ concept Encodable =
 ///
 /// A `scry::Json` member captures the canonical text of whatever JSON value sits at
 /// its position, `null` included, so a document can carry an opaque payload through
-/// a typed decode. `scry::Json` has no schema.
+/// a typed decode. `scry::Json` has no schema. Decoding produces a value, so the
+/// target itself must be a cv-unqualified object type, as reflection::decode()
+/// requires.
 template <typename Type>
 concept Decodable =
-    detail::value_problem(^^std::remove_cvref_t<Type>, detail::value_family::decodable)
-        .empty();
+    !detail::is_qualified(^^Type) &&
+    detail::value_problem(^^Type, detail::value_family::decodable).empty();
 
 /// Complete plain aggregates accepted as reflected tool arguments.
 template <typename Type>
