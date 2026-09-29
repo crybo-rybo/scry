@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# The clang-tidy leg, run identically by preflight and by hosted CI.
+# The clang-tidy leg, run identically by scripts/ci.sh and by hosted CI.
 #
 # SCRY_CLANG_TOOLING builds only the C++23 kernel (src/kernel/), which is the
 # whole Clang-analyzable surface: the public API and the rest of src/ are C++26
@@ -15,7 +15,7 @@
 
 set -euo pipefail
 
-readonly root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+readonly root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 cd "${root_dir}"
 
