@@ -28,6 +28,6 @@ Callbacks retain shared panel state; disconnection stops further delivery and
 releases those captures.
 
 The showcase is a standalone CMake project outside Scry's root build; configure
-`extras/showcase` directly, or run `./scripts/ci-showcase.sh` (`just showcase`). It
-fetches the pinned Dear ImGui core only for this build and deliberately does not
+`extras/showcase` directly, or run `./.github/scripts/ci-showcase.sh`
+(`just showcase`). It fetches the pinned Dear ImGui core only for this build and does not
 select or link GLFW, SDL, OpenGL, or another host backend.

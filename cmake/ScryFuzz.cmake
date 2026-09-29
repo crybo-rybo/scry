@@ -1,8 +1,7 @@
 # Registration for libFuzzer targets. Every fuzz target is built only under
 # SCRY_BUILD_FUZZERS and is registered as a ctest test that replays its
 # checked-in seed corpus: -runs=0 makes libFuzzer execute the corpus once and
-# exit, which is a deterministic per-commit replay. The scheduled long searches
-# run the binaries directly (scripts/ci-nightly-fuzz.sh).
+# exit, which is a deterministic per-commit replay.
 
 # scry_add_fuzzer(<target> <corpus> SOURCES <source>...
 #                 [TEST_PREFIX <prefix>] [LINK_LIBRARIES <lib>...])

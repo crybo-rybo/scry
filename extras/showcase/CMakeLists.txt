@@ -5,7 +5,7 @@
 #
 #   cmake -S extras/showcase -B build/showcase -G Ninja -DCMAKE_BUILD_TYPE=Debug
 #
-# ./scripts/ci-showcase.sh builds this project.
+# ./.github/scripts/ci-showcase.sh builds this project.
 
 cmake_minimum_required(VERSION 3.28)
 
