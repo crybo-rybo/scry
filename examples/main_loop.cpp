@@ -44,11 +44,11 @@ struct StatusResult {
   std::string state{};
 };
 
-// Scry guarantees only that the arguments are a canonical JSON object; checking
-// them against the declared schema is the handler's job. Each rejection goes
-// through scry::tool_error() so the model reads what was wrong and can correct
-// the call. A plain scry::Error would reach it only as Scry's fixed "tool handler
-// returned an error", which gives it nothing to fix.
+// For a dynamic tool, Scry guarantees only that the arguments are a canonical JSON
+// object; checking them against the declared schema is the handler's job. Each
+// rejection goes through scry::tool_error() so the model reads what was wrong and
+// can correct the call. A plain scry::Error would reach it only as Scry's fixed
+// "tool handler returned an error", which gives it nothing to fix.
 [[nodiscard]] scry::Status validate_echo_arguments(const scry::JsonView& root) {
   const auto reject = [](std::string message) {
     return std::unexpected(scry::tool_error(std::move(message)));
@@ -65,7 +65,9 @@ struct StatusResult {
   return {};
 }
 
-// The explicit-schema path: the handler owns validation at the JSON boundary.
+// A dynamic tool, the escape hatch for tools that exist only at runtime (bridged
+// from a script, say): the schema is hand-written, and the handler owns
+// validation at the JSON boundary.
 [[nodiscard]] scry::ToolHandler echo_handler() {
   return [](const scry::Json& arguments) -> scry::Result<scry::Json> {
     // Every handler runs synchronously inside harness.update(), on this thread.
@@ -88,7 +90,8 @@ struct StatusResult {
   };
 }
 
-// Registers one reflected tool and one explicit-schema tool.
+// Registers one reflected tool, its schema generated from StatusArguments, and one
+// dynamic tool. examples/toolbox.cpp shows the other reflected forms.
 [[nodiscard]] scry::Status register_tools(scry::ToolRegistry& tools, Application& app) {
   if (auto reflected = tools.add<StatusArguments>(
           {
