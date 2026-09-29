@@ -297,7 +297,11 @@ with `scry::reflection::tool`. `add<^^npc_tools>()` registers every such functio
 declared directly in the namespace `npc_tools`, in declaration order; nested
 namespaces are not searched, and a namespace's tools should be declared before
 the call that registers them, since reflection sees the namespace as it stands
-at that point. A static member function registers as a free function does. A non-static
+at that point. A namespace is open, so two translation units can see different
+tools in it; each registers the tools it sees. The set found at the call site is
+a defaulted template argument of `add()`, so units with different sets
+instantiate different specializations, which the linker cannot merge into one.
+A static member function registers as a free function does. A non-static
 member function needs an object, so it is registered through its class as a
 toolbox.
 

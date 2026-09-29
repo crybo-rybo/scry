@@ -170,7 +170,7 @@ make_function_entry(std::shared_ptr<Object> object) {
   return entry;
 }
 
-// Every tool function of a class or namespace, in declaration order.
+// Every tool function of a toolbox class, in declaration order.
 template <std::meta::info Scope, typename Object>
 [[nodiscard]] std::vector<scry::detail::ToolEntry>
 scope_entries(const std::shared_ptr<Object>& object) {
@@ -183,16 +183,16 @@ scope_entries(const std::shared_ptr<Object>& object) {
   return entries;
 }
 
-// The entries add<^^Entity>() registers. Free functions bind to no object.
-template <std::meta::info Entity>
-[[nodiscard]] std::vector<scry::detail::ToolEntry> entity_entries() {
-  if constexpr (std::meta::is_namespace(Entity)) {
-    return scope_entries<Entity>(std::shared_ptr<void>{});
-  } else {
-    std::vector<scry::detail::ToolEntry> entries{};
-    entries.push_back(make_function_entry<Entity>(std::shared_ptr<void>{}));
-    return entries;
-  }
+// The entries add<^^Entity>() registers: free functions, bound to no object.
+// They depend on nothing but the functions named here, so every translation unit
+// that registers the same set instantiates the same code.
+template <std::meta::info... Functions>
+[[nodiscard]] std::vector<scry::detail::ToolEntry>
+tool_set_entries(tool_set<Functions...>) {
+  std::vector<scry::detail::ToolEntry> entries{};
+  entries.reserve(sizeof...(Functions));
+  (entries.push_back(make_function_entry<Functions>(std::shared_ptr<void>{})), ...);
+  return entries;
 }
 
 template <typename Toolbox>
