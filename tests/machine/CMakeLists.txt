@@ -6,6 +6,7 @@ add_executable(
   tool_budget_tests.cpp
   tool_loop_tests.cpp
   turn_machine_tests.cpp
+  typed_answer_tests.cpp
 )
 target_include_directories(
   scry_turn_machine_tests

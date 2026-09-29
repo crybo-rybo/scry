@@ -42,6 +42,10 @@ struct ModelRequest {
   // of messages per tool round. Owned by the turn machine alone.
   std::vector<Message> messages{};
   SchemaSnapshot tools{};
+  // The response tool of a turn sent with a ResponseFormat, or null. Adapters
+  // offer it after the registered tools and require the model to call a tool;
+  // a null one leaves the request exactly as it would be without the feature.
+  std::shared_ptr<const ToolDefinition> response_tool{};
   SamplingConfig sampling{};
 
   [[nodiscard]] std::size_t message_count() const noexcept {

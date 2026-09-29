@@ -6,6 +6,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <chrono>
 #include <cstdint>
+#include <memory>
 #include <scry/error.hpp>
 #include <string>
 #include <utility>
@@ -34,6 +35,18 @@ inline constexpr TurnId turn_id{42};
               },
           },
   };
+}
+
+// A turn sent with a response format: its request carries the response tool the
+// model answers through.
+[[nodiscard]] inline ModelRequest typed_request(std::string answer_tool = "respond") {
+  auto typed = request();
+  typed.response_tool = std::make_shared<const ToolDefinition>(ToolDefinition{
+      .name = std::move(answer_tool),
+      .description = "answer",
+      .input_schema = Json{.text = R"({"type":"object"})"},
+  });
+  return typed;
 }
 
 [[nodiscard]] inline RetryPolicy retry_policy() {
@@ -181,6 +194,7 @@ inline void enter_awaiting_tool(TurnMachine& machine) {
       RetryWake{.observed_at = at(100ms)},
       result("call-1", "{}", at(0ms)),
       ToolExecutionFailed{.error = error(ErrorCategory::resource_limit)},
+      AnswerAccepted{.call_id = "call-1"},
       CancelTurn{},
   };
 }
