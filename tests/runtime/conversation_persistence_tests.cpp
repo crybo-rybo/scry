@@ -219,19 +219,34 @@ TEST_CASE("Conversation persistence enforces tool block roles and shapes") {
 TEST_CASE("Conversation::from_json reports which part of the document it rejected") {
   const std::vector<std::pair<std::string, std::string_view>> cases{
       {R"({"messages":[],"system_prompt":"","version":-1})",
-       "Conversation document version must be an unsigned integer"},
+       "Conversation document at $.version is outside the integer range"},
       {R"({"messages":[],"system_prompt":"","version":2})",
        "Conversation document version is not supported"},
+      // The version is read first, so another version's shape is not reported.
+      {R"({"messages":{},"version":2})",
+       "Conversation document version is not supported"},
       {R"({"messages":[],"system_prompt":0,"version":1})",
-       "Conversation document field 'system_prompt' must be a string"},
+       "Conversation document at $.system_prompt must be a string"},
       {document(R"([{"content":[],"role":"system"}])"),
-       "Conversation message has an unknown role"},
+       "Conversation document at $.messages[0].role is not a declared enumerator; "
+       "must be one of: user, assistant"},
       {document(
            R"([{"content":[{"arguments":{},"id":"","name":"tool","type":"tool_call"}],"role":"assistant"}])"),
        "Tool-call block field 'id' must not be empty"},
       {document(
            R"([{"content":[{"is_error":0,"result":null,"tool_call_id":"id","type":"tool_result"}],"role":"user"}])"),
-       "Tool-result block field 'is_error' must be a boolean"},
+       "Conversation document at $.messages[0].content[0].is_error must be a boolean"},
+      {document(
+           R"([{"content":[{"is_error":false,"tool_call_id":"id","type":"tool_result"}],"role":"user"}])"),
+       "Conversation document at $.messages[0].content[0].result is a required member"},
+      {document(R"([{"content":[{"text":"x","type":"text"}]}])"),
+       "Conversation document at $.messages[0].role is a required member"},
+      {document(
+           R"([{"content":[{"arguments":{},"id":"id","name":"tool","type":"tool_call"}],"role":"user"}])"),
+       "Tool-call blocks require the assistant role"},
+      {document(
+           R"([{"content":[{"arguments":[],"id":"id","name":"tool","type":"tool_call"}],"role":"assistant"}])"),
+       "Tool-call block field 'arguments' must be an object"},
   };
   for (const auto& [input, message] : cases) {
     CAPTURE(input);
