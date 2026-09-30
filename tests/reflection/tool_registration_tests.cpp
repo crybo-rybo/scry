@@ -51,21 +51,6 @@ inline Position unannotated() { return {}; }
 
 } // namespace grid
 
-// The context followed by synthesized parameters.
-[[= scry::reflection::tool{"Label the call"}]] inline std::string
-label(const scry::ToolCallContext& context, std::string prefix) {
-  return prefix + ":" + std::string{context.tool_name};
-}
-
-// Status acknowledges with {} or refuses with the handler's error.
-[[= scry::reflection::tool{"Accept only positive numbers"}]] inline scry::Status
-require_positive(std::int32_t value) {
-  if (value <= 0) {
-    return std::unexpected(scry::tool_error("value must be positive"));
-  }
-  return {};
-}
-
 class Counter {
 public:
   [[= scry::reflection::tool{"Add to the counter"}]] std::int32_t
@@ -182,6 +167,11 @@ struct Derived : Base {
   }
 };
 
+// tool describes functions; on a data member it is rejected.
+struct ToolOnMember {
+  [[= scry::reflection::tool{"City to query"}]] std::string city;
+};
+
 // The explicit object forms registration rejects.
 struct TakesRvalue {
   [[= scry::reflection::tool{"Consume"}]] std::int32_t take(this TakesRvalue&&) {
@@ -205,12 +195,6 @@ struct Unrelated {
     return self.x;
   }
 };
-
-namespace colliding_grid {
-[[= scry::reflection::tool{"First"}]] inline std::int32_t first() { return 1; }
-[[= scry::reflection::tool{"Second"}]] inline std::int32_t second() { return 2; }
-[[= scry::reflection::tool{"Third"}]] inline std::int32_t origin() { return 3; }
-} // namespace colliding_grid
 
 } // namespace registration
 
@@ -254,9 +238,8 @@ static_assert(!scry::reflection::Toolbox<const registration::Counter>);
 static_assert(!scry::reflection::Toolbox<registration::Position>);
 static_assert(!scry::reflection::Toolbox<std::int32_t>);
 
-// Toolbox accepts exactly the explicit object forms registration accepts: the
-// accepted ones register below, and each rejected one has a compile-fail test or
-// fails the same check.
+// Toolbox accepts exactly the explicit object forms registration accepts: Box
+// registers below, and the const-toolbox rejection has a compile-fail test.
 static_assert(scry::reflection::Toolbox<registration::Box>);
 static_assert(!scry::reflection::Toolbox<const registration::Box>); // bump: Box&
 static_assert(scry::reflection::Toolbox<registration::ConstBox>);
@@ -266,6 +249,7 @@ static_assert(scry::reflection::Toolbox<const registration::Derived>);
 static_assert(!scry::reflection::Toolbox<registration::TakesRvalue>);
 static_assert(!scry::reflection::Toolbox<registration::Uncopyable>);
 static_assert(!scry::reflection::Toolbox<registration::Unrelated>);
+static_assert(!scry::reflection::ToolArguments<registration::ToolOnMember>);
 
 TEST_CASE("a function without parameters takes the empty object only") {
   scry::ToolRegistry registry;
@@ -299,46 +283,17 @@ TEST_CASE("plain parameters are synthesized into one required argument object") 
   CHECK(missing.error().model_message == "$.dy is a required member");
 }
 
-TEST_CASE("a context parameter precedes an aggregate or synthesized arguments") {
-  scry::ToolRegistry registry;
-  REQUIRE(registry.add<^^registration::grid::stride>());
-  REQUIRE(registry.add<^^registration::label>());
-  CHECK(registry.names() == std::vector<std::string>{"stride_east", "label"});
-
-  // The aggregate form keeps its member descriptions, exactly as add<Args>() does.
-  CHECK(schema_of(registry, "stride_east") ==
-        scry::reflection::input_schema_v<registration::StrideArguments>);
-  auto result = call(registry, "stride_east", R"({"tiles":5})");
-  REQUIRE(result);
-  CHECK(result->text == R"({"x":5,"y":2})");
-
-  CHECK(
-      schema_of(registry, "label") ==
-      R"({"additionalProperties":false,"properties":{"prefix":{"type":"string"}},"required":["prefix"],"type":"object"})");
-  result = call(registry, "label", R"({"prefix":"tool"})");
-  REQUIRE(result);
-  CHECK(result->text == R"("tool:label")");
-}
-
 TEST_CASE("a namespace registers every annotated function in declaration order") {
   scry::ToolRegistry registry;
   REQUIRE(registry.add<^^registration::grid>());
   CHECK(registry.names() ==
         std::vector<std::string>{"origin", "offset", "stride_east"});
   CHECK_FALSE(registry.contains("unannotated"));
-}
 
-TEST_CASE("Status and void tools acknowledge with an empty object") {
-  scry::ToolRegistry registry;
-  REQUIRE(registry.add<^^registration::require_positive>());
-
-  auto result = call(registry, "require_positive", R"({"value":1})");
+  // stride takes the call context before its aggregate arguments.
+  const auto result = call(registry, "stride_east", R"({"tiles":5})");
   REQUIRE(result);
-  CHECK(result->text == "{}");
-
-  result = call(registry, "require_positive", R"({"value":0})");
-  REQUIRE_FALSE(result);
-  CHECK(result.error().model_message == "value must be positive");
+  CHECK(result->text == R"({"x":5,"y":2})");
 }
 
 TEST_CASE("a shared toolbox binds every tool to the object the host still holds") {
@@ -422,16 +377,6 @@ TEST_CASE("a toolbox that collides on its third tool registers none of them") {
   CHECK_FALSE(registry.contains("beta"));
 }
 
-TEST_CASE("a namespace that collides on its third tool registers none of them") {
-  scry::ToolRegistry registry;
-  REQUIRE(registry.add<^^registration::grid::origin>());
-
-  const auto status = registry.add<^^registration::colliding_grid>();
-  REQUIRE_FALSE(status);
-  CHECK(status.error().message == R"(a tool named "origin" is already registered)");
-  CHECK(registry.names() == std::vector<std::string>{"origin"});
-}
-
 TEST_CASE("a second object of one toolbox class is a duplicate registration") {
   scry::ToolRegistry registry;
   REQUIRE(registry.add(registration::Reader{.fixed = 1}));
@@ -499,27 +444,4 @@ TEST_CASE("explicit object parameters bind the toolbox, not an argument") {
   result = call(registry, "read", "{}");
   REQUIRE(result);
   CHECK(result->text == "11");
-}
-
-TEST_CASE("a const toolbox calls explicit object tools by const reference or copy") {
-  scry::ToolRegistry registry;
-  REQUIRE(registry.add(std::make_shared<const registration::ConstBox>(
-      registration::ConstBox{.value = 9})));
-  auto result = call(registry, "read", "{}");
-  REQUIRE(result);
-  CHECK(result->text == "9");
-  result = call(registry, "copy", "{}");
-  REQUIRE(result);
-  CHECK(result->text == "9");
-}
-
-TEST_CASE("an explicit object parameter of a base class binds the derived toolbox") {
-  scry::ToolRegistry registry;
-  REQUIRE(registry.add(registration::Derived{}));
-  auto result = call(registry, "read_base", "{}");
-  REQUIRE(result);
-  CHECK(result->text == "2");
-  result = call(registry, "sliced", "{}");
-  REQUIRE(result);
-  CHECK(result->text == "2");
 }

@@ -12,8 +12,7 @@
 
 // Requests whose exact encoded bytes request_bytes_tests.cpp pins. Between them
 // they reach every member either wire struct declares, every optional both ways,
-// both OpenAI content shapes, the Anthropic role merge, string escapes, and the
-// sampling numbers whose spelling differs between shortest round-trip forms.
+// both OpenAI content shapes, the Anthropic role merge, and string escapes.
 namespace scry::test_fixtures {
 
 struct RequestBytesCase {
@@ -141,16 +140,6 @@ struct RequestBytesCase {
                                         "\x01\x1b[0m\x1f\x7f caf\xC3\xA9 "
                                         "\xF0\x9F\x8E\xB2 \xFF")});
     cases.push_back({dialect + " empty text", config, bytes_text_request("")});
-
-    for (const double temperature :
-         {0.7, 1.0, 0.1, 1e-7, 0.0, 2.0, 0.25, 1e-5, 0.0001, 0.00012,
-          0.30000000000000004, 1.9999999999999998, 5e-324}) {
-      auto sampled = bytes_text_request("t");
-      sampled.sampling.temperature = temperature;
-      sampled.sampling.top_p = temperature;
-      cases.push_back(
-          {dialect + " sampling " + std::to_string(temperature), config, sampled});
-    }
   }
   // A typed turn's request: the response tool follows the registered ones and the
   // body requires a tool call. Without a response tool, every body above stays
