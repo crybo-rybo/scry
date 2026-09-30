@@ -60,6 +60,13 @@ public:
     return {};
   }
 
+  // An explicit object parameter is the toolbox itself, not an argument, so this
+  // tool takes {}.
+  [[= scry::reflection::tool{"Litres poured since the greenhouse opened"}]] double
+  litres_so_far(this const Greenhouse& self) {
+    return self.litres_poured_;
+  }
+
   // Not a tool: only the host calls it.
   [[nodiscard]] double litres_poured() const noexcept { return litres_poured_; }
 

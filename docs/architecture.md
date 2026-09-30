@@ -299,11 +299,7 @@ with `scry::reflection::tool`. `add<^^npc_tools>()` registers every such functio
 declared directly in the namespace `npc_tools`, in declaration order; nested
 namespaces are not searched, and a namespace's tools should be declared before
 the call that registers them, since reflection sees the namespace as it stands
-at that point. A namespace is open, so two translation units can see different
-tools in it; each registers the tools it sees. The set found at the call site is
-a defaulted template argument of `add()`, so units with different sets
-instantiate different specializations, which the linker cannot merge into one.
-A static member function registers as a free function does. A non-static
+at that point. A static member function registers as a free function does. A non-static
 member function needs an object, so it is registered through its class as a
 toolbox.
 
@@ -318,6 +314,22 @@ std::string advice(Crop crop);
 auto one = tools.add<^^almanac::advice>();
 auto all = tools.add<^^almanac>();  // both, or neither
 ```
+
+Registration reads the declarations that precede the call in the calling
+translation unit, and two units can see different ones. A namespace is open, so
+each unit sees the tools declared in it so far. A function's `tool` and `name`
+annotations accumulate across its redeclarations, and its parameter names are
+the ones its declarations so far give it, so two units that declare one function
+differently see a different description, tool name, or synthesized argument
+object. An out-of-class definition of a toolbox member can likewise add
+annotations, including `tool` itself, that only the units containing it see.
+Each unit registers what it sees. The tools found at the call site, each with its
+name, description, and synthesized parameter names, are a defaulted template
+argument of every `add()` overload that registers reflected declarations, and
+the code generated for a tool reads those facts from that argument and from the
+function's type, never again from its declarations. Units that see different
+declarations therefore instantiate differently named specializations, which the
+linker cannot merge into one.
 
 **An argument aggregate and a callable.** `add<Args>(ToolMetadata, handler)`
 registers any callable that takes `Args`, which suits a lambda capturing host
@@ -360,8 +372,23 @@ member functions are not considered. Each must be public, not deleted, and not
 annotations on a template, so an annotated function template in a namespace or
 class is not seen.
 
-A tool function's parameters, after an optional leading `const ToolCallContext&`,
-take one of three forms:
+A tool member function may take a C++23 explicit object parameter, such as
+`int read(this const Box& self)`. The registry calls it on the toolbox it holds,
+as an lvalue that is `const` when the toolbox is, so that parameter is the
+toolbox and never an argument; the call context and the arguments follow it. The
+lvalue must initialize the parameter as it would any argument, and the `const`
+and `&&` rules for implicit object members do not apply. A `const T&` parameter
+always binds. A `T&` parameter binds a non-const toolbox and reaches the object
+the host shares; on a const toolbox it is a compile error. A by-value `T`
+parameter copies the toolbox for each call, so `T` must be copy-constructible
+from a `const T` lvalue for a const toolbox, or from a `T` lvalue otherwise. An
+rvalue reference is a compile error, as a `&&`-qualified member function is. A
+parameter of another type, such as a reference to a base class, is accepted when
+the toolbox lvalue converts to it, and is a compile error otherwise.
+`this auto&& self` makes the function a template, which is not seen.
+
+A tool function's parameters, after an optional explicit object parameter and an
+optional `const ToolCallContext&`, take one of three forms:
 
 - **None.** The tool takes no arguments. Its schema is the empty closed object,
   `{"additionalProperties":false,"properties":{},"required":[],"type":"object"}`,
@@ -385,8 +412,8 @@ take one of three forms:
 
 The decoded arguments are moved into the call, so each parameter takes a value,
 a `const` reference, or an rvalue reference. A non-const lvalue reference, a
-`volatile` parameter, or a `ToolCallContext` anywhere but first is a compile
-error.
+`volatile` parameter, or a `ToolCallContext` anywhere but first (after the
+explicit object parameter, if there is one) is a compile error.
 
 Handlers and tool functions return a supported value, a `Result` of one, `void`,
 or `Status`. A value is encoded as the tool result. `void` and a successful
@@ -416,7 +443,8 @@ reason. Each of these is one: a toolbox class that declares no tool member
 function; a `tool` annotation on anything but a function, such as a variable or
 a data member; a namespace that declares no tool function; a non-static member
 function passed to `add<^^...>()`; an unnamed or unsupported parameter, or one
-passed in a way the decoded arguments cannot bind; an unsupported return type;
+passed in a way the decoded arguments cannot bind; an explicit object parameter
+the toolbox cannot initialize; an unsupported return type;
 two tools of one toolbox or namespace with one name; more than one `tool` or
 `name` annotation on one function; and an lvalue passed to `add(T&&)`. For
 example, `scry::ToolRegistry::add<^^lamp_tools::label>(): lamp_tools::label has
