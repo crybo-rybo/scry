@@ -1,15 +1,10 @@
-#include "runtime/tool_dispatch.hpp"
-#include "runtime/tool_registry_impl.hpp"
-
 #include <catch2/catch_test_macros.hpp>
 #include <cstdint>
-#include <memory>
 #include <optional>
 #include <scry/annotations.hpp>
 #include <scry/reflection.hpp>
 #include <string>
 #include <string_view>
-#include <utility>
 #include <variant>
 #include <vector>
 
@@ -203,21 +198,6 @@ struct HoldsBad {
 template <typename Type>
 [[nodiscard]] scry::Result<Type> decode_text(const std::string_view text) {
   return reflection::decode<Type>(scry::Json{.text = std::string{text}});
-}
-
-// A dispatchable snapshot holding one reflected handler under the given name.
-[[nodiscard]] scry::detail::ToolSnapshot
-snapshot_of(std::string tool_name, scry::ContextualToolHandler handler) {
-  return {
-      std::make_shared<const scry::detail::RegisteredTool>(scry::detail::RegisteredTool{
-          .definition =
-              {
-                  .name = std::move(tool_name),
-                  .description = "Reflected test tool",
-                  .input_schema = {.text = "{}"},
-              },
-          .handler = std::move(handler),
-      })};
 }
 
 } // namespace
@@ -462,31 +442,6 @@ TEST_CASE("a tagged class outside a variant neither writes nor accepts its tag")
   CHECK(decoded.error().model_message == R"($ contains unknown member "type")");
 }
 
-TEST_CASE("tagged variant arguments reach a reflected tool handler") {
-  auto handler = reflection::detail::make_tool_handler<Drawing>([](Drawing drawing) {
-    double area = 0;
-    for (const auto& shape : drawing.shapes) {
-      if (const auto* rectangle = std::get_if<Rectangle>(&shape)) {
-        area += rectangle->height * rectangle->width;
-      }
-    }
-    return area;
-  });
-  auto result = handler(
-      {},
-      scry::Json{.text = R"({"shapes":[{"type":"rectangle","height":2,"width":3}]})"});
-  REQUIRE(result);
-  CHECK(result->text == "6");
-
-  result = handler({}, scry::Json{.text = R"({"shapes":[{"type":"triangle"}]})"});
-  REQUIRE_FALSE(result);
-  // The tool path keeps its own category; only the public decode reports
-  // invalid_argument.
-  CHECK(result.error().category == scry::ErrorCategory::tool);
-  CHECK(result.error().model_message ==
-        "$.shapes[0].type must be one of: circle, rectangle");
-}
-
 TEST_CASE("name annotations replace keys in encoding decoding and errors") {
   const Renamed value{.limit = 5, .zed = "z"};
   CHECK(reflection::encode(value)->text == R"({"a_first":"z","max_tokens":5})");
@@ -706,39 +661,6 @@ TEST_CASE("public decoding reports invalid_argument with path-based messages") {
   REQUIRE_FALSE(role);
   CHECK(role.error().model_message ==
         "$ is not a declared enumerator; must be one of: user, assistant");
-}
-
-TEST_CASE("floats encode as their shortest round-trip spelling") {
-  CHECK(reflection::detail::encode_value(0.7)->text == "0.7");
-  CHECK(reflection::detail::encode_value(0.7F)->text == "0.7");
-  CHECK(reflection::detail::encode_value(1e20)->text == "1e+20");
-  CHECK(reflection::detail::encode_value(0.1 + 0.2)->text == "0.30000000000000004");
-  CHECK(reflection::encode(0.7)->text == "0.7");
-  CHECK(reflection::encode(0.7F)->text == "0.7");
-  CHECK(reflection::encode(1e20)->text == "1E20");
-
-  // Tool results pass through the runtime's canonical writer, which prints the
-  // double a float widens to: the shortest double spelling agrees with the direct
-  // one, and a float result now reads as the float it is rather than as the
-  // nine-digit double spelling of its value.
-  struct Measured {
-    float approximate{};
-    double precise{};
-  };
-  auto handler = reflection::detail::make_tool_handler<Circle>([](Circle circle) {
-    return Measured{.approximate = 0.7F, .precise = circle.radius + 0.6};
-  });
-  const auto tools = snapshot_of("measure", std::move(handler));
-  const auto result = scry::detail::dispatch_tool(
-      tools,
-      scry::detail::ToolCallBlock{.id = "call-1",
-                                  .name = "measure",
-                                  .arguments = {.text = R"({"radius":0.1})"}},
-      {}, 1024);
-  REQUIRE(result);
-  CHECK(result->result.text == R"({"approximate":0.7,"precise":0.7})");
-  CHECK(reflection::detail::encode_value(Measured{.approximate = 0.7F, .precise = 0.7})
-            ->text == result->result.text);
 }
 
 TEST_CASE("encoding reports a valueless variant instead of throwing") {

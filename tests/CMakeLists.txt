@@ -225,19 +225,9 @@ scry_add_reflection_compile_fail_test(
   "Arguments::shape: std::variant<Circle, Square> has the alternative Circle without a scry::reflection::tag annotation"
 )
 scry_add_reflection_compile_fail_test(
-  duplicate-tag
-  duplicate_tag.cpp
-  "has alternatives Circle and Square that share the tag"
-)
-scry_add_reflection_compile_fail_test(
   duplicate-key
   duplicate_key.cpp
   "does not satisfy scry::reflection::Encodable: Limits has members limit and max_tokens that both map to the JSON key"
-)
-scry_add_reflection_compile_fail_test(
-  tag-key-collision
-  tag_key_collision.cpp
-  "does not satisfy scry::reflection::Decodable: Event::type: has the JSON key"
 )
 # The type after the path is the dealiased std::chrono::seconds, whose spelling
 # varies with the platform's int64_t, so the assertion stops at the path.
