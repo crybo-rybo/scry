@@ -89,7 +89,8 @@ counts as delivered; the Harness remains valid. Tool-handler exceptions are
 caught and converted into tool-error results.
 
 `send_and_wait()` runs `send()` and pumps `update()` until the requested turn
-finishes; `ask<Answer>()` does the same for a typed turn. It also runs callbacks and handlers for other accepted turns. It does
+finishes; `ask<Answer>()` does the same for a typed turn. It also runs callbacks
+and handlers for other accepted turns. It does
 not expose the waited Turn handle, and calling it from a callback or handler
 returns `invalid_state`. When `update()` throws while it is pumping, the
 exception propagates out of `send_and_wait()` and the waited turn is
@@ -218,7 +219,8 @@ as a tool error: the fixed text `tool call limit for this turn reached; respond
 without calling tools` for the limit, the host's `model_message` for a hook
 refusal. A typed turn still requires a tool call and ends only on its response
 tool, so there the limit's text instead tells the model to call that tool, by
-its name, on its own with the final answer. That result reaches `on_tool_call` with `is_error` and is posted to the
+its name, on its own with the final answer. That result reaches `on_tool_call`
+with `is_error` and is posted to the
 worker like any other, so the turn continues and commits normally. A hook that
 throws is treated exactly like a handler that throws: the call is refused with the
 same fixed text and the turn carries on. The hook runs under the same invocation
@@ -671,159 +673,95 @@ reflected codec.
 
 ## Typed completions
 
-A turn can be asked to end with a structured answer instead of free text. The
-answer is a C++ type, and reflection drives the rest: the schema the model is
-given, the strict decoder that checks what it sends back, and the error text
-that tells it what to fix.
+A turn can end with a structured answer instead of free text. The answer is a
+C++ type, and reflection supplies the schema the model is given, the strict
+decoder that checks its reply, and the error text that tells it what to fix.
+`ask<Answer>(conversation, text)` blocks like `send_and_wait()` and returns
+`Result<Answered<Answer>>`: the decoded `value` beside the turn's `Completion`,
+which carries what the value alone does not (prose, usage, attempts, counts).
+`send<Answer>(conversation, text, callbacks)` is the poll-friendly form; its
+`Completion::structured` holds the answer's canonical JSON for
+`reflection::decode<Answer>()`. `Answer` must satisfy `ToolArguments`, because
+a provider's tool input is always a JSON object; any other type fails to compile
+with the member path and the reason, as `add<Args>()` does.
 
-```cpp
-struct Verdict {
-  [[= scry::reflection::description{"Is the claim supported?"}]] bool supported{};
-  std::string reason{};
-};
+A typed turn is the ordinary tool loop plus one response tool, described by a
+`ResponseFormat`: a `name` (`respond` by default), a `description` (empty
+selects Scry's instruction to call it exactly once, on its own, with the final
+answer), a JSON Schema object `schema`, and an optional host-thread `validate`.
+`reflection::response_format<Answer>()` pairs `input_schema_v<Answer>` with a
+`decode<Answer>()` validator and is what `send<Answer>()` and `ask<Answer>()`
+use. Another name, description, or a hand-written schema goes through
+`send_structured(conversation, text, format, callbacks)` or
+`send_and_wait_structured(conversation, text, format)`, named apart so that
+`send(conversation, text, {})` still means "no callbacks" and `send<Answer>()`
+is never chosen without its explicit template argument. Before acceptance
+these reject with `invalid_argument` a format whose name is empty or a
+registered tool's, or whose schema is not a JSON object. The request lists the
+response tool after the registered tools and requires a tool call
+(`"tool_choice":{"type":"any"}` for Anthropic, `"tool_choice":"required"` for
+OpenAI-compatible servers); a request without a response format is byte for
+byte what it was before typed turns existed. The model may still call
+registered tools for as many rounds as `max_tool_rounds` allows.
 
-// Blocking, like send_and_wait(): Result<Answered<Verdict>>.
-auto verdict = harness.ask<Verdict>(conversation, "Is the moon made of cheese?");
-// verdict->value is the Verdict; verdict->completion is the turn's Completion.
+Each response of a typed turn is classified by its tool calls. A response that
+calls no tool fails the turn with `protocol`, naming the response tool and
+whether the server ignored the tool choice or the output hit its token limit. A
+lone response-tool call is a candidate answer, validated inside `update()` on
+the host thread as one delivery unit: acceptance completes the turn, and a
+rejection gives the model `{"error": model_message}` as that call's tool-error
+result and costs a tool round (for a reflected type, the decoder's
+schema-derived text such as `$.supported is a required member`). A
+response-tool call beside other calls, or more than one, is refused with `call
+respond exactly once, on its own, after your other tool calls have returned`
+while the real calls dispatch as usual. Only real calls make an ordinary round.
+Because a server forcing a tool call may report a plain `stop`, a typed turn
+takes calls with a normal finish reason as a tool response.
 
-// Poll-friendly: on_finished's Completion::structured holds the answer's
-// canonical JSON, which reflection::decode<Verdict>() reads back.
-auto turn = harness.send<Verdict>(conversation, "Is the moon made of cheese?",
-                                  std::move(callbacks));
-```
+A validator is treated as a tool handler is: an error without a
+`model_message`, or a throw, gives the model the handler's fixed text, and the
+turn continues. Without a validator any JSON object is accepted; Scry does not
+implement general JSON Schema validation. Under the handler's invocation guard,
+cancelling from inside the validator is honoured before any verdict reaches the
+worker, and disconnecting stops later delivery but not the verdict.
 
-`Answer` must satisfy `ToolArguments`, because a provider's tool input is always
-a JSON object; any other type fails to compile with the member path and the
-reason, as `add<Args>()` does. `ask()` returns the `Completion` beside the value
-because it carries what the value alone does not: prose the model gave with the
-answer, usage, attempts, and round counts.
+An accepted answer completes the turn with `finish_reason` `completed`;
+`Completion::structured` holds the canonicalized arguments and
+`Completion::text` only the prose beside the call, which may be empty. The
+committed transcript is the user message, each round of real calls with its
+results, and a final assistant message of that prose followed by one text block
+holding the answer's canonical JSON. No response-tool call is committed, nor any
+rejected attempt the model saw within the turn: those calls, their error
+results, and any message they leave empty are removed, while real calls in the
+same rounds stay. Every committed call needs its result; a result for the
+accepted call would end the history on a user message; and later requests,
+including plain turns and Conversations restored from JSON, do not declare the
+response tool, which a provider may refuse to see named. Removing a rejected
+round can leave two assistant messages in a row, which the Anthropic adapter
+merges and the OpenAI-compatible dialect accepts; the OpenAI adapter joins a
+message's text blocks without a separator. `Conversation::to_json()` saves the
+answer as the text block it is, and a restored Conversation re-encodes for
+either dialect. The answer is reserved against the Conversation byte limit like
+any reply; the `structured` copy is never charged to the queued-event limit.
 
-### Mechanism
-
-A typed turn is the ordinary tool loop with one extra tool, the response tool,
-described by a `ResponseFormat`: a `name` (`respond` by default), a
-`description` (empty selects Scry's instruction to call it exactly once, on its
-own, with the final answer), a JSON Schema object `schema`, and an optional
-host-thread `validate` callable. `reflection::response_format<Answer>()` builds
-one whose schema is `input_schema_v<Answer>` and whose validator is
-`reflection::decode<Answer>()`; `send<Answer>()` and `ask<Answer>()` use it, and
-a host that wants another name or description, or a hand-written schema, passes
-a `ResponseFormat` to `send_structured(conversation, text, format, callbacks)` or
-`send_and_wait_structured(conversation, text, format)`. The dynamic forms have
-their own names so that `send()` and `send_and_wait()` keep exactly their plain
-overloads: `send(conversation, text, {})` still means "no callbacks", and
-`send<Answer>()` is never chosen without its explicit template argument.
-
-Before acceptance, a structured send rejects with `invalid_argument` a format whose name
-is empty or is a registered tool's, or whose schema is not a JSON object, so the
-response tool can always be told apart from the host's tools. The request lists
-the response tool after the registered tools and requires a tool call:
-`"tool_choice":{"type":"any"}` for Anthropic and `"tool_choice":"required"` for
-OpenAI-compatible servers. A request without a response format is byte for byte
-what it was before typed turns existed. Nothing else changes: the model may call
-registered tools for as many rounds as `max_tool_rounds` allows before it
-answers.
-
-### Validation loop
-
-Each model response of a typed turn is classified by its tool calls:
-
-- **No tool call.** The server ignored the required tool choice, or the output
-  hit its token limit first. The turn fails with `protocol`, naming the
-  response tool and which of the two happened, and commits nothing.
-- **Exactly one call, to the response tool.** Its canonical arguments are a
-  candidate answer. It travels to the host like a tool call and is validated
-  inside `update()` on the host thread, counting as one delivery unit. On
-  success the turn completes. On failure the model receives
-  `{"error": model_message}` as the call's tool-error result, and the loop
-  continues so the model can correct itself; the attempt costs a tool round.
-  For a reflected type the `model_message` is the decode failure's
-  schema-derived text, exactly as for a reflected tool argument, such as
-  `$.supported is a required member`.
-- **A response-tool call beside other calls, or more than one.** The real calls
-  are dispatched as usual. Each response-tool call receives the tool error
-  `call respond exactly once, on its own, after your other tool calls have
-  returned`, and the loop continues.
-- **Only real tool calls.** An ordinary tool round.
-
-A validator is treated as a tool handler is. An error's `model_message` is what
-the model reads; an error without one, and a validator that throws, give the
-model the fixed text a failing handler gives it, and the turn continues. Without
-a validator, any JSON object is accepted, since Scry does not implement general
-JSON Schema validation. Validation runs under the same invocation guard as a
-handler: cancelling from inside the validator is honoured before any verdict
-reaches the worker, and disconnecting from inside it stops later delivery but
-not the verdict, because the validator is part of the turn's work rather than
-one of its callbacks.
-
-A server that forces a tool call may report a plain `stop` beside the call it
-forced, so a typed turn takes calls with a normal finish reason as a tool
-response.
-
-### Completion and history
-
-An accepted answer completes the turn with `finish_reason` `completed`.
-`Completion::structured` holds the answer's canonical JSON object, the arguments
-the model passed, canonicalized; `Completion::text` holds only the prose the
-final response carried beside the call, which may be empty.
-
-The committed transcript is the user message, every round of real tool calls
-with its results, and a final assistant message made of the final response's
-text followed by one text block holding the answer's canonical JSON. The
-response-tool call itself is not committed, and neither is any rejected
-attempt: each response-tool call, its error result, and any message they leave
-empty are taken out of the transcript, while real calls in the same rounds stay
-with their results. Three constraints fix this shape. Every committed tool call
-needs its result, or neither dialect accepts the history on the next request. A
-result for the accepted call would end the transcript on a user message. And the
-response tool is offered only to typed turns, so history that named it would
-reach later requests, including a plain turn or a Harness that restored the
-Conversation from JSON, that do not declare it, and a provider may refuse tool
-blocks for a tool the request does not define. The model sees its attempts
-within the turn; the committed history is what the next turn needs, which is
-the question and the answer. Taking a rejected round out can leave two
-assistant messages in a row, which the Anthropic adapter merges and the
-OpenAI-compatible dialect accepts as they are. The OpenAI adapter joins a
-message's text blocks without a separator, so the next request carries the
-prose directly followed by the answer's JSON.
-
-`Conversation::to_json()` saves the answer as the ordinary text block it is, and
-a restored Conversation re-encodes for either dialect. The committed answer is
-reserved against the Conversation byte limit like any reply; the copy in
-`Completion::structured` is taken by the pump at commit and, like
-`Completion::text`, is never charged to the queued-event limit.
-
-### Counting and hooks
-
-Response-tool calls are Scry's own protocol, not host tool calls. They never
-reach a handler, `max_tool_calls_per_turn`, `on_tool_request`, or
-`on_tool_call`, and they count in neither `tool_call_count` nor
-`rejected_tool_call_count`. `Completion::answer_attempt_count` counts every
-response-tool call the model made, the accepted one included. A real call's
-`ToolCall::index` keeps its position in its round's batch in provider order, so
-a response-tool call beside it still occupies an index.
-
-`tool_round_count` counts the rounds that ran before the final response,
-including rounds whose only call was a rejected answer, even though such a
-round is not committed. The response carrying the accepted answer is the final
-response, not a round.
-
-### Limits and errors
+Response-tool calls are Scry's protocol, not host tool calls: they never reach
+a handler, `max_tool_calls_per_turn`, `on_tool_request`, or `on_tool_call`, and
+count in neither `tool_call_count` nor `rejected_tool_call_count`.
+`Completion::answer_attempt_count` counts every one, the accepted one included.
+A real call's `ToolCall::index` keeps its provider-order position, so a
+response-tool call beside it still occupies an index. `tool_round_count`
+includes rounds whose only call was a rejected answer; the response carrying
+the accepted answer is the final response, not a round.
 
 A lone response-tool call is validated even when every round is spent, since it
 can end the turn. Any other response at the round limit, and a rejected answer
-at the limit, fail the turn with `max_tool_rounds` under either
-`ToolRoundLimitPolicy`: the caller asked for an answer and there is none, so
-`ToolRoundLimitPolicy::complete` has nothing to complete with, and
-`Completion::unexecuted_tool_calls` is always empty for a typed turn.
-
-After acceptance a typed turn fails with `protocol` when a response calls no
-tool, with `max_tool_rounds` as above, and otherwise exactly as any turn does.
-Cancellation, retries, and persistence behave as for any turn: retries apply
-before semantic output, a failed or cancelled turn commits nothing, and
-`on_finished` remains the single terminal channel. `ask()` reports what
-`send_and_wait_structured()` would, and a decode failure of an accepted answer, which the
-validator makes unreachable.
+there, fail with `max_tool_rounds` under either `ToolRoundLimitPolicy`, because
+there is no answer to complete with; `Completion::unexecuted_tool_calls` is
+always empty for a typed turn. Otherwise a typed turn fails, cancels, retries,
+and persists as any turn does: retries apply before semantic output, a failed
+or cancelled turn commits nothing, and `on_finished` is the single terminal
+channel. `ask()` reports what `send_and_wait_structured()` would, plus a decode
+failure of an accepted answer, which the validator makes unreachable.
 
 ## Providers and transport
 
@@ -1027,7 +965,8 @@ handlers never ran, so they count in neither `tool_call_count` nor
 `Completion::tool_round_count` and `Completion::tool_call_count` report what the
 loop ran before that final response; the call count includes unknown tools and
 calls whose handler failed, and excludes calls to a typed turn's response tool,
-which `Completion::answer_attempt_count` counts instead. `Completion::rejected_tool_call_count` is the subset
+which `Completion::answer_attempt_count` counts instead.
+`Completion::rejected_tool_call_count` is the subset
 of those calls that never reached a handler because the per-turn call limit or
 `on_tool_request` refused them; a refusal is an answer to the model, not a turn
 failure, so it appears in both counts. Each observed `ToolCall` carries its own `round` and
