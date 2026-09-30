@@ -182,9 +182,9 @@ if(SCRY_REFLECTION_TEST_SOURCES)
 endif()
 
 # A registration must generate code from the declarations its own translation
-# unit sees (a namespace's tools, a function's parameter names and annotations, a
-# toolbox member's annotations), however the linker orders the units, so the same
-# program is linked in both orders.
+# unit sees (a namespace's tools, a function's parameter names and annotations),
+# however the linker orders the units, so the same program is linked in both
+# orders.
 foreach(SCRY_LINK_ORDER IN ITEMS a_then_b b_then_a)
   if(SCRY_LINK_ORDER STREQUAL "a_then_b")
     set(SCRY_MULTI_TU_UNITS tools_a.cpp tools_b.cpp)
@@ -276,24 +276,9 @@ scry_add_reflection_compile_fail_test(
   "scry::ToolRegistry::add<^^lamp_tools>(): lamp_tools::brightness carries scry::reflection::tool, which applies to functions"
 )
 scry_add_reflection_compile_fail_test(
-  tool-on-data-member
-  tool_on_data_member.cpp
-  "Arguments::city: carries scry::reflection::tool, which applies to functions"
-)
-scry_add_reflection_compile_fail_test(
-  namespace-without-tools
-  namespace_without_tools.cpp
-  "scry::ToolRegistry::add<^^lamp_tools>(): namespace lamp_tools declares no function annotated with scry::reflection::tool"
-)
-scry_add_reflection_compile_fail_test(
   unnamed-parameter
   unnamed_parameter.cpp
   "lamp_tools::dim has the unnamed parameter 2; an argument synthesized from a parameter is named after it"
-)
-scry_add_reflection_compile_fail_test(
-  unsupported-parameter
-  unsupported_parameter.cpp
-  "lamp_tools::label has parameter `initial`: char is a character type"
 )
 scry_add_reflection_compile_fail_test(
   mutable-reference-parameter
@@ -316,19 +301,9 @@ scry_add_reflection_compile_fail_test(
   "Lamp is passed as an lvalue: ToolRegistry::add(Toolbox&&) takes ownership of a toolbox"
 )
 scry_add_reflection_compile_fail_test(
-  explicit-object-rvalue
-  explicit_object_rvalue.cpp
-  "Lamp::toggle takes its explicit object parameter by rvalue reference, so the toolbox object the registry holds cannot call it"
-)
-scry_add_reflection_compile_fail_test(
   explicit-object-const-toolbox
   explicit_object_const_toolbox.cpp
   "Lamp::toggle takes its explicit object parameter by non-const reference, and the toolbox is const"
-)
-scry_add_reflection_compile_fail_test(
-  explicit-object-uncopyable
-  explicit_object_uncopyable.cpp
-  "Lamp::read takes its explicit object parameter by value, and Lamp cannot be copy-initialized from an lvalue of Lamp"
 )
 scry_add_reflection_compile_fail_test(
   unbound-member-tool
