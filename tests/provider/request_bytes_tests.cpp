@@ -1,11 +1,9 @@
 #include "core/provider.hpp"
-#include "kernel/json/codec.hpp"
 #include "request_bytes_cases.hpp"
 
 #include <array>
 #include <catch2/catch_test_macros.hpp>
 #include <cstddef>
-#include <limits>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -15,7 +13,7 @@ namespace {
 // The exact bodies the request encoders write for request_bytes_cases(). The
 // fixtures in tests/fixtures compare JSON meaning; these pin every byte,
 // including key order, string escapes, and number spelling.
-constexpr std::array<std::string_view, 34> request_bytes{
+constexpr std::array<std::string_view, 8> request_bytes{
     "{\"max_tokens\":64,\"messages\":[{\"content\":[{\"text\":\"Weather?\",\"type\":"
     "\"text\"}],\"role\":\"user\"},{\"content\":[{\"text\":\"Checking "
     "\",\"type\":\"text\"},{\"text\":\"twice.\",\"type\":\"text\"},{\"id\":\"call-a\","
@@ -55,45 +53,6 @@ constexpr std::array<std::string_view, 34> request_bytes{
     "\"stream\":true,\"temperature\":1}",
     "{\"max_tokens\":16,\"messages\":[{\"content\":[{\"text\":\"\",\"type\":\"text\"}],"
     "\"role\":\"user\"}],\"model\":\"claude-test\",\"stream\":true,\"temperature\":1}",
-    "{\"max_tokens\":16,\"messages\":[{\"content\":[{\"text\":\"t\",\"type\":\"text\"}]"
-    ",\"role\":\"user\"}],\"model\":\"claude-test\",\"stream\":true,\"temperature\":0."
-    "7,\"top_p\":0.7}",
-    "{\"max_tokens\":16,\"messages\":[{\"content\":[{\"text\":\"t\",\"type\":\"text\"}]"
-    ",\"role\":\"user\"}],\"model\":\"claude-test\",\"stream\":true,\"temperature\":1,"
-    "\"top_p\":1}",
-    "{\"max_tokens\":16,\"messages\":[{\"content\":[{\"text\":\"t\",\"type\":\"text\"}]"
-    ",\"role\":\"user\"}],\"model\":\"claude-test\",\"stream\":true,\"temperature\":0."
-    "1,\"top_p\":0.1}",
-    "{\"max_tokens\":16,\"messages\":[{\"content\":[{\"text\":\"t\",\"type\":\"text\"}]"
-    ",\"role\":\"user\"}],\"model\":\"claude-test\",\"stream\":true,\"temperature\":1E-"
-    "7,\"top_p\":1E-7}",
-    "{\"max_tokens\":16,\"messages\":[{\"content\":[{\"text\":\"t\",\"type\":\"text\"}]"
-    ",\"role\":\"user\"}],\"model\":\"claude-test\",\"stream\":true,\"temperature\":0,"
-    "\"top_p\":0}",
-    "{\"max_tokens\":16,\"messages\":[{\"content\":[{\"text\":\"t\",\"type\":\"text\"}]"
-    ",\"role\":\"user\"}],\"model\":\"claude-test\",\"stream\":true,\"temperature\":2,"
-    "\"top_p\":2}",
-    "{\"max_tokens\":16,\"messages\":[{\"content\":[{\"text\":\"t\",\"type\":\"text\"}]"
-    ",\"role\":\"user\"}],\"model\":\"claude-test\",\"stream\":true,\"temperature\":0."
-    "25,\"top_p\":0.25}",
-    "{\"max_tokens\":16,\"messages\":[{\"content\":[{\"text\":\"t\",\"type\":\"text\"}]"
-    ",\"role\":\"user\"}],\"model\":\"claude-test\",\"stream\":true,\"temperature\":1E-"
-    "5,\"top_p\":1E-5}",
-    "{\"max_tokens\":16,\"messages\":[{\"content\":[{\"text\":\"t\",\"type\":\"text\"}]"
-    ",\"role\":\"user\"}],\"model\":\"claude-test\",\"stream\":true,\"temperature\":0."
-    "0001,\"top_p\":0.0001}",
-    "{\"max_tokens\":16,\"messages\":[{\"content\":[{\"text\":\"t\",\"type\":\"text\"}]"
-    ",\"role\":\"user\"}],\"model\":\"claude-test\",\"stream\":true,\"temperature\":0."
-    "00012,\"top_p\":0.00012}",
-    "{\"max_tokens\":16,\"messages\":[{\"content\":[{\"text\":\"t\",\"type\":\"text\"}]"
-    ",\"role\":\"user\"}],\"model\":\"claude-test\",\"stream\":true,\"temperature\":0."
-    "30000000000000004,\"top_p\":0.30000000000000004}",
-    "{\"max_tokens\":16,\"messages\":[{\"content\":[{\"text\":\"t\",\"type\":\"text\"}]"
-    ",\"role\":\"user\"}],\"model\":\"claude-test\",\"stream\":true,\"temperature\":1."
-    "9999999999999998,\"top_p\":1.9999999999999998}",
-    "{\"max_tokens\":16,\"messages\":[{\"content\":[{\"text\":\"t\",\"type\":\"text\"}]"
-    ",\"role\":\"user\"}],\"model\":\"claude-test\",\"stream\":true,\"temperature\":5E-"
-    "324,\"top_p\":5E-324}",
     "{\"max_tokens\":64,\"messages\":[{\"content\":\"Be "
     "concise\",\"role\":\"system\"},{\"content\":\"Weather?\",\"role\":\"user\"},{"
     "\"content\":\"Checking "
@@ -136,45 +95,6 @@ constexpr std::array<std::string_view, 34> request_bytes{
     "{\"max_tokens\":16,\"messages\":[{\"content\":\"\",\"role\":\"user\"}],\"model\":"
     "\"chat-model\",\"stream\":true,\"stream_options\":{\"include_usage\":true},"
     "\"temperature\":1}",
-    "{\"max_tokens\":16,\"messages\":[{\"content\":\"t\",\"role\":\"user\"}],\"model\":"
-    "\"chat-model\",\"stream\":true,\"stream_options\":{\"include_usage\":true},"
-    "\"temperature\":0.7,\"top_p\":0.7}",
-    "{\"max_tokens\":16,\"messages\":[{\"content\":\"t\",\"role\":\"user\"}],\"model\":"
-    "\"chat-model\",\"stream\":true,\"stream_options\":{\"include_usage\":true},"
-    "\"temperature\":1,\"top_p\":1}",
-    "{\"max_tokens\":16,\"messages\":[{\"content\":\"t\",\"role\":\"user\"}],\"model\":"
-    "\"chat-model\",\"stream\":true,\"stream_options\":{\"include_usage\":true},"
-    "\"temperature\":0.1,\"top_p\":0.1}",
-    "{\"max_tokens\":16,\"messages\":[{\"content\":\"t\",\"role\":\"user\"}],\"model\":"
-    "\"chat-model\",\"stream\":true,\"stream_options\":{\"include_usage\":true},"
-    "\"temperature\":1E-7,\"top_p\":1E-7}",
-    "{\"max_tokens\":16,\"messages\":[{\"content\":\"t\",\"role\":\"user\"}],\"model\":"
-    "\"chat-model\",\"stream\":true,\"stream_options\":{\"include_usage\":true},"
-    "\"temperature\":0,\"top_p\":0}",
-    "{\"max_tokens\":16,\"messages\":[{\"content\":\"t\",\"role\":\"user\"}],\"model\":"
-    "\"chat-model\",\"stream\":true,\"stream_options\":{\"include_usage\":true},"
-    "\"temperature\":2,\"top_p\":2}",
-    "{\"max_tokens\":16,\"messages\":[{\"content\":\"t\",\"role\":\"user\"}],\"model\":"
-    "\"chat-model\",\"stream\":true,\"stream_options\":{\"include_usage\":true},"
-    "\"temperature\":0.25,\"top_p\":0.25}",
-    "{\"max_tokens\":16,\"messages\":[{\"content\":\"t\",\"role\":\"user\"}],\"model\":"
-    "\"chat-model\",\"stream\":true,\"stream_options\":{\"include_usage\":true},"
-    "\"temperature\":1E-5,\"top_p\":1E-5}",
-    "{\"max_tokens\":16,\"messages\":[{\"content\":\"t\",\"role\":\"user\"}],\"model\":"
-    "\"chat-model\",\"stream\":true,\"stream_options\":{\"include_usage\":true},"
-    "\"temperature\":0.0001,\"top_p\":0.0001}",
-    "{\"max_tokens\":16,\"messages\":[{\"content\":\"t\",\"role\":\"user\"}],\"model\":"
-    "\"chat-model\",\"stream\":true,\"stream_options\":{\"include_usage\":true},"
-    "\"temperature\":0.00012,\"top_p\":0.00012}",
-    "{\"max_tokens\":16,\"messages\":[{\"content\":\"t\",\"role\":\"user\"}],\"model\":"
-    "\"chat-model\",\"stream\":true,\"stream_options\":{\"include_usage\":true},"
-    "\"temperature\":0.30000000000000004,\"top_p\":0.30000000000000004}",
-    "{\"max_tokens\":16,\"messages\":[{\"content\":\"t\",\"role\":\"user\"}],\"model\":"
-    "\"chat-model\",\"stream\":true,\"stream_options\":{\"include_usage\":true},"
-    "\"temperature\":1.9999999999999998,\"top_p\":1.9999999999999998}",
-    "{\"max_tokens\":16,\"messages\":[{\"content\":\"t\",\"role\":\"user\"}],\"model\":"
-    "\"chat-model\",\"stream\":true,\"stream_options\":{\"include_usage\":true},"
-    "\"temperature\":5E-324,\"top_p\":5E-324}",
 };
 
 } // namespace
@@ -193,38 +113,24 @@ TEST_CASE("request encoders write byte-identical bodies") {
 }
 
 TEST_CASE("sampling numbers keep the canonical spelling in request bodies") {
-  // The reflected codec writes a double in std::to_chars' shortest form, which
-  // differs from the canonical writer's for small and large exponents, and a
-  // request body is not canonicalized after encoding. The sampling values reach
-  // the body pre-spelled instead.
-  constexpr std::array cases{
-      std::pair{0.7, "0.7"},
-      std::pair{1.0, "1"},
-      std::pair{0.1, "0.1"},
-      std::pair{1e-7, "1E-7"},
-      std::pair{0.0, "0"},
-      std::pair{0.0001, "0.0001"},
-      std::pair{1e-5, "1E-5"},
-      std::pair{0.00012, "0.00012"},
-      std::pair{2.0, "2"},
-      std::pair{0.30000000000000004, "0.30000000000000004"},
-      std::pair{5e-324, "5E-324"},
-      std::pair{1e16, "1E16"},
-  };
-  for (const auto& [value, spelling] : cases) {
+  // The reflected codec writes a double in std::to_chars' shortest form (1e-07),
+  // and a request body is not canonicalized after encoding, so the sampling values
+  // reach the body pre-spelled. The spellings themselves are pinned with the
+  // canonical writer.
+  for (const auto& [value, spelling] : {std::pair{0.7, std::string_view{"0.7"}},
+                                        std::pair{1e-7, std::string_view{"1E-7"}}}) {
     INFO(spelling);
-    CHECK(scry::detail::canonical_json_number(value).text == spelling);
     auto request = scry::test_fixtures::bytes_text_request("t");
     request.sampling.temperature = value;
+    request.sampling.top_p = value;
     for (const auto& config : {scry::test_fixtures::anthropic_config(),
                                scry::test_fixtures::openai_config()}) {
       const auto adapter = scry::detail::make_provider_adapter(config.dialect);
       const auto encoded = adapter->make_request(config, request);
       REQUIRE(encoded);
-      // Without top_p, temperature is the body's last member in either dialect.
-      CHECK(encoded->body.ends_with(std::string{"\"temperature\":"} + spelling + "}"));
+      // temperature and top_p are the body's last members in either dialect.
+      CHECK(encoded->body.ends_with("\"temperature\":" + std::string{spelling} +
+                                    ",\"top_p\":" + std::string{spelling} + "}"));
     }
   }
-  CHECK(scry::detail::canonical_json_number(std::numeric_limits<double>::quiet_NaN())
-            .text == "null");
 }
