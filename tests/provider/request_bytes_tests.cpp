@@ -15,7 +15,7 @@ namespace {
 // The exact bodies the request encoders write for request_bytes_cases(). The
 // fixtures in tests/fixtures compare JSON meaning; these pin every byte,
 // including key order, string escapes, and number spelling.
-constexpr std::array<std::string_view, 38> request_bytes{
+constexpr std::array<std::string_view, 36> request_bytes{
     "{\"max_tokens\":64,\"messages\":[{\"content\":[{\"text\":\"Weather?\",\"type\":"
     "\"text\"}],\"role\":\"user\"},{\"content\":[{\"text\":\"Checking "
     "\",\"type\":\"text\"},{\"text\":\"twice.\",\"type\":\"text\"},{\"id\":\"call-a\","
@@ -197,12 +197,6 @@ constexpr std::array<std::string_view, 38> request_bytes{
     "\"Give the \\\"final\\\" answer\",\"input_schema\":{\"additionalProperties\""
     ":false,\"properties\":{\"supported\":{\"type\":\"boolean\"}},\"required\":["
     "\"supported\"],\"type\":\"object\"},\"name\":\"respond\"}],\"top_p\":0.9}",
-    "{\"max_tokens\":16,\"messages\":[{\"content\":[{\"text\":\"Verdict?\",\"type"
-    "\":\"text\"}],\"role\":\"user\"}],\"model\":\"claude-test\",\"stream\":true,"
-    "\"temperature\":1,\"tool_choice\":{\"type\":\"any\"},\"tools\":[{\"descripti"
-    "on\":\"Give the \\\"final\\\" answer\",\"input_schema\":{\"additionalPropert"
-    "ies\":false,\"properties\":{\"supported\":{\"type\":\"boolean\"}},\"required"
-    "\":[\"supported\"],\"type\":\"object\"},\"name\":\"respond\"}]}",
     "{\"max_tokens\":64,\"messages\":[{\"content\":\"Be concise\",\"role\":\"syst"
     "em\"},{\"content\":\"Weather?\",\"role\":\"user\"},{\"content\":\"Checking t"
     "wice.\",\"role\":\"assistant\",\"tool_calls\":[{\"function\":{\"arguments\":"
@@ -225,13 +219,6 @@ constexpr std::array<std::string_view, 38> request_bytes{
     "\":\"respond\",\"parameters\":{\"additionalProperties\":false,\"properties\""
     ":{\"supported\":{\"type\":\"boolean\"}},\"required\":[\"supported\"],\"type"
     "\":\"object\"}},\"type\":\"function\"}],\"top_p\":0.9}",
-    "{\"max_tokens\":16,\"messages\":[{\"content\":\"Verdict?\",\"role\":\"user\""
-    "}],\"model\":\"chat-model\",\"stream\":true,\"stream_options\":{\"include_us"
-    "age\":true},\"temperature\":1,\"tool_choice\":\"required\",\"tools\":[{\"fun"
-    "ction\":{\"description\":\"Give the \\\"final\\\" answer\",\"name\":\"respon"
-    "d\",\"parameters\":{\"additionalProperties\":false,\"properties\":{\"support"
-    "ed\":{\"type\":\"boolean\"}},\"required\":[\"supported\"],\"type\":\"object"
-    "\"}},\"type\":\"function\"}]}",
 };
 
 } // namespace

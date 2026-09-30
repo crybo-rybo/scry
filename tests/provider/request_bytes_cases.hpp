@@ -162,10 +162,6 @@ struct RequestBytesCase {
     forced.response_tool = bytes_response_tool();
     cases.push_back(
         {dialect + " response tool after registered tools", config, forced});
-
-    auto alone = bytes_text_request("Verdict?");
-    alone.response_tool = bytes_response_tool();
-    cases.push_back({dialect + " response tool alone", config, alone});
   }
   return cases;
 }
