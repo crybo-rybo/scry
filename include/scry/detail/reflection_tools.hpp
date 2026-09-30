@@ -74,18 +74,38 @@ consteval bool is_context_parameter(const std::meta::info parameter) {
          std::meta::dealias(^^const scry::ToolCallContext&);
 }
 
-consteval bool takes_context(const std::meta::info function) {
+// A C++23 explicit object parameter (`this const Box& self`) is the object a
+// member tool is called on. Member-call syntax binds it to the toolbox, so it is
+// neither the context nor an argument the model supplies.
+consteval bool has_explicit_object(const std::meta::info function) {
   const auto parameters = std::meta::parameters_of(function);
-  return !parameters.empty() && is_context_parameter(parameters.front());
+  return !parameters.empty() &&
+         std::meta::is_explicit_object_parameter(parameters.front());
 }
 
-// The parameters the model supplies: every one after the optional context.
+consteval std::size_t object_parameter_count(const std::meta::info function) {
+  return has_explicit_object(function) ? 1U : 0U;
+}
+
+consteval bool takes_context(const std::meta::info function) {
+  const auto parameters = std::meta::parameters_of(function);
+  const auto first = object_parameter_count(function);
+  return parameters.size() > first && is_context_parameter(parameters[first]);
+}
+
+// The index of the first parameter the model supplies: after the explicit object
+// parameter and the context, when the function has them.
+consteval std::size_t first_value_index(const std::meta::info function) {
+  return object_parameter_count(function) + (takes_context(function) ? 1U : 0U);
+}
+
+// The parameters the model supplies, in declaration order.
 consteval std::vector<std::meta::info>
 value_parameters_of(const std::meta::info function) {
   auto parameters = std::meta::parameters_of(function);
-  if (takes_context(function)) {
-    parameters.erase(parameters.begin());
-  }
+  parameters.erase(parameters.begin(),
+                   parameters.begin() +
+                       static_cast<std::ptrdiff_t>(first_value_index(function)));
   return parameters;
 }
 
@@ -260,6 +280,38 @@ consteval std::string tool_annotation_problem(const std::meta::info function) {
   return {};
 }
 
+// A member tool with an explicit object parameter is called on the toolbox the
+// registry holds, an lvalue that is const when the toolbox is. That lvalue must
+// initialize the parameter, as for any argument: a reference to the toolbox
+// class or a base of it binds directly, a by-value parameter copies the toolbox,
+// and a parameter of another type needs an implicit conversion.
+consteval std::string explicit_object_problem(const std::meta::info function,
+                                              const std::meta::info toolbox,
+                                              const bool const_toolbox) {
+  const auto declared = std::meta::type_of(std::meta::parameters_of(function).front());
+  const auto type = std::meta::dealias(declared);
+  const auto referred = std::meta::remove_reference(type);
+  if (std::meta::is_rvalue_reference_type(type)) {
+    return "takes its explicit object parameter by rvalue reference, so the toolbox "
+           "object the registry holds cannot call it";
+  }
+  if (std::meta::is_lvalue_reference_type(type) && const_toolbox &&
+      !std::meta::is_const_type(referred)) {
+    return "takes its explicit object parameter by non-const reference, and the "
+           "toolbox is const";
+  }
+  const auto object = const_toolbox ? std::meta::add_const(toolbox) : toolbox;
+  if (std::meta::is_convertible_type(std::meta::add_lvalue_reference(object), type)) {
+    return {};
+  }
+  if (!std::meta::is_reference_type(type) && plain_type(type) == toolbox) {
+    return "takes its explicit object parameter by value, and " + display(toolbox) +
+           " cannot be copy-initialized from an lvalue of " + display(object);
+  }
+  return "takes its explicit object parameter as " + display(declared) +
+         ", which an lvalue of " + display(object) + " does not convert to";
+}
+
 // `toolbox` is the class a member tool is bound to, or the null reflection for a
 // function registered on its own.
 consteval std::string binding_problem(const std::meta::info function,
@@ -281,6 +333,9 @@ consteval std::string binding_problem(const std::meta::info function,
   if (!std::meta::is_public(function)) {
     return "is not a public member function";
   }
+  if (has_explicit_object(function)) {
+    return explicit_object_problem(function, toolbox, const_toolbox);
+  }
   if (bound && std::meta::is_rvalue_reference_qualified(function)) {
     return "is &&-qualified, so the toolbox object the registry holds cannot call it";
   }
@@ -299,10 +354,11 @@ consteval std::string parameter_label(const std::meta::info parameter,
 
 // Checks each parameter's passing convention: the decoded arguments are moved
 // into the call, so a parameter may take a value, a const reference, or an
-// rvalue reference, and the call context may appear only first.
+// rvalue reference, and the call context may appear only first. Parameters are
+// numbered as declared, counting an explicit object parameter.
 consteval std::string passing_problem(const std::meta::info function) {
   const auto parameters = std::meta::parameters_of(function);
-  for (std::size_t index = takes_context(function) ? 1U : 0U; index < parameters.size();
+  for (std::size_t index = first_value_index(function); index < parameters.size();
        ++index) {
     const auto type = std::meta::dealias(std::meta::type_of(parameters[index]));
     const auto label = parameter_label(parameters[index], index);
@@ -326,7 +382,7 @@ consteval std::string passing_problem(const std::meta::info function) {
 
 consteval std::string arguments_problem(const std::meta::info function) {
   const auto values = value_parameters_of(function);
-  const std::size_t first = takes_context(function) ? 1U : 0U;
+  const std::size_t first = first_value_index(function);
   if (arguments_form_of(function) == arguments_form::aggregate) {
     const auto reason =
         tool_arguments_problem(plain_type(std::meta::type_of(values.front())));
@@ -538,6 +594,10 @@ namespace scry::reflection {
 /// itself; inherited member functions are not considered. Every tool member must
 /// be a public, non-deleted, non-`&&`-qualified function with a valid tool
 /// signature, `const` when the toolbox is, and the tool names must be distinct.
+/// A member with an explicit object parameter is instead called on the toolbox as
+/// an lvalue, `const` when the toolbox is, which must initialize that parameter:
+/// it may not be an rvalue reference, nor a non-const reference when the toolbox
+/// is const, and a by-value parameter needs a toolbox it can copy.
 /// Registration reports the first violation with the member's name and the reason.
 template <typename Type>
 concept Toolbox = detail::toolbox_problem(^^Type).empty();

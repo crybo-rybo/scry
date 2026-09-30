@@ -326,6 +326,21 @@ scry_add_reflection_compile_fail_test(
   "Lamp is passed as an lvalue: ToolRegistry::add(Toolbox&&) takes ownership of a toolbox"
 )
 scry_add_reflection_compile_fail_test(
+  explicit-object-rvalue
+  explicit_object_rvalue.cpp
+  "Lamp::toggle takes its explicit object parameter by rvalue reference, so the toolbox object the registry holds cannot call it"
+)
+scry_add_reflection_compile_fail_test(
+  explicit-object-const-toolbox
+  explicit_object_const_toolbox.cpp
+  "Lamp::toggle takes its explicit object parameter by non-const reference, and the toolbox is const"
+)
+scry_add_reflection_compile_fail_test(
+  explicit-object-uncopyable
+  explicit_object_uncopyable.cpp
+  "Lamp::read takes its explicit object parameter by value, and Lamp cannot be copy-initialized from an lvalue of Lamp"
+)
+scry_add_reflection_compile_fail_test(
   unbound-member-tool
   unbound_member_tool.cpp
   "Lamp::toggle is a non-static member function; register an object of Lamp as a toolbox"

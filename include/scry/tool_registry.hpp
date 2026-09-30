@@ -146,7 +146,10 @@ public:
   /// turn that snapshotted these tools, still holds one, and the last of those is
   /// released on the host thread. Handlers run on that thread inside
   /// Harness::update(), so the toolbox's state needs no locking. A `const`
-  /// toolbox admits only const member functions.
+  /// toolbox admits only const member functions. A member function with an
+  /// explicit object parameter is called on the toolbox, which must initialize
+  /// that parameter as an lvalue, `const` when the toolbox is; the parameters
+  /// after it follow the rules of add<^^function>().
   /// @tparam Toolbox Class satisfying scry::reflection::Toolbox.
   /// @tparam Tools Leave defaulted. The tool member functions of `Toolbox` as the
   /// call site sees them, since an out-of-class definition can annotate a member

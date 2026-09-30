@@ -116,6 +116,96 @@ struct Colliding {
   }
 };
 
+// Explicit object parameters: member-call syntax binds the toolbox to them, so
+// only the parameters after them are arguments.
+struct Box {
+  std::int32_t value{7};
+
+  [[= scry::reflection::tool{"Get value"}]] std::int32_t read(this const Box& self) {
+    return self.value;
+  }
+
+  [[= scry::reflection::tool{"Get the value of a copy"}]] std::int32_t
+  copy(this Box self) {
+    return self.value;
+  }
+
+  [[= scry::reflection::tool{"Add to the value without keeping it"}]] std::int32_t
+  add_to(this const Box& self, std::int32_t amount) {
+    return self.value + amount;
+  }
+
+  [[= scry::reflection::tool{"Name the call being serviced"}]] std::string
+  whoami(this const Box&, const scry::ToolCallContext& context) {
+    return std::string{context.tool_name};
+  }
+
+  [[= scry::reflection::tool{"Add to the value"}]] std::int32_t bump(this Box& self,
+                                                                     std::int32_t by) {
+    self.value += by;
+    return self.value;
+  }
+};
+
+// Only tools a const toolbox can call: a const reference, and a copy.
+struct ConstBox {
+  std::int32_t value{3};
+
+  [[= scry::reflection::tool{"Get value"}]] std::int32_t
+  read(this const ConstBox& self) {
+    return self.value;
+  }
+
+  [[= scry::reflection::tool{"Get the value of a copy"}]] std::int32_t
+  copy(this ConstBox self) {
+    return self.value;
+  }
+};
+
+// An explicit object parameter of a base class, or of another type the toolbox
+// converts to, is initialized as any argument would be.
+struct Base {
+  std::int32_t base{2};
+};
+
+struct Derived : Base {
+  std::int32_t own{5};
+
+  [[= scry::reflection::tool{"Read the base"}]] std::int32_t
+  read_base(this const Base& self) {
+    return self.base;
+  }
+
+  [[= scry::reflection::tool{"Read a sliced copy"}]] std::int32_t
+  sliced(this Base self) {
+    return self.base;
+  }
+};
+
+// The explicit object forms registration rejects.
+struct TakesRvalue {
+  [[= scry::reflection::tool{"Consume"}]] std::int32_t take(this TakesRvalue&&) {
+    return 0;
+  }
+};
+
+struct Uncopyable {
+  Uncopyable() = default;
+  Uncopyable(const Uncopyable&) = delete;
+  Uncopyable(Uncopyable&&) = default;
+  Uncopyable& operator=(const Uncopyable&) = delete;
+  Uncopyable& operator=(Uncopyable&&) = default;
+  ~Uncopyable() = default;
+
+  [[= scry::reflection::tool{"Copy"}]] std::int32_t copy(this Uncopyable) { return 0; }
+};
+
+struct Unrelated {
+  [[= scry::reflection::tool{"Read"}]] std::int32_t read(this const Position& self) {
+    return self.x;
+  }
+};
+
 namespace colliding_grid {
 [[= scry::reflection::tool{"First"}]] inline std::int32_t first() { return 1; }
 [[= scry::reflection::tool{"Second"}]] inline std::int32_t second() { return 2; }
@@ -163,6 +253,19 @@ static_assert(scry::reflection::Toolbox<const registration::Reader>);
 static_assert(!scry::reflection::Toolbox<const registration::Counter>);
 static_assert(!scry::reflection::Toolbox<registration::Position>);
 static_assert(!scry::reflection::Toolbox<std::int32_t>);
+
+// Toolbox accepts exactly the explicit object forms registration accepts: the
+// accepted ones register below, and each rejected one has a compile-fail test or
+// fails the same check.
+static_assert(scry::reflection::Toolbox<registration::Box>);
+static_assert(!scry::reflection::Toolbox<const registration::Box>); // bump: Box&
+static_assert(scry::reflection::Toolbox<registration::ConstBox>);
+static_assert(scry::reflection::Toolbox<const registration::ConstBox>);
+static_assert(scry::reflection::Toolbox<registration::Derived>);
+static_assert(scry::reflection::Toolbox<const registration::Derived>);
+static_assert(!scry::reflection::Toolbox<registration::TakesRvalue>);
+static_assert(!scry::reflection::Toolbox<registration::Uncopyable>);
+static_assert(!scry::reflection::Toolbox<registration::Unrelated>);
 
 TEST_CASE("a function without parameters takes the empty object only") {
   scry::ToolRegistry registry;
@@ -361,4 +464,62 @@ TEST_CASE("the manifest shows the schemas generated for every registration form"
           R"(},"required":[],"type":"object"},"name":"stride_east"},)" +
           R"({"description":"Read the fixed value","input_schema":)" +
           std::string{empty_object_schema} + R"(,"name":"peek"}],"version":1})");
+}
+
+TEST_CASE("explicit object parameters bind the toolbox, not an argument") {
+  auto box = std::make_shared<registration::Box>();
+  scry::ToolRegistry registry;
+  REQUIRE(registry.add(box));
+  CHECK(registry.names() ==
+        std::vector<std::string>{"read", "copy", "add_to", "whoami", "bump"});
+  CHECK(schema_of(registry, "read") == empty_object_schema);
+  CHECK(schema_of(registry, "add_to") ==
+        std::string{R"({"additionalProperties":false,"properties":{"amount":)"} +
+            std::string{int32_schema} + R"(},"required":["amount"],"type":"object"})");
+
+  auto result = call(registry, "read", "{}");
+  REQUIRE(result);
+  CHECK(result->text == "7");
+  result = call(registry, "copy", "{}");
+  REQUIRE(result);
+  CHECK(result->text == "7");
+  result = call(registry, "add_to", R"({"amount":3})");
+  REQUIRE(result);
+  CHECK(result->text == "10");
+  CHECK(box->value == 7);
+  result = call(registry, "whoami", "{}");
+  REQUIRE(result);
+  CHECK(result->text == R"("whoami")");
+
+  // A non-const reference reaches the object the host holds.
+  result = call(registry, "bump", R"({"by":4})");
+  REQUIRE(result);
+  CHECK(result->text == "11");
+  CHECK(box->value == 11);
+  result = call(registry, "read", "{}");
+  REQUIRE(result);
+  CHECK(result->text == "11");
+}
+
+TEST_CASE("a const toolbox calls explicit object tools by const reference or copy") {
+  scry::ToolRegistry registry;
+  REQUIRE(registry.add(std::make_shared<const registration::ConstBox>(
+      registration::ConstBox{.value = 9})));
+  auto result = call(registry, "read", "{}");
+  REQUIRE(result);
+  CHECK(result->text == "9");
+  result = call(registry, "copy", "{}");
+  REQUIRE(result);
+  CHECK(result->text == "9");
+}
+
+TEST_CASE("an explicit object parameter of a base class binds the derived toolbox") {
+  scry::ToolRegistry registry;
+  REQUIRE(registry.add(registration::Derived{}));
+  auto result = call(registry, "read_base", "{}");
+  REQUIRE(result);
+  CHECK(result->text == "2");
+  result = call(registry, "sliced", "{}");
+  REQUIRE(result);
+  CHECK(result->text == "2");
 }
