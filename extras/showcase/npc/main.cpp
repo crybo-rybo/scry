@@ -134,10 +134,11 @@ void pump_until_terminal(scry::Harness& harness, const Application& app) {
   }
   auto harness = std::move(*harness_result);
 
+  // The world is a toolbox: its five annotated member functions become the NPC's
+  // tools in one registration, which adds all of them or none. The host keeps
+  // its own handle so it can report the final state.
   auto world = std::make_shared<scry_showcase::npc::World>();
-  if (auto registration =
-          scry_showcase::npc::register_world_tools(harness.tools(), world);
-      !registration) {
+  if (auto registration = harness.tools().add(world); !registration) {
     std::cerr << registration.error().message << '\n';
     return 1;
   }
@@ -162,7 +163,9 @@ void pump_until_terminal(scry::Harness& harness, const Application& app) {
   }
   pump_until_terminal(harness, app);
 
-  std::cout << "Final world: " << world->look().text << '\n';
+  const auto final_world = scry::reflection::encode(world->look());
+  std::cout << "Final world: " << (final_world ? final_world->text : "unavailable")
+            << '\n';
   return app.exit_code();
 }
 

@@ -1,7 +1,7 @@
 #include "runtime/worker.hpp"
 
-#include "core/retry.hpp"
-#include "protocol/sse.hpp"
+#include "kernel/retry.hpp"
+#include "kernel/sse.hpp"
 
 #include <algorithm>
 #include <cassert>
@@ -145,9 +145,11 @@ void WorkerActor::accept_command(WorkerCommand command) {
     pending_.push_back(std::move(*send));
     return;
   }
-  if (std::holds_alternative<ToolResultCommand>(command)) {
-    // A tool result is meaningful only while its turn owns the serialized
-    // worker slot. Results arriving after terminal cancellation are stale.
+  if (std::holds_alternative<ToolResultCommand>(command) ||
+      std::holds_alternative<AnswerAcceptedCommand>(command)) {
+    // A tool result or answer verdict is meaningful only while its turn owns
+    // the serialized worker slot. One arriving after terminal cancellation is
+    // stale.
     return;
   }
   const auto turn_id = std::get<CancelTurnCommand>(command).turn_id;
@@ -392,6 +394,10 @@ WorkerActor::handle_tool_wait_command(TurnMachine& machine, WorkerCommand comman
         .observed_at = time_.now(),
     });
   }
+  if (auto* accepted = std::get_if<AnswerAcceptedCommand>(&command);
+      accepted != nullptr && accepted->turn_id == turn.turn_id) {
+    return machine.apply(AnswerAccepted{.call_id = std::move(accepted->call_id)});
+  }
   if (const auto* cancel = std::get_if<CancelTurnCommand>(&command);
       cancel != nullptr && cancel->turn_id == turn.turn_id) {
     return machine.apply(CancelTurn{});
@@ -503,6 +509,8 @@ void WorkerActor::publish_terminal_command(MachineCommand command) {
         .tool_round_count = completion->tool_round_count,
         .tool_call_count = completion->tool_call_count,
         .unexecuted_tool_calls = std::move(completion->unexecuted_tool_calls),
+        .answered = completion->answered,
+        .answer_attempt_count = completion->answer_attempt_count,
     });
     return;
   }

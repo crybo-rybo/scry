@@ -1,4 +1,5 @@
 #include <chrono>
+#include <cstdint>
 #include <cstdlib>
 #include <expected>
 #include <iostream>
@@ -25,6 +26,46 @@ constexpr std::string_view expected_answer = "E2E_SMOKE_OK";
   return 1;
 }
 
+// The answer the typed scenario asks for. Every member is required, so the
+// server has to honor the forced tool choice and fill the whole schema.
+struct SmokeAnswer {
+  [[= scry::reflection::description{
+      "Copy this exactly: E2E_SMOKE_OK"}]] std::string token{};
+  [[= scry::reflection::description{"The sum of 2 and 3"}]] std::int32_t sum{};
+};
+
+// A typed turn over the live server: the request forces a tool call, the model
+// answers through the response tool, and ask<T>() decodes the answer. It gets a
+// Harness of its own, because the chat scenario's tool asks to be called before
+// any final answer.
+[[nodiscard]] int run_typed_answer(scry::Config config) {
+  auto created = scry::Harness::create(std::move(config));
+  if (!created) {
+    return report_error("Harness::create", created.error());
+  }
+  auto harness = std::move(*created);
+  auto conversation = scry::Conversation::create({
+      .system_prompt = "You are a deterministic protocol conformance agent. Answer "
+                       "by calling the respond tool with the requested fields.",
+  });
+  if (!conversation) {
+    return report_error("Conversation::create", conversation.error());
+  }
+  auto answered = harness.ask<SmokeAnswer>(
+      *conversation, "Set token to E2E_SMOKE_OK and sum to the sum of 2 and 3.");
+  if (!answered) {
+    return report_error("Harness::ask", answered.error());
+  }
+  if (answered->value.token != expected_answer || answered->value.sum != 5) {
+    std::cerr << "Unexpected typed answer: " << answered->completion.structured->text
+              << '\n';
+    return 1;
+  }
+  std::cout << "Local-model typed answer passed after "
+            << answered->completion.answer_attempt_count << " attempt(s).\n";
+  return 0;
+}
+
 [[nodiscard]] int run_smoke() {
   auto base_url = required_environment("SCRY_LOCAL_MODEL_BASE_URL");
   auto model = required_environment("SCRY_LOCAL_MODEL_MODEL");
@@ -33,7 +74,7 @@ constexpr std::string_view expected_answer = "E2E_SMOKE_OK";
   }
   const char* api_key = std::getenv("SCRY_LOCAL_MODEL_API_KEY");
 
-  auto created = scry::Harness::create(scry::Config{
+  const auto config = scry::Config{
       .base_url = std::move(base_url),
       .api_key = api_key == nullptr ? std::string{} : std::string{api_key},
       .model = std::move(model),
@@ -56,14 +97,15 @@ constexpr std::string_view expected_answer = "E2E_SMOKE_OK";
               .shutdown = std::chrono::seconds{2},
           },
       .max_tool_rounds = 2,
-  });
+  };
+  auto created = scry::Harness::create(config);
   if (!created) {
     return report_error("Harness::create", created.error());
   }
   auto harness = std::move(*created);
 
   int tool_call_count = 0;
-  auto registration = harness.tools().add(
+  auto registration = harness.tools().add_dynamic(
       scry::ToolDefinition{
           .name = "e2e_required_check",
           .description =
@@ -129,7 +171,7 @@ constexpr std::string_view expected_answer = "E2E_SMOKE_OK";
     return 1;
   }
   std::cout << "Local-model chat and required tool round passed.\n";
-  return 0;
+  return run_typed_answer(config);
 }
 
 } // namespace

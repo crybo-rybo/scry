@@ -7,18 +7,34 @@
 namespace scry::detail {
 namespace {
 
+// An answered turn's final message ends with the answer's text block, which is
+// the structured result rather than prose, so the text leaves it out.
 [[nodiscard]] std::string completion_text(const CompletionEvent& event) {
   if (event.transcript.empty()) {
     return {};
   }
-  const auto& final_message = event.transcript.back();
+  const auto& content = event.transcript.back().content;
+  const auto prose = content.size() - (event.answered ? 1U : 0U);
   std::string text;
-  for (const auto& block : final_message.content) {
+  for (const auto& block : content | std::views::take(prose)) {
     if (const auto* value = std::get_if<TextBlock>(&block)) {
       text += value->text;
     }
   }
   return text;
+}
+
+[[nodiscard]] std::optional<Json> completion_answer(const CompletionEvent& event) {
+  if (!event.answered || event.transcript.empty()) {
+    return std::nullopt;
+  }
+  const auto& content = event.transcript.back().content;
+  const auto* answer =
+      content.empty() ? nullptr : std::get_if<TextBlock>(&content.back());
+  if (answer == nullptr) {
+    return std::nullopt;
+  }
+  return Json{.text = answer->text};
 }
 
 // Appends the turn's whole transcript - its user message, every tool round, and
@@ -272,9 +288,11 @@ bool PumpState::conversation_limit_exceeded(
 }
 
 void PumpState::commit_completion(TurnRoute& route, CompletionEvent& event) {
-  // The callback needs only the final assistant text, so capture it before the
-  // transcript moves into the Conversation rather than retaining a second copy.
+  // The callback needs only the final assistant text and answer, so capture them
+  // before the transcript moves into the Conversation rather than retaining a
+  // second copy of it.
   event.text = completion_text(event);
+  event.structured = completion_answer(event);
   append_history(*route.conversation_, std::move(event.transcript));
 }
 

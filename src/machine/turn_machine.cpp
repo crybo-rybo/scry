@@ -1,11 +1,13 @@
 #include "machine/turn_machine.hpp"
 
-#include "core/json_codec.hpp"
-#include "core/retry.hpp"
+#include "kernel/json/codec.hpp"
+#include "kernel/retry.hpp"
 
 #include <algorithm>
 #include <array>
 #include <ranges>
+#include <string>
+#include <string_view>
 #include <utility>
 
 namespace scry::detail {
@@ -78,6 +80,22 @@ saturating_deadline(const MachineTimePoint started,
   return {};
 }
 
+// Why a typed turn's response ended it without an answer: the model gave its
+// output without calling any tool, which a server that ignores the required tool
+// choice allows, or ran out of tokens first.
+[[nodiscard]] std::string no_answer_message(const std::string_view answer_tool,
+                                            const FinishReason finish_reason) {
+  const auto truncated = finish_reason == FinishReason::length;
+  auto message = std::string{
+      truncated ? "model output reached its token limit before calling the response "
+                  "tool \""
+                : "model response did not call the response tool \""};
+  message.append(answer_tool);
+  message.append(truncated ? "\""
+                           : "\"; the server may not honor the required tool choice");
+  return message;
+}
+
 // An empty text block is representable on the wire - an Anthropic content block
 // that opens and never receives a delta, for one - but nothing downstream can
 // carry it: persistence rejects it and providers reject it on the next request.
@@ -90,12 +108,56 @@ void drop_empty_text_blocks(std::vector<ContentBlock>& content) {
   content.erase(removed.begin(), removed.end());
 }
 
+// Removes a message's blocks that belong to a response-tool call: the call
+// itself in an assistant message, its result in a user message.
+void erase_answer_blocks(Message& message, const std::string_view answer_tool,
+                         const std::vector<std::string>& answer_ids) {
+  std::erase_if(message.content, [&](const ContentBlock& block) {
+    if (const auto* call = std::get_if<ToolCallBlock>(&block)) {
+      return call->name == answer_tool;
+    }
+    const auto* result = std::get_if<ToolResultBlock>(&block);
+    return result != nullptr && std::ranges::contains(answer_ids, result->tool_call_id);
+  });
+}
+
+// Takes every rejected answer attempt out of an answered turn's transcript: the
+// response-tool calls, their error results, and any message left empty. The
+// response tool is offered only to typed turns, so committed history that named
+// it would reach a later request that does not define it, and a provider may
+// refuse tool blocks for a tool the request does not declare. Real tool calls and
+// their results stay, so every committed call still has its result.
+void strip_answer_attempts(std::vector<Message>& transcript,
+                           const std::string_view answer_tool) {
+  std::vector<std::string> answer_ids;
+  for (const auto& message : transcript) {
+    for (const auto& block : message.content) {
+      const auto* call = std::get_if<ToolCallBlock>(&block);
+      if (call != nullptr && call->name == answer_tool) {
+        answer_ids.push_back(call->id);
+      }
+    }
+  }
+  if (answer_ids.empty()) {
+    return;
+  }
+  for (auto& message : transcript) {
+    erase_answer_blocks(message, answer_tool, answer_ids);
+  }
+  std::erase_if(transcript,
+                [](const Message& message) { return message.content.empty(); });
+}
+
 } // namespace
 
 TurnMachine::TurnMachine(TurnId turn_id, ModelRequest request, RetryPolicy retry_policy,
                          ToolLoopPolicy tool_policy)
     : turn_id_(turn_id), request_(std::make_shared<ModelRequest>(std::move(request))),
-      retry_policy_(retry_policy), tool_policy_(tool_policy) {}
+      retry_policy_(retry_policy), tool_policy_(tool_policy) {
+  if (request_->response_tool) {
+    answer_tool_ = request_->response_tool->name;
+  }
+}
 
 TransitionResult TurnMachine::apply(MachineEvent event) {
   if (phase() == MachinePhase::terminal) {
@@ -153,6 +215,9 @@ TransitionResult TurnMachine::on_event(ModelCompleted event) {
     auto error = std::move(call_count.error());
     error.provider_request_id = std::move(event.response.provider_request_id);
     return finish_error(correlate(std::move(error)));
+  }
+  if (!answer_tool_.empty()) {
+    return typed_response(std::move(event.response), *call_count);
   }
   const auto at_round_limit =
       *call_count > 0 && tool_round_count_ >= tool_policy_.max_rounds;
@@ -238,18 +303,34 @@ TransitionResult TurnMachine::on_event(ToolResultReady event) {
   if (awaiting->results_received != awaiting->calls.size()) {
     return {};
   }
+  return finish_tool_round(*awaiting, event.observed_at);
+}
 
+TransitionResult TurnMachine::finish_tool_round(AwaitingToolState& awaiting,
+                                                const MachineTimePoint observed_at) {
+  // A rejected answer turns its round into an ordinary one. At the round limit
+  // there is no round left to spend on another attempt, and the caller asked for
+  // an answer, so the turn fails whatever the limit policy says.
+  if (awaiting.answer_candidate) {
+    if (tool_round_count_ >= tool_policy_.max_rounds) {
+      return fail_response(ErrorCategory::max_tool_rounds,
+                           "model exceeded the configured tool-round limit without a "
+                           "valid answer",
+                           awaiting.provider_request_id);
+    }
+    ++tool_round_count_;
+  }
   Message results{.role = Role::user};
-  results.content.reserve(awaiting->calls.size());
-  for (auto& call : awaiting->calls) {
+  results.content.reserve(awaiting.calls.size());
+  for (auto& call : awaiting.calls) {
     // results_received reaches calls.size() only after every optional is populated.
     // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
     results.content.emplace_back(std::move(call.result).value());
   }
   auto& request = mutable_request();
-  request.messages.push_back(std::move(awaiting->assistant));
+  request.messages.push_back(std::move(awaiting.assistant));
   request.messages.push_back(std::move(results));
-  return start_request(event.observed_at);
+  return start_request(observed_at);
 }
 
 TransitionResult TurnMachine::on_event(ToolExecutionFailed event) {
@@ -261,6 +342,22 @@ TransitionResult TurnMachine::on_event(ToolExecutionFailed event) {
     event.error.provider_request_id = awaiting->provider_request_id;
   }
   return finish_error(correlate(std::move(event.error)));
+}
+
+TransitionResult TurnMachine::on_event(AnswerAccepted event) {
+  auto* awaiting = std::get_if<AwaitingToolState>(&state_);
+  if (awaiting == nullptr || !awaiting->answer_candidate) {
+    return illegal(TransitionStatus::event_not_allowed);
+  }
+  // A candidate round holds exactly one call.
+  const auto& candidate = awaiting->calls.front();
+  if (candidate.id != event.call_id) {
+    return illegal(TransitionStatus::unknown_tool_call);
+  }
+  if (candidate.result) {
+    return illegal(TransitionStatus::duplicate_tool_result);
+  }
+  return complete_with_answer(*awaiting);
 }
 
 TransitionResult TurnMachine::on_event(const CancelTurn /*event*/) {
@@ -294,7 +391,45 @@ ModelRequest& TurnMachine::mutable_request() {
   return *request_;
 }
 
-TransitionResult TurnMachine::begin_tool_round(ModelResponse response) {
+TransitionResult TurnMachine::typed_response(ModelResponse response,
+                                             const std::size_t call_count) {
+  if (call_count == 0) {
+    return fail_response(ErrorCategory::protocol,
+                         no_answer_message(answer_tool_, response.finish_reason),
+                         std::move(response.provider_request_id));
+  }
+  const auto answers =
+      std::ranges::count_if(response.content, [this](const ContentBlock& block) {
+        const auto* call = std::get_if<ToolCallBlock>(&block);
+        return call != nullptr && call->name == answer_tool_;
+      });
+  const auto answer_candidate = answers == 1 && call_count == 1;
+  // Only a lone answer can end the turn, so it is validated even at the round
+  // limit; any other response there would need a round the turn cannot spend.
+  if (!answer_candidate && tool_round_count_ >= tool_policy_.max_rounds) {
+    return fail_response(ErrorCategory::max_tool_rounds,
+                         "model exceeded the configured tool-round limit without a "
+                         "valid answer",
+                         std::move(response.provider_request_id));
+  }
+  if (!add_usage(response.usage)) {
+    return fail_response(ErrorCategory::protocol,
+                         "model usage counters overflow the turn total",
+                         std::move(response.provider_request_id));
+  }
+  return begin_tool_round(std::move(response), answer_candidate);
+}
+
+ToolCallRole TurnMachine::role_of(const ToolCallBlock& call,
+                                  const bool answer_candidate) const noexcept {
+  if (answer_tool_.empty() || call.name != answer_tool_) {
+    return ToolCallRole::tool;
+  }
+  return answer_candidate ? ToolCallRole::answer : ToolCallRole::misplaced_answer;
+}
+
+TransitionResult TurnMachine::begin_tool_round(ModelResponse response,
+                                               const bool answer_candidate) {
   Message assistant{
       .role = Role::assistant,
       .content = std::move(response.content),
@@ -304,10 +439,15 @@ TransitionResult TurnMachine::begin_tool_round(ModelResponse response) {
                          "tool response exceeds the remaining Conversation byte limit",
                          std::move(response.provider_request_id));
   }
-  ++tool_round_count_;
+  if (!answer_candidate) {
+    ++tool_round_count_;
+  }
+  const auto round = answer_candidate ? tool_round_count_ + 1 : tool_round_count_;
 
-  AwaitingToolState awaiting{.provider_request_id =
-                                 std::move(response.provider_request_id)};
+  AwaitingToolState awaiting{
+      .provider_request_id = std::move(response.provider_request_id),
+      .answer_candidate = answer_candidate,
+  };
   TransitionResult result{};
   const auto remaining = tool_policy_.max_exchange_bytes - exchange_payload_bytes_;
   std::uint32_t index = 0;
@@ -316,14 +456,17 @@ TransitionResult TurnMachine::begin_tool_round(ModelResponse response) {
     if (call == nullptr) {
       continue;
     }
+    const auto role = role_of(*call, answer_candidate);
+    ++(role == ToolCallRole::tool ? tool_call_count_ : answer_attempt_count_);
     dispatched_tool_ids_.push_back(call->id);
     awaiting.calls.push_back(PendingToolCall{.id = call->id});
     result.commands.emplace_back(PublishToolCall{
         .turn_id = turn_id_,
         .call = *call,
         .remaining_exchange_bytes = remaining,
-        .round = tool_round_count_,
+        .round = round,
         .index = index,
+        .role = role,
     });
     ++index;
   }
@@ -372,6 +515,37 @@ TransitionResult TurnMachine::complete_turn(ModelResponse response,
                          "completion exceeds the remaining Conversation byte limit",
                          std::move(response.provider_request_id));
   }
+  return commit_transcript(std::move(assistant), response.finish_reason,
+                           std::move(response.provider_request_id),
+                           std::move(unexecuted), false);
+}
+
+// The committed message keeps the response's text and ends with the answer as a
+// text block. A tool call committed without its result would make the history
+// invalid on the next request of either dialect, and a result for it would leave
+// the transcript ending on a user message. The text block is never larger than
+// the call it replaces, which the round already reserved. Earlier rejected
+// attempts are taken out of the transcript, so committed history never names the
+// response tool.
+TransitionResult TurnMachine::complete_with_answer(AwaitingToolState& awaiting) {
+  auto assistant = std::move(awaiting.assistant);
+  auto& content = assistant.content;
+  const auto call = std::ranges::find_if(content, [](const ContentBlock& block) {
+    return std::holds_alternative<ToolCallBlock>(block);
+  });
+  auto answer = std::move(std::get<ToolCallBlock>(*call).arguments.text);
+  content.erase(call);
+  content.emplace_back(TextBlock{.text = std::move(answer)});
+  strip_answer_attempts(mutable_request().messages, answer_tool_);
+  return commit_transcript(std::move(assistant), FinishReason::completed,
+                           std::move(awaiting.provider_request_id), {}, true);
+}
+
+TransitionResult TurnMachine::commit_transcript(Message assistant,
+                                                const FinishReason finish_reason,
+                                                std::string provider_request_id,
+                                                std::vector<ToolCallBlock> unexecuted,
+                                                const bool answered) {
   auto& request = mutable_request();
   // Every committed message carries at least one block. A calls-only response at
   // the round limit leaves nothing to commit once its calls are dropped, so the
@@ -385,13 +559,15 @@ TransitionResult TurnMachine::complete_turn(ModelResponse response,
   return applied(CommitCompletion{
       .turn_id = turn_id_,
       .transcript = std::move(transcript),
-      .finish_reason = response.finish_reason,
+      .finish_reason = finish_reason,
       .usage = usage_,
       .attempt_count = attempt_count_,
-      .provider_request_id = std::move(response.provider_request_id),
+      .provider_request_id = std::move(provider_request_id),
       .tool_round_count = tool_round_count_,
-      .tool_call_count = static_cast<std::uint32_t>(dispatched_tool_ids_.size()),
+      .tool_call_count = tool_call_count_,
       .unexecuted_tool_calls = std::move(unexecuted),
+      .answered = answered,
+      .answer_attempt_count = answer_attempt_count_,
   });
 }
 
@@ -441,7 +617,12 @@ Result<std::size_t> TurnMachine::validate_response(ModelResponse& response) cons
         response_error(ErrorCategory::protocol, "model response contained no content"));
   }
 
-  const auto declares_tools = response.finish_reason == FinishReason::tool_use;
+  // A server forcing a tool call may report a plain stop beside the call it
+  // forced, so a typed turn takes calls with a normal finish as a tool response.
+  const auto forced_tool_stop = !answer_tool_.empty() && call_count > 0 &&
+                                response.finish_reason == FinishReason::completed;
+  const auto declares_tools =
+      response.finish_reason == FinishReason::tool_use || forced_tool_stop;
   if (declares_tools != (call_count > 0)) {
     return std::unexpected(response_error(
         ErrorCategory::protocol,

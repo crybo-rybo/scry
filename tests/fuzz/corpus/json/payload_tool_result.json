@@ -1,0 +1,1 @@
+{"content":[{"type":"text","text":"line1\nline2 \"quoted\" \u00e9"}],"is_error":false,"meta":{"latency_ms":12.5,"count":3,"ratio":-0.25,"ids":[1,2,3]}}

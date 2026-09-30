@@ -1,24 +1,42 @@
 #pragma once
 
-#include <array>
-#include <charconv>
-#include <cmath>
-#include <concepts>
 #include <cstddef>
-#include <limits>
-#include <meta>
-#include <optional>
-#include <scry/detail/reflection_json.hpp>
-#include <scry/detail/reflection_json_string.hpp>
-#include <scry/detail/reflection_meta.hpp>
+#include <expected>
 #include <scry/error.hpp>
-#include <scry/json.hpp>
 #include <string>
 #include <string_view>
-#include <type_traits>
 #include <utility>
 
 namespace scry::reflection::detail {
+
+// A codec failure on its way out of the recursion. `path` is relative to the value
+// the failing call was given (".blocks[2].text") and grows at the front as the
+// failure passes each enclosing member or element, so a successful encode or decode
+// spends nothing on paths.
+struct codec_failure {
+  std::string reason{};
+  std::string path{};
+};
+
+template <typename Type> using codec_result = std::expected<Type, codec_failure>;
+
+[[nodiscard]] inline std::unexpected<codec_failure> codec_fail(std::string reason) {
+  return std::unexpected(codec_failure{.reason = std::move(reason)});
+}
+
+[[nodiscard]] inline codec_failure at_member(codec_failure failure,
+                                             const std::string_view key) {
+  std::string prefix{"."};
+  prefix.append(key);
+  failure.path.insert(0, prefix);
+  return failure;
+}
+
+[[nodiscard]] inline codec_failure at_element(codec_failure failure,
+                                              const std::size_t index) {
+  failure.path.insert(0, "[" + std::to_string(index) + "]");
+  return failure;
+}
 
 // A host-only codec diagnostic. Result encoding uses this shape: the failure
 // describes the handler's own result type, whose schema the model never sees,
@@ -47,400 +65,13 @@ namespace scry::reflection::detail {
   return error;
 }
 
-[[nodiscard]] inline std::string member_path(const std::string& path,
-                                             const std::string_view member) {
-  std::string result = path;
-  result.push_back('.');
-  result.append(member);
-  return result;
+[[nodiscard]] inline Error encode_failure_error(const codec_failure& failure) {
+  return codec_error("$" + failure.path, failure.reason);
 }
 
-[[nodiscard]] inline std::string element_path(const std::string& path,
-                                              const std::size_t index) {
-  std::string result = path;
-  result.push_back('[');
-  result.append(std::to_string(index));
-  result.push_back(']');
-  return result;
-}
-
-template <typename Type>
-  requires SupportedValue<Type> && std::same_as<Type, std::remove_cvref_t<Type>>
-[[nodiscard]] Result<Type> decode(const JsonView& view, const std::string& path = "$");
-
-template <typename Integer>
-  requires is_supported_integer_v<Integer>
-[[nodiscard]] Result<Integer> decode_integer(const JsonView& view,
-                                             const std::string& path) {
-  const auto narrow = [&path](const auto value) -> Result<Integer> {
-    if (!std::in_range<Integer>(value)) {
-      return std::unexpected(decode_error(path, "is outside the integer range"));
-    }
-    return static_cast<Integer>(value);
-  };
-  if (const auto value = view.signed_integer()) {
-    return narrow(*value);
-  }
-  if (const auto value = view.unsigned_integer()) {
-    return narrow(*value);
-  }
-  return std::unexpected(decode_error(path, "must be an integer"));
-}
-
-template <typename Float>
-  requires is_supported_float_v<Float>
-[[nodiscard]] Result<Float> decode_float(const JsonView& view,
-                                         const std::string& path) {
-  long double value = 0.0L;
-  switch (view.kind()) {
-  case JsonKind::signed_integer:
-    value = static_cast<long double>(*view.signed_integer());
-    break;
-  case JsonKind::unsigned_integer:
-    value = static_cast<long double>(*view.unsigned_integer());
-    break;
-  case JsonKind::number:
-    value = static_cast<long double>(*view.number());
-    break;
-  default:
-    return std::unexpected(decode_error(path, "must be a number"));
-  }
-
-  const auto maximum = static_cast<long double>(std::numeric_limits<Float>::max());
-  if (!std::isfinite(value) || value < -maximum || value > maximum) {
-    return std::unexpected(decode_error(path, "must be a finite in-range number"));
-  }
-  const auto converted = static_cast<Float>(value);
-  if (!std::isfinite(converted) || (value != 0.0L && converted == Float{0})) {
-    return std::unexpected(decode_error(path, "must be a finite in-range number"));
-  }
-  return converted;
-}
-
-// The enumerator names are already in the generated schema's `enum` array, so
-// repeating them in the failure keeps a retrying model from having to guess.
-template <typename Enum>
-  requires is_supported_enum_v<Enum>
-[[nodiscard]] std::string enumerator_list() {
-  std::string names{};
-  static constexpr auto enumerators = declared_enumerators_of<Enum>();
-  template for (constexpr std::meta::info enumerator : enumerators) {
-    if (!names.empty()) {
-      names.append(", ");
-    }
-    names.append(std::meta::identifier_of(enumerator));
-  }
-  return names;
-}
-
-template <typename Enum>
-  requires is_supported_enum_v<Enum>
-[[nodiscard]] Result<Enum> decode_enum(const JsonView& view, const std::string& path) {
-  if (view.kind() != JsonKind::string) {
-    return std::unexpected(decode_error(path, "must be an enumerator name"));
-  }
-
-  const auto name = *view.string();
-  std::optional<Enum> value{};
-  static constexpr auto enumerators = declared_enumerators_of<Enum>();
-  template for (constexpr std::meta::info enumerator : enumerators) {
-    if (name == std::meta::identifier_of(enumerator)) {
-      value = std::meta::extract<Enum>(std::meta::constant_of(enumerator));
-    }
-  }
-  if (!value.has_value()) {
-    std::string message{"is not a declared enumerator; must be one of: "};
-    message.append(enumerator_list<Enum>());
-    return std::unexpected(decode_error(path, message));
-  }
-  return *value;
-}
-
-template <typename Type>
-[[nodiscard]] bool is_reflected_member(const std::string_view name) {
-  bool known = false;
-  static constexpr auto members = declared_members_of<Type>();
-  template for (constexpr std::meta::info member : members) {
-    if (name == std::meta::identifier_of(member)) {
-      known = true;
-    }
-  }
-  return known;
-}
-
-template <typename Type>
-  requires SupportedValue<Type> && std::is_aggregate_v<Type>
-[[nodiscard]] Result<Type> decode_aggregate(const JsonView& view,
-                                            const std::string& path) {
-  if (view.kind() != JsonKind::object) {
-    return std::unexpected(decode_error(path, "must be an object"));
-  }
-
-  // key_at cannot be empty here: the view is an object and index is in range.
-  for (std::size_t index = 0; index < view.size(); ++index) {
-    const auto key = view.key_at(index);
-    if (!is_reflected_member<Type>(*key)) {
-      std::string message{"contains unknown member "};
-      append_json_string(message, *key);
-      return std::unexpected(decode_error(path, message));
-    }
-  }
-
-  Type object{};
-  std::optional<Error> failure{};
-  static constexpr auto members = declared_members_of<Type>();
-  template for (constexpr std::meta::info member : members) {
-    if (!failure.has_value()) {
-      constexpr auto name = std::meta::identifier_of(member);
-      const auto field = view.find(name);
-      if (!field.has_value()) {
-        if constexpr (!std::meta::has_default_member_initializer(member)) {
-          failure = decode_error(member_path(path, name), "is a required member");
-        }
-      } else {
-        using Member = [:std::meta::type_of(member):];
-        auto decoded = decode<Member>(*field, member_path(path, name));
-        if (!decoded) {
-          failure = std::move(decoded.error());
-        } else {
-          object.[:member:] = std::move(*decoded);
-        }
-      }
-    }
-  }
-
-  if (failure.has_value()) {
-    return std::unexpected(std::move(*failure));
-  }
-  return object;
-}
-
-template <typename Optional>
-[[nodiscard]] Result<Optional> decode_optional(const JsonView& view,
-                                               const std::string& path) {
-  using Element = typename optional_traits<Optional>::value_type;
-  if (view.kind() == JsonKind::null) {
-    return Optional{std::nullopt};
-  }
-  auto decoded = decode<Element>(view, path);
-  if (!decoded) {
-    return std::unexpected(std::move(decoded.error()));
-  }
-  return Optional{std::move(*decoded)};
-}
-
-template <typename Vector>
-[[nodiscard]] Result<Vector> decode_vector(const JsonView& view,
-                                           const std::string& path) {
-  using Element = typename vector_traits<Vector>::value_type;
-  if (view.kind() != JsonKind::array) {
-    return std::unexpected(decode_error(path, "must be an array"));
-  }
-  Vector values{};
-  values.reserve(view.size());
-  for (std::size_t index = 0; index < view.size(); ++index) {
-    auto decoded = decode<Element>(*view.at(index), element_path(path, index));
-    if (!decoded) {
-      return std::unexpected(std::move(decoded.error()));
-    }
-    values.push_back(std::move(*decoded));
-  }
-  return values;
-}
-
-template <typename Array>
-[[nodiscard]] Result<Array> decode_array(const JsonView& view,
-                                         const std::string& path) {
-  using Element = typename array_traits<Array>::value_type;
-  if (view.kind() != JsonKind::array || view.size() != array_traits<Array>::size) {
-    return std::unexpected(
-        decode_error(path, "must be an array of the declared fixed size"));
-  }
-  Array values{};
-  for (std::size_t index = 0; index < values.size(); ++index) {
-    auto decoded = decode<Element>(*view.at(index), element_path(path, index));
-    if (!decoded) {
-      return std::unexpected(std::move(decoded.error()));
-    }
-    values[index] = std::move(*decoded);
-  }
-  return values;
-}
-
-template <typename Type>
-  requires SupportedValue<Type> && std::same_as<Type, std::remove_cvref_t<Type>>
-Result<Type> decode(const JsonView& view, const std::string& path) {
-  if constexpr (std::same_as<Type, bool>) {
-    if (view.kind() != JsonKind::boolean) {
-      return std::unexpected(decode_error(path, "must be a boolean"));
-    }
-    return *view.boolean();
-  } else if constexpr (is_supported_integer_v<Type>) {
-    return decode_integer<Type>(view, path);
-  } else if constexpr (is_supported_float_v<Type>) {
-    return decode_float<Type>(view, path);
-  } else if constexpr (std::same_as<Type, std::string>) {
-    if (view.kind() != JsonKind::string) {
-      return std::unexpected(decode_error(path, "must be a string"));
-    }
-    return std::string{*view.string()};
-  } else if constexpr (is_supported_enum_v<Type>) {
-    return decode_enum<Type>(view, path);
-  } else if constexpr (optional_traits<Type>::recognized) {
-    return decode_optional<Type>(view, path);
-  } else if constexpr (vector_traits<Type>::recognized) {
-    return decode_vector<Type>(view, path);
-  } else if constexpr (array_traits<Type>::recognized) {
-    return decode_array<Type>(view, path);
-  } else {
-    return decode_aggregate<Type>(view, path);
-  }
-}
-
-template <ToolArguments Args>
-[[nodiscard]] Result<Args> decode_arguments(const Json& input) {
-  auto parsed = JsonView::parse(input);
-  if (!parsed) {
-    return std::unexpected(Error{
-        .category = ErrorCategory::tool,
-        .message = "reflected tool arguments are not valid JSON",
-        .model_message = "tool arguments are not valid JSON",
-    });
-  }
-  return decode<Args>(*parsed);
-}
-
-template <typename Type>
-  requires SupportedValue<Type> && std::same_as<Type, std::remove_cvref_t<Type>>
-[[nodiscard]] Status append_encoded(std::string& output, const Type& value,
-                                    const std::string& path);
-
-template <typename Number>
-[[nodiscard]] Status append_number(std::string& output, const Number value,
-                                   const std::string& path) {
-  // Wide enough for any 64-bit integer or max_digits10 float in general form
-  // (at most 24 characters), so to_chars cannot run out of room.
-  std::array<char, 32> buffer{};
-  std::to_chars_result result{};
-  if constexpr (std::integral<Number>) {
-    result = std::to_chars(buffer.data(), buffer.data() + buffer.size(), value);
-  } else {
-    if (!std::isfinite(value)) {
-      return std::unexpected(codec_error(path, "must be finite"));
-    }
-    result = std::to_chars(buffer.data(), buffer.data() + buffer.size(), value,
-                           std::chars_format::general,
-                           std::numeric_limits<Number>::max_digits10);
-  }
-  output.append(buffer.data(), result.ptr);
-  return {};
-}
-
-template <typename Enum>
-  requires is_supported_enum_v<Enum>
-[[nodiscard]] Status append_enum(std::string& output, const Enum value,
-                                 const std::string& path) {
-  bool found = false;
-  static constexpr auto enumerators = declared_enumerators_of<Enum>();
-  template for (constexpr std::meta::info enumerator : enumerators) {
-    constexpr auto candidate =
-        std::meta::extract<Enum>(std::meta::constant_of(enumerator));
-    if (value == candidate) {
-      append_json_string(output, std::meta::identifier_of(enumerator));
-      found = true;
-    }
-  }
-  if (!found) {
-    return std::unexpected(codec_error(path, "is not a declared enumerator value"));
-  }
-  return {};
-}
-
-template <typename Sequence>
-[[nodiscard]] Status append_sequence(std::string& output, const Sequence& value,
-                                     const std::string& path) {
-  using Element = typename Sequence::value_type;
-  output.push_back('[');
-  for (std::size_t index = 0; index < value.size(); ++index) {
-    if (index != 0) {
-      output.push_back(',');
-    }
-    auto status =
-        append_encoded<Element>(output, value[index], element_path(path, index));
-    if (!status) {
-      return status;
-    }
-  }
-  output.push_back(']');
-  return {};
-}
-
-template <typename Type>
-  requires SupportedValue<Type> && std::is_aggregate_v<Type>
-[[nodiscard]] Status append_aggregate(std::string& output, const Type& value,
-                                      const std::string& path) {
-  output.push_back('{');
-  bool first = true;
-  Status status{};
-  static constexpr auto members = sorted_members_of<Type>();
-  template for (constexpr std::meta::info member : members) {
-    if (status) {
-      if (!first) {
-        output.push_back(',');
-      }
-      constexpr auto name = std::meta::identifier_of(member);
-      append_json_string(output, name);
-      output.push_back(':');
-      using Member = [:std::meta::type_of(member):];
-      status =
-          append_encoded<Member>(output, value.[:member:], member_path(path, name));
-      first = false;
-    }
-  }
-  if (!status) {
-    return status;
-  }
-  output.push_back('}');
-  return {};
-}
-
-template <typename Type>
-  requires SupportedValue<Type> && std::same_as<Type, std::remove_cvref_t<Type>>
-Status append_encoded(std::string& output, const Type& value, const std::string& path) {
-  if constexpr (std::same_as<Type, bool>) {
-    output.append(value ? "true" : "false");
-    return {};
-  } else if constexpr (is_supported_integer_v<Type> || is_supported_float_v<Type>) {
-    return append_number(output, value, path);
-  } else if constexpr (std::same_as<Type, std::string>) {
-    append_json_string(output, value);
-    return {};
-  } else if constexpr (is_supported_enum_v<Type>) {
-    return append_enum(output, value, path);
-  } else if constexpr (optional_traits<Type>::recognized) {
-    if (!value.has_value()) {
-      output.append("null");
-      return {};
-    }
-    using Element = typename optional_traits<Type>::value_type;
-    return append_encoded<Element>(output, *value, path);
-  } else if constexpr (vector_traits<Type>::recognized ||
-                       array_traits<Type>::recognized) {
-    return append_sequence(output, value, path);
-  } else {
-    return append_aggregate(output, value, path);
-  }
-}
-
-template <typename Type>
-  requires SupportedValue<Type> && std::same_as<Type, std::remove_cvref_t<Type>>
-[[nodiscard]] Result<Json> encode_value(const Type& value) {
-  std::string output{};
-  auto status = append_encoded<Type>(output, value, "$");
-  if (!status) {
-    return std::unexpected(std::move(status.error()));
-  }
-  return Json{.text = std::move(output)};
+[[nodiscard]] inline Error decode_failure_error(const std::string_view root,
+                                                const codec_failure& failure) {
+  return decode_error(std::string{root} + failure.path, failure.reason);
 }
 
 } // namespace scry::reflection::detail

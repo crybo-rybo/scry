@@ -34,18 +34,23 @@ selected Clang compiler with a libFuzzer runtime.
 
 - `include/scry/` — public headers, each compiling standalone with no third-party
   types; reflection lives here, in `detail/reflection_*.hpp`.
-- `src/` by layer — `core/` (neutral model, seams, JSON codec), `machine/`
-  (sans-I/O turn machine), `protocol/` (SSE), `provider/` (Anthropic,
-  OpenAI-compatible), `runtime/` (worker, pump, registry, conversation),
-  `transport/` (curl), `reflection/` (JSON bridge).
+- `src/` by layer — `kernel/` (C++23: error factory, JSON codec, SSE, retry,
+  transport seam and curl), `core/` (neutral model, provider seam), `machine/`
+  (sans-I/O turn machine), `provider/` (Anthropic, OpenAI-compatible),
+  `runtime/` (worker, pump, registry, conversation), `reflection/` (JSON bridge).
 - `tests/`, `examples/`, `extras/showcase/` (a standalone project the root build
   never configures), `scripts/` (local commands), `.github/scripts/` (CI helpers),
   `cmake/`, `docs/`.
 
 ## Guardrails
 
-- Keep `src/**` free of reflection syntax so the `SCRY_CLANG_TOOLING` build
-  (clang-tidy, libFuzzer) keeps compiling.
+- `src/kernel/` is C++23 without reflection in every build, enforced by the
+  compiler; it is all the `SCRY_CLANG_TOOLING` build (clang-tidy, libFuzzer)
+  compiles. Kernel code may include only `<scry/error.hpp>`, `<scry/json.hpp>`,
+  `<scry/config.hpp>`, `<scry/turn_id.hpp>`, `<scry/unique_function.hpp>`, and
+  other kernel headers, never the rest of `src/` (`kernel.include-boundary`
+  checks this). Everything else in `src/` is C++26 and is expected to use
+  reflection where it replaces hand-written shape code.
 - Top-level builds treat warnings as errors. lizard allows at most cyclomatic
   complexity 15 and 6 arguments; clang-tidy allows cognitive complexity 25. `// TODO` must link an issue.
 - Scry-originated semantic failures are values (`std::expected` / `Result<T>`).

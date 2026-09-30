@@ -71,7 +71,7 @@ TEST_CASE("tool manifests export the current registry without invoking handlers"
   CHECK(empty->text == R"({"tools":[],"version":1})");
 
   auto calls = std::make_shared<int>(0);
-  REQUIRE(harness->tools().add(definition(), handler(calls)));
+  REQUIRE(harness->tools().add_dynamic(definition(), handler(calls)));
   const auto first = harness->tools().to_json();
   REQUIRE(first);
   CHECK(
@@ -81,10 +81,11 @@ TEST_CASE("tool manifests export the current registry without invoking handlers"
   REQUIRE(repeated);
   CHECK(repeated->text == first->text);
 
-  REQUIRE_FALSE(harness->tools().add(definition(), handler(calls)));
-  REQUIRE_FALSE(harness->tools().add(definition("invalid", "{"), handler(calls)));
-  REQUIRE(harness->tools().add(definition("another", R"({"type":"object"})"),
-                               handler(calls)));
+  REQUIRE_FALSE(harness->tools().add_dynamic(definition(), handler(calls)));
+  REQUIRE_FALSE(
+      harness->tools().add_dynamic(definition("invalid", "{"), handler(calls)));
+  REQUIRE(harness->tools().add_dynamic(definition("another", R"({"type":"object"})"),
+                                       handler(calls)));
   const auto later = harness->tools().to_json();
   REQUIRE(later);
   const auto parsed = scry::JsonView::parse(*later);
@@ -104,7 +105,7 @@ TEST_CASE("tool manifests preserve escaped metadata and nested schema values") {
   REQUIRE(harness);
   const std::string name = "quoted\"tool\\name";
   const std::string description = "First line\nSecond\tline — café";
-  REQUIRE(harness->tools().add(
+  REQUIRE(harness->tools().add_dynamic(
       {
           .name = name,
           .description = description,
@@ -138,21 +139,22 @@ TEST_CASE("tool manifests preserve escaped metadata and nested schema values") {
 TEST_CASE("tool registration accepts only JSON object schemas and canonicalizes them") {
   scry::ToolRegistry registry;
 
-  auto status = registry.add(definition("malformed", "{"), contextual_handler());
+  auto status =
+      registry.add_dynamic(definition("malformed", "{"), contextual_handler());
   REQUIRE_FALSE(status);
   CHECK(status.error().category == scry::ErrorCategory::invalid_argument);
 
-  status = registry.add(definition("array", R"(["not","an","object"])"),
-                        contextual_handler());
+  status = registry.add_dynamic(definition("array", R"(["not","an","object"])"),
+                                contextual_handler());
   REQUIRE_FALSE(status);
   CHECK(status.error().category == scry::ErrorCategory::invalid_argument);
 
-  status = registry.add(definition("empty", ""), contextual_handler());
+  status = registry.add_dynamic(definition("empty", ""), contextual_handler());
   REQUIRE_FALSE(status);
   CHECK(status.error().category == scry::ErrorCategory::invalid_argument);
   CHECK(registry.empty());
 
-  REQUIRE(registry.add(definition(), contextual_handler()));
+  REQUIRE(registry.add_dynamic(definition(), contextual_handler()));
   const auto registered = entries(registry);
   REQUIRE(registered.size() == 1);
   CHECK(
@@ -163,12 +165,12 @@ TEST_CASE("tool registration accepts only JSON object schemas and canonicalizes 
 
 TEST_CASE("tool registration is additive and duplicate names do not replace records") {
   scry::ToolRegistry registry;
-  REQUIRE(registry.add(definition(), contextual_handler()));
+  REQUIRE(registry.add_dynamic(definition(), contextual_handler()));
   const auto original = entries(registry).front();
 
-  auto status =
-      registry.add(definition("forecast", R"({"type":"object","properties":{}})"),
-                   contextual_handler());
+  auto status = registry.add_dynamic(
+      definition("forecast", R"({"type":"object","properties":{}})"),
+      contextual_handler());
 
   REQUIRE_FALSE(status);
   CHECK(status.error().category == scry::ErrorCategory::invalid_argument);
@@ -180,7 +182,7 @@ TEST_CASE("tool registration is additive and duplicate names do not replace reco
 TEST_CASE("tool registration argument failures report invalid_argument") {
   scry::ToolRegistry registry;
 
-  auto empty_name = registry.add(definition(""), contextual_handler());
+  auto empty_name = registry.add_dynamic(definition(""), contextual_handler());
   REQUIRE_FALSE(empty_name);
   CHECK(empty_name.error().category == scry::ErrorCategory::invalid_argument);
   CHECK(empty_name.error().message == "tool name must not be empty");
@@ -188,18 +190,19 @@ TEST_CASE("tool registration argument failures report invalid_argument") {
   // An empty plain handler adapts to an empty contextual one rather than to a
   // wrapper that would throw on the first call, so both spellings are rejected
   // at registration.
-  auto empty_handler = registry.add(definition(), scry::ToolHandler{});
+  auto empty_handler = registry.add_dynamic(definition(), scry::ToolHandler{});
   REQUIRE_FALSE(empty_handler);
   CHECK(empty_handler.error().category == scry::ErrorCategory::invalid_argument);
   CHECK(empty_handler.error().message == "tool handler must not be empty");
 
-  auto empty_contextual = registry.add(definition(), scry::ContextualToolHandler{});
+  auto empty_contextual =
+      registry.add_dynamic(definition(), scry::ContextualToolHandler{});
   REQUIRE_FALSE(empty_contextual);
   CHECK(empty_contextual.error().category == scry::ErrorCategory::invalid_argument);
   CHECK(empty_contextual.error().message == "tool handler must not be empty");
 
-  REQUIRE(registry.add(definition(), contextual_handler()));
-  auto duplicate = registry.add(definition(), contextual_handler());
+  REQUIRE(registry.add_dynamic(definition(), contextual_handler()));
+  auto duplicate = registry.add_dynamic(definition(), contextual_handler());
   REQUIRE_FALSE(duplicate);
   CHECK(duplicate.error().category == scry::ErrorCategory::invalid_argument);
   CHECK(registry.size() == 1);
@@ -215,12 +218,12 @@ TEST_CASE("tool snapshots retain immutable registrations across later additions"
   scry::detail::FrozenToolSnapshot snapshot{};
   {
     scry::ToolRegistry registry;
-    REQUIRE(registry.add(definition(), contextual_handler(calls)));
+    REQUIRE(registry.add_dynamic(definition(), contextual_handler(calls)));
 
     snapshot = scry::detail::ToolRegistryAccess::snapshot(registry);
     REQUIRE(snapshot.entries->size() == 1);
-    REQUIRE(registry.add(definition("current_time", R"({"type":"object"})"),
-                         contextual_handler()));
+    REQUIRE(registry.add_dynamic(definition("current_time", R"({"type":"object"})"),
+                                 contextual_handler()));
     const auto current = entries(registry);
     CHECK(current.size() == 2);
     CHECK(snapshot.entries->size() == 1);
@@ -243,7 +246,7 @@ TEST_CASE("tool snapshots retain immutable registrations across later additions"
 
 TEST_CASE("registry snapshots rebuild only when registration changed") {
   scry::ToolRegistry registry;
-  REQUIRE(registry.add(definition(), contextual_handler()));
+  REQUIRE(registry.add_dynamic(definition(), contextual_handler()));
 
   const auto first = scry::detail::ToolRegistryAccess::snapshot(registry);
   const auto shared = scry::detail::ToolRegistryAccess::snapshot(registry);
@@ -252,8 +255,8 @@ TEST_CASE("registry snapshots rebuild only when registration changed") {
   CHECK(first.entries->size() == 1);
   CHECK(first.schemas->size() == 1);
 
-  REQUIRE(registry.add(definition("current_time", R"({"type":"object"})"),
-                       contextual_handler()));
+  REQUIRE(registry.add_dynamic(definition("current_time", R"({"type":"object"})"),
+                               contextual_handler()));
   const auto rebuilt = scry::detail::ToolRegistryAccess::snapshot(registry);
   CHECK(rebuilt.entries != first.entries);
   CHECK(rebuilt.schemas != first.schemas);
@@ -269,8 +272,8 @@ TEST_CASE("a standalone registry exports its manifest without a Harness") {
   // provider.
   scry::ToolRegistry tools;
   CHECK(tools.empty());
-  REQUIRE(tools.add(definition(), handler()));
-  REQUIRE(tools.add(definition("another", R"({"type":"object"})"), handler()));
+  REQUIRE(tools.add_dynamic(definition(), handler()));
+  REQUIRE(tools.add_dynamic(definition("another", R"({"type":"object"})"), handler()));
   CHECK(tools.size() == 2);
   CHECK(tools.contains("another"));
   // Names match exactly, never by prefix.
@@ -290,7 +293,7 @@ TEST_CASE("a Harness adopts a registry built before it and runs its handlers") {
 
   auto calls = std::make_shared<int>(0);
   scry::ToolRegistry tools;
-  REQUIRE(tools.add(definition(), handler(calls)));
+  REQUIRE(tools.add_dynamic(definition(), handler(calls)));
 
   auto fake = std::make_unique<scry::test::FakeTransport>();
   fake->enqueue(scripted_exchange(
@@ -303,8 +306,8 @@ TEST_CASE("a Harness adopts a registry built before it and runs its handlers") {
 
   CHECK(harness.tools().names() == std::vector<std::string>{"forecast"});
   // Registration stays open through tools() after create().
-  REQUIRE(
-      harness.tools().add(definition("another", R"({"type":"object"})"), handler()));
+  REQUIRE(harness.tools().add_dynamic(definition("another", R"({"type":"object"})"),
+                                      handler()));
   CHECK(harness.tools().size() == 2);
 
   auto conversation = unwrap(scry::Conversation::create());
@@ -323,7 +326,7 @@ TEST_CASE("a Harness adopts a registry built before it and runs its handlers") {
 
 TEST_CASE("a moved-from registry is inactive and reports invalid_state") {
   scry::ToolRegistry tools;
-  REQUIRE(tools.add(definition(), handler()));
+  REQUIRE(tools.add_dynamic(definition(), handler()));
 
   const scry::ToolRegistry adopted{std::move(tools)};
   CHECK(adopted.size() == 1);
@@ -336,7 +339,7 @@ TEST_CASE("a moved-from registry is inactive and reports invalid_state") {
   CHECK(tools.names().empty());
 
   const auto added =
-      tools.add(definition("another", R"({"type":"object"})"), handler());
+      tools.add_dynamic(definition("another", R"({"type":"object"})"), handler());
   REQUIRE_FALSE(added);
   CHECK(added.error().category == scry::ErrorCategory::invalid_state);
 
@@ -347,7 +350,7 @@ TEST_CASE("a moved-from registry is inactive and reports invalid_state") {
   // Move-assigning a fresh registry makes the variable usable again.
   tools = scry::ToolRegistry{};
   // NOLINTEND(bugprone-use-after-move)
-  REQUIRE(tools.add(definition(), handler()));
+  REQUIRE(tools.add_dynamic(definition(), handler()));
   CHECK(tools.size() == 1);
 }
 
@@ -356,10 +359,10 @@ TEST_CASE("both handler shapes register and export the same contract") {
   auto contextual_calls = std::make_shared<int>(0);
 
   scry::ToolRegistry plain;
-  REQUIRE(plain.add(definition(), handler(plain_calls)));
+  REQUIRE(plain.add_dynamic(definition(), handler(plain_calls)));
 
   scry::ToolRegistry contextual;
-  REQUIRE(contextual.add(definition(), contextual_handler(contextual_calls)));
+  REQUIRE(contextual.add_dynamic(definition(), contextual_handler(contextual_calls)));
 
   const auto plain_manifest = plain.to_json();
   const auto contextual_manifest = contextual.to_json();
@@ -377,20 +380,21 @@ TEST_CASE("the plain overload's adapter delivers arguments unchanged") {
   scry::ToolRegistry registry;
   scry::Json plain_seen{};
   scry::Json contextual_seen{};
-  REQUIRE(registry.add(definition("plain"),
-                       scry::ToolHandler{[&plain_seen](scry::Json arguments) {
-                         plain_seen = arguments;
-                         return scry::Result<scry::Json>{std::move(arguments)};
-                       }}));
-  REQUIRE(registry.add(definition("contextual"),
-                       scry::ContextualToolHandler{
-                           [&contextual_seen](const scry::ToolCallContext& context,
-                                              scry::Json arguments) {
-                             contextual_seen = arguments;
-                             return scry::Result<scry::Json>{scry::Json{
-                                 .text = std::string{R"({"tool":")"} +
-                                         std::string{context.tool_name} + R"("})"}};
-                           }}));
+  REQUIRE(registry.add_dynamic(definition("plain"),
+                               scry::ToolHandler{[&plain_seen](scry::Json arguments) {
+                                 plain_seen = arguments;
+                                 return scry::Result<scry::Json>{std::move(arguments)};
+                               }}));
+  REQUIRE(
+      registry.add_dynamic(definition("contextual"),
+                           scry::ContextualToolHandler{
+                               [&contextual_seen](const scry::ToolCallContext& context,
+                                                  scry::Json arguments) {
+                                 contextual_seen = arguments;
+                                 return scry::Result<scry::Json>{scry::Json{
+                                     .text = std::string{R"({"tool":")"} +
+                                             std::string{context.tool_name} + R"("})"}};
+                               }}));
   const auto registered = entries(registry);
   REQUIRE(registered.size() == 2);
 

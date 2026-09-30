@@ -30,6 +30,10 @@ which never enter a request body.
 The disposable self-signed key and certificate under `tls/` follow the same
 "deliberate test fixture" convention; see [`tls/README.md`](tls/README.md).
 
+`json/` holds a different kind of golden: the acceptance boundary and canonical
+bytes of the kernel's JSON layer, generated from the third-party codec it
+replaced; see [`json/README.md`](json/README.md).
+
 There is no OpenAI streaming golden file: `openai_stream_tests.cpp` builds each
 chunk from a template so it can vary one field at a time, and the end-to-end
 OpenAI streams live next to the integration tests that assert on them.

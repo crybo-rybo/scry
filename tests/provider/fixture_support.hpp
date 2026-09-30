@@ -1,12 +1,15 @@
 #pragma once
 
-#include "core/json_codec.hpp"
 #include "core/provider.hpp"
+#include "provider/anthropic_content.hpp"
+#include "provider/shared.hpp"
 
 #include <catch2/catch_test_macros.hpp>
+#include <cstddef>
 #include <fstream>
 #include <iterator>
 #include <scry/config.hpp>
+#include <scry/json.hpp>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -52,19 +55,41 @@ openai_config(std::string base_url = "https://api.openai.test/v1") {
   };
 }
 
-[[nodiscard]] inline detail::JsonValue json_value(const std::string_view text) {
-  auto value = detail::parse_json(text, ErrorCategory::protocol, "invalid test JSON");
-  REQUIRE(value);
-  return std::move(*value);
+[[nodiscard]] inline JsonView json_view(const std::string_view text) {
+  auto view = JsonView::parse(Json{.text = std::string{text}});
+  REQUIRE(view);
+  return *view;
 }
 
 // Request fixtures assert JSON meaning. They deliberately do not promise
-// byte-for-byte wire spelling or member order.
+// byte-for-byte wire spelling or member order; request_bytes_tests.cpp does.
 [[nodiscard]] inline std::string canonical(const std::string_view json) {
-  auto encoded = detail::write_json_text(json_value(json), ErrorCategory::protocol,
-                                         "test JSON could not be encoded");
-  REQUIRE(encoded);
-  return *encoded;
+  return json_view(json).to_json().text;
+}
+
+// The string members named `field` of each element of the array at `name`.
+[[nodiscard]] inline std::vector<std::string>
+member_strings(const JsonView& owner, const std::string_view name,
+               const std::string_view field) {
+  const auto array = owner.find(name);
+  REQUIRE(array);
+  std::vector<std::string> values{};
+  for (std::size_t index = 0; index < array->size(); ++index) {
+    const auto value = array->at(index)->find(field);
+    REQUIRE(value);
+    REQUIRE(value->string());
+    values.emplace_back(*value->string());
+  }
+  return values;
+}
+
+// One Anthropic content block decoded as a stream event carries it.
+[[nodiscard]] inline Result<detail::ContentBlock>
+anthropic_content(const std::string_view json, const bool streaming_start) {
+  return detail::decode_payload<detail::AnthropicContent>(json_view(json), "Anthropic")
+      .and_then([streaming_start](detail::AnthropicContent content) {
+        return detail::anthropic_content_block(std::move(content), streaming_start);
+      });
 }
 
 [[nodiscard]] inline std::string header(const detail::TransportRequest& request,

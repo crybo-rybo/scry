@@ -15,8 +15,9 @@ instructions.
 |---|---|
 | `Config` | Provider endpoint, credentials, model, sampling, retries, timeouts, and resource limits |
 | `Conversation` | System prompt and committed message history |
-| `ToolRegistry` | Standalone additive registry of tool definitions and handlers; a Harness takes ownership at `create()` |
+| `ToolRegistry` | Standalone additive registry of reflected and dynamic tools; a Harness takes ownership at `create()` |
 | `Turn` | Handle to an accepted exchange: identity, completion query, cancellation, and callback disconnection |
+| `ResponseFormat` | Response tool and answer validator that make a turn end with a [structured answer](#typed-completions) |
 | `Harness` | Configured runtime, worker thread, registry, and callback pump |
 
 `Harness::validate(config)` runs the configuration checks used by `create()`
@@ -41,8 +42,8 @@ Use a Harness, its registry, its Turns, and their Conversations from one host
 thread. The public handles do not synchronize concurrent application access. A
 registry that no Harness owns yet is a plain move-only value on the thread that
 built it; `Harness::create()` adopts it and leaves the source inactive. All
-callbacks and tool handlers run inside `update()` on its calling thread; they
-can access host state owned by that thread directly.
+callbacks, tool handlers, and answer validators run inside `update()` on its
+calling thread; they can access host state owned by that thread directly.
 
 One worker per Harness owns the network transfers, provider decoding, and turn
 machine. It processes accepted turns in FIFO order, with one active turn at a
@@ -88,7 +89,8 @@ counts as delivered; the Harness remains valid. Tool-handler exceptions are
 caught and converted into tool-error results.
 
 `send_and_wait()` runs `send()` and pumps `update()` until the requested turn
-finishes. It also runs callbacks and handlers for other accepted turns. It does
+finishes; `ask<Answer>()` does the same for a typed turn. It also runs callbacks
+and handlers for other accepted turns. It does
 not expose the waited Turn handle, and calling it from a callback or handler
 returns `invalid_state`. When `update()` throws while it is pumping, the
 exception propagates out of `send_and_wait()` and the waited turn is
@@ -132,6 +134,9 @@ Invalid transitions return diagnostics without changing state or issuing work.
 Tests inject time and event sequences directly.
 
 A successful model response either completes the turn or starts a tool round.
+In a [typed turn](#typed-completions) the model completes it by calling the
+response tool instead, and the round holding that call ends the turn once the
+host accepts the answer.
 Calls from one response are admitted to the event queue as a batch: if the whole
 batch cannot fit, no handler in it runs. The pump dispatches calls in provider
 order, posts each result to the worker, and invokes the optional `on_tool_call`
@@ -165,14 +170,27 @@ and `usage` accumulates usage from completed model responses.
 
 ## Tools and JSON
 
+Tools are declared in C++ and registered by reflection. `ToolRegistry::add()`
+takes a toolbox object, an annotated function or a namespace of them, or an
+argument aggregate with a callable, and generates each tool's argument schema,
+its strict argument decoder, and its result encoder from the declaration.
+[Dynamic tools](#dynamic-tools), registered with `add_dynamic()`, are the escape
+hatch for tools that exist only at runtime.
+
 A registry is a standalone value: a host builds one, `Harness::create(config,
 std::move(tools))` adopts it, and `Harness::tools()` keeps it open for later
 registrations. A registry is additive: duplicate names are rejected and there is
-no replacement or removal operation. Each accepted turn retains the
-registrations visible at `send()`. Immutable registration and schema snapshots
-are reused until another tool is added; handlers stay on the host thread.
+no replacement or removal operation. Every registration call is atomic. A call
+that registers several tools, such as a toolbox or a namespace, validates all
+of them first: each name must be non-empty and distinct from the other names in
+the call and from every tool already registered, each schema must be a JSON
+object, and each handler must be non-empty. Only then does it insert them, so a
+failed call leaves the registry exactly as it was, even when the failure is an
+allocation. Each accepted turn retains the registrations visible at `send()`.
+Immutable registration and schema snapshots are reused until another tool is
+added; handlers stay on the host thread.
 
-Every tool handler, reflected or explicit, comes in two shapes: one that receives
+Every tool handler, reflected or dynamic, comes in two shapes: one that receives
 only its arguments, and one that also receives a `ToolCallContext` naming the call
 it is servicing — the `TurnId`, the provider-assigned `call_id`, the registered
 `tool_name`, the one-based `round`, and the zero-based `index` within that round's
@@ -181,8 +199,8 @@ a handler can correlate its own work with the turn without counting calls itself
 The context is borrowed: both string views point into the call block being
 dispatched and are valid only until the handler returns. A handler that keeps
 either beyond its return must copy the text. Registrations store one handler
-shape internally, so the two paths export an identical tool contract and differ
-in nothing the model can see.
+shape internally, so every registration form exports the same kind of tool
+contract and differs in nothing the model can see.
 
 Before a handler runs, a call passes two admission gates in a fixed order. First
 `Config::max_tool_calls_per_turn`, which bounds the calls one turn may dispatch
@@ -199,7 +217,10 @@ because there is no handler for the host to admit. A refused call runs no handle
 and so can have no side effect. The model is given `{"error": message}` flagged
 as a tool error: the fixed text `tool call limit for this turn reached; respond
 without calling tools` for the limit, the host's `model_message` for a hook
-refusal. That result reaches `on_tool_call` with `is_error` and is posted to the
+refusal. A typed turn still requires a tool call and ends only on its response
+tool, so there the limit's text instead tells the model to call that tool, by
+its name, on its own with the final answer. That result reaches `on_tool_call`
+with `is_error` and is posted to the
 worker like any other, so the turn continues and commits normally. A hook that
 throws is treated exactly like a handler that throws: the call is refused with the
 same fixed text and the turn carries on. The hook runs under the same invocation
@@ -231,58 +252,129 @@ commits.
 in registration order. Every entry contains the registered `name`, `description`,
 and `input_schema` object, including reflected parameter annotations. This is
 the provider-neutral tool contract; provider adapters apply their own wire
-envelopes. The export includes both registration paths, invokes no handlers, and
-makes no provider request. It reads the current registry rather than an active
-turn's frozen snapshot, and returns owned text that later registrations do not
-change. The host owns writing that text to a file or running the export as a
-build step; only tools registered on that execution path are included. Export
-needs no Harness: a registry built on its own exports the same document without
-provider configuration, libcurl, or a worker. The manifest version is independent
-of the library version: incompatible changes to its structure or field meanings
-increment it; additive fields keep the version, and consumers should ignore
-unknown fields.
+envelopes. The export includes reflected and dynamic tools alike, invokes no
+handlers, and makes no provider request. It reads the current registry rather
+than an active turn's frozen snapshot, and returns owned text that later
+registrations do not change. The host owns writing that text to a file or
+running the export as a build step; only tools registered on that execution path
+are included. Export needs no Harness: a registry built on its own exports the
+same document without provider configuration, libcurl, or a worker. The manifest
+version is independent of the library version: incompatible changes to its
+structure or field meanings increment it; additive fields keep the version, and
+consumers should ignore unknown fields.
 
 ### Reflected tools
 
-`scry::reflection::add<Args>()` registers a typed callable at runtime using a
-compile-time schema, `input_schema_v<Args>`, and generated argument decoding and
-result encoding. It lowers to the same registry as explicit-schema tools and
-preserves move-only handler captures.
+A reflected tool is declared in one of three ways, and each lowers to the same
+registry entry: a name, a description, a schema generated by the
+[reflected codec](#reflected-codec), and a handler that decodes the arguments
+strictly, calls the C++ code, and encodes what it returns. The schema, the
+decoder, and the encoder cannot disagree, because one compile-time model of the
+argument and result types drives all three. `examples/toolbox.cpp` shows each
+form.
 
-```cpp
-struct ForecastArgs {
-  [[= scry::reflection::description{"City to query"}]] std::string city;
-  std::optional<int> days = std::nullopt;
-};
-struct Forecast { std::string summary; double temperature_c; };
+- **A toolbox.** `ToolRegistry::add(std::shared_ptr<T>)` registers every member
+  function of `T` annotated with `scry::reflection::tool`, each bound to that one
+  object. `add(T&&)` moves the object into the registry first and then does the
+  same, so the registry owns the only copy.
+- **Annotated functions.** `add<^^forecast>()` registers one annotated function.
+  `add<^^npc_tools>()` registers every annotated function declared directly in
+  the namespace `npc_tools`, in declaration order; nested namespaces are not
+  searched. A static member function registers as a free function does. A
+  non-static member function needs an object, so it is registered through its
+  class as a toolbox.
+- **An argument aggregate and a callable.** `add<Args>(ToolMetadata, handler)`
+  registers any callable that takes `Args`, which suits a lambda capturing host
+  state. The name and description come from `ToolMetadata`.
 
-auto status = scry::reflection::add<ForecastArgs>(
-    tools,
-    {.name = "forecast", .description = "Return the forecast for one city"},
-    [](ForecastArgs args) -> scry::Result<Forecast> {
-      return lookup_forecast(std::move(args));
-    });
+Registration reads only the declarations that precede the call in its own
+translation unit, so declare a namespace's tools before registering it. Each
+unit registers what it sees: the namespace's tools so far, and the annotations
+and parameter names a function's declarations so far give it, including any an
+out-of-class toolbox member definition adds. These facts are a defaulted template
+argument of each reflected `add()` overload, so units that see different
+declarations instantiate distinct specializations the linker cannot merge.
 
-// The same registration, with the call's identity as an optional leading parameter.
-auto traced = scry::reflection::add<ForecastArgs>(
-    tools,
-    {.name = "traced_forecast", .description = "Return the forecast for one city"},
-    [](const scry::ToolCallContext& context, ForecastArgs args) -> Forecast {
-      log(context.turn_id, context.round, context.call_id);
-      return lookup_forecast(std::move(args));
-    });
-```
+An annotated function is named after its identifier, and a
+`scry::reflection::name{"..."}` annotation on the function replaces it. Its
+description is the `tool` annotation's text, which must not be empty; a
+`description` annotation on a function is an error, since the `tool` text already
+is the description, and so is more than one `tool` or `name` annotation. `tool`
+applies only to functions: on a variable, data member, or class it is an error.
+Tool names within one toolbox or namespace must be distinct, which is checked at
+compile time, and against the registry, which is checked at registration. A
+toolbox class or namespace that declares no tool function is an error.
 
-The tool name and description come from `ToolMetadata`. Parameter descriptions
-come from P3394 `scry::reflection::description` annotations on members. Duplicate
-Scry description annotations on one member fail at compile time.
+A toolbox's tools are the member functions its class declares itself; inherited
+member functions are not considered. Each must be public, not deleted, and not
+`&&`-qualified. A toolbox registered as `std::shared_ptr<const T>` admits only
+`const` member functions. Function templates cannot be tools: GCC 16 cannot read
+annotations on a template, so an annotated function template in a namespace or
+class is not seen.
+
+A tool member function may take a C++23 explicit object parameter, such as
+`int read(this const Box& self)`: the registry calls it on the toolbox it holds,
+an lvalue that is `const` when the toolbox is, so that parameter is never an
+argument. The lvalue initializes it as it would any argument: `const T&` always
+binds; `T&` binds a non-const toolbox and reaches the object the host shares; a
+by-value `T` copies the toolbox per call, so it must be copy-constructible from
+that lvalue; a base-class reference or other type binds when the lvalue converts
+to it; an rvalue reference never binds. Any other form is a compile error.
+`this auto&& self` makes the function a template, which is not seen.
+
+A tool function's parameters, after an optional explicit object parameter and an
+optional `const ToolCallContext&`, take one of three forms:
+
+- **None.** The tool takes no arguments. Its schema is the empty closed object,
+  `{"additionalProperties":false,"properties":{},"required":[],"type":"object"}`,
+  and decoding accepts `{}` alone.
+- **One aggregate.** When exactly one parameter remains and its type, without
+  references and cv-qualifiers, is a plain aggregate class (not `std::string`,
+  `std::optional`, or another standard type), that class is the argument
+  object, exactly as for `add<Args>()`.
+- **Anything else.** Scry synthesizes the argument object with
+  `std::meta::define_aggregate`: one required member per parameter, named after
+  the parameter, of the parameter's type without references and cv-qualifiers,
+  with no description. Default arguments are ignored. GCC 16 cannot read
+  annotations on function parameters, so a tool whose parameters need
+  descriptions, defaults, or optional members takes an argument aggregate
+  instead. Every parameter must be named, in some declaration of the function,
+  and of a `SupportedValue` type. A single aggregate meant as one member of the
+  argument object needs a wrapper aggregate or a second parameter.
+
+The decoded arguments are moved into the call, so each parameter takes a value,
+a `const` reference, or an rvalue reference. A non-const lvalue reference, a
+`volatile` parameter, or a `ToolCallContext` anywhere but first (after the
+explicit object parameter, if there is one) is a compile error. An `add<Args>()`
+handler, likewise invoked with moved arguments, may take a leading
+`const ToolCallContext&`; `ToolHandlerFor` accepts either arity, preferring the
+contextual one, and a handler that trails the context fails to compile.
+
+Handlers and tool functions return a supported value, a `Result` of one, `void`,
+or `Status`. A value is encoded as the tool result. `void` and a successful
+`Status` both send `{}`: a tool that acts for its side effects has nothing to
+report beyond success. A failed `Status` or `Result` is a handler error like any
+other. The returned object is encoded without an additional copy or move,
+including aggregates whose user-declared destructor suppresses an implicit move
+constructor. Raw `Json`, references, futures, and awaitables are not reflected
+result types. `reflection::encode(value)` uses the same value encoder without
+requiring registration.
+
+Handlers run synchronously on the host thread, inside `Harness::update()`, so a
+toolbox's state needs no locking. Each registration from a toolbox holds a copy
+of its `std::shared_ptr`, so the toolbox lives while the registry or any turn
+that snapshotted it does, and is released on the host thread. The registry never
+borrows an object: an lvalue passed to `add(T&&)` is a compile error; a host can
+instead pass a `std::shared_ptr` with a no-op deleter and own the lifetime.
+
+Parameter descriptions come from P3394 `scry::reflection::description`
+annotations on members; duplicates on one member fail at compile time.
 `scry::reflection::description_of<View>()` builds the same annotation from a
-`std::string_view` with static storage duration, so a host can keep its parameter
-text in one catalog instead of in literals spread across aggregates.
-
-`scry::reflection::schema_v<Value>` is the same generator over any `SupportedValue`,
-including handler result types; Scry sends only `input_schema_v<Args>` to a provider,
-so a result schema is for a host's own contract export.
+`std::string_view` with static storage duration, so a host can keep its
+parameter text in one catalog. `scry::reflection::schema_v<Value>` is the same
+generator over any `SupportedValue`, including handler result types; Scry sends
+only `input_schema_v<Args>` to a provider, so a result schema is for a host's own
+contract export.
 
 Argument objects and nested objects must be complete, default-constructible,
 move-constructible, move-assignable plain aggregates. They must have no bases,
@@ -299,28 +391,39 @@ Supported member and result values are:
 - `std::vector<T, Allocator>` except `vector<bool, Allocator>`; `std::array<T, N>`;
   and recursively supported aggregates. Containers must support default
   construction, move construction, and move assignment.
+- `std::variant<A, B, ...>` whose alternatives are supported aggregates, each
+  with a distinct `scry::reflection::tag`. An untagged variant, or one with a
+  non-aggregate alternative, is not supported.
 
-Only a default member initializer permits omission. Only `std::optional<T>`
-permits JSON `null`. Thus `std::optional<int> value;` is required and nullable,
-while `int value = 1;` is omittable and non-null. Omission preserves the C++
-initializer.
+Only a default member initializer, or `skip_null` on a `std::optional<T>` member,
+permits omission. Only `std::optional<T>` permits JSON `null`. Thus
+`std::optional<int> value;` is required and nullable, while `int value = 1;` is
+omittable and non-null. Omission preserves the C++ initializer, except that an
+omitted `skip_null` member decodes as disengaged.
 
 Generated schemas use closed inline objects, numeric range bounds, exact array
 lengths, and a provider-neutral JSON Schema subset. Their keywords are
 `additionalProperties`, `anyOf`, `description`, `enum`, `items`, `maxItems`,
 `minItems`, `minimum`, `maximum`, `properties`, `required`, and `type`.
-Object keys and required names are sorted; enum values keep declaration order.
-Schemas omit `$schema`, references, definitions, `title`, and `default`.
+Object keys and required names are sorted by final JSON key; enum values and
+variant alternatives keep declaration order. A tagged variant is an `anyOf` of
+its alternatives' object schemas, each with a required `type` property whose
+`enum` holds that alternative's tag; an optional variant adds `{"type":"null"}`
+to the same `anyOf`. Schemas omit `$schema`, references, definitions, `title`,
+and `default`.
 
 Decoding recursively rejects unknown or missing fields, incorrect JSON kinds,
-disallowed null, out-of-range or non-finite numbers, unknown enum names, and
-incorrect fixed-array lengths. A floating-point JSON value such as `1.0` does
-not decode into an integer member. Canonical parsing collapses duplicate object
-keys before dispatch, so handlers do not see the original lexical duplicates.
+disallowed null, out-of-range or non-finite numbers, unknown enum names, missing
+or unknown variant tags, and incorrect fixed-array lengths. Only a number spelled
+as digits alone is an integer, so neither `1.0` nor `1e2` decodes into an integer
+member, and neither does `-0`, which is the double -0.0. Canonical parsing
+collapses duplicate object keys before dispatch, the last occurrence winning, so
+handlers do not see the original lexical duplicates.
 
 A decode failure fills `Error::model_message` with the host `message` minus its
 `reflected JSON at ` prefix: the JSON path of the offending value and what the
 schema required there, plus the declared enumerator names when an enum value is
+unrecognized, or the declared tags when a variant's `type` is missing or
 unrecognized. Argument text that is not JSON at all reports `tool arguments are
 not valid JSON`. Every word of it is derived from the schema the model was
 already given, so the model can correct itself without learning anything new. A
@@ -328,34 +431,123 @@ result-encoding failure fills no `model_message`: it describes the handler's own
 result type, whose schema the model never sees, so the model receives the fixed
 diagnostic.
 
-Handlers are invoked with moved arguments and return a supported value or
-`Result` of one. A handler may declare a leading `const ToolCallContext&`
-parameter; `ToolHandlerFor` accepts either arity and checks the result type of
-whichever form is viable, preferring the contextual one. The context must lead:
-a handler that trails it is not a reflected handler and fails to compile. Raw
-`Json`, `void`, `Status`, references, futures, and awaitables are not reflected
-result types. The returned object is encoded without an
-additional copy or move, including aggregates whose user-declared destructor
-suppresses an implicit move constructor. `reflection::encode(value)` uses the
-same value encoder without requiring registration.
+Every declaration or type the rules above reject fails to compile at `add`,
+`schema_v`, or `input_schema_v` with a `static_assert` that names the function,
+member path, or namespace and the reason, for example `ForecastArgs does not
+satisfy scry::reflection::ToolArguments: ForecastArgs::window.when:
+std::chrono::duration<long int> is not a supported reflected value`. Those entry
+points are unconstrained so that this text is what the compiler prints; the
+concepts `SupportedValue`, `ToolArguments`, `ToolHandlerFor`, and `Toolbox` are
+the SFINAE-friendly form of the same checks.
 
-### Explicit-schema tools
+### Reflected codec
 
-`ToolRegistry::add(ToolDefinition, ToolHandler)` accepts a JSON schema object and
-a move-only `Json -> Result<Json>` callable;
-`ToolRegistry::add(ToolDefinition, ContextualToolHandler)` accepts a move-only
-`(const ToolCallContext&, Json) -> Result<Json>` callable instead. The overloads
-are separated by the handler's arity, so a lambda of either shape selects one of
-them without a cast. Registration validates and canonicalizes the schema as a
-JSON object; Scry does not implement general JSON Schema validation. An empty
-handler of either shape is rejected at registration. The handler receives
-canonical object arguments and owns validation against its schema: Scry has
-checked that the arguments parse and form an object, not that they match the
-schema the model was given. A handler that rejects them with
+The reflection layer is Scry's serialization engine, and reflected tools are its
+first consumer: their schemas, argument decoding, and result encoding are this
+codec applied to the argument and result types. One compile-time model of a type (its shape, its fields in
+canonical key order, and its annotations) drives schema generation, encoding,
+and decoding, so the three cannot disagree about a key, an omission, or a tag.
+
+Three concepts name what it accepts. `SupportedValue` is the closed family of the
+previous section: every value has a schema, encodes, and decodes. `Encodable`
+adds two encode-only leaves: `std::string_view`, written as a JSON string, for
+wire text borrowed from elsewhere, and `scry::Json`, which is checked by the
+validation scan request encoding uses and spliced verbatim. Because encoding
+only reads, an `Encodable` aggregate need not be default-constructible or
+movable and may have `const` members or reference members, through which it
+borrows a value it writes. `Decodable` adds `scry::Json`, which
+captures the canonical text of whatever value sits at its position, `null`
+included, as `JsonView::to_json()` writes it; `std::optional<scry::Json>` reads
+`null` as disengaged. Neither leaf has a schema, so neither may appear in tool
+arguments, handler results, or `schema_v`.
+
+`reflection::encode(value)` accepts any `Encodable` value and returns canonical
+JSON. The writer emits object keys in canonical order, strings with the
+canonical writer's escapes, and numbers in the
+shortest spelling that reads back as the same value of their own type, so a
+`float` 0.7 is written `0.7`; the result then passes once through the canonical
+writer, which settles exponent spelling and canonicalizes spliced `Json` text.
+It fails with `tool` and the value's path for a non-finite number, an undeclared
+enumerator value, `Json` text that is not JSON, or a variant left valueless by an
+exception. `reflection::decode<T>(json)` and `decode<T>(view)` accept any
+`Decodable` `T` and apply the decoding rules of the previous section. They
+report a failure as `invalid_argument`, with the same path-based `message` and
+`model_message` a tool-argument failure carries, so a host can hand a typed
+answer's failure back to the model; text that is not JSON reports `reflected
+JSON text is not valid JSON`. The tool path keeps `ErrorCategory::tool`. A type
+outside the family fails to compile with the member path and the reason, and
+`Encodable` and `Decodable` are the SFINAE-friendly checks.
+
+Annotations are declared in `<scry/annotations.hpp>`, which does not need a
+reflection-enabled compiler to include: its types are plain structural types,
+and only writing `[[= ...]]` requires C++26. A class annotation goes between the
+class-key and the class name, `struct [[= scry::reflection::tag{"text"}]]
+TextBlock { ... };`. Several annotations on one entity each take their own `=`,
+in one bracket, `[[= a, = b]]`, or in separate ones.
+
+| Annotation | Applies to | Effect |
+|---|---|---|
+| `description{"..."}` | Data member | The member schema's `description` |
+| `name{"key"}` | Data member, or tool function | Replaces the member's JSON key in encoding, decoding, schemas, and failure paths; on a tool function, replaces the tool name |
+| `tool{"..."}` | Function or member function | Declares a [reflected tool](#reflected-tools) and supplies its description |
+| `tag{"value"}` | Class | The class's `type` value as a variant alternative; no effect elsewhere |
+| `skip_null` | Class, or a `std::optional` member | A disengaged optional is omitted, and its absence decodes as disengaged |
+| `emit_null` | `std::optional` member | Restores `null` output for one member of a `skip_null` class |
+| `ignore_unknown` | Class | Decoding ignores members the class does not declare |
+
+Objects are written in lexical byte order of their final keys. A variant
+alternative's object carries `"type":"<tag>"` at its sorted position. Decoding
+reads `type` first and dispatches on it, and the tag is not an unknown member of
+the alternative. A tagged class outside a variant neither writes nor accepts
+`type`. A `skip_null` member is left out of the schema's `required` list, and
+its absence overrides its initializer, so every encoded value decodes to itself.
+`ignore_unknown` relaxes only the class it annotates: its members' values and
+any enclosing class stay strict, and its schema stays closed, because a schema
+describes what a producer should send.
+
+Each of these fails to compile with a diagnostic naming the class or member: two
+members of one class with one final key; a variant alternative that is not an
+aggregate, has no tag, shares its tag, or has a member whose final key is
+`type`; `skip_null` or `emit_null` on a member that is not a `std::optional`, or
+both on one member; more than one `name`, `description`, or `tag` on one entity;
+`tag` or `ignore_unknown` on a data member, or `name` or `emit_null` on a
+class; and `tool` on a data member or a class, which the tool registration
+checks also report for any other entity that is not a function.
+
+The public message model is reflected too. `TextBlock`, `ToolCallBlock`, and
+`ToolResultBlock` carry the tags `text`, `tool_call`, and `tool_result`, so
+`ContentBlock` is a tagged variant and a host can pass a `Message`, or a vector
+of them, to `reflection::encode()` and `decode()`. The encoding is the
+per-message shape of the `Conversation::to_json()` document. Every member of the
+model has an initializer, so `decode()` reads an absent member as its initial
+value, while `Conversation::from_json()` requires every member. Because the
+blocks carry annotations, including `<scry/message.hpp>` needs a C++26
+compiler, as the rest of the public API does.
+
+### Dynamic tools
+
+`ToolRegistry::add_dynamic(ToolDefinition, ToolHandler)` registers a tool from a
+hand-written JSON schema object and a move-only `Json -> Result<Json>` callable;
+`add_dynamic(ToolDefinition, ContextualToolHandler)` accepts a move-only
+`(const ToolCallContext&, Json) -> Result<Json>` callable instead. They are the
+escape hatch for tools that exist only at runtime, such as ones bridged from a
+scripting language, another process, or a plugin manifest, where there is no
+C++ declaration to reflect. A tool declared in C++ belongs on `add()`, where its
+schema and argument checks are generated and cannot drift apart.
+
+The overloads are separated by the handler's arity, so a lambda of either shape
+selects one of them without a cast. Registration validates and canonicalizes the
+schema as a JSON object; Scry does not implement general JSON Schema validation.
+An empty handler of either shape is rejected at registration. The handler
+receives canonical object arguments and owns validation against its schema:
+Scry has checked that the arguments parse and form an object, not that they
+match the schema the model was given. A handler that rejects them with
 `scry::tool_error()` tells the model what was wrong, and the turn continues so
 the model can correct the call; `on_tool_request` can apply the same check
 before any handler runs. A handler must synchronously return valid JSON or an
 error. Asynchronous or deferred tool results are not supported.
+
+### Tool errors
 
 Unknown tools, reflected decode failures, handler errors, exceptions, and invalid
 result JSON produce bounded model-visible error results. A handler error's
@@ -376,10 +568,141 @@ Cancellation or a fatal framework failure can suppress this observer.
 
 `Json` owns serialized text. `JsonView::parse()` creates a shared immutable parsed
 document with scalar accessors, `find()`, `at()`, and ordered `key_at()` lookup;
-child views can outlive their parent. Invalid input returns `invalid_argument`.
-`escape_json_string()` produces a quoted JSON string for hand-built results.
-The internal JSON codec uses Glaze and canonicalizes object keys in lexical order.
-No Glaze type or header is exposed to consumers.
+child views can outlive their parent. `to_json()` writes the canonical text of the
+viewed value alone. Invalid input returns `invalid_argument`.
+`escape_json_string()` produces a quoted JSON string for hand-built results,
+escaped exactly as the canonical writer escapes: `\"`, `\\`, the short escapes
+`\b \f \n \r \t`, and `\u00XX` with uppercase hexadecimal digits for any
+other byte below 0x20; every other byte, `/` and non-ASCII included, passes
+through unchanged.
+
+JSON is parsed and written by Scry's own code, the kernel's JSON layer under
+`src/kernel/json/`; no JSON library is linked or exposed. The rest of `src/`
+reads parsed JSON through `JsonView` and maps its own data shapes with the
+reflected codec. `src/kernel/json/document.hpp` states the contract in full:
+
+- **Accepted text** is RFC 8259 JSON holding exactly one value, surrounded only
+  by space, tab, line feed, and carriage return. Empty or whitespace-only input,
+  a byte order mark, comments, trailing commas, a second value, and trailing
+  bytes, a NUL included, are rejected. A validation pass that allocates nothing
+  accepts exactly what the parser accepts.
+- **Nesting** is limited to 256 arrays and objects open at once, counting an
+  empty one; deeper input is rejected, which bounds recursion.
+- **Strings** must be strictly valid UTF-8 in keys and values: no overlong
+  forms, no encoded surrogates, nothing above U+10FFFF, no truncated sequence.
+  Control characters must be escaped. A `\u` escape of a surrogate must be a
+  high surrogate followed at once by an escaped low one; a lone or reversed
+  surrogate is rejected. `\u0000` decodes to a NUL byte.
+- **Numbers** spelled as an optional `-` and digits alone are integers when they
+  fit: `unsigned_integer` for a non-negative value within 64 bits,
+  `signed_integer` for a negative one. Everything else, a fraction or an
+  exponent included (`1.0`, `1e2`), is a correctly rounded double, and so is
+  `-0`, which is not negative and keeps its sign as -0.0. A number whose
+  magnitude rounds to infinity, or a nonzero one that rounds to zero, is
+  rejected.
+- **Duplicate keys** collapse to the last occurrence, at every level.
+- **Canonical text** has no insignificant whitespace, object keys in lexical
+  byte order, the string escapes above, integers in plain digits, and doubles
+  in the shortest spelling that reads back as the same double: positional for a
+  decimal exponent from -4 through 15 (`0.0001`, `1`, `1500000000000000`),
+  otherwise scientific with an uppercase `E`, no `+`, and no leading exponent
+  zeros (`1E-5`, `1E20`). Zero is `0` and negative zero `-0`. Canonical text
+  reads back as the same tree and writes back as itself.
+
+Golden fixtures in `tests/fixtures/json/goldens.tar.xz` pin the acceptance
+boundary and the canonical bytes.
+
+## Typed completions
+
+A turn can end with a structured answer instead of free text. The answer is a
+C++ type, and reflection supplies the schema the model is given, the strict
+decoder that checks its reply, and the error text that tells it what to fix.
+`ask<Answer>(conversation, text)` blocks like `send_and_wait()` and returns
+`Result<Answered<Answer>>`: the decoded `value` beside the turn's `Completion`,
+which carries what the value alone does not (prose, usage, attempts, counts).
+`send<Answer>(conversation, text, callbacks)` is the poll-friendly form; its
+`Completion::structured` holds the answer's canonical JSON for
+`reflection::decode<Answer>()`. `Answer` must satisfy `ToolArguments`, because
+a provider's tool input is always a JSON object; any other type fails to compile
+with the member path and the reason, as `add<Args>()` does.
+
+A typed turn is the ordinary tool loop plus one response tool, described by a
+`ResponseFormat`: a `name` (`respond` by default), a `description` (empty
+selects Scry's instruction to call it exactly once, on its own, with the final
+answer), a JSON Schema object `schema`, and an optional host-thread `validate`.
+`reflection::response_format<Answer>()` pairs `input_schema_v<Answer>` with a
+`decode<Answer>()` validator and is what `send<Answer>()` and `ask<Answer>()`
+use. Another name, description, or a hand-written schema goes through
+`send_structured(conversation, text, format, callbacks)` or
+`send_and_wait_structured(conversation, text, format)`, named apart so that
+`send(conversation, text, {})` still means "no callbacks" and `send<Answer>()`
+is never chosen without its explicit template argument. Before acceptance
+these reject with `invalid_argument` a format whose name is empty or a
+registered tool's, or whose schema is not a JSON object. The request lists the
+response tool after the registered tools and requires a tool call
+(`"tool_choice":{"type":"any"}` for Anthropic, `"tool_choice":"required"` for
+OpenAI-compatible servers); a request without a response format is byte for
+byte what it was before typed turns existed. The model may still call
+registered tools for as many rounds as `max_tool_rounds` allows.
+
+Each response of a typed turn is classified by its tool calls. A response that
+calls no tool fails the turn with `protocol`, naming the response tool and
+whether the server ignored the tool choice or the output hit its token limit. A
+lone response-tool call is a candidate answer, validated inside `update()` on
+the host thread as one delivery unit: acceptance completes the turn, and a
+rejection gives the model `{"error": model_message}` as that call's tool-error
+result and costs a tool round (for a reflected type, the decoder's
+schema-derived text such as `$.supported is a required member`). A
+response-tool call beside other calls, or more than one, is refused with `call
+respond exactly once, on its own, after your other tool calls have returned`
+while the real calls dispatch as usual. Only real calls make an ordinary round.
+Because a server forcing a tool call may report a plain `stop`, a typed turn
+takes calls with a normal finish reason as a tool response.
+
+A validator is treated as a tool handler is: an error without a
+`model_message`, or a throw, gives the model the handler's fixed text, and the
+turn continues. Without a validator any JSON object is accepted; Scry does not
+implement general JSON Schema validation. Under the handler's invocation guard,
+cancelling from inside the validator is honoured before any verdict reaches the
+worker, and disconnecting stops later delivery but not the verdict.
+
+An accepted answer completes the turn with `finish_reason` `completed`;
+`Completion::structured` holds the canonicalized arguments and
+`Completion::text` only the prose beside the call, which may be empty. The
+committed transcript is the user message, each round of real calls with its
+results, and a final assistant message of that prose followed by one text block
+holding the answer's canonical JSON. No response-tool call is committed, nor any
+rejected attempt the model saw within the turn: those calls, their error
+results, and any message they leave empty are removed, while real calls in the
+same rounds stay. Every committed call needs its result; a result for the
+accepted call would end the history on a user message; and later requests,
+including plain turns and Conversations restored from JSON, do not declare the
+response tool, which a provider may refuse to see named. Removing a rejected
+round can leave two assistant messages in a row, which the Anthropic adapter
+merges and the OpenAI-compatible dialect accepts; the OpenAI adapter joins a
+message's text blocks without a separator. `Conversation::to_json()` saves the
+answer as the text block it is, and a restored Conversation re-encodes for
+either dialect. The answer is reserved against the Conversation byte limit like
+any reply; the `structured` copy is never charged to the queued-event limit.
+
+Response-tool calls are Scry's protocol, not host tool calls: they never reach
+a handler, `max_tool_calls_per_turn`, `on_tool_request`, or `on_tool_call`, and
+count in neither `tool_call_count` nor `rejected_tool_call_count`.
+`Completion::answer_attempt_count` counts every one, the accepted one included.
+A real call's `ToolCall::index` keeps its provider-order position, so a
+response-tool call beside it still occupies an index. `tool_round_count`
+includes rounds whose only call was a rejected answer; the response carrying
+the accepted answer is the final response, not a round.
+
+A lone response-tool call is validated even when every round is spent, since it
+can end the turn. Any other response at the round limit, and a rejected answer
+there, fail with `max_tool_rounds` under either `ToolRoundLimitPolicy`, because
+there is no answer to complete with; `Completion::unexecuted_tool_calls` is
+always empty for a typed turn. Otherwise a typed turn fails, cancels, retries,
+and persists as any turn does: retries apply before semantic output, a failed
+or cancelled turn commits nothing, and `on_finished` is the single terminal
+channel. `ask()` reports what `send_and_wait_structured()` would, plus a decode
+failure of an accepted answer, which the validator makes unreachable.
 
 ## Providers and transport
 
@@ -389,13 +712,30 @@ and decode streaming replies. Provider code lives under `src/provider/`, split
 into request encoding, stream decoding, and content helpers. Per-attempt decode
 state is separate from the adapter.
 
-Request encoding writes typed wire structs straight to JSON text rather than
-building a document tree. Each embedded payload — tool-call arguments, tool
-results, and tool input schemas — is checked by one allocation-free validation
-scan and spliced in as the canonical text the turn machine, tool dispatch, and
-registration already produced, so a retry or a tool round re-encodes only the
-request's own frame and never rebuilds history as a document tree. Malformed
-embedded text is still rejected with `invalid_config`.
+Request encoding describes each body as reflected wire structs and writes them
+straight to JSON text with the reflected codec, rather than building a document
+tree. The structs borrow what they write: text as `std::string_view`, and
+tool-call arguments and tool input schemas as `const Json&` members. Each
+embedded payload, including tool results, which travel as JSON strings, is
+checked by one allocation-free validation scan and used as the canonical text
+the turn machine, tool dispatch, and registration already produced, so a retry
+or a tool round re-encodes only the request's own frame and never rebuilds
+history as a document tree. Malformed embedded text is still rejected with
+`invalid_config`. A body is not canonicalized after it is written, so it relies
+on the codec writing keys in canonical order and strings with the canonical
+escapes; `temperature` and `top_p` are spelled by the canonical writer before
+the encode, because the codec's shortest spelling of a double differs from it
+for small and large exponents (`1e-07` against `1E-7`).
+
+Stream decoding parses each SSE `data` payload once and decodes it with the
+reflected codec into event types that ignore members they do not declare, since
+providers add fields: a tagged variant keyed on `type` for Anthropic, and one
+chunk type for OpenAI. A shape the codec rejects is a `protocol` error naming
+the JSON path. The protocol lifecycle stays hand-written: event order, block
+indices, finish reasons, usage accumulation, and the argument byte limit. So do
+the error-token and request-identifier reads, which are best-effort: each value
+is independently optional, and one of the wrong type reads as absent rather
+than failing the event.
 
 | Setting | Anthropic Messages | OpenAI-compatible Chat Completions |
 |---|---|---|
@@ -420,8 +760,11 @@ adapter accepts an origin, a `/v1` base, or the full `/v1/chat/completions` endp
 Both adapters always request `stream: true`. Default reasoning mode omits reasoning
 controls.
 An OpenAI-compatible server must implement the subset Scry sends, including the
-optional reasoning field when enabled. Azure-specific endpoints, the Responses
-API, structured output, and other server extensions are not implemented.
+optional reasoning field when enabled and `tool_choice: "required"` for a typed
+turn. Azure-specific endpoints, the Responses API, server-side structured output
+modes such as `response_format`, and other server extensions are not
+implemented; [typed completions](#typed-completions) are built on tool calling
+instead, which both dialects share.
 
 The Anthropic adapter merges consecutive same-role messages into one message whose
 content array concatenates their blocks, because the Messages API takes one message
@@ -437,13 +780,16 @@ allowed before `[DONE]`. Missing, duplicate, or early terminal markers and
 semantic content after finish are protocol errors. Anthropic streams decode
 Messages content blocks, usage, stop reasons, and tool-use arguments.
 
-The incremental SSE parser handles arbitrary byte splits. A CR, LF, or CRLF ends
+The incremental SSE parser, in the kernel (`src/kernel/sse.cpp`), handles
+arbitrary byte splits. A CR, LF, or CRLF ends
 a line as soon as it arrives; a blank line ended by a lone CR dispatches its event
 without waiting for the next byte. Unknown optional events
 can be ignored; malformed required content fails with `protocol`. There is no
 non-streaming response path or public logging API.
 
-The transport uses libcurl through an internal injectable interface. Each Harness
+The transport uses libcurl through an internal injectable interface; the
+interface and its libcurl implementation are kernel code under
+`src/kernel/transport/`. Each Harness
 retains a curl multi handle and its connection cache across retries, tool rounds,
 and turns, while running one transfer at a time. Curl objects use RAII, and C
 callbacks catch exceptions. Process-wide curl initialization is attempted once;
@@ -543,7 +889,10 @@ Failure or cancellation commits nothing. `Completion::finish_reason` is
 the loop, because a response that requests tools either starts another round,
 fails with `max_tool_rounds`, or, under `ToolRoundLimitPolicy::complete`, ends the
 turn as `tool_round_limit`. Inspect `Completion::finish_reason` when the
-application requires an untruncated answer.
+application requires an untruncated answer. A turn sent with a response format
+completes only on an accepted answer, with `completed` and
+`Completion::structured` engaged; [Typed completions](#typed-completions)
+describes its transcript and counts.
 
 `Completion::unexecuted_tool_calls` holds the tool calls that final response asked
 for and the loop never dispatched, in provider order. It is non-empty only for
@@ -556,7 +905,9 @@ handlers never ran, so they count in neither `tool_call_count` nor
 
 `Completion::tool_round_count` and `Completion::tool_call_count` report what the
 loop ran before that final response; the call count includes unknown tools and
-calls whose handler failed. `Completion::rejected_tool_call_count` is the subset
+calls whose handler failed, and excludes calls to a typed turn's response tool,
+which `Completion::answer_attempt_count` counts instead.
+`Completion::rejected_tool_call_count` is the subset
 of those calls that never reached a handler because the per-turn call limit or
 `on_tool_request` refused them; a refusal is an answer to the model, not a turn
 failure, so it appears in both counts. Each observed `ToolCall` carries its own `round` and
@@ -582,7 +933,15 @@ for the invocation; `on_finished` receives its result by value.
 
 `to_json()` writes the system prompt and committed message blocks as a canonical
 versioned document. `from_json()` rejects malformed JSON, unknown fields or
-versions, and invalid block shapes or roles with `invalid_config`. Saving while
+versions, and invalid block shapes or roles with `invalid_config`. The document
+is a reflected type holding `messages`, `system_prompt`, and `version`, decoded
+by the reflected codec after its `version` alone, so another version is
+reported as unsupported rather than by its shape. A shape failure names its
+JSON path, as in `Conversation document at $.messages[0].role is a required
+member`. The rules the codec does not express are checked after it: every
+member of every message and block is present, tool calls appear only in
+assistant messages and tool results only in user messages, text, identifiers,
+names, and content are nonempty, and arguments are a JSON object. Saving while
 busy captures the last committed boundary; active work, callbacks, turn IDs, and
 tools are excluded. Scry performs no persistence file I/O. The host owns storage
 and any input-size limit before loading.
@@ -594,11 +953,25 @@ with C++26 reflection and annotation support. CMake probes the P2996/P3394
 features used by the headers. Linux and macOS are the supported platforms.
 API, ABI, and persistence-format stability are not promised before 1.0.
 
-The implementation under `src/` avoids reflection and builds as C++23 in
-`SCRY_CLANG_TOOLING` mode. That mode requires Clang and supports clang-tidy and
-libFuzzer; it excludes examples and ordinary tests. Fuzz targets are registered
-separately from the ordinary test build. It is a tooling build, not
-a supported consumer configuration.
+The implementation is split in two. The kernel under `src/kernel/` is the code
+that parses untrusted bytes or computes retry and transport policy: the JSON
+codec, the SSE parser, retry delays, and the transport seam with its libcurl
+implementation. It is compiled as C++23 without reflection in every build, and
+it may include only the public headers `<scry/error.hpp>`, `<scry/json.hpp>`,
+`<scry/config.hpp>`, `<scry/turn_id.hpp>`, and `<scry/unique_function.hpp>`. The
+rest of `src/` — the turn machine, provider adapters, runtime, and reflection
+bridge — is C++26 and maps Scry's types to and from their wire and JSON shapes,
+using reflection where it replaces hand-written shape code. The kernel's objects
+are archived into `scry::scry`; it is not a separate installed target.
+
+The split keeps the layer that sees untrusted bytes within reach of Clang
+tooling, which cannot compile reflection. `SCRY_CLANG_TOOLING` mode builds the
+kernel alone with Clang, for clang-tidy and for libFuzzer targets over the SSE
+parser, the transport response policy, and the JSON layer; it excludes the rest
+of the library, `scry::testing`, examples, and ordinary tests, and is a tooling
+build, not a supported consumer configuration. Fuzz targets over the provider
+stream decoders and conversation persistence link the whole library, so the GCC
+test build replays their seed corpora instead of searching from them.
 
 `scry::testing` is an optional second static library, installed as the package
 component `testing` and built unless `SCRY_BUILD_TESTING_SUPPORT` is off. It
@@ -614,10 +987,9 @@ stay covered by the loopback transport and integration suites. Its headers
 depend only on `<scry/*>`, and its retry waits are real time bounded by the
 `Config`'s retry policy.
 
-libcurl is a linked dependency. Glaze is a private header-only build dependency,
-resolved from an installed package or a pinned FetchContent checkout. The
-installed package exports no Glaze target; it discovers curl and Threads.
-Catch2 is used by tests, and Dear ImGui is confined to the standalone showcase.
+libcurl is the only linked dependency. The installed package discovers curl and
+Threads. Catch2 is used by tests, and Dear ImGui is confined to the standalone
+showcase.
 Public headers use Scry-owned types and move-only `UniqueFunction` callables;
 stateful handles use PImpl. Build, test, and packaging gates are described in
 [contributing.md](contributing.md).

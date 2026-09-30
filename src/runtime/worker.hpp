@@ -1,9 +1,9 @@
 #pragma once
 
 #include "core/provider.hpp"
-#include "core/transport.hpp"
+#include "kernel/sse.hpp"
+#include "kernel/transport/transport.hpp"
 #include "machine/turn_machine.hpp"
-#include "protocol/sse.hpp"
 #include "runtime/queue.hpp"
 
 #include <cstdint>

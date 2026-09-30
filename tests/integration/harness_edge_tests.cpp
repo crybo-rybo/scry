@@ -132,7 +132,7 @@ TEST_CASE("moved-from public runtime handles remain safely observable") {
 
   const auto& const_tools = std::as_const(harness).tools();
   CHECK(const_tools.empty());
-  REQUIRE(harness.tools().add(tool(), static_handler(R"({"ok":true})")));
+  REQUIRE(harness.tools().add_dynamic(tool(), static_handler(R"({"ok":true})")));
   CHECK(const_tools.size() == 1);
 
   auto turn_result = harness.send(conversation, "question");
@@ -304,7 +304,7 @@ TEST_CASE("a rejected send leaves the conversation and tool registry reusable") 
   auto fixture =
       make_harness_fixture(test_config(), {scripted_exchange(completed_stream)});
   auto& harness = fixture.harness;
-  REQUIRE(harness.tools().add(tool(), static_handler(R"({"ok":true})")));
+  REQUIRE(harness.tools().add_dynamic(tool(), static_handler(R"({"ok":true})")));
 
   const auto rejected = harness.send(fixture.conversation, "");
   REQUIRE_FALSE(rejected);
@@ -315,8 +315,8 @@ TEST_CASE("a rejected send leaves the conversation and tool registry reusable") 
 
   auto added_after_rejection = tool();
   added_after_rejection.name = "added_after_rejection";
-  REQUIRE(harness.tools().add(std::move(added_after_rejection),
-                              static_handler(R"({"ok":true})")));
+  REQUIRE(harness.tools().add_dynamic(std::move(added_after_rejection),
+                                      static_handler(R"({"ok":true})")));
 
   const auto completion =
       harness.send_and_wait(fixture.conversation, "send after validation failure");

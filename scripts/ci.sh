@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # Run the CI checks locally: documentation, formatting, core, clang-tidy,
-# sanitizers, fuzz corpus replay, and the standalone showcase build.
+# sanitizers, kernel fuzz corpus replay, and the standalone showcase build.
 #
 # Every gate runs scripts/format.sh or a helper under .github/scripts/;
 # the only thing that lives here is the host-capability probe in front of it.
@@ -124,7 +124,7 @@ run_gate "ASan + UBSan" run_sanitizer_leg asan -fsanitize=address,undefined
 # TSan is where nondeterminism surfaces; ci-sanitizer.sh puts the repeat runs
 # on that leg.
 run_gate "TSan" run_sanitizer_leg tsan -fsanitize=thread
-run_gate "fuzz corpus replay" run_fuzz_replay
+run_gate "kernel fuzz corpus replay" run_fuzz_replay
 run_gate "showcase build" ./.github/scripts/ci-showcase.sh
 
 if [[ -n "${skipped_gates}" ]]; then

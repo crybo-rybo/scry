@@ -3,31 +3,26 @@
 // Small helpers both dialect adapters need. The two stream state machines stay
 // independent; only the pieces that are byte-for-byte identical live here.
 //
-// Request wire structs. Each request encoder describes its body as plain
-// aggregates instead of a JSON tree. Glaze reflects each one member by member
-// in declaration order, so the members are declared alphabetically and the body
-// still leaves the encoder in the codec's canonical key order. Every
-// std::string_view borrows from a literal, the Config, or the ModelRequest, all
-// of which outlive the encode, and every JsonText splices stored canonical JSON
-// verbatim rather than re-parsing it. The names are dialect-qualified and the types
-// deliberately sit outside the unnamed namespace: Glaze derives each member's
-// name from a pointer into an `extern` object of the type, which a type with no
-// linkage cannot have, and GCC mangles every translation unit's unnamed
-// namespace identically, so two same-named wire structs in the two request files
-// would have their key tables merged by the linker and each dialect would
-// serialize with the other's keys.
+// Request wire structs. Each request encoder describes its body as reflected
+// aggregates and encodes them with the reflected codec, which writes keys in
+// canonical order whatever the declaration order and strings with the canonical
+// escapes. The structs borrow every byte they write: text through
+// std::string_view, and stored JSON payloads through `const Json&` members, which
+// the codec validates with one allocation-free scan and splices verbatim. The
+// borrowed Config, ModelRequest, and literals all outlive the encode.
 
-#include "core/error.hpp"
-#include "core/json_codec.hpp"
 #include "core/provider.hpp"
+#include "kernel/error.hpp"
+#include "kernel/json/codec.hpp"
+#include "reflection/codec.hpp"
 
 #include <algorithm>
 #include <cctype>
 #include <cstddef>
-#include <cstdint>
-#include <limits>
+#include <initializer_list>
 #include <optional>
 #include <scry/config.hpp>
+#include <scry/json.hpp>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -52,6 +47,25 @@ template <class Encode>
     if (auto status = encode(message); !status) {
       return status;
     }
+  }
+  return {};
+}
+
+// Calls `encode` for every registered tool, then for a typed turn's response
+// tool, stopping at the first failure. Both dialects offer the response tool
+// last, so a request without one lists exactly the registered tools.
+template <class Encode>
+[[nodiscard]] Status for_each_request_tool(const ModelRequest& request,
+                                           Encode&& encode) {
+  if (request.tools) {
+    for (const auto& tool : *request.tools) {
+      if (auto status = encode(tool); !status) {
+        return status;
+      }
+    }
+  }
+  if (request.response_tool) {
+    return encode(*request.response_tool);
   }
   return {};
 }
@@ -88,9 +102,22 @@ transport_request(const Config& config, std::string url,
 }
 
 // Every JSON payload a request encoder embeds is canonical text Scry's own codec
-// produced, so the encoders splice the stored text after one allocation-free
+// produced, so the encoders use the stored text after one allocation-free
 // validation scan of every byte instead of re-parsing it into a document. That
-// scan keeps the rejection contract for a ModelRequest assembled by hand.
+// scan keeps the rejection contract for a ModelRequest assembled by hand. A
+// payload spliced through a `const Json&` member is scanned by the codec as it is
+// written, so before the encode only its root is checked here; a payload carried
+// as a JSON string is scanned here, since the codec only quotes it.
+[[nodiscard]] inline Status embedded_object_root(const std::string_view text,
+                                                 const std::string_view message) {
+  const auto first = text.find_first_not_of(" \t\n\r");
+  if (first == std::string_view::npos || text[first] != '{') {
+    return std::unexpected(
+        make_error(ErrorCategory::invalid_config, std::string{message}));
+  }
+  return {};
+}
+
 [[nodiscard]] inline Status embedded_json_object(const std::string_view text,
                                                  const std::string_view message) {
   return validate_json_object(text, ErrorCategory::invalid_config, message);
@@ -99,6 +126,22 @@ transport_request(const Config& config, std::string url,
 [[nodiscard]] inline Status embedded_json_value(const std::string_view text,
                                                 const std::string_view message) {
   return validate_json(text, ErrorCategory::invalid_config, message);
+}
+
+// Writes a request body. Sampling numbers reach the body as canonical_json_number
+// text, because the codec spells a double in std::to_chars' shortest form and the
+// body is not canonicalized afterwards. A failure is a spliced payload that is not
+// JSON, reported with its path.
+template <typename Body>
+[[nodiscard]] Result<std::string> encode_request_body(const Body& body,
+                                                      const std::string_view dialect) {
+  auto encoded = encode_text(body);
+  if (!encoded) {
+    return std::unexpected(
+        make_error(ErrorCategory::invalid_config,
+                   std::string{dialect} + " request at " + describe(encoded.error())));
+  }
+  return std::move(*encoded);
 }
 
 // Provider error identifiers reach Error::provider_detail, so only a bounded token
@@ -116,16 +159,61 @@ sanitize_error_token(const std::string_view value) {
   return safe ? std::optional<std::string>{value} : std::nullopt;
 }
 
+// Parses one SSE `data` payload.
+[[nodiscard]] inline Result<JsonView> parse_payload(const std::string_view data,
+                                                    const std::string_view dialect) {
+  auto root = JsonView::parse(Json{.text = std::string{data}});
+  if (!root) {
+    return std::unexpected(make_error(
+        ErrorCategory::protocol, std::string{dialect} + " SSE data is not valid JSON"));
+  }
+  return root;
+}
+
+// Decodes a provider payload with the reflected codec. A shape the codec rejects
+// is a protocol error naming the path; the path holds only declared keys and
+// indices, never provider text.
+template <typename Payload>
+[[nodiscard]] Result<Payload> decode_payload(const JsonView& view,
+                                             const std::string_view dialect) {
+  auto decoded = decode_value<Payload>(view);
+  if (!decoded) {
+    return std::unexpected(
+        make_error(ErrorCategory::protocol, std::string{dialect} + " stream data at " +
+                                                describe(decoded.error())));
+  }
+  return std::move(*decoded);
+}
+
+// The value at a member path, or nullopt when a step is missing or not an
+// object. Provider error bodies and request identifiers are diagnostics read
+// best-effort: each value is independently optional, and one of the wrong type
+// reads as absent without failing its event or hiding its siblings. The codec
+// decodes an object all or nothing, so these few reads use the view directly.
+[[nodiscard]] inline std::optional<JsonView>
+member_at(const JsonView& root, const std::initializer_list<std::string_view> path) {
+  std::optional<JsonView> value{root};
+  for (const auto key : path) {
+    value = value->find(key);
+    if (!value) {
+      break;
+    }
+  }
+  return value;
+}
+
+// The string at a member path, or nullopt when it is absent or not a string.
+[[nodiscard]] inline std::optional<std::string_view>
+string_at(const JsonView& root, const std::initializer_list<std::string_view> path) {
+  const auto value = member_at(root, path);
+  return value ? value->string() : std::nullopt;
+}
+
 // The sanitized string at `root.error.<field>`, or nullopt when it is absent,
 // not a string, or unsafe.
 [[nodiscard]] inline std::optional<std::string>
-error_token(const JsonValue& root, const std::string_view field) {
-  const auto* error = json_field(root, "error");
-  const auto* value = error == nullptr ? nullptr : json_field(*error, field);
-  if (value == nullptr || !value->is_string()) {
-    return std::nullopt;
-  }
-  return sanitize_error_token(value->get_string());
+error_token(const JsonView& root, const std::string_view field) {
+  return string_at(root, {"error", field}).and_then(sanitize_error_token);
 }
 
 // The error types both dialects share. A dialect with its own aliases checks
@@ -154,21 +242,6 @@ error_category(const std::string_view token) noexcept {
   Error error = make_error(category, std::string{message}, retryable);
   error.provider_detail = std::move(detail);
   return error;
-}
-
-// Reads a required non-negative "index" that fits a std::size_t.
-[[nodiscard]] inline Result<std::size_t>
-required_index(const JsonValue& value, const std::string_view message) {
-  auto parsed = optional_json_uint(value, "index");
-  if (!parsed) {
-    return std::unexpected(std::move(parsed.error()));
-  }
-  const auto index = *parsed;
-  if (!index ||
-      *index > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
-    return std::unexpected(make_error(ErrorCategory::protocol, std::string{message}));
-  }
-  return static_cast<std::size_t>(*index);
 }
 
 // Claims the shared decode state for one dialect. The terminal event moves the

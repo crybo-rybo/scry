@@ -24,10 +24,13 @@ struct MoveResult {
   std::string room{};
 };
 
-// A refusal is not a framework failure: the turn continues and the model gets a
-// chance to pick another direction. Only the first string reaches the model; the
-// second is the host-side Error::message, which Scry never forwards.
-[[nodiscard]] scry::Result<MoveResult> move(const MoveArguments arguments) {
+// The annotation makes this function a tool named "move"; its one aggregate
+// parameter is the argument object the model fills in. A refusal is not a
+// framework failure: the turn continues and the model gets a chance to pick
+// another direction. Only the first string reaches the model; the second is the
+// host-side Error::message, which Scry never forwards.
+[[= scry::reflection::tool{"Step one room in a direction"}]] [[nodiscard]]
+scry::Result<MoveResult> move(const MoveArguments arguments) {
   if (arguments.direction != Direction::north) {
     return std::unexpected(scry::tool_error(
         "a wall blocks that direction; only north is open from the entrance hall",
@@ -61,9 +64,7 @@ struct MoveResult {
 
 int main() {
   scry::ToolRegistry tools;
-  if (const auto registered = scry::reflection::add<MoveArguments>(
-          tools, {.name = "move", .description = "Step one room in a direction"}, move);
-      !registered) {
+  if (const auto registered = tools.add<^^move>(); !registered) {
     std::cerr << registered.error().message << '\n';
     return 1;
   }

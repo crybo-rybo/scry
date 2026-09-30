@@ -33,10 +33,15 @@ no NPC tool exits nonzero instead of presenting a no-op as success. The selected
 server must support `reasoning_effort: "none"`; leave `ReasoningMode` at its
 default in applications whose endpoint does not support that optional field.
 
-`register_world_tools()` expects a fresh registry for these five names.
-`ToolRegistry` is additive-only, so a collision on a later name can leave
-earlier showcase tools registered; discard that Harness after registration
-failure instead of assuming rollback.
+The tools are declared, not written: `World` in `world.hpp` is a toolbox, and
+each of its member functions annotated with `scry::reflection::tool` becomes a
+tool named after the function. `harness.tools().add(world)` registers all five
+against the shared `World`, which the host also keeps to print the final state.
+Scry generates each tool's schema from its parameters (none, so the model sends
+`{}` and anything else is rejected before the NPC moves) and encodes the
+`Observation` and `MoveOutcome` results from their members. Registration is
+atomic: if any of the five names were already taken, none of them would be
+registered.
 
 The world is intentionally ephemeral. A failed or cancelled model turn does not
 roll back movement that already occurred. Real applications that expose durable

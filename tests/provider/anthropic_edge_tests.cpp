@@ -1,6 +1,6 @@
-#include "core/json_codec.hpp"
 #include "core/model.hpp"
 #include "fixture_support.hpp"
+#include "kernel/json/codec.hpp"
 #include "provider/anthropic.hpp"
 #include "provider/anthropic_content.hpp"
 #include "provider/shared.hpp"
@@ -46,20 +46,17 @@ TEST_CASE("provider error tokens remain bounded and safe") {
   CHECK_FALSE(sanitize_error_token("unsafe-value"));
 }
 TEST_CASE("Anthropic content decoding covers text, tool, and rejection shapes") {
-  auto text = decode_anthropic_content(
-      json_value("{\"type\":\"text\",\"text\":\"answer\"}"), false);
+  auto text = anthropic_content("{\"type\":\"text\",\"text\":\"answer\"}", false);
   REQUIRE(text);
   CHECK(std::get<TextBlock>(*text).text == "answer");
-  auto streamed_tool = decode_anthropic_content(
-      json_value(
-          "{\"type\":\"tool_use\",\"id\":\"id\",\"name\":\"lookup\",\"input\":{}}"),
-      true);
+  auto streamed_tool = anthropic_content(
+      "{\"type\":\"tool_use\",\"id\":\"id\",\"name\":\"lookup\",\"input\":{}}", true);
   REQUIRE(streamed_tool);
   CHECK(std::get<ToolCallBlock>(*streamed_tool).arguments.text.empty());
-  auto tool = decode_anthropic_content(
-      json_value("{\"type\":\"tool_use\",\"id\":\"id\",\"name\":\"lookup\","
-                 "\"input\":{\"x\":1}}"),
-      false);
+  auto tool =
+      anthropic_content("{\"type\":\"tool_use\",\"id\":\"id\",\"name\":\"lookup\","
+                        "\"input\":{\"x\":1}}",
+                        false);
   REQUIRE(tool);
   CHECK(std::get<ToolCallBlock>(*tool).arguments.text == "{\"x\":1}");
   constexpr std::array invalid{
@@ -73,7 +70,7 @@ TEST_CASE("Anthropic content decoding covers text, tool, and rejection shapes") 
       "{\"type\":\"tool_use\",\"id\":\"id\",\"name\":\"lookup\"}",
   };
   for (const auto json : invalid) {
-    const auto result = decode_anthropic_content(json_value(json), false);
+    const auto result = anthropic_content(json, false);
     REQUIRE_FALSE(result);
     CHECK(result.error().category == ErrorCategory::protocol);
   }
@@ -86,18 +83,31 @@ TEST_CASE("Anthropic finish and usage decoding covers every wire variant") {
   CHECK(decode_anthropic_finish("max_tokens") == FinishReason::length);
   CHECK(decode_anthropic_finish("tool_use") == FinishReason::tool_use);
   CHECK(decode_anthropic_finish("future") == FinishReason::unknown);
+  // Usage arrives on message_delta; each case is one such event whose root is the
+  // usage owner, applied to a message that started with 1 input and 2 output.
+  AnthropicAdapter adapter;
+  const auto apply_usage = [&adapter](const std::string_view owner, Usage& usage) {
+    ProviderDecodeState state;
+    start_anthropic_message(adapter, state);
+    state.response.usage = usage;
+    auto body = std::string{owner};
+    body.insert(1, R"("type":"message_delta","delta":{"stop_reason":null})" +
+                       std::string{owner.size() > 2 ? "," : ""});
+    const auto result = decode(adapter, "message_delta", body, state);
+    usage = state.response.usage;
+    return result.has_value();
+  };
   Usage usage{.input_tokens = 1, .output_tokens = 2};
-  REQUIRE(apply_anthropic_usage(json_value("{}"), usage));
-  REQUIRE_FALSE(apply_anthropic_usage(json_value(R"({"usage":[]})"), usage));
-  REQUIRE(apply_anthropic_usage(
-      json_value(R"({"usage":{"input_tokens":7,"output_tokens":9}})"), usage));
+  REQUIRE(apply_usage("{}", usage));
+  CHECK(usage.input_tokens == 1);
+  CHECK(usage.output_tokens == 2);
+  REQUIRE_FALSE(apply_usage(R"({"usage":[]})", usage));
+  REQUIRE(apply_usage(R"({"usage":{"input_tokens":7,"output_tokens":9}})", usage));
   CHECK(usage.input_tokens == 7);
-  REQUIRE(
-      apply_anthropic_usage(json_value(R"({"usage":{"input_tokens":null}})"), usage));
-  REQUIRE_FALSE(
-      apply_anthropic_usage(json_value(R"({"usage":{"input_tokens":"7"}})"), usage));
-  REQUIRE_FALSE(
-      apply_anthropic_usage(json_value(R"({"usage":{"output_tokens":"9"}})"), usage));
+  REQUIRE(apply_usage(R"({"usage":{"input_tokens":null}})", usage));
+  CHECK(usage.input_tokens == 7);
+  REQUIRE_FALSE(apply_usage(R"({"usage":{"input_tokens":"7"}})", usage));
+  REQUIRE_FALSE(apply_usage(R"({"usage":{"output_tokens":"9"}})", usage));
 }
 TEST_CASE("Anthropic endpoint normalization appends the Messages path once") {
   AnthropicAdapter adapter;

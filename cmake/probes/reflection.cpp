@@ -1,5 +1,6 @@
 #include <cstddef>
 #include <meta>
+#include <string_view>
 #if !defined(__cpp_impl_reflection)
 #error P2996 feature macro is missing
 #endif
@@ -41,4 +42,47 @@ consteval bool has_required_annotation_queries() {
 }
 
 static_assert(has_required_annotation_queries());
+
+// The codec reads annotations on class definitions, recovers fixed-string text
+// through a substituted variable template, catches std::meta::exception while
+// classifying types, and prints generated static_assert messages.
+struct[[= probe_description{"tagged"}]] probe_tagged {};
+
+struct probe_text {
+  const char* data;
+  std::size_t size;
+};
+
+template <auto Annotation>
+inline constexpr probe_text probe_text_v{Annotation.text, sizeof(Annotation.text) - 1};
+
+struct probe_incomplete;
+
+consteval bool is_probe_complete(const std::meta::info type) {
+  try {
+    static_cast<void>(std::meta::size_of(type));
+  } catch (const std::meta::exception&) {
+    return false;
+  }
+  return true;
+}
+
+consteval bool has_required_codec_queries() {
+  const auto annotations = std::meta::annotations_of(^^probe_tagged);
+  if (annotations.size() != 1) {
+    return false;
+  }
+  const auto text = std::meta::extract<probe_text>(std::meta::substitute(
+      ^^probe_text_v, {
+                          std::meta::constant_of(annotations[0])}));
+  return text.size == 6 && text.data[0] == 't' && is_probe_complete(^^probe_tagged) &&
+         !is_probe_complete(^^probe_incomplete);
+}
+
+static_assert(has_required_codec_queries());
+
+constexpr const char* probe_message = std::define_static_string("generated message");
+static_assert(has_required_codec_queries(),
+              std::string_view{probe_message, sizeof("generated message") - 1});
+
 int main() { return 0; }

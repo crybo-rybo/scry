@@ -8,7 +8,7 @@
 #include <scry/error.hpp>
 #include <scry/json.hpp>
 #include <scry/message.hpp>
-#include <scry/tool_registry.hpp>
+#include <scry/tool.hpp>
 #include <scry/turn_id.hpp>
 #include <scry/unique_function.hpp>
 #include <string>
@@ -75,7 +75,9 @@ struct ToolCall {
 /// Final successful result of an accepted turn.
 ///
 /// Harness::send() delivers a Result<Completion> by value to on_finished, so that
-/// callback owns its argument and may move or copy fields that must outlive it.
+/// callback owns its argument and may move or copy fields that must outlive it. A
+/// turn sent with a ResponseFormat also carries its validated answer in
+/// `structured`.
 struct Completion {
   /// Completed turn.
   TurnId turn_id{};
@@ -89,10 +91,12 @@ struct Completion {
   std::uint32_t attempt_count{};
   /// Sanitized provider request identifier for the completion.
   std::string provider_request_id{};
-  /// Tool rounds that ran before the final response.
+  /// Tool rounds that ran before the final response, including rounds in which a
+  /// response-tool answer was rejected.
   std::uint32_t tool_round_count{};
   /// Tool calls the model issued across those rounds, including unknown tools
-  /// and calls whose handler failed.
+  /// and calls whose handler failed. Calls to a ResponseFormat's response tool
+  /// are counted by answer_attempt_count instead.
   std::uint32_t tool_call_count{};
   /// Calls refused before their handler ran, by on_tool_request or by
   /// Config::max_tool_calls_per_turn. Every refusal is also counted by
@@ -105,6 +109,61 @@ struct Completion {
   /// size is bounded by ResourceLimits::max_conversation_bytes during the turn and
   /// is never charged to ResourceLimits::max_queued_event_bytes_per_turn.
   std::vector<ToolCallBlock> unexecuted_tool_calls{};
+  /// The validated answer of a turn sent with a ResponseFormat, as the canonical
+  /// JSON object the model passed to the response tool. Empty for a turn sent
+  /// without one. When engaged, finish_reason is completed and `text` holds only
+  /// the prose the final response carried beside the answer, which may be empty.
+  std::optional<Json> structured{};
+  /// Calls the model made to the response tool across the turn, the accepted one
+  /// included. Rejected attempts, whether their answer failed validation or the
+  /// call was not made on its own, are part of the committed tool rounds. Response
+  /// tool calls are never host tool calls, so none of them is counted by
+  /// tool_call_count. Zero for a turn sent without a ResponseFormat.
+  std::uint32_t answer_attempt_count{};
+};
+
+/// A typed answer and the completion that carried it, returned by Harness::ask().
+///
+/// @tparam Answer The reflected answer aggregate the turn was asked for.
+template <typename Answer> struct Answered {
+  /// The decoded answer.
+  Answer value;
+  /// The turn's completion; `completion.structured` holds `value`'s canonical JSON.
+  Completion completion{};
+};
+
+/// Host-thread check of a candidate answer, run inside Harness::update().
+///
+/// It receives the canonical JSON object the model passed to the response tool.
+/// Success accepts the answer and completes the turn. An error rejects it: the
+/// model receives {"error": model_message} as the call's result and the loop
+/// continues, so the model can correct itself. An error without a model_message,
+/// or a validator that throws, gives the model the fixed text a failing tool
+/// handler gives it.
+using AnswerValidator = UniqueFunction<Status(const Json&)>;
+
+/// Asks a turn to end with a structured answer instead of free text.
+///
+/// The turn's request offers the model one extra tool, the response tool, whose
+/// input schema is `schema`, and requires the model to call a tool. The model
+/// answers by calling it, on its own, with the answer as the arguments.
+/// scry::reflection::response_format<Answer>() builds one from a reflected type,
+/// with a generated schema and a strict decoder as its validator.
+struct ResponseFormat {
+  /// Name of the response tool the model calls with its answer. It must not be
+  /// empty or name a registered tool.
+  std::string name{"respond"};
+  /// Description of the response tool shown to the model. Empty selects Scry's
+  /// default, which tells the model to call it exactly once, on its own, with its
+  /// final answer.
+  std::string description{};
+  /// JSON Schema object describing the answer, sent as the response tool's input
+  /// schema.
+  Json schema{};
+  /// Optional check of each candidate answer on the host thread. Empty accepts
+  /// any JSON object, since Scry does not implement general JSON Schema
+  /// validation.
+  AnswerValidator validate{};
 };
 
 /// Limits one Harness::update() pump invocation.
@@ -178,7 +237,8 @@ using ToolAdmissionCallback =
 /// Callbacks are supplied to Harness::send() and are attached from the moment the turn
 /// is accepted, so no event can precede them. They are detached only by
 /// Turn::disconnect() or Harness::disconnect(), which clears all of them at once and
-/// lets the turn run on undelivered.
+/// lets the turn run on undelivered. The tool hooks see registered and unknown
+/// tools only: calls to a ResponseFormat's response tool reach neither of them.
 struct TurnCallbacks {
   /// Observes coalesced fragments of streamed assistant text.
   TextDeltaCallback on_text_delta{};
