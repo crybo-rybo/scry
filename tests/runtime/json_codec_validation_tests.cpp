@@ -1,8 +1,8 @@
 // What the JSON codec accepts, seen from the rest of src/: the text-level entry
 // points in kernel/json/codec.hpp and the public JsonView are one parser, so each
 // must accept exactly what the others do. The oracle is the golden fixtures
-// under tests/fixtures/json/, which pin the acceptance boundary and the canonical
-// bytes (tests/kernel/json_fixture_tests.cpp holds the kernel layer itself to
+// in tests/fixtures/json/goldens.tar.xz, which pin the acceptance boundary and the
+// canonical bytes (tests/kernel/json_fixture_tests.cpp holds the kernel layer itself to
 // them), plus a table of adversarial documents named by shape.
 
 #include "kernel/json/codec.hpp"

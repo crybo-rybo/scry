@@ -1,8 +1,9 @@
 #pragma once
 
-// Readers for the JSON golden fixtures under tests/fixtures/json/ (see the
-// README there), shared by the kernel's fixture test and the runtime codec
-// tests, which hold the layers above the kernel to the same expectations.
+// Readers for the JSON golden fixtures, which the build unpacks from
+// tests/fixtures/json/goldens.tar.xz (see the README there), shared by the kernel's
+// fixture test and the runtime codec tests, which hold the layers above the kernel to
+// the same expectations.
 
 #include <algorithm>
 #include <catch2/catch_test_macros.hpp>

@@ -1,6 +1,6 @@
 // Golden fixtures for Scry's JSON layer (kernel/json/document.hpp). Every
-// expectation under tests/fixtures/json/ was produced by the JSON codec the layer
-// replaced, with the layer's two documented departures applied, and checked
+// expectation in tests/fixtures/json/goldens.tar.xz was produced by the JSON codec the
+// layer replaced, with the layer's two documented departures applied, and checked
 // against the layer when it was written (tests/fixtures/json/README.md). They
 // keep the parser's acceptance boundary and the canonical writer's bytes fixed.
 

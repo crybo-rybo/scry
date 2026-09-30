@@ -27,7 +27,11 @@ Without them the old canonical form was not idempotent.
 
 ## Files
 
-| File | Cases |
+The case files are generated, frozen text (about 16,000 lines), so they are
+checked in as one archive, `goldens.tar.xz`, which the test build unpacks into
+`build/<preset>/tests/fixtures/json/` at configure time.
+
+| File in the archive | Cases |
 |---|---|
 | `corpus.txt` | Every file under `tests/fuzz/corpus/`, whole |
 | `corpus_prefixes.list` | Which prefix lengths of each of those files parse |
@@ -57,3 +61,16 @@ must be justified by the rules in `src/kernel/json/document.hpp`, not merely
 recorded. A new file under `tests/fuzz/corpus/` needs its line in
 `corpus_prefixes.list` (the prefix tests fail until it has one) and, if it should
 be pinned whole, a case in `corpus.txt`.
+
+To edit the files, unpack the archive here, change them, and repack it
+reproducibly, then delete the unpacked copies:
+
+```sh
+cd tests/fixtures/json
+tar -xJf goldens.tar.xz
+# edit, then:
+tar --sort=name --owner=0 --group=0 --numeric-owner --mtime=@0 --format=gnu \
+  -cf - adversarial.txt corpus.txt corpus_prefixes.list fuzz_findings.txt |
+  xz -9e > goldens.tar.xz
+rm adversarial.txt corpus.txt corpus_prefixes.list fuzz_findings.txt
+```

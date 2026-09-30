@@ -702,7 +702,7 @@ reflected codec. `src/kernel/json/document.hpp` states the contract in full:
   zeros (`1E-5`, `1E20`). Zero is `0` and negative zero `-0`. Canonical text
   reads back as the same tree and writes back as itself.
 
-Golden fixtures under `tests/fixtures/json/` pin the acceptance boundary and the
+Golden fixtures in `tests/fixtures/json/goldens.tar.xz` pin the acceptance boundary and the
 canonical bytes.
 
 ## Typed completions

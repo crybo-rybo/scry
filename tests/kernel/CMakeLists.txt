@@ -18,7 +18,7 @@ target_include_directories(
 target_compile_definitions(
   scry_kernel_json_tests
   PRIVATE
-    "SCRY_JSON_FIXTURE_DIR=\"${PROJECT_SOURCE_DIR}/tests/fixtures/json\""
+    "SCRY_JSON_FIXTURE_DIR=\"${SCRY_JSON_FIXTURE_DIR}\""
     "SCRY_FUZZ_CORPUS_DIR=\"${PROJECT_SOURCE_DIR}/tests/fuzz/corpus\""
 )
 target_link_libraries(

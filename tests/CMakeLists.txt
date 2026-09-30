@@ -97,6 +97,13 @@ add_executable(
   runtime/tool_pump_tests.cpp
   runtime/tool_registry_tests.cpp
 )
+# The JSON golden fixtures are frozen, generated text, checked in as one archive
+# (tests/fixtures/json/README.md) and unpacked at configure time.
+set(SCRY_JSON_FIXTURE_ARCHIVE "${PROJECT_SOURCE_DIR}/tests/fixtures/json/goldens.tar.xz")
+set(SCRY_JSON_FIXTURE_DIR "${PROJECT_BINARY_DIR}/tests/fixtures/json")
+file(ARCHIVE_EXTRACT INPUT "${SCRY_JSON_FIXTURE_ARCHIVE}" DESTINATION "${SCRY_JSON_FIXTURE_DIR}")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${SCRY_JSON_FIXTURE_ARCHIVE}")
+
 target_include_directories(
   scry_runtime_tests PRIVATE "${PROJECT_SOURCE_DIR}/src" "${PROJECT_SOURCE_DIR}/tests"
 )
@@ -107,7 +114,7 @@ target_compile_definitions(
   scry_runtime_tests
   PRIVATE
     "SCRY_FUZZ_CORPUS_DIR=\"${PROJECT_SOURCE_DIR}/tests/fuzz/corpus\""
-    "SCRY_JSON_FIXTURE_DIR=\"${PROJECT_SOURCE_DIR}/tests/fixtures/json\""
+    "SCRY_JSON_FIXTURE_DIR=\"${SCRY_JSON_FIXTURE_DIR}\""
 )
 target_link_libraries(
   scry_runtime_tests
