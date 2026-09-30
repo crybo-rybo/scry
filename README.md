@@ -238,7 +238,7 @@ Then, in a project configured with GCC 16 and
 `-DCMAKE_PREFIX_PATH=/your/prefix`:
 
 ```cmake
-find_package(scry 0.5.0 CONFIG REQUIRED)
+find_package(scry 0.6.0 CONFIG REQUIRED)
 target_link_libraries(app PRIVATE scry::scry)
 ```
 
@@ -250,7 +250,7 @@ include(FetchContent)
 FetchContent_Declare(
   scry
   GIT_REPOSITORY https://github.com/crybo-rybo/scry.git
-  GIT_TAG v0.5.0
+  GIT_TAG v0.6.0
 )
 FetchContent_MakeAvailable(scry)
 target_link_libraries(app PRIVATE scry::scry)
