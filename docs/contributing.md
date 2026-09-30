@@ -26,8 +26,8 @@ python3 -m pip install --user --break-system-packages 'cmake>=3.30'
 **macOS:**
 
 ```sh
-brew install gcc cmake llvm@18 ninja doxygen graphviz
-export PATH="$(brew --prefix llvm@18)/bin:$PATH"
+brew install gcc cmake llvm@21 ninja doxygen graphviz
+export PATH="$(brew --prefix llvm@21)/bin:$PATH"
 ```
 
 Both platforms also need the complexity checker, which CI pins:
@@ -41,10 +41,10 @@ with `-DCMAKE_CXX_COMPILER=...`. Select a versioned formatter with
 `CLANG_FORMAT=clang-format-18 ./scripts/format.sh --check`. Doxygen and Graphviz
 are needed for the documentation gate; Doxygen 1.9.8 is the minimum.
 
-The optional clang-tidy gate needs Clang and clang-tidy on `PATH`. CI uses
-version 18; on macOS that is the `llvm@18` export above. The kernel's libFuzzer
-targets need a Clang installation with libFuzzer; the hosted fuzz legs use
-Clang 21.
+The optional clang-tidy gate and the kernel's libFuzzer targets need Clang 21
+with clang-tidy and libFuzzer; on macOS that is the `llvm@21` export above, and
+on Linux the apt.llvm.org packages that `.github/actions/fuzz-toolchain`
+installs.
 
 ## Presets
 
@@ -94,7 +94,6 @@ separate translation unit per header.
 | `SCRY_WARNINGS_AS_ERRORS` | On at top level | Treat project warnings as errors |
 | `SCRY_ENABLE_CLANG_TIDY` | Off | Analyze the kernel's sources while compiling |
 | `SCRY_CLANG_TOOLING` | Off | Build only the C++23 kernel with Clang for tooling |
-| `SCRY_CLANG_TOOLING_LIBCXX` | Off | Select libc++ in Clang tooling mode |
 | `SCRY_BUILD_FUZZERS` | Off | Build the kernel's libFuzzer targets with Clang |
 | `SCRY_SANITIZER` | `none` | Select `none`, `address-undefined`, or `thread` |
 
@@ -155,7 +154,7 @@ live under `scripts/`, including formatting and the two test entry points.
 |---|---|
 | Doxygen API site + clang-format | `./.github/scripts/ci-docs.sh`, then `CLANG_FORMAT=clang-format-18 ./scripts/format.sh --check` |
 | Core, Linux GCC 16 and macOS GCC 16 | `./.github/scripts/ci-local.sh` |
-| clang-tidy | `./.github/scripts/ci-tidy.sh -DSCRY_CLANG_TOOLING_LIBCXX=ON`, because Ubuntu 24.04's libstdc++ `<expected>` is newer than clang 18 can parse |
+| clang-tidy | `./.github/scripts/ci-tidy.sh` with Clang 21 |
 | ASan + UBSan, TSan | `./.github/scripts/ci-sanitizer.sh asan` and `... tsan` |
 | Kernel fuzz corpus replay | `./.github/scripts/ci-fuzz-replay.sh` |
 
@@ -200,10 +199,9 @@ The kernel targets run under `.github/scripts/ci-fuzz-replay.sh`. The other
 three link the whole library, which only GCC compiles, so the ordinary test
 build links each to `tests/fuzz/replay_main.cpp` instead of libFuzzer: every GCC
 leg replays their corpora, with ASan and UBSan under the `asan` preset, but
-nothing runs a coverage-guided search on them. The `json` target needs only the
-kernel, so the GCC build replays its corpus too. The JSON layer's acceptance
-boundary and canonical bytes are also pinned by the golden fixtures in
-`tests/fixtures/json/goldens.tar.xz`, which `kernel.` and `runtime.` tests check.
+nothing runs a coverage-guided search on them. The JSON layer's acceptance
+boundary and canonical bytes are also pinned by golden fixtures, checked by
+`kernel.` tests; see [`tests/fixtures/json/`](../tests/fixtures/json/README.md).
 
 ## End-to-end testing
 

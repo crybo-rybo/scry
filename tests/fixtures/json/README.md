@@ -1,11 +1,8 @@
 # JSON golden fixtures
 
-Expected results for Scry's JSON layer (`src/kernel/json/document.hpp`). They
-pin two things that must not drift: which inputs the parser accepts, and the
-exact bytes of the canonical writer. `tests/kernel/json_fixture_tests.cpp`
-checks the layer itself against them, and
-`tests/runtime/json_codec_validation_tests.cpp` checks the codec entry points
-and `JsonView` above it.
+Expected results for Scry's JSON layer (`src/kernel/json/document.hpp`),
+checked by `tests/kernel/json_fixture_tests.cpp`. They pin which inputs the
+parser accepts and the exact bytes of the canonical writer.
 
 ## Provenance
 
@@ -27,8 +24,8 @@ Without them the old canonical form was not idempotent.
 
 ## Files
 
-The case files are generated, frozen text (about 16,000 lines), so they are
-checked in as one archive, `goldens.tar.xz`, which the test build unpacks into
+The case files are generated, frozen text (about 16,000 lines), checked in as
+one archive, `goldens.tar.xz`, which the test build unpacks into
 `build/<preset>/tests/fixtures/json/` at configure time.
 
 | File in the archive | Cases |

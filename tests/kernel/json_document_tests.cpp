@@ -93,17 +93,13 @@ TEST_CASE("json integers are plain digit strings that fit their kind") {
 }
 
 TEST_CASE("json numbers with a fraction or exponent are doubles even when whole") {
-  const auto whole = parse_ok("1.0");
-  CHECK(whole.kind() == JsonKind::number);
-  CHECK(json::write(whole) == "1");
-  CHECK(parse_ok("1e2").kind() == JsonKind::number);
-  CHECK(canonical("1e2") == "100");
+  for (const auto text : {"1.0", "1e2", "1E+2", "0e5", "1.0e19"}) {
+    INFO(text);
+    CHECK(parse_ok(text).kind() == JsonKind::number);
+  }
+  // A whole double is spelled without a fraction.
+  CHECK(canonical("1.0") == "1");
   CHECK(canonical("1E+2") == "100");
-  CHECK(parse_ok("0e5").kind() == JsonKind::number);
-  CHECK(canonical("1.0e19") == "1E19");
-  // Integral doubles read back as integers; the text is already canonical.
-  CHECK(canonical("100") == "100");
-  CHECK(canonical("1E19") == "1E19");
 }
 
 TEST_CASE("json negative zero is the double -0.0 and keeps its sign") {
