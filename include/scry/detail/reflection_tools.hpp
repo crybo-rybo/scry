@@ -55,35 +55,6 @@ consteval std::vector<std::meta::info> tool_functions_of(const std::meta::info s
   return functions;
 }
 
-// Only for a class: a complete class has the same members in every translation
-// unit. A namespace does not, so its functions reach registration as a tool_set.
-template <std::meta::info Scope>
-inline constexpr auto tool_functions_v =
-    std::define_static_array(tool_functions_of(Scope));
-
-// The tool functions one add<^^Entity>() registers, as template arguments. The set
-// is part of the registration's identity: a namespace can hold different functions
-// in different translation units, and a specialization computed from the
-// namespace alone would be merged by the linker whatever each unit saw.
-template <std::meta::info... Functions> struct tool_set {};
-
-// Reflects tool_set<...> for an entity: the tool functions a namespace declares
-// before this point, or the one function. Anything else yields an empty set and
-// is rejected by the registration's diagnostic.
-consteval std::meta::info tool_set_of(const std::meta::info entity) {
-  std::vector<std::meta::info> functions{};
-  if (std::meta::is_namespace(entity)) {
-    functions = tool_functions_of(entity);
-  } else if (std::meta::is_function(entity)) {
-    functions.push_back(entity);
-  }
-  std::vector<std::meta::info> arguments{};
-  for (const auto function : functions) {
-    arguments.push_back(std::meta::reflect_constant(function));
-  }
-  return std::meta::substitute(^^tool_set, arguments);
-}
-
 // The tool name the model sees: a name annotation, or else the identifier.
 consteval std::string_view tool_name_of(const std::meta::info function) {
   if (const auto annotated = annotated_text(function, ^^name)) {
@@ -103,18 +74,38 @@ consteval bool is_context_parameter(const std::meta::info parameter) {
          std::meta::dealias(^^const scry::ToolCallContext&);
 }
 
-consteval bool takes_context(const std::meta::info function) {
+// A C++23 explicit object parameter (`this const Box& self`) is the object a
+// member tool is called on. Member-call syntax binds it to the toolbox, so it is
+// neither the context nor an argument the model supplies.
+consteval bool has_explicit_object(const std::meta::info function) {
   const auto parameters = std::meta::parameters_of(function);
-  return !parameters.empty() && is_context_parameter(parameters.front());
+  return !parameters.empty() &&
+         std::meta::is_explicit_object_parameter(parameters.front());
 }
 
-// The parameters the model supplies: every one after the optional context.
+consteval std::size_t object_parameter_count(const std::meta::info function) {
+  return has_explicit_object(function) ? 1U : 0U;
+}
+
+consteval bool takes_context(const std::meta::info function) {
+  const auto parameters = std::meta::parameters_of(function);
+  const auto first = object_parameter_count(function);
+  return parameters.size() > first && is_context_parameter(parameters[first]);
+}
+
+// The index of the first parameter the model supplies: after the explicit object
+// parameter and the context, when the function has them.
+consteval std::size_t first_value_index(const std::meta::info function) {
+  return object_parameter_count(function) + (takes_context(function) ? 1U : 0U);
+}
+
+// The parameters the model supplies, in declaration order.
 consteval std::vector<std::meta::info>
 value_parameters_of(const std::meta::info function) {
   auto parameters = std::meta::parameters_of(function);
-  if (takes_context(function)) {
-    parameters.erase(parameters.begin());
-  }
+  parameters.erase(parameters.begin(),
+                   parameters.begin() +
+                       static_cast<std::ptrdiff_t>(first_value_index(function)));
   return parameters;
 }
 
@@ -143,19 +134,76 @@ consteval arguments_form arguments_form_of(const std::meta::info function) {
 // closed object, and decoding accepts `{}` alone.
 struct no_arguments {};
 
+// ---- Registration identity ----------------------------------------------------
+
+// The member names of a synthesized argument object, each followed by a comma:
+// the value parameters' identifiers. Empty for the other forms, whose generated
+// code does not depend on parameter names.
+consteval std::string synthesized_member_list(const std::meta::info function) {
+  std::string list{};
+  if (arguments_form_of(function) == arguments_form::synthesized) {
+    for (const auto parameter : value_parameters_of(function)) {
+      list += owned_text(std::meta::identifier_of(parameter));
+      list.push_back(',');
+    }
+  }
+  return list;
+}
+
+// The text of a reflect_constant_string array, without its terminator.
+template <std::meta::info Text>
+inline constexpr std::string_view constant_text_v{[:Text:], sizeof([:Text:]) - 1U};
+
+// One tool function as a registration sees it.
+//
+// A function's tool name, description, and parameter names come from the
+// declarations of it that precede the point of evaluation, and annotations
+// accumulate across redeclarations, so two translation units can see one
+// function differently. Each of those facts is a template argument here, a
+// constant string that GCC mangles by its content, so units that see different
+// facts instantiate differently named code, which the linker cannot merge. The
+// code generated for a tool reads these facts from here and never from the
+// function's declarations, so what a specialization's name records is exactly
+// what its code contains. Everything else it reads from the function, such as
+// the parameter types, the return type, and the object parameter, is part of the
+// function's type and the same in every unit.
+template <std::meta::info Function, std::meta::info Name, std::meta::info Description,
+          std::meta::info Members>
+struct bound_tool {
+  static constexpr std::meta::info function = Function;
+  static constexpr std::string_view name = constant_text_v<Name>;
+  static constexpr std::string_view description = constant_text_v<Description>;
+  // The synthesized member names, as synthesized_member_list writes them.
+  static constexpr std::string_view members = constant_text_v<Members>;
+};
+
+// The tools one registration call registers, as bound_tool types, in
+// registration order. The set is part of the registration's identity too: a
+// namespace can hold different functions in different translation units, and a
+// class's member functions can gain annotations, including the tool annotation
+// itself, from an out-of-class definition that only some units see.
+template <typename... Tools> struct tool_set {};
+
 // The argument object synthesized from a parameter list: one required member per
-// parameter, named after it, of the parameter's type without references or
-// cv-qualifiers. The consteval block runs when the specialization is
-// instantiated, which C++26 permits because the aggregate it completes is a
-// member of that same specialization.
-template <std::meta::info Function> struct synthesized_arguments {
+// value parameter, named as `Tool` records, of the parameter's type without
+// references or cv-qualifiers. The consteval block runs when the specialization
+// is instantiated, which C++26 permits because the aggregate it completes is a
+// member of that same specialization. The names are read one character at a
+// time, for the reason owned_text gives.
+template <typename Tool> struct synthesized_arguments {
   struct type;
 
   consteval {
     std::vector<std::meta::info> members{};
-    for (const auto parameter : value_parameters_of(Function)) {
+    std::size_t position = 0;
+    for (const auto parameter : value_parameters_of(Tool::function)) {
+      std::string name{};
+      for (; Tool::members[position] != ','; ++position) {
+        name.push_back(Tool::members[position]);
+      }
+      ++position;
       std::meta::data_member_options options{};
-      options.name = std::meta::identifier_of(parameter);
+      options.name = name;
       members.push_back(std::meta::data_member_spec(
           plain_type(std::meta::type_of(parameter)), options));
     }
@@ -165,19 +213,19 @@ template <std::meta::info Function> struct synthesized_arguments {
 
 // Instantiates synthesized_arguments only for the form that needs it, and only
 // after the function has passed tool_function_problem.
-template <std::meta::info Function> consteval std::meta::info tool_arguments_type() {
-  constexpr auto form = arguments_form_of(Function);
+template <typename Tool> consteval std::meta::info tool_arguments_type() {
+  constexpr auto form = arguments_form_of(Tool::function);
   if constexpr (form == arguments_form::none) {
     return ^^no_arguments;
   } else if constexpr (form == arguments_form::aggregate) {
-    return plain_type(std::meta::type_of(value_parameters_of(Function).front()));
+    return plain_type(std::meta::type_of(value_parameters_of(Tool::function).front()));
   } else {
-    return ^^typename synthesized_arguments<Function>::type;
+    return ^^typename synthesized_arguments<Tool>::type;
   }
 }
 
-template <std::meta::info Function>
-using tool_arguments_t = typename[:tool_arguments_type<Function>():];
+template <typename Tool>
+using tool_arguments_t = typename[:tool_arguments_type<Tool>():];
 
 // ---- Diagnostics -------------------------------------------------------------
 
@@ -232,6 +280,38 @@ consteval std::string tool_annotation_problem(const std::meta::info function) {
   return {};
 }
 
+// A member tool with an explicit object parameter is called on the toolbox the
+// registry holds, an lvalue that is const when the toolbox is. That lvalue must
+// initialize the parameter, as for any argument: a reference to the toolbox
+// class or a base of it binds directly, a by-value parameter copies the toolbox,
+// and a parameter of another type needs an implicit conversion.
+consteval std::string explicit_object_problem(const std::meta::info function,
+                                              const std::meta::info toolbox,
+                                              const bool const_toolbox) {
+  const auto declared = std::meta::type_of(std::meta::parameters_of(function).front());
+  const auto type = std::meta::dealias(declared);
+  const auto referred = std::meta::remove_reference(type);
+  if (std::meta::is_rvalue_reference_type(type)) {
+    return "takes its explicit object parameter by rvalue reference, so the toolbox "
+           "object the registry holds cannot call it";
+  }
+  if (std::meta::is_lvalue_reference_type(type) && const_toolbox &&
+      !std::meta::is_const_type(referred)) {
+    return "takes its explicit object parameter by non-const reference, and the "
+           "toolbox is const";
+  }
+  const auto object = const_toolbox ? std::meta::add_const(toolbox) : toolbox;
+  if (std::meta::is_convertible_type(std::meta::add_lvalue_reference(object), type)) {
+    return {};
+  }
+  if (!std::meta::is_reference_type(type) && plain_type(type) == toolbox) {
+    return "takes its explicit object parameter by value, and " + display(toolbox) +
+           " cannot be copy-initialized from an lvalue of " + display(object);
+  }
+  return "takes its explicit object parameter as " + display(declared) +
+         ", which an lvalue of " + display(object) + " does not convert to";
+}
+
 // `toolbox` is the class a member tool is bound to, or the null reflection for a
 // function registered on its own.
 consteval std::string binding_problem(const std::meta::info function,
@@ -253,6 +333,9 @@ consteval std::string binding_problem(const std::meta::info function,
   if (!std::meta::is_public(function)) {
     return "is not a public member function";
   }
+  if (has_explicit_object(function)) {
+    return explicit_object_problem(function, toolbox, const_toolbox);
+  }
   if (bound && std::meta::is_rvalue_reference_qualified(function)) {
     return "is &&-qualified, so the toolbox object the registry holds cannot call it";
   }
@@ -271,10 +354,11 @@ consteval std::string parameter_label(const std::meta::info parameter,
 
 // Checks each parameter's passing convention: the decoded arguments are moved
 // into the call, so a parameter may take a value, a const reference, or an
-// rvalue reference, and the call context may appear only first.
+// rvalue reference, and the call context may appear only first. Parameters are
+// numbered as declared, counting an explicit object parameter.
 consteval std::string passing_problem(const std::meta::info function) {
   const auto parameters = std::meta::parameters_of(function);
-  for (std::size_t index = takes_context(function) ? 1U : 0U; index < parameters.size();
+  for (std::size_t index = first_value_index(function); index < parameters.size();
        ++index) {
     const auto type = std::meta::dealias(std::meta::type_of(parameters[index]));
     const auto label = parameter_label(parameters[index], index);
@@ -298,7 +382,7 @@ consteval std::string passing_problem(const std::meta::info function) {
 
 consteval std::string arguments_problem(const std::meta::info function) {
   const auto values = value_parameters_of(function);
-  const std::size_t first = takes_context(function) ? 1U : 0U;
+  const std::size_t first = first_value_index(function);
   if (arguments_form_of(function) == arguments_form::aggregate) {
     const auto reason =
         tool_arguments_problem(plain_type(std::meta::type_of(values.front())));
@@ -423,6 +507,52 @@ consteval std::string entity_problem(const std::meta::info entity) {
   return display(entity) + " is neither a function nor a namespace";
 }
 
+// ---- Registration sets --------------------------------------------------------
+
+// The bound_tool of a function that has passed tool_function_problem, with the
+// facts the declarations preceding this point give it.
+consteval std::meta::info bound_tool_of(const std::meta::info function) {
+  const auto text = [](const std::string_view value) {
+    return std::meta::reflect_constant(
+        std::meta::reflect_constant_string(owned_text(value)));
+  };
+  return std::meta::substitute(^^bound_tool,
+                               {
+                                   std::meta::reflect_constant(function),
+                                   text(tool_name_of(function)),
+                                   text(tool_description_of(function)),
+                                   text(synthesized_member_list(function))});
+}
+
+consteval std::meta::info tool_set_of(const std::vector<std::meta::info>& functions) {
+  std::vector<std::meta::info> tools{};
+  for (const auto function : functions) {
+    tools.push_back(bound_tool_of(function));
+  }
+  return std::meta::substitute(^^tool_set, tools);
+}
+
+// Reflects the tool_set add<^^Entity>() registers: the tool functions a
+// namespace declares before this point, or the one function. An entity the
+// registration rejects yields the empty set, and its diagnostic reports why.
+consteval std::meta::info entity_tool_set(const std::meta::info entity) {
+  if (!entity_problem(entity).empty()) {
+    return ^^tool_set<>;
+  }
+  return tool_set_of(std::meta::is_namespace(entity) ? tool_functions_of(entity)
+                                                     : std::vector{entity});
+}
+
+// Reflects the tool_set a toolbox of `type` registers: its class's tool member
+// functions, in declaration order. A type the registration rejects yields the
+// empty set, and its diagnostic reports why.
+consteval std::meta::info toolbox_tool_set(const std::meta::info type) {
+  if (!toolbox_problem(type).empty()) {
+    return ^^tool_set<>;
+  }
+  return tool_set_of(tool_functions_of(plain_type(type)));
+}
+
 template <std::meta::info Entity> consteval std::string_view entity_tools_diagnostic() {
   const auto reason = entity_problem(Entity);
   if (reason.empty()) {
@@ -464,6 +594,10 @@ namespace scry::reflection {
 /// itself; inherited member functions are not considered. Every tool member must
 /// be a public, non-deleted, non-`&&`-qualified function with a valid tool
 /// signature, `const` when the toolbox is, and the tool names must be distinct.
+/// A member with an explicit object parameter is instead called on the toolbox as
+/// an lvalue, `const` when the toolbox is, which must initialize that parameter:
+/// it may not be an rvalue reference, nor a non-const reference when the toolbox
+/// is const, and a by-value parameter needs a toolbox it can copy.
 /// Registration reports the first violation with the member's name and the reason.
 template <typename Type>
 concept Toolbox = detail::toolbox_problem(^^Type).empty();

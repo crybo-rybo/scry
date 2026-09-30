@@ -119,19 +119,23 @@ public:
   /// an argument object with one required member per parameter. It returns what
   /// an add<Args>() handler may return. A function that breaks these rules fails
   /// to compile with its name and the reason.
-  /// A namespace is open, so the tools registered are the ones declared in it
-  /// before the call, in the calling translation unit. Two translation units that
-  /// see different parts of one namespace each register their own part.
+  /// Registration reads the declarations that precede the call in the calling
+  /// translation unit: a namespace is open, so the tools registered are the ones
+  /// declared in it before the call, and a function's name, description, and
+  /// parameter names are the ones its declarations so far give it. Two
+  /// translation units that see different declarations each register what they
+  /// see.
   /// @tparam Entity Reflection of a tool function, a static member function, or a
   /// namespace.
-  /// @tparam Tools Leave defaulted. The tool functions `Entity` holds at the call
-  /// site; it gives each distinct set its own specialization, which the linker
-  /// cannot merge with another translation unit's.
+  /// @tparam Tools Leave defaulted. The tools `Entity` holds at the call site, each
+  /// with the name, description, and parameter names seen there; it gives each
+  /// distinct view its own specialization, which the linker cannot merge with
+  /// another translation unit's.
   /// @return Success, an immediate validation/duplicate-name error, or
   /// ErrorCategory::invalid_state for an inactive registry. A namespace is
   /// registered all or nothing.
   template <std::meta::info Entity,
-            typename Tools = typename[:reflection::detail::tool_set_of(Entity):]>
+            typename Tools = typename[:reflection::detail::entity_tool_set(Entity):]>
   [[nodiscard]] Status add();
 
   /// Registers a shared toolbox: every tool member function of `Toolbox`, bound to
@@ -142,13 +146,21 @@ public:
   /// turn that snapshotted these tools, still holds one, and the last of those is
   /// released on the host thread. Handlers run on that thread inside
   /// Harness::update(), so the toolbox's state needs no locking. A `const`
-  /// toolbox admits only const member functions.
+  /// toolbox admits only const member functions. A member function with an
+  /// explicit object parameter is called on the toolbox, which must initialize
+  /// that parameter as an lvalue, `const` when the toolbox is; the parameters
+  /// after it follow the rules of add<^^function>().
   /// @tparam Toolbox Class satisfying scry::reflection::Toolbox.
+  /// @tparam Tools Leave defaulted. The tool member functions of `Toolbox` as the
+  /// call site sees them, since an out-of-class definition can annotate a member
+  /// in some translation units only; see add<^^Entity>().
   /// @param toolbox Non-null toolbox to share.
   /// @return Success, ErrorCategory::invalid_argument for a null toolbox or an
   /// immediate validation/duplicate-name error, or ErrorCategory::invalid_state
   /// for an inactive registry. The toolbox is registered all or nothing.
-  template <typename Toolbox>
+  template <
+      typename Toolbox,
+      typename Tools = typename[:reflection::detail::toolbox_tool_set(^^Toolbox):]>
   [[nodiscard]] Status add(std::shared_ptr<Toolbox> toolbox);
 
   /// Registers an owned toolbox: moves it into the registry, then registers it as
@@ -159,9 +171,11 @@ public:
   /// host needs to see that state too.
   /// @tparam Toolbox Movable class satisfying scry::reflection::Toolbox, passed as
   /// an rvalue.
+  /// @tparam Tools Leave defaulted, as for add(std::shared_ptr<Toolbox>).
   /// @param toolbox Toolbox to take ownership of.
   /// @return As add(std::shared_ptr<Toolbox>).
-  template <typename Toolbox>
+  template <typename Toolbox, typename Tools = typename
+            [:reflection::detail::toolbox_tool_set(^^std::remove_cvref_t<Toolbox>):]>
     requires detail::owned_toolbox_candidate<Toolbox>
   [[nodiscard]] Status add(Toolbox&& toolbox);
 
@@ -266,11 +280,13 @@ template <std::meta::info Entity, typename Tools> Status ToolRegistry::add() {
   if constexpr (!problem.empty()) {
     return {};
   } else {
-    return add_all(reflection::detail::tool_set_entries(Tools{}));
+    return add_all(
+        reflection::detail::tool_set_entries(Tools{}, std::shared_ptr<void>{}));
   }
 }
 
-template <typename Toolbox> Status ToolRegistry::add(std::shared_ptr<Toolbox> toolbox) {
+template <typename Toolbox, typename Tools>
+Status ToolRegistry::add(std::shared_ptr<Toolbox> toolbox) {
   constexpr std::string_view problem =
       reflection::detail::toolbox_diagnostic<Toolbox>();
   static_assert(problem.empty(), problem);
@@ -283,11 +299,11 @@ template <typename Toolbox> Status ToolRegistry::add(std::shared_ptr<Toolbox> to
           .message = "toolbox must not be null",
       });
     }
-    return add_all(reflection::detail::toolbox_entries(toolbox));
+    return add_all(reflection::detail::tool_set_entries(Tools{}, toolbox));
   }
 }
 
-template <typename Toolbox>
+template <typename Toolbox, typename Tools>
   requires detail::owned_toolbox_candidate<Toolbox>
 Status ToolRegistry::add(Toolbox&& toolbox) {
   constexpr std::string_view problem =
@@ -296,8 +312,10 @@ Status ToolRegistry::add(Toolbox&& toolbox) {
   if constexpr (!problem.empty()) {
     return {};
   } else {
+    // Forwards this call site's view explicitly: a default computed inside this
+    // body would be keyed on the class alone.
     using Owned = std::remove_cvref_t<Toolbox>;
-    return add(std::make_shared<Owned>(std::forward<Toolbox>(toolbox)));
+    return add<Owned, Tools>(std::make_shared<Owned>(std::forward<Toolbox>(toolbox)));
   }
 }
 

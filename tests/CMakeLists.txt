@@ -182,27 +182,29 @@ if(SCRY_REFLECTION_TEST_SOURCES)
   catch_discover_tests(scry_reflection_tests TEST_PREFIX "reflection.")
 endif()
 
-# add<^^namespace>() must register what each translation unit can see, however
-# the linker orders the units, so the same program is linked in both orders.
+# A registration must generate code from the declarations its own translation
+# unit sees (a namespace's tools, a function's parameter names and annotations, a
+# toolbox member's annotations), however the linker orders the units, so the same
+# program is linked in both orders.
 foreach(SCRY_LINK_ORDER IN ITEMS a_then_b b_then_a)
   if(SCRY_LINK_ORDER STREQUAL "a_then_b")
-    set(SCRY_INVENTORY_UNITS tools_a.cpp tools_b.cpp)
+    set(SCRY_MULTI_TU_UNITS tools_a.cpp tools_b.cpp)
   else()
-    set(SCRY_INVENTORY_UNITS tools_b.cpp tools_a.cpp)
+    set(SCRY_MULTI_TU_UNITS tools_b.cpp tools_a.cpp)
   endif()
-  list(TRANSFORM SCRY_INVENTORY_UNITS PREPEND "reflection/multi_tu/")
+  list(TRANSFORM SCRY_MULTI_TU_UNITS PREPEND "reflection/multi_tu/")
   add_executable(
-    scry_namespace_inventory_${SCRY_LINK_ORDER}
+    scry_multi_tu_${SCRY_LINK_ORDER}
     reflection/multi_tu/main.cpp
-    ${SCRY_INVENTORY_UNITS}
+    ${SCRY_MULTI_TU_UNITS}
   )
   target_link_libraries(
-    scry_namespace_inventory_${SCRY_LINK_ORDER}
+    scry_multi_tu_${SCRY_LINK_ORDER}
     PRIVATE scry::scry scry_project_options
   )
   add_test(
-    NAME "reflection.namespace-inventory-${SCRY_LINK_ORDER}"
-    COMMAND scry_namespace_inventory_${SCRY_LINK_ORDER}
+    NAME "reflection.multi-tu-${SCRY_LINK_ORDER}"
+    COMMAND scry_multi_tu_${SCRY_LINK_ORDER}
   )
 endforeach()
 
@@ -334,6 +336,21 @@ scry_add_reflection_compile_fail_test(
   scalar-answer
   scalar_answer.cpp
   "int does not satisfy scry::reflection::ToolArguments: int is not a plain aggregate"
+)
+scry_add_reflection_compile_fail_test(
+  explicit-object-rvalue
+  explicit_object_rvalue.cpp
+  "Lamp::toggle takes its explicit object parameter by rvalue reference, so the toolbox object the registry holds cannot call it"
+)
+scry_add_reflection_compile_fail_test(
+  explicit-object-const-toolbox
+  explicit_object_const_toolbox.cpp
+  "Lamp::toggle takes its explicit object parameter by non-const reference, and the toolbox is const"
+)
+scry_add_reflection_compile_fail_test(
+  explicit-object-uncopyable
+  explicit_object_uncopyable.cpp
+  "Lamp::read takes its explicit object parameter by value, and Lamp cannot be copy-initialized from an lvalue of Lamp"
 )
 scry_add_reflection_compile_fail_test(
   unbound-member-tool
