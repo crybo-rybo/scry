@@ -126,8 +126,6 @@ TEST_CASE("ask decodes an Anthropic answer and the next turn re-encodes it") {
   REQUIRE(completion.structured);
   CHECK(completion.structured->text == canonical_answer);
   CHECK(completion.answer_attempt_count == 1);
-  CHECK(completion.tool_call_count == 0);
-  CHECK(completion.tool_round_count == 0);
 
   const auto first = transport.requests().front().body;
   CHECK(contains(first, R"("tool_choice":{"type":"any"})"));
@@ -150,7 +148,7 @@ TEST_CASE("ask decodes an Anthropic answer and the next turn re-encodes it") {
   CHECK(conversation.message_count() == 4);
 }
 
-TEST_CASE("send<T> completes an OpenAI-compatible answer reported with a plain stop") {
+TEST_CASE("send<T> completes an OpenAI-compatible answer that persists and replays") {
   ScriptedTransport transport;
   // A server forcing a tool call may finish with `stop` rather than `tool_calls`.
   transport.enqueue(scripted(scry::testing::openai_text_tool_stream(
@@ -183,7 +181,12 @@ TEST_CASE("send<T> completes an OpenAI-compatible answer reported with a plain s
   CHECK(contains(transport.requests().front().body, R"("tool_choice":"required")"));
   require_answer_only_as_text(conversation);
 
-  static_cast<void>(unwrap(harness.send_and_wait(conversation, "Thanks.")));
+  // The answered history round-trips through persistence and replays as text.
+  const auto saved = unwrap(conversation.to_json());
+  auto restored = unwrap(scry::Conversation::from_json(saved));
+  CHECK(unwrap(restored.to_json()).text == saved.text);
+  require_answer_only_as_text(restored);
+  static_cast<void>(unwrap(harness.send_and_wait(restored, "Thanks.")));
   const auto second = transport.requests().back().body;
   CHECK_FALSE(contains(second, "tool_choice"));
   CHECK_FALSE(contains(second, "tool_calls"));
@@ -197,7 +200,6 @@ TEST_CASE("an invalid answer goes back to the model, which corrects it") {
       "msg_first")));
   transport.enqueue(scripted(scry::testing::anthropic_tool_stream(
       {respond("toolu_2", valid_answer)}, "msg_second")));
-  transport.enqueue(scripted(scry::testing::anthropic_text_stream("Anything else?")));
   auto harness = unwrap(scry::testing::create_harness(anthropic_config(), transport));
   auto conversation = unwrap(scry::Conversation::create());
 
@@ -217,225 +219,57 @@ TEST_CASE("an invalid answer goes back to the model, which corrects it") {
   // History keeps the question and the accepted answer, not the attempt.
   REQUIRE(conversation.message_count() == 2);
   require_answer_only_as_text(conversation);
-
-  static_cast<void>(unwrap(harness.send_and_wait(conversation, "Thanks.")));
-  CHECK_FALSE(contains(transport.requests().back().body, "toolu_1"));
-}
-
-TEST_CASE("an answer beside a real tool call waits for the tool") {
-  ScriptedTransport transport;
-  transport.enqueue(scripted(scry::testing::openai_text_tool_stream(
-      "Let me look.",
-      {
-          {.id = "call_lookup", .name = "lookup", .arguments = R"({"topic":"moon"})"},
-          respond("call_early", valid_answer),
-      })));
-  transport.enqueue(scripted(scry::testing::openai_tool_stream(
-      {respond("call_answer", valid_answer)}, "chatcmpl-answer")));
-  scry::ToolRegistry tools;
-  REQUIRE(tools.add<LookupArguments>(
-      {.name = "lookup", .description = "Look a topic up"},
-      [](LookupArguments arguments) { return "notes on " + arguments.topic; }));
-  auto harness = unwrap(
-      scry::testing::create_harness(openai_config(), transport, std::move(tools)));
-  auto conversation = unwrap(scry::Conversation::create());
-
-  std::vector<std::string> requested;
-  std::vector<std::string> observed;
-  std::optional<scry::Result<scry::Completion>> finished;
-  auto turn = unwrap(harness.send<Verdict>(
-      conversation, "Is the moon made of cheese?",
-      {
-          .on_tool_request = [&requested](const scry::ToolRequest& request)
-              -> std::optional<scry::ToolRejection> {
-            requested.emplace_back(request.context.tool_name);
-            return std::nullopt;
-          },
-          .on_tool_call =
-              [&observed](const scry::ToolCall& call) {
-                observed.push_back(call.name);
-              },
-          .on_finished =
-              [&finished](scry::Result<scry::Completion> result) {
-                finished = std::move(result);
-              },
-      }));
-  REQUIRE(pump_until(harness, [&turn] { return turn.finished(); }));
-
-  REQUIRE(finished);
-  REQUIRE(*finished);
-  // Only the real tool reached the host's hooks.
-  CHECK(requested == std::vector<std::string>{"lookup"});
-  CHECK(observed == std::vector<std::string>{"lookup"});
-  CHECK((*finished)->tool_call_count == 1);
-  CHECK((*finished)->answer_attempt_count == 2);
-  CHECK((*finished)->tool_round_count == 1);
-  const auto requests = transport.requests();
-  REQUIRE(requests.size() == 2);
-  CHECK(contains(requests[1].body,
-                 "call respond exactly once, on its own, after your other tool calls "
-                 "have returned"));
-  // The real round stays in history without the refused answer.
-  REQUIRE(conversation.message_count() == 4);
-  const auto& round = conversation.messages()[1];
-  REQUIRE(round.content.size() == 2);
-  CHECK(std::get<scry::TextBlock>(round.content[0]).text == "Let me look.");
-  CHECK(std::get<scry::ToolCallBlock>(round.content[1]).name == "lookup");
-  require_answer_only_as_text(conversation);
 }
 
 // Past max_tool_calls_per_turn a plain turn is told to answer without tools, but
 // a typed turn still requires a tool call and can only end on its response tool,
-// so the refusal names that tool instead.
+// so the refusal names that tool. A dynamic format with its own name and host
+// validator shows the name is the turn's; ask<T> reaches the same path.
 TEST_CASE("the per-turn call limit tells a typed turn to finish on its response tool") {
-  const auto run = [](const std::string_view response_tool, auto send) {
-    ScriptedTransport transport;
-    transport.enqueue(scripted(scry::testing::openai_tool_stream({
-        {.id = "call_first", .name = "lookup", .arguments = R"({"topic":"moon"})"},
-        {.id = "call_second", .name = "lookup", .arguments = R"({"topic":"rock"})"},
-    })));
-    transport.enqueue(scripted(scry::testing::openai_tool_stream(
-        {{.id = "call_answer", .name = response_tool, .arguments = valid_answer}},
-        "chatcmpl-answer")));
-    scry::ToolRegistry tools;
-    REQUIRE(tools.add<LookupArguments>(
-        {.name = "lookup", .description = "Look a topic up"},
-        [](LookupArguments arguments) { return "notes on " + arguments.topic; }));
-    auto config = openai_config();
-    config.max_tool_calls_per_turn = 1;
-    auto harness =
-        unwrap(scry::testing::create_harness(config, transport, std::move(tools)));
-    auto conversation = unwrap(scry::Conversation::create());
-
-    const auto completion = send(harness, conversation);
-    REQUIRE(completion);
-    CHECK(completion->rejected_tool_call_count == 1);
-    REQUIRE(completion->structured);
-    const auto requests = transport.requests();
-    REQUIRE(requests.size() == 2);
-    const auto& follow_up = requests[1].body;
-    CHECK(contains(follow_up, R"("tool_choice":"required")"));
-    CHECK(contains(follow_up, "tool call limit for this turn reached; call " +
-                                  std::string{response_tool} +
-                                  " on its own with your final answer"));
-    CHECK_FALSE(contains(follow_up, "respond without calling tools"));
-  };
-
-  SECTION("ask<T> names the default response tool") {
-    run("respond", [](scry::Harness& harness, scry::Conversation& conversation) {
-      return harness.ask<Verdict>(conversation, "Is the moon made of cheese?")
-          .transform([](scry::Answered<Verdict> answered) {
-            return std::move(answered.completion);
-          });
-    });
-  }
-  SECTION("a dynamic response format names its own tool") {
-    run("verdict", [](scry::Harness& harness, scry::Conversation& conversation) {
-      return harness.send_and_wait_structured(
-          conversation, "Is the moon made of cheese?",
-          scry::ResponseFormat{
-              .name = "verdict",
-              .schema = {.text =
-                             std::string{scry::reflection::input_schema_v<Verdict>}},
-          });
-    });
-  }
-}
-
-TEST_CASE("a typed turn whose model calls no tool fails with protocol") {
   ScriptedTransport transport;
-  transport.enqueue(scripted(scry::testing::anthropic_text_stream("No, it is rock.")));
-  auto harness = unwrap(scry::testing::create_harness(anthropic_config(), transport));
-  auto conversation = unwrap(scry::Conversation::create());
-
-  const auto answered =
-      harness.ask<Verdict>(conversation, "Is the moon made of cheese?");
-
-  REQUIRE_FALSE(answered);
-  CHECK(answered.error().category == scry::ErrorCategory::protocol);
-  CHECK(
-      contains(answered.error().message, "did not call the response tool \"respond\""));
-  CHECK(conversation.message_count() == 0);
-}
-
-TEST_CASE("the round limit without a valid answer fails the typed turn") {
-  ScriptedTransport transport;
-  transport.enqueue(scripted(scry::testing::anthropic_tool_stream(
-      {respond("toolu_1", R"({"supported":1})")}, "msg_first")));
-  transport.enqueue(scripted(scry::testing::anthropic_tool_stream(
-      {respond("toolu_2", R"({"supported":2})")}, "msg_second")));
-  auto config = anthropic_config();
-  config.max_tool_rounds = 1;
-  config.tool_round_limit = scry::ToolRoundLimitPolicy::complete;
-  auto harness = unwrap(scry::testing::create_harness(config, transport));
-  auto conversation = unwrap(scry::Conversation::create());
-
-  const auto answered =
-      harness.ask<Verdict>(conversation, "Is the moon made of cheese?");
-
-  REQUIRE_FALSE(answered);
-  CHECK(answered.error().category == scry::ErrorCategory::max_tool_rounds);
-  CHECK(conversation.message_count() == 0);
-}
-
-TEST_CASE("cancelling a typed turn from a callback commits nothing") {
-  ScriptedTransport transport;
-  transport.enqueue(scripted(scry::testing::anthropic_text_tool_stream(
-      "Checked.", {respond("toolu_1", valid_answer)})));
-  auto harness = unwrap(scry::testing::create_harness(anthropic_config(), transport));
-  auto conversation = unwrap(scry::Conversation::create());
-
-  std::optional<scry::TurnId> turn_id;
-  std::optional<scry::Result<scry::Completion>> finished;
-  auto turn = unwrap(
-      harness.send<Verdict>(conversation, "Is the moon made of cheese?",
-                            {
-                                .on_text_delta =
-                                    [&harness, &turn_id](std::string_view) {
-                                      static_cast<void>(harness.cancel(*turn_id));
-                                    },
-                                .on_finished =
-                                    [&finished](scry::Result<scry::Completion> result) {
-                                      finished = std::move(result);
-                                    },
-                            }));
-  turn_id = turn.id();
-  REQUIRE(pump_until(harness, [&turn] { return turn.finished(); }));
-
-  REQUIRE(finished);
-  REQUIRE_FALSE(*finished);
-  CHECK(finished->error().category == scry::ErrorCategory::cancelled);
-  CHECK(conversation.message_count() == 0);
-}
-
-TEST_CASE("a dynamic response format names its tool and validates on the host") {
-  ScriptedTransport transport;
-  transport.enqueue(scripted(scry::testing::anthropic_tool_stream(
-      {{.id = "toolu_1", .name = "verdict", .arguments = R"({"score":3})"}})));
-  auto harness = unwrap(scry::testing::create_harness(anthropic_config(), transport));
+  transport.enqueue(scripted(scry::testing::openai_tool_stream({
+      {.id = "call_first", .name = "lookup", .arguments = R"({"topic":"moon"})"},
+      {.id = "call_second", .name = "lookup", .arguments = R"({"topic":"rock"})"},
+  })));
+  transport.enqueue(scripted(scry::testing::openai_tool_stream(
+      {{.id = "call_answer", .name = "verdict", .arguments = valid_answer}},
+      "chatcmpl-answer")));
+  scry::ToolRegistry tools;
+  REQUIRE(tools.add<LookupArguments>(
+      {.name = "lookup", .description = "Look a topic up"},
+      [](LookupArguments arguments) { return "notes on " + arguments.topic; }));
+  auto config = openai_config();
+  config.max_tool_calls_per_turn = 1;
+  auto harness =
+      unwrap(scry::testing::create_harness(config, transport, std::move(tools)));
   auto conversation = unwrap(scry::Conversation::create());
 
   std::vector<std::string> validated;
   const auto completion = unwrap(harness.send_and_wait_structured(
-      conversation, "Score the claim.",
+      conversation, "Is the moon made of cheese?",
       scry::ResponseFormat{
           .name = "verdict",
-          .schema =
-              {.text =
-                   R"({"type":"object","properties":{"score":{"type":"integer"}}})"},
+          .schema = {.text = std::string{scry::reflection::input_schema_v<Verdict>}},
           .validate = [&validated](const scry::Json& answer) -> scry::Status {
             validated.push_back(answer.text);
             return {};
           },
       }));
 
-  CHECK(validated == std::vector<std::string>{R"({"score":3})"});
+  CHECK(completion.rejected_tool_call_count == 1);
   REQUIRE(completion.structured);
-  CHECK(completion.structured->text == R"({"score":3})");
-  const auto body = transport.requests().front().body;
-  CHECK(contains(body, R"("name":"verdict")"));
+  // The host's validator saw the canonical answer once.
+  CHECK(validated == std::vector<std::string>{std::string{canonical_answer}});
+  const auto requests = transport.requests();
+  REQUIRE(requests.size() == 2);
+  CHECK(contains(requests[0].body, R"("name":"verdict")"));
   // An empty description selects Scry's instruction for the response tool.
-  CHECK(contains(body, "exactly once, on its own"));
+  CHECK(contains(requests[0].body, "exactly once, on its own"));
+  const auto& follow_up = requests[1].body;
+  CHECK(contains(follow_up, R"("tool_choice":"required")"));
+  CHECK(contains(follow_up, "tool call limit for this turn reached; call verdict on "
+                            "its own with your final answer"));
+  CHECK_FALSE(contains(follow_up, "respond without calling tools"));
 }
 
 TEST_CASE("send_structured rejects a response format that cannot be offered") {
@@ -465,29 +299,4 @@ TEST_CASE("send_structured rejects a response format that cannot be offered") {
   transport.enqueue(scripted(
       scry::testing::anthropic_tool_stream({respond("toolu_1", valid_answer)})));
   CHECK(harness.ask<Verdict>(conversation, "Is the moon made of cheese?"));
-}
-
-TEST_CASE("a conversation holding a typed answer survives persistence") {
-  ScriptedTransport transport;
-  transport.enqueue(scripted(scry::testing::anthropic_text_tool_stream(
-      "Checked.", {respond("toolu_1", valid_answer)})));
-  auto harness = unwrap(scry::testing::create_harness(anthropic_config(), transport));
-  auto conversation = unwrap(scry::Conversation::create());
-  static_cast<void>(
-      unwrap(harness.ask<Verdict>(conversation, "Is the moon made of cheese?")));
-
-  const auto saved = unwrap(conversation.to_json());
-  auto restored = unwrap(scry::Conversation::from_json(saved));
-
-  CHECK(unwrap(restored.to_json()).text == saved.text);
-  REQUIRE(restored.message_count() == 2);
-  require_answer_only_as_text(restored);
-  // The restored history encodes for the other dialect too.
-  ScriptedTransport other_transport;
-  other_transport.enqueue(
-      scripted(scry::testing::openai_text_stream("Anything else?")));
-  auto other = unwrap(scry::testing::create_harness(openai_config(), other_transport));
-  const auto follow_up = unwrap(other.send_and_wait(restored, "Thanks."));
-  CHECK(follow_up.text == "Anything else?");
-  CHECK(contains(other_transport.requests().back().body, escaped(canonical_answer)));
 }

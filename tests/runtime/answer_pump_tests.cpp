@@ -230,47 +230,38 @@ TEST_CASE("an answer of a turn cancelled from a callback is never validated") {
   CHECK_FALSE(fixture.commands->try_pop());
 }
 
-TEST_CASE("a turn disconnected from a callback still validates its answer") {
+// Disconnecting stops delivery, not the turn: whether a callback or the validator
+// itself disconnects, the answer is still checked and its verdict posted.
+TEST_CASE("a disconnected turn still validates its answer and posts the verdict") {
+  bool from_validator = false;
+  SECTION("from a callback") {}
+  SECTION("from the validator") { from_validator = true; }
   PumpFixture fixture;
   std::shared_ptr<scry::detail::TurnRoute> route;
   std::size_t validations = 0;
+  const auto disconnect_if = [&route](const bool now) {
+    if (now) {
+      static_cast<void>(route->disconnect());
+    }
+  };
   route = fixture.add(
-      409, {
-               .callbacks = {.on_text_delta =
-                                 [&route](std::string_view) {
-                                   static_cast<void>(route->disconnect());
-                                 }},
-               .validate_answer = [&validations](const scry::Json&) -> scry::Status {
-                 ++validations;
-                 return {};
-               },
-           });
+      409,
+      {
+          .callbacks = {.on_text_delta =
+                            [&](std::string_view) { disconnect_if(!from_validator); }},
+          .validate_answer = [&](const scry::Json&) -> scry::Status {
+            ++validations;
+            disconnect_if(from_validator);
+            return {};
+          },
+      });
   REQUIRE(fixture.events->push(
       scry::detail::TextDeltaEvent{.turn_id = route->id(), .text = "thinking"}, 1024));
   REQUIRE(fixture.events->push(answer_event(route->id()), 1024));
 
   static_cast<void>(fixture.pump.update({}));
 
-  // Disconnecting stops delivery, not the turn: the answer is still checked.
   CHECK(validations == 1);
-  CHECK(pop_acceptance(fixture).call_id == "answer-1");
-}
-
-TEST_CASE("a validator that disconnects its turn still posts the verdict") {
-  PumpFixture fixture;
-  std::shared_ptr<scry::detail::TurnRoute> route;
-  route = fixture.add(
-      410, {
-               .callbacks = {.on_finished = [](scry::Result<scry::Completion>) {}},
-               .validate_answer = [&route](const scry::Json&) -> scry::Status {
-                 static_cast<void>(route->disconnect());
-                 return {};
-               },
-           });
-  REQUIRE(fixture.events->push(answer_event(route->id()), 1024));
-
-  static_cast<void>(fixture.pump.update({}));
-
   CHECK(pop_acceptance(fixture).call_id == "answer-1");
 }
 
