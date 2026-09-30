@@ -419,13 +419,17 @@ TEST_CASE("reflected encoding uses Scry canonical number spelling") {
   const auto fraction = scry::reflection::encode(0.1);
   const auto exponent = scry::reflection::encode(1e20);
   const auto negative_zero = scry::reflection::encode(-0.0);
+  // A float is spelled as the float it is, not as the double it widens to.
+  const auto single = scry::reflection::encode(0.7F);
 
   REQUIRE(fraction);
   REQUIRE(exponent);
   REQUIRE(negative_zero);
+  REQUIRE(single);
   CHECK(fraction->text == "0.1");
   CHECK(exponent->text == "1E20");
   CHECK(negative_zero->text == "0");
+  CHECK(single->text == "0.7");
 }
 
 TEST_CASE("reflected sequence encoding propagates fallible element errors") {
