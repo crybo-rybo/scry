@@ -7,11 +7,8 @@
 # and GCC-only. The ci preset pins g++-16, so the Clang compiler is named
 # explicitly here.
 #
-# Extra arguments are forwarded to the configure step. The hosted leg passes
-# -DSCRY_CLANG_TOOLING_LIBCXX=ON to build against libc++ instead of the host's
-# libstdc++, which is newer than clang 18 can parse on Ubuntu 24.04. A Homebrew
-# llvm@18 already defaults to its own libc++, so a local run with it passes
-# nothing.
+# Extra arguments are forwarded to the configure step; the hosted leg passes
+# -DSCRY_CLANG_TIDY_EXECUTABLE=clang-tidy-21 to match its versioned compiler.
 
 set -euo pipefail
 

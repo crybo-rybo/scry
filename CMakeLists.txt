@@ -55,12 +55,6 @@ clang-tidy and libFuzzer. Not a supported consumer build."
   OFF
 )
 option(
-  SCRY_CLANG_TOOLING_LIBCXX
-  "Use libc++ for the Clang tooling build; needed where the host's libstdc++ \
-lacks std::expected for the tooling compiler"
-  OFF
-)
-option(
   SCRY_BUILD_FUZZERS
   "Build the kernel's libFuzzer targets; requires SCRY_CLANG_TOOLING"
   OFF

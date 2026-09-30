@@ -487,88 +487,73 @@ private:
     return cursor_ != start;
   }
 
-  [[nodiscard]] bool exponent(DecimalNumber& decimal) noexcept {
+  [[nodiscard]] bool exponent() noexcept {
     ++cursor_;
-    bool negative = false;
     if (next_is('+') || next_is('-')) {
-      negative = *cursor_++ == '-';
-    }
-    const char* start = cursor_;
-    if (!digits()) {
-      return false;
-    }
-    std::int64_t magnitude = 0;
-    for (const char* digit = start; digit != cursor_; ++digit) {
-      magnitude =
-          std::min(magnitude * 10 + (*digit - '0'), DecimalNumber::max_exponent);
-    }
-    decimal.exponent = negative ? -magnitude : magnitude;
-    return true;
-  }
-
-  // Scans the RFC 8259 number grammar into `decimal`; true when well formed.
-  // `plain` ends false when the number has a fraction or an exponent.
-  [[nodiscard]] bool scan_number(DecimalNumber& decimal, bool& plain) noexcept {
-    if (next_is('-')) {
-      decimal.negative = true;
       ++cursor_;
     }
-    const char* integer = cursor_;
+    return digits();
+  }
+
+  // Scans the RFC 8259 number grammar; true when well formed. `plain` ends false
+  // when the number has a fraction or an exponent.
+  [[nodiscard]] bool scan_number(bool& plain) noexcept {
+    if (next_is('-')) {
+      ++cursor_;
+    }
     if (next_is('0')) {
       ++cursor_;
     } else if (at_end() || *cursor_ < '1' || *cursor_ > '9' || !digits()) {
       return false;
     }
-    decimal.integer = std::string_view{integer, cursor_};
     if (next_is('.')) {
       ++cursor_;
-      const char* fraction = cursor_;
       if (!digits()) {
         return false;
       }
-      decimal.fraction = std::string_view{fraction, cursor_};
       plain = false;
     }
     if (next_is('e') || next_is('E')) {
       plain = false;
-      return exponent(decimal);
+      return exponent();
     }
     return true;
   }
 
   [[nodiscard]] bool number(Out& out) {
-    DecimalNumber decimal{};
+    const char* start = cursor_;
     bool plain = true;
-    if (!scan_number(decimal, plain)) {
+    if (!scan_number(plain)) {
       return false;
     }
-    if (plain && integer(decimal, out)) {
+    const std::string_view token{start, cursor_};
+    if (plain && integer(token, out)) {
       return true;
     }
-    if constexpr (Build) {
-      const auto converted = decimal_to_double(decimal);
-      if (!converted) {
-        return false;
-      }
-      emit(out, *converted);
-      return true;
-    } else {
-      return decimal_in_range(decimal);
+    const auto converted = parse_double(start, cursor_);
+    if (!converted) {
+      return false;
     }
+    emit(out, *converted);
+    return true;
   }
 
   // A plain integer token that fits its kind; false sends it to the double path.
-  [[nodiscard]] static bool integer(const DecimalNumber& decimal, Out& out) {
+  [[nodiscard]] static bool integer(std::string_view token, Out& out) {
+    const bool negative = token.front() == '-';
+    if (negative) {
+      token.remove_prefix(1);
+    }
     constexpr auto max = std::numeric_limits<std::uint64_t>::max();
     std::uint64_t magnitude = 0;
-    for (const char digit : decimal.integer) {
+    for (const char digit : token) {
       const auto value = static_cast<std::uint64_t>(digit - '0');
       if (magnitude > (max - value) / 10U) {
         return false;
       }
       magnitude = magnitude * 10U + value;
     }
-    if (!decimal.negative) {
+    if (!negative) {
       emit(out, magnitude);
       return true;
     }

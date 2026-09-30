@@ -102,19 +102,14 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
-      CC: clang-18
-      CXX: clang++-18
+      CC: clang-21
+      CXX: clang++-21
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - run: >
-          sudo apt-get update &&
-          sudo apt-get install -y
-          clang-18 clang-tidy-18 libc++-18-dev libc++abi-18-dev
-          libcurl4-openssl-dev ninja-build
+      - name: Install Clang 21 and clang-tidy
+        uses: ./.github/actions/fuzz-toolchain
       - name: Analyze
-        # Ubuntu 24.04 ships a libstdc++ whose <expected> clang 18 cannot
-        # parse, so this leg analyzes against libc++.
-        run: ./.github/scripts/ci-tidy.sh -DSCRY_CLANG_TOOLING_LIBCXX=ON
+        run: ./.github/scripts/ci-tidy.sh -DSCRY_CLANG_TIDY_EXECUTABLE=clang-tidy-21
 
   sanitizers:
     name: ${{ matrix.name }}

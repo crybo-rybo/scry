@@ -1,11 +1,3 @@
-if(SCRY_CLANG_TOOLING_LIBCXX AND NOT SCRY_CLANG_TOOLING)
-  message(
-    FATAL_ERROR
-    "SCRY_CLANG_TOOLING_LIBCXX selects the standard library for the "
-    "SCRY_CLANG_TOOLING build; enable SCRY_CLANG_TOOLING or leave it OFF"
-  )
-endif()
-
 if(SCRY_BUILD_FUZZERS AND NOT SCRY_CLANG_TOOLING)
   message(FATAL_ERROR
     "SCRY_BUILD_FUZZERS requires SCRY_CLANG_TOOLING=ON and a Clang-family compiler")
@@ -32,29 +24,6 @@ if(SCRY_CLANG_TOOLING)
   # libFuzzer targets are registered separately (tests/fuzz/).
   set(SCRY_BUILD_EXAMPLES OFF)
   set(SCRY_BUILD_TESTS OFF)
-
-  # The kernel's transport seam uses std::stop_token. libstdc++ and recent
-  # libc++ expose that C++20 surface directly; LLVM 18's libc++ still gates it
-  # behind experimental-library mode. Probe rather than assume, so the
-  # flag appears only on the standard libraries that need it.
-  cmake_push_check_state()
-  set(CMAKE_REQUIRED_FLAGS "-std=c++23")
-  if(SCRY_CLANG_TOOLING_LIBCXX)
-    # The probe must see the same standard library the build will use, or the
-    # -fexperimental-library decision below is made against the wrong one.
-    string(APPEND CMAKE_REQUIRED_FLAGS " -stdlib=libc++")
-  endif()
-  check_cxx_source_compiles(
-    [=[
-      #include <stop_token>
-      int main() {
-        std::stop_source source;
-        return source.get_token().stop_requested() ? 1 : 0;
-      }
-    ]=]
-    SCRY_TOOLING_HAS_STOP_TOKEN
-  )
-  cmake_pop_check_state()
 else()
   if(
     NOT CMAKE_CXX_COMPILER_ID STREQUAL "GNU"
