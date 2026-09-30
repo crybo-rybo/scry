@@ -189,6 +189,7 @@ public:
             .max_tool_calls = config_.max_tool_calls_per_turn,
             .callbacks = std::move(callbacks),
             .validate_answer = std::move(response->validate),
+            .response_tool_name = response->tool ? response->tool->name : std::string{},
         });
     auto request = detail::ModelRequest{
         .system_prompt = conversation->config.system_prompt,

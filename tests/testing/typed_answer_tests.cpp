@@ -284,6 +284,64 @@ TEST_CASE("an answer beside a real tool call waits for the tool") {
   require_answer_only_as_text(conversation);
 }
 
+// Past max_tool_calls_per_turn a plain turn is told to answer without tools, but
+// a typed turn still requires a tool call and can only end on its response tool,
+// so the refusal names that tool instead.
+TEST_CASE("the per-turn call limit tells a typed turn to finish on its response tool") {
+  const auto run = [](const std::string_view response_tool, auto send) {
+    ScriptedTransport transport;
+    transport.enqueue(scripted(scry::testing::openai_tool_stream({
+        {.id = "call_first", .name = "lookup", .arguments = R"({"topic":"moon"})"},
+        {.id = "call_second", .name = "lookup", .arguments = R"({"topic":"rock"})"},
+    })));
+    transport.enqueue(scripted(scry::testing::openai_tool_stream(
+        {{.id = "call_answer", .name = response_tool, .arguments = valid_answer}},
+        "chatcmpl-answer")));
+    scry::ToolRegistry tools;
+    REQUIRE(tools.add<LookupArguments>(
+        {.name = "lookup", .description = "Look a topic up"},
+        [](LookupArguments arguments) { return "notes on " + arguments.topic; }));
+    auto config = openai_config();
+    config.max_tool_calls_per_turn = 1;
+    auto harness =
+        unwrap(scry::testing::create_harness(config, transport, std::move(tools)));
+    auto conversation = unwrap(scry::Conversation::create());
+
+    const auto completion = send(harness, conversation);
+    REQUIRE(completion);
+    CHECK(completion->rejected_tool_call_count == 1);
+    REQUIRE(completion->structured);
+    const auto requests = transport.requests();
+    REQUIRE(requests.size() == 2);
+    const auto& follow_up = requests[1].body;
+    CHECK(contains(follow_up, R"("tool_choice":"required")"));
+    CHECK(contains(follow_up, "tool call limit for this turn reached; call " +
+                                  std::string{response_tool} +
+                                  " on its own with your final answer"));
+    CHECK_FALSE(contains(follow_up, "respond without calling tools"));
+  };
+
+  SECTION("ask<T> names the default response tool") {
+    run("respond", [](scry::Harness& harness, scry::Conversation& conversation) {
+      return harness.ask<Verdict>(conversation, "Is the moon made of cheese?")
+          .transform([](scry::Answered<Verdict> answered) {
+            return std::move(answered.completion);
+          });
+    });
+  }
+  SECTION("a dynamic response format names its own tool") {
+    run("verdict", [](scry::Harness& harness, scry::Conversation& conversation) {
+      return harness.send_and_wait_structured(
+          conversation, "Is the moon made of cheese?",
+          scry::ResponseFormat{
+              .name = "verdict",
+              .schema = {.text =
+                             std::string{scry::reflection::input_schema_v<Verdict>}},
+          });
+    });
+  }
+}
+
 TEST_CASE("a typed turn whose model calls no tool fails with protocol") {
   ScriptedTransport transport;
   transport.enqueue(scripted(scry::testing::anthropic_text_stream("No, it is rock.")));

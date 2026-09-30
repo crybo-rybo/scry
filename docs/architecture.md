@@ -216,7 +216,9 @@ because there is no handler for the host to admit. A refused call runs no handle
 and so can have no side effect. The model is given `{"error": message}` flagged
 as a tool error: the fixed text `tool call limit for this turn reached; respond
 without calling tools` for the limit, the host's `model_message` for a hook
-refusal. That result reaches `on_tool_call` with `is_error` and is posted to the
+refusal. A typed turn still requires a tool call and ends only on its response
+tool, so there the limit's text instead tells the model to call that tool, by
+its name, on its own with the final answer. That result reaches `on_tool_call` with `is_error` and is posted to the
 worker like any other, so the turn continues and commits normally. A hook that
 throws is treated exactly like a handler that throws: the call is refused with the
 same fixed text and the turn carries on. The hook runs under the same invocation

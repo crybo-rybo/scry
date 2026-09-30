@@ -28,6 +28,9 @@ struct TurnRouteOptions {
   // A typed turn's answer check. It is not a callback: disconnecting leaves it in
   // place, as it leaves tool handlers, so the turn can still complete.
   AnswerValidator validate_answer{};
+  // A typed turn's response tool, which the per-turn call limit's refusal names;
+  // empty for a plain turn.
+  std::string response_tool_name{};
 };
 
 class TurnRoute final {
@@ -97,6 +100,7 @@ private:
   bool tool_dispatch_failed_{false};
   TurnCallbacks callbacks_{};
   AnswerValidator validate_answer_{};
+  std::string response_tool_name_{};
 };
 
 using PumpClock = UniqueFunction<std::chrono::steady_clock::time_point()>;

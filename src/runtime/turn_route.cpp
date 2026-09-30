@@ -41,6 +41,17 @@ template <typename> inline constexpr bool unhandled_worker_event = false;
 constexpr std::string_view call_limit_message =
     "tool call limit for this turn reached; respond without calling tools";
 
+// The same refusal in a typed turn. The request still requires a tool call and
+// the turn can only end on its response tool, so answering without tools would
+// fail the turn; the model is told to finish on that tool instead.
+[[nodiscard]] std::string
+typed_call_limit_message(const std::string_view response_tool) {
+  std::string message{"tool call limit for this turn reached; call "};
+  message.append(response_tool);
+  message.append(" on its own with your final answer, and call no other tool");
+  return message;
+}
+
 // Model-visible refusal of a response-tool call that did not come on its own: the
 // turn can only end on a lone answer, so the model is told how to give one.
 [[nodiscard]] std::string misplaced_answer_message(const ToolCallBlock& call) {
@@ -100,7 +111,8 @@ TurnRoute::TurnRoute(const TurnId turn_id, std::shared_ptr<std::atomic<bool>> ca
       max_tool_result_bytes_(options.max_tool_result_bytes),
       max_conversation_bytes_(options.max_conversation_bytes),
       max_tool_calls_(options.max_tool_calls), callbacks_(std::move(options.callbacks)),
-      validate_answer_(std::move(options.validate_answer)) {}
+      validate_answer_(std::move(options.validate_answer)),
+      response_tool_name_(std::move(options.response_tool_name)) {}
 
 TurnId TurnRoute::id() const noexcept { return turn_id_; }
 
@@ -233,6 +245,10 @@ std::optional<Result<ToolResultBlock>> TurnRoute::admit(const ToolCallEvent& eve
   ++dispatched_count_;
   if (max_tool_calls_ && dispatched_count_ > *max_tool_calls_) {
     ++rejected_count_;
+    if (!response_tool_name_.empty()) {
+      return error_result(event.call, typed_call_limit_message(response_tool_name_),
+                          max_tool_result_bytes_);
+    }
     return error_result(event.call, call_limit_message, max_tool_result_bytes_);
   }
   if (callbacks_.on_tool_request && find_tool(*tools_, event.call.name) != nullptr) {
