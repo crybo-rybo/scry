@@ -702,8 +702,8 @@ reflected codec. `src/kernel/json/document.hpp` states the contract in full:
   zeros (`1E-5`, `1E20`). Zero is `0` and negative zero `-0`. Canonical text
   reads back as the same tree and writes back as itself.
 
-Golden fixtures in `tests/fixtures/json/goldens.tar.xz` pin the acceptance boundary and the
-canonical bytes.
+Golden fixtures in `tests/fixtures/json/goldens.tar.xz` pin the acceptance
+boundary and the canonical bytes.
 
 ## Typed completions
 
@@ -1125,9 +1125,9 @@ tooling, which cannot compile reflection. `SCRY_CLANG_TOOLING` mode builds the
 kernel alone with Clang, for clang-tidy and for libFuzzer targets over the SSE
 parser, the transport response policy, and the JSON layer; it excludes the rest
 of the library, `scry::testing`, examples, and ordinary tests, and is a tooling
-build, not a supported consumer configuration. Fuzz targets over the provider stream decoders
-and conversation persistence link the whole library, so the GCC test build
-replays their seed corpora instead of searching from them.
+build, not a supported consumer configuration. Fuzz targets over the provider
+stream decoders and conversation persistence link the whole library, so the GCC
+test build replays their seed corpora instead of searching from them.
 
 `scry::testing` is an optional second static library, installed as the package
 component `testing` and built unless `SCRY_BUILD_TESTING_SUPPORT` is off. It
@@ -1143,8 +1143,9 @@ stay covered by the loopback transport and integration suites. Its headers
 depend only on `<scry/*>`, and its retry waits are real time bounded by the
 `Config`'s retry policy.
 
-libcurl is the only linked dependency; JSON is Scry's own kernel code. The
-installed package discovers curl and Threads. Catch2 is used by tests, and Dear ImGui is confined to the standalone showcase.
+libcurl is the only linked dependency. The installed package discovers curl and
+Threads. Catch2 is used by tests, and Dear ImGui is confined to the standalone
+showcase.
 Public headers use Scry-owned types and move-only `UniqueFunction` callables;
 stateful handles use PImpl. Build, test, and packaging gates are described in
 [contributing.md](contributing.md).

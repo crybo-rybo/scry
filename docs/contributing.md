@@ -200,10 +200,9 @@ The kernel targets run under `.github/scripts/ci-fuzz-replay.sh`. The other
 three link the whole library, which only GCC compiles, so the ordinary test
 build links each to `tests/fuzz/replay_main.cpp` instead of libFuzzer: every GCC
 leg replays their corpora, with ASan and UBSan under the `asan` preset, but
-nothing runs a coverage-guided search on them. The `json` target needs only the
-kernel, so the GCC build replays its corpus too. The JSON layer's acceptance
-boundary and canonical bytes are also pinned by the golden fixtures in
-`tests/fixtures/json/goldens.tar.xz`, which `kernel.` and `runtime.` tests check.
+nothing runs a coverage-guided search on them. The JSON layer's acceptance
+boundary and canonical bytes are also pinned by golden fixtures, checked by
+`kernel.` tests; see [`tests/fixtures/json/`](../tests/fixtures/json/README.md).
 
 ## End-to-end testing
 

@@ -8,13 +8,15 @@ add_executable(
 target_compile_features(scry_kernel_json_tests PRIVATE cxx_std_23)
 target_include_directories(
   scry_kernel_json_tests
-  PRIVATE
-    "${PROJECT_SOURCE_DIR}/include"
-    "${PROJECT_SOURCE_DIR}/src"
-    "${PROJECT_SOURCE_DIR}/tests"
+  PRIVATE "${PROJECT_SOURCE_DIR}/include" "${PROJECT_SOURCE_DIR}/src"
 )
-# The fixtures pin the canonical form; the corpora supply the prefixes the
-# truncation replay walks.
+# The JSON golden fixtures are frozen, generated text, checked in as one archive
+# (tests/fixtures/json/README.md) and unpacked at configure time. The corpora
+# supply the prefixes the truncation replay walks.
+set(SCRY_JSON_FIXTURE_ARCHIVE "${PROJECT_SOURCE_DIR}/tests/fixtures/json/goldens.tar.xz")
+set(SCRY_JSON_FIXTURE_DIR "${PROJECT_BINARY_DIR}/tests/fixtures/json")
+file(ARCHIVE_EXTRACT INPUT "${SCRY_JSON_FIXTURE_ARCHIVE}" DESTINATION "${SCRY_JSON_FIXTURE_DIR}")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${SCRY_JSON_FIXTURE_ARCHIVE}")
 target_compile_definitions(
   scry_kernel_json_tests
   PRIVATE

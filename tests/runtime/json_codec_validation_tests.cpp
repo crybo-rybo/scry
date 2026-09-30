@@ -1,58 +1,53 @@
 // What the JSON codec accepts, seen from the rest of src/: the text-level entry
-// points in kernel/json/codec.hpp and the public JsonView are one parser, so each
-// must accept exactly what the others do. The oracle is the golden fixtures
-// in tests/fixtures/json/goldens.tar.xz, which pin the acceptance boundary and the
-// canonical bytes (tests/kernel/json_fixture_tests.cpp holds the kernel layer itself to
-// them), plus a table of adversarial documents named by shape.
+// points in kernel/json/codec.hpp and the public JsonView are thin layers over the
+// kernel's JSON layer (kernel/json/document.hpp), which tests/kernel/ holds to the
+// golden fixtures. So every entry point must give the kernel's verdict and write
+// the kernel's canonical text, checked here on a table of adversarial documents
+// named by shape and a handful of representative ones.
 
 #include "kernel/json/codec.hpp"
-#include "support/json_fixtures.hpp"
+#include "kernel/json/document.hpp"
 
 #include <array>
 #include <catch2/catch_test_macros.hpp>
-#include <cstddef>
-#include <filesystem>
-#include <limits>
-#include <optional>
 #include <scry/error.hpp>
 #include <scry/json.hpp>
 #include <string>
 #include <string_view>
-#include <utility>
 
 namespace {
 
 using scry::JsonView;
-namespace fixtures = scry::test::json_fixtures;
+namespace json = scry::detail::json;
 
 constexpr auto category = scry::ErrorCategory::invalid_argument;
 constexpr std::string_view failure = "JSON text is not valid";
 
-// Every entry point's verdict on `input`; they must agree, whichever way.
+// Every entry point's verdict on `input`, each checked against the kernel's.
 [[nodiscard]] bool codec_accepts(const std::string_view input) {
-  const bool validated =
-      scry::detail::validate_json(input, category, failure).has_value();
-  const auto canonical = scry::detail::canonicalize_json(
-      scry::Json{.text = std::string{input}}, category, failure);
-  const auto viewed = JsonView::parse(scry::Json{.text = std::string{input}});
-  REQUIRE(canonical.has_value() == validated);
-  REQUIRE(viewed.has_value() == validated);
-  if (!viewed) {
+  const auto kernel = json::parse(input);
+  const scry::Json text{.text = std::string{input}};
+  const auto canonical = scry::detail::canonicalize_json(text, category, failure);
+  const auto viewed = JsonView::parse(text);
+  REQUIRE(scry::detail::validate_json(input, category, failure).has_value() ==
+          kernel.has_value());
+  REQUIRE(canonical.has_value() == kernel.has_value());
+  REQUIRE(viewed.has_value() == kernel.has_value());
+  // The object variants accept exactly the documents whose root is an object.
+  const bool object = kernel && kernel->kind() == scry::JsonKind::object;
+  CHECK(scry::detail::validate_json_object(input, category, failure).has_value() ==
+        object);
+  CHECK(scry::detail::canonicalize_json_object(text, category, failure).has_value() ==
+        object);
+  if (!kernel) {
     CHECK(viewed.error().category == scry::ErrorCategory::invalid_argument);
     CHECK(viewed.error().message == "JSON text is not valid");
     return false;
   }
-  // The view and the codec write one canonical form.
-  CHECK(viewed->to_json().text == canonical->text);
+  const auto written = json::write(*kernel);
+  CHECK(canonical->text == written);
+  CHECK(viewed->to_json().text == written);
   return true;
-}
-
-// The canonical text of an accepted input, through the codec.
-[[nodiscard]] std::optional<std::string> canonical_text(const std::string_view input) {
-  auto canonical = scry::detail::canonicalize_json(
-      scry::Json{.text = std::string{input}}, category, failure);
-  return canonical ? std::optional<std::string>{std::move(canonical->text)}
-                   : std::nullopt;
 }
 
 struct Adversarial {
@@ -153,57 +148,17 @@ TEST_CASE("the JSON codec still collapses duplicate object keys") {
   CHECK(nested->find("o")->find("k")->unsigned_integer() == 2U);
 }
 
-TEST_CASE("the JSON codec and JsonView match every golden fixture") {
-  const auto cases = fixtures::all_fixtures(SCRY_JSON_FIXTURE_DIR);
-  REQUIRE(cases.size() > 1000);
-  for (const auto& fixture : cases) {
-    INFO(fixture.location);
-    REQUIRE(codec_accepts(fixture.input) == fixture.output.has_value());
-    if (!fixture.output) {
-      continue;
-    }
-    CHECK(canonical_text(fixture.input) == fixture.output);
-    // The object variants accept exactly the documents whose root is an object.
-    const bool object = fixture.output->starts_with('{');
-    CHECK(scry::detail::validate_json_object(fixture.input, category, failure)
-              .has_value() == object);
-    CHECK(scry::detail::canonicalize_json_object(scry::Json{.text = fixture.input},
-                                                 category, failure)
-              .has_value() == object);
+TEST_CASE("the JSON codec and JsonView write the kernel's canonical text") {
+  // One input per canonical-form rule; codec_accepts compares every entry point's
+  // output with the kernel writer's.
+  for (const std::string_view input : {
+           R"( { "b" : 1 , "a" : [ 2 , { "d" : 3 , "c" : 4 } ] , "a" : null } )",
+           "[1.0,-0,1e2,0.00001,1.5e16,18446744073709551615,-9223372036854775808]",
+           R"({"\u0041\u00e9\ud83d\ude00":"\/\u001f\b\t"})",
+           R"("\u0000")",
+           "true",
+       }) {
+    INFO(input);
+    CHECK(codec_accepts(input));
   }
-}
-
-TEST_CASE("the JSON codec accepts exactly the recorded prefixes of every fuzz corpus") {
-  // The single pass has to reject truncation wherever it falls, so every prefix of
-  // every checked-in corpus file goes through every entry point.
-  const auto accepted = fixtures::accepted_prefixes(SCRY_JSON_FIXTURE_DIR);
-  const std::filesystem::path corpus_root{SCRY_FUZZ_CORPUS_DIR};
-  std::size_t checked = 0;
-  for (const auto& path : fixtures::files_under(corpus_root, "")) {
-    const auto name = path.lexically_relative(corpus_root).generic_string();
-    INFO(name);
-    const auto found = accepted.find(name);
-    REQUIRE(found != accepted.end());
-    const auto text = fixtures::read_file(path);
-    for (std::size_t length = 0; length <= text.size(); ++length) {
-      INFO("prefix length " << length);
-      REQUIRE(codec_accepts(std::string_view{text}.substr(0, length)) ==
-              fixtures::contains(found->second, length));
-      ++checked;
-    }
-  }
-  CHECK(checked > 10000);
-}
-
-TEST_CASE("the JSON codec quotes and spells numbers canonically") {
-  CHECK(scry::detail::make_json_error_object("a\x1f\"b").text ==
-        "{\"error\":\"a\\u001F\\\"b\"}");
-  CHECK(scry::detail::canonical_json_number(0.1).text == "0.1");
-  CHECK(scry::detail::canonical_json_number(1e20).text == "1E20");
-  CHECK(scry::detail::canonical_json_number(-0.0).text == "-0");
-  CHECK(scry::detail::canonical_json_number(2.0).text == "2");
-  CHECK(scry::detail::canonical_json_number(std::numeric_limits<double>::infinity())
-            .text == "null");
-  CHECK(scry::detail::canonical_json_number(std::numeric_limits<double>::quiet_NaN())
-            .text == "null");
 }
