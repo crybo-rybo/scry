@@ -1,8 +1,11 @@
 # Security policy
 
-Report a vulnerability through this repository's private security advisories at
-<https://github.com/crybo-rybo/scry/security/advisories/new>, not a public issue.
+To report a vulnerability, use the private security advisories of this
+repository at <https://github.com/crybo-rybo/scry/security/advisories/new>.
+Do not use a public issue.
 
-Only the latest 0.x release is supported; fixes land there, not on older tags.
+The project supports only the latest 0.x release. Fixes land in that release,
+not on older tags.
 
-Responses are best-effort: no service-level agreement, and no bounty.
+Responses are best-effort. There is no service-level agreement, and there is no
+bounty.

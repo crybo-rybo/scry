@@ -1,18 +1,24 @@
 # CLAUDE.md
 
-A static library (`scry::scry`) running the full LLM agentic tool loop — HTTP, SSE
-streaming, tool dispatch, retries, transactional history — behind a poll-friendly
-API for apps that own their main loop. The public API is C++26 and requires **GCC
-16 or newer**, because P2996 reflection is how tools are declared, so there is no
-Clang consumer build. Pre-1.0: no API or ABI stability promised.
+Scry is a static library (`scry::scry`). It runs the full agentic tool loop of an
+LLM: HTTP, SSE streaming, tool dispatch, retries, and transactional history. It
+puts this loop behind an API that an app can poll. This API is for apps that own
+their main loop. The public API is C++26 and must have **GCC 16 or newer**. The
+reason is that the API uses P2996 reflection to declare tools. Thus, there is no
+Clang consumer build. Scry is pre-1.0, so it does not promise API or ABI
+stability.
 
 ## Sources of truth
 
-Read the current branch, not remembered state. Do not implement or promise
-behavior these do not cover: `docs/architecture.md` (what it is, how it works,
-what it guarantees), `docs/contributing.md` (toolchain, presets, gates, and
-what a change needs before it lands), and the public headers under
-`include/scry/`.
+Read the current branch. Do not use the state that you remember. These are the
+sources of truth:
+
+- `docs/architecture.md`: what Scry is, how it works, and what it guarantees.
+- `docs/contributing.md`: the toolchain, the presets, the gates, and what a
+  change must have before it lands.
+- The public headers under `include/scry/`.
+
+Do not implement or promise behavior that these sources do not cover.
 
 ## Commands
 
@@ -24,38 +30,46 @@ ctest --test-dir build/dev -R 'runtime\.'       # one suite, or one case by name
 ./scripts/preflight.sh                          # the full local ring before a PR
 ```
 
-The `dev`, `ci`, `asan`, and `tsan` presets select `g++-16`; override with
-`-DCMAKE_CXX_COMPILER=...` when needed. The `fuzz` preset requires an explicitly
-selected Clang compiler with a libFuzzer runtime.
+The `dev`, `ci`, `asan`, and `tsan` presets select `g++-16`. If necessary,
+override this with `-DCMAKE_CXX_COMPILER=...`. For the `fuzz` preset, select a
+Clang compiler explicitly. That compiler must have a libFuzzer runtime.
 
 ## Directory map
 
-- `include/scry/` — public headers, each compiling standalone with no third-party
-  types; reflection lives here, in `detail/reflection_*.hpp`.
-- `src/` by layer — `core/` (neutral model, seams, JSON codec), `machine/`
+- `include/scry/`: the public headers. Each header compiles standalone and has
+  no third-party types. Reflection is here, in `detail/reflection_*.hpp`.
+- `src/`, by layer: `core/` (neutral model, seams, JSON codec), `machine/`
   (sans-I/O turn machine), `protocol/` (SSE), `provider/` (Anthropic,
   OpenAI-compatible), `runtime/` (worker, pump, registry, conversation),
   `transport/` (curl), `reflection/` (JSON bridge).
-- `tests/`, `examples/`, `extras/showcase/` (a standalone project the root build
-  never configures), `scripts/` (one per CI leg), `cmake/`, `docs/`.
+- `tests/`, `examples/`, `extras/showcase/` (a standalone project that the root
+  build never configures), `scripts/` (one script for each CI leg), `cmake/`,
+  `docs/`.
 
 ## Guardrails
 
-- Keep `src/**` free of reflection syntax so the `SCRY_CLANG_TOOLING` build
-  (clang-tidy, libFuzzer) keeps compiling.
-- Top-level builds treat warnings as errors. lizard allows at most cyclomatic
-  complexity 15 and 6 arguments; clang-tidy allows cognitive complexity 25. `// TODO` must link an issue.
-- Scry-originated semantic failures are values (`std::expected` / `Result<T>`).
-  Allocation failure is outside that contract. Observer exceptions propagate from
-  `update()`; tool-handler exceptions become tool-error results.
-- Bug fixes land with a regression test first, public API changes with a
-  compiling example, behavior changes with a `docs/architecture.md` update.
-- `project(VERSION ...)` in `CMakeLists.txt` is the version source of truth;
-  `<scry/version.hpp>` is generated from it and is not tracked.
+- Do not put reflection syntax in `src/**`. Then the `SCRY_CLANG_TOOLING` build
+  (clang-tidy, libFuzzer) continues to compile.
+- Top-level builds treat warnings as errors. lizard allows a maximum cyclomatic
+  complexity of 15 and a maximum of 6 arguments. clang-tidy allows a maximum
+  cognitive complexity of 25. A `// TODO` must link an issue.
+- Semantic failures that start in Scry are values (`std::expected` /
+  `Result<T>`). Allocation failure is not part of that contract. Observer
+  exceptions propagate from `update()`. Tool-handler exceptions become
+  tool-error results.
+- A bug fix lands with a regression test first. A public API change lands with
+  an example that compiles. A behavior change lands with an update to
+  `docs/architecture.md`.
+- `project(VERSION ...)` in `CMakeLists.txt` is the version source of truth.
+  CMake generates `<scry/version.hpp>` from it. Git does not track that file.
 - Never edit or commit anything under `build/`.
 
 ## PR conventions
 
-Trunk-based, squash-merged, conventional-commit messages. The template asks for
-what and why plus three checkboxes: preflight ran with skipped legs named, tests
-added or updated, and the load-bearing docs updated when behavior changed.
+The project is trunk-based. It uses squash merges and conventional-commit
+messages. The template asks what the change does and why. It also has three
+checkboxes:
+
+- `./scripts/preflight.sh` ran, and the PR names each leg that it skipped.
+- The PR adds or updates tests.
+- If the behavior changed, the PR updates the load-bearing docs.
