@@ -58,7 +58,7 @@ public:
 
   [[= scry::reflection::tool{
       "Observe the NPC position, bounds, and available moves."}]] Observation
-  look() const;
+      look() const;
 
   [[= scry::reflection::tool{"Move the NPC one cell north."}]] MoveOutcome move_north();
 

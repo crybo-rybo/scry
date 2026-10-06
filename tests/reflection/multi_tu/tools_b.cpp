@@ -5,14 +5,14 @@
 
 namespace inventory_tools {
 [[= scry::reflection::tool{"Only unit B declares this tool"}]] inline std::string
-only_b() {
+    only_b() {
   return "b";
 }
 } // namespace inventory_tools
 
 namespace echo_tools {
 [[= scry::reflection::tool{"Echo a quantity"}]] std::int32_t
-echo(std::int32_t quantity);
+    echo(std::int32_t quantity);
 } // namespace echo_tools
 
 scry::Status register_inventory_from_b(scry::ToolRegistry& registry) {

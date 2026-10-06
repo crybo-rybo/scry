@@ -20,7 +20,7 @@ what a change needs before it lands), and the public headers under
 ./scripts/test.sh                   # configure, build, ctest (dev preset)
 ./scripts/test.sh -R 'runtime\.'    # one suite, or one case by name
 PRESET=asan ./scripts/test.sh       # presets: dev asan tsan
-./scripts/format.sh --fix           # --check to verify; CI pins clang-format 18
+./scripts/format.sh --fix           # --check to verify; pinned clang-format via uv
 ./scripts/lint.sh                   # clang-tidy over src/kernel/ + repo rules
 ./scripts/test-e2e.sh               # live model; requires URL and model
 ```

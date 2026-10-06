@@ -7,8 +7,7 @@ struct Lamp {
   [[
     = scry::reflection::tool{"Switch the lamp off"},
     = scry::reflection::name{"toggle"}
-  ]] bool
-  switch_off() {
+  ]] bool switch_off() {
     return false;
   }
 };

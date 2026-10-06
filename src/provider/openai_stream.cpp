@@ -23,8 +23,8 @@ namespace {
 // null optional member as disengaged. What the codec cannot express - chunk
 // identity, fragment accumulation, the finish lifecycle - stays below.
 
-struct[
-    [ = reflection::ignore_unknown, = reflection::skip_null ]] OpenAiFunctionFragment {
+struct[[ = reflection::ignore_unknown, = reflection::skip_null ]]
+    OpenAiFunctionFragment {
   std::optional<std::string> name;
   std::optional<std::string> arguments;
 };

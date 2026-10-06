@@ -3,15 +3,15 @@
 ## Toolchain
 
 Scry needs GCC 16 or newer, CMake 3.30 or newer, Ninja, and libcurl 7.84 or
-newer with development headers. Tests fetch Catch2. Formatting uses
-clang-format 18 (newer versions lay out reflection annotations differently);
-linting uses clang-tidy 21 or newer.
+newer with development headers. Tests fetch Catch2. Formatting needs
+[uv](https://docs.astral.sh/uv/): `scripts/format.sh` runs the exact
+clang-format version it pins, so every machine formats identically. Linting uses
+clang-tidy 21 or newer.
 
 **macOS:**
 
 ```sh
-brew install gcc cmake ninja llvm llvm@18
-export CLANG_FORMAT="$(brew --prefix llvm@18)/bin/clang-format"
+brew install gcc cmake ninja uv llvm
 export CLANG_TIDY="$(brew --prefix llvm)/bin/clang-tidy"
 ```
 
@@ -19,7 +19,8 @@ export CLANG_TIDY="$(brew --prefix llvm)/bin/clang-tidy"
 
 ```sh
 sudo add-apt-repository --yes ppa:ubuntu-toolchain-r/test
-sudo apt-get install -y g++-16 libcurl4-openssl-dev ninja-build clang-format-18
+sudo apt-get install -y g++-16 libcurl4-openssl-dev ninja-build pipx
+pipx install uv
 # clang-tidy 21 comes from https://apt.llvm.org; see .github/workflows/ci.yml.
 # Ubuntu 24.04 packages CMake 3.28; install a newer one with pip if needed.
 ```

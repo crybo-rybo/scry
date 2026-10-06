@@ -27,13 +27,13 @@ class Greenhouse {
 public:
   // No parameters: the tool takes {}.
   [[= scry::reflection::tool{"Read the temperature and the roof vents"}]] Climate
-  climate() const {
+      climate() const {
     return climate_;
   }
 
   // Plain parameters: Scry synthesizes the argument object {"open": boolean}.
   [[= scry::reflection::tool{"Open or close the roof vents"}]] Climate
-  set_vents(const bool open) {
+      set_vents(const bool open) {
     climate_ = {.temperature_c = open ? 21.0 : 27.0, .vents_open = open};
     return climate_;
   }
@@ -41,7 +41,7 @@ public:
   // One aggregate parameter is the argument object. A Status result reaches the
   // model as {} or as the refusal's text.
   [[= scry::reflection::tool{"Water one bed"}]] scry::Status
-  water(const WaterArguments arguments) {
+      water(const WaterArguments arguments) {
     if (arguments.bed < 1 || arguments.bed > 3) {
       return std::unexpected(scry::tool_error("there are only beds 1 to 3"));
     }
@@ -59,7 +59,7 @@ private:
 // A namespace of free tools, registered together with add<^^almanac>().
 namespace almanac {
 [[= scry::reflection::tool{"Planting advice for one crop"}]] inline std::string
-advice(const Crop crop) {
+    advice(const Crop crop) {
   return crop == Crop::tomato ? "Stake them." : "Pinch off the flower buds.";
 }
 } // namespace almanac
@@ -68,8 +68,7 @@ advice(const Crop crop) {
 [[
   = scry::reflection::tool{"Convert Celsius to Fahrenheit"},
   = scry::reflection::name{"celsius_to_fahrenheit"}
-]] inline double
-to_fahrenheit(const double celsius) {
+]] inline double to_fahrenheit(const double celsius) {
   return celsius * 9.0 / 5.0 + 32.0;
 }
 

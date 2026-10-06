@@ -32,7 +32,7 @@ namespace grid {
 
 // Plain parameters: an argument object is synthesized from them.
 [[= scry::reflection::tool{"Offset the origin"}]] inline Position
-offset(std::int32_t dx, const std::int32_t& dy) {
+    offset(std::int32_t dx, const std::int32_t& dy) {
   return {.x = dx, .y = dy};
 }
 
@@ -41,8 +41,8 @@ offset(std::int32_t dx, const std::int32_t& dy) {
 [[
   = scry::reflection::tool{"Stride east"},
   = scry::reflection::name{"stride_east"}
-]] inline Position
-stride(const scry::ToolCallContext& context, StrideArguments arguments) {
+]] inline Position stride(const scry::ToolCallContext& context,
+                          StrideArguments arguments) {
   return {.x = arguments.tiles, .y = static_cast<std::int32_t>(context.round)};
 }
 
@@ -54,7 +54,7 @@ inline Position unannotated() { return {}; }
 class Counter {
 public:
   [[= scry::reflection::tool{"Add to the counter"}]] std::int32_t
-  increment(std::int32_t by) {
+      increment(std::int32_t by) {
     value_ += by;
     return value_;
   }
@@ -66,7 +66,7 @@ public:
   [[= scry::reflection::tool{"Reset the counter"}]] void reset() { value_ = 0; }
 
   [[= scry::reflection::tool{"Name the call being serviced"}]] std::string
-  whoami(const scry::ToolCallContext& context) const {
+      whoami(const scry::ToolCallContext& context) const {
     return std::string{context.tool_name};
   }
 
@@ -95,8 +95,7 @@ struct Colliding {
   [[= scry::reflection::tool{"First"}]] std::int32_t alpha() const { return 1; }
   [[= scry::reflection::tool{"Second"}]] std::int32_t beta() const { return 2; }
   [[ = scry::reflection::tool{"Third"},
-     = scry::reflection::name{"reset"} ]] std::int32_t
-  gamma() const {
+     = scry::reflection::name{"reset"} ]] std::int32_t gamma() const {
     return 3;
   }
 };
@@ -111,17 +110,17 @@ struct Box {
   }
 
   [[= scry::reflection::tool{"Get the value of a copy"}]] std::int32_t
-  copy(this Box self) {
+      copy(this Box self) {
     return self.value;
   }
 
   [[= scry::reflection::tool{"Add to the value without keeping it"}]] std::int32_t
-  add_to(this const Box& self, std::int32_t amount) {
+      add_to(this const Box& self, std::int32_t amount) {
     return self.value + amount;
   }
 
   [[= scry::reflection::tool{"Name the call being serviced"}]] std::string
-  whoami(this const Box&, const scry::ToolCallContext& context) {
+      whoami(this const Box&, const scry::ToolCallContext& context) {
     return std::string{context.tool_name};
   }
 
@@ -137,12 +136,12 @@ struct ConstBox {
   std::int32_t value{3};
 
   [[= scry::reflection::tool{"Get value"}]] std::int32_t
-  read(this const ConstBox& self) {
+      read(this const ConstBox& self) {
     return self.value;
   }
 
   [[= scry::reflection::tool{"Get the value of a copy"}]] std::int32_t
-  copy(this ConstBox self) {
+      copy(this ConstBox self) {
     return self.value;
   }
 };
@@ -157,12 +156,12 @@ struct Derived : Base {
   std::int32_t own{5};
 
   [[= scry::reflection::tool{"Read the base"}]] std::int32_t
-  read_base(this const Base& self) {
+      read_base(this const Base& self) {
     return self.base;
   }
 
   [[= scry::reflection::tool{"Read a sliced copy"}]] std::int32_t
-  sliced(this Base self) {
+      sliced(this Base self) {
     return self.base;
   }
 };
