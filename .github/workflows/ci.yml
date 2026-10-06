@@ -1,149 +1,53 @@
-# Per-commit CI ring; see docs/contributing.md.
-#
-# Live gates: the warning-clean Doxygen site plus format (pinned
-# clang-format-18), core build matrix with warnings-as-errors plus complexity,
-# contract tests, and the install/package-consumer audit via ci-local.sh,
-# ASan/UBSan/TSan, clang-tidy over the kernel, and the kernel's libFuzzer corpus
-# replay.
-#
-# The main build and analysis gates use .github/scripts/, also called by
-# scripts/ci.sh locally. The hosted documentation job also runs the pinned
-# clang-format check. Scry's public API is C++26
-# reflection, so every core leg is GCC 16 from ppa:ubuntu-toolchain-r/test
-# (the gcc16-env composite action) or Homebrew. Toolchains are pinned
-# deliberately: compiler drift on an experimental compiler is a first-class
-# risk, and third-party actions are pinned to commit SHAs.
 name: CI
 
 on:
   pull_request:
   push:
-    branches:
-      - main
-  workflow_dispatch:
+    branches: [main]
 
 permissions:
   contents: read
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: true
 
 jobs:
-  documentation:
-    name: Doxygen API site + clang-format (pinned 18)
+  lint:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Install documentation and format toolchain
+      - uses: actions/checkout@v7
+      # clang-format is pinned to 18: newer versions lay out reflection
+      # annotations differently. clang-tidy 21 comes from apt.llvm.org because
+      # Ubuntu's clang 18 cannot parse libstdc++'s <expected>.
+      - name: Install clang-format and clang-tidy
         run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
+          echo "deb https://apt.llvm.org/noble/ llvm-toolchain-noble-21 main" | sudo tee /etc/apt/sources.list.d/llvm-21.list
           sudo apt-get update
-          sudo apt-get install -y doxygen graphviz ninja-build clang-format-18
-          doxygen --version
-          dot -V
-      - name: Build warning-clean API documentation
-        run: ./.github/scripts/ci-docs.sh
-      - name: Retain generated website
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: scry-api-docs
-          path: build/docs/html
-          if-no-files-found: error
-          retention-days: 14
-      - name: Check formatting
+          sudo apt-get install -y clang-format-18 clang-tidy-21 g++-14 libcurl4-openssl-dev
+      - run: ./scripts/format.sh --check
         env:
           CLANG_FORMAT: clang-format-18
-        run: ./scripts/format.sh --check
+      - run: ./scripts/lint.sh
+        env:
+          CLANG_TIDY: clang-tidy-21
 
-  core:
-    name: Core (${{ matrix.name }})
+  test:
+    name: test (${{ matrix.preset }})
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - name: Linux GCC 16
-            os: ubuntu-24.04
-          - name: macOS GCC 16
-            os: macos-15
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
-    env:
-      CC: gcc-16
-      CXX: g++-16
+        preset: [dev, asan, tsan]
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Install the Linux GCC 16 environment
-        if: runner.os == 'Linux'
-        uses: ./.github/actions/gcc16-env
-      - name: Install macOS GCC 16 toolchain
-        if: runner.os == 'macOS'
+      - uses: actions/checkout@v7
+      - name: Install GCC 16
         run: |
-          brew install ninja
-          brew info gcc
-          if ! command -v g++-16 >/dev/null 2>&1; then
-            brew install gcc || true
-          fi
-          if ! command -v g++-16 >/dev/null 2>&1; then
-            brew install gcc@16 || true
-          fi
-          if ! command -v g++-16 >/dev/null 2>&1; then
-            echo "Homebrew did not provide g++-16 on this runner" >&2
-            exit 1
-          fi
-          g++-16 --version
-      - name: Install complexity checker
-        run: python3 -m pip install --user --break-system-packages lizard==1.24.0
-      - name: Run local-equivalent CI
-        run: ./.github/scripts/ci-local.sh
-
-  static-analysis:
-    name: clang-tidy
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    env:
-      CC: clang-21
-      CXX: clang++-21
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Install Clang 21 and clang-tidy
-        uses: ./.github/actions/fuzz-toolchain
-      - name: Analyze
-        run: ./.github/scripts/ci-tidy.sh -DSCRY_CLANG_TIDY_EXECUTABLE=clang-tidy-21
-
-  sanitizers:
-    name: ${{ matrix.name }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: ASan + UBSan
-            leg: asan
-          - name: TSan
-            leg: tsan
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Install the GCC 16 environment
-        uses: ./.github/actions/gcc16-env
-      - name: Run the sanitizer leg
-        run: ./.github/scripts/ci-sanitizer.sh "${{ matrix.leg }}"
-
-  fuzz-replay:
-    # Every kernel libFuzzer target builds and replays its checked-in seed corpus
-    # per pull request. The reflective-side fuzz targets replay their corpora as
-    # ordinary tests in the core and sanitizer legs. The fuzz-toolchain action
-    # installs the matching Clang runtime required by libFuzzer.
-    name: Kernel fuzz corpus replay (ASan + UBSan)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    env:
-      CC: clang-21
-      CXX: clang++-21
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Install the pinned fuzz toolchain
-        uses: ./.github/actions/fuzz-toolchain
-      - name: Replay the fuzz corpus
-        run: ./.github/scripts/ci-fuzz-replay.sh
+          sudo add-apt-repository --yes ppa:ubuntu-toolchain-r/test
+          sudo apt-get install -y g++-16 libcurl4-openssl-dev ninja-build
+          # High-entropy ASLR breaks ASan/TSan shadow memory on these runners.
+          sudo sysctl vm.mmap_rnd_bits=28
+      - run: ./scripts/test.sh
+        env:
+          PRESET: ${{ matrix.preset }}

@@ -10,25 +10,23 @@ Clang consumer build. Pre-1.0: no API or ABI stability promised.
 
 Read the current branch, not remembered state. Do not implement or promise
 behavior these do not cover: `docs/architecture.md` (what it is, how it works,
-what it guarantees), `docs/contributing.md` (toolchain, presets, gates, and
+what it guarantees), `docs/contributing.md` (toolchain, commands, and
 what a change needs before it lands), and the public headers under
 `include/scry/`.
 
 ## Commands
 
 ```sh
-cmake --preset dev && cmake --build build/dev   # presets: dev ci asan tsan fuzz
-ctest --test-dir build/dev --output-on-failure
-ctest --test-dir build/dev -R 'runtime\.'       # one suite, or one case by name
-./scripts/format.sh --fix                       # --check to verify only
-./scripts/test.sh                              # build and run unit/integration tests
-./scripts/test-e2e.sh                           # live model; requires URL and model
-./scripts/ci.sh                                 # all local CI checks before a PR
+./scripts/test.sh                   # configure, build, ctest (dev preset)
+./scripts/test.sh -R 'runtime\.'    # one suite, or one case by name
+PRESET=asan ./scripts/test.sh       # presets: dev asan tsan
+./scripts/format.sh --fix           # --check to verify; CI pins clang-format 18
+./scripts/lint.sh                   # clang-tidy over src/kernel/ + repo rules
+./scripts/test-e2e.sh               # live model; requires URL and model
 ```
 
-The `dev`, `ci`, `asan`, and `tsan` presets select `g++-16`; override with
-`-DCMAKE_CXX_COMPILER=...` when needed. The `fuzz` preset requires an explicitly
-selected Clang compiler with a libFuzzer runtime.
+CI runs format, lint, and `test.sh` under each preset. The presets select
+`g++-16`; set `CXX` or pass `-DCMAKE_CXX_COMPILER=...` when needed.
 
 ## Directory map
 
@@ -39,20 +37,19 @@ selected Clang compiler with a libFuzzer runtime.
   (sans-I/O turn machine), `provider/` (Anthropic, OpenAI-compatible),
   `runtime/` (worker, pump, registry, conversation), `reflection/` (JSON bridge).
 - `tests/`, `examples/`, `extras/showcase/` (a standalone project the root build
-  never configures), `scripts/` (local commands), `.github/scripts/` (CI helpers),
-  `cmake/`, `docs/`.
+  never configures), `scripts/` (build, test, format, lint), `cmake/`, `docs/`.
 
 ## Guardrails
 
 - `src/kernel/` is C++23 without reflection in every build, enforced by the
-  compiler; it is all the `SCRY_CLANG_TOOLING` build (clang-tidy, libFuzzer)
-  compiles. Kernel code may include only `<scry/error.hpp>`, `<scry/json.hpp>`,
-  `<scry/config.hpp>`, `<scry/turn_id.hpp>`, `<scry/unique_function.hpp>`, and
-  other kernel headers, never the rest of `src/` (`kernel.include-boundary`
-  checks this). Everything else in `src/` is C++26 and is expected to use
-  reflection where it replaces hand-written shape code.
-- Top-level builds treat warnings as errors. lizard allows at most cyclomatic
-  complexity 15 and 6 arguments; clang-tidy allows cognitive complexity 25. `// TODO` must link an issue.
+  compiler; it is all clang-tidy analyzes. Kernel code may include only
+  `<scry/error.hpp>`, `<scry/json.hpp>`, `<scry/config.hpp>`,
+  `<scry/turn_id.hpp>`, `<scry/unique_function.hpp>`, and other kernel headers,
+  never the rest of `src/` (`scripts/lint.sh` checks this). Everything else in
+  `src/` is C++26 and is expected to use reflection where it replaces
+  hand-written shape code.
+- Top-level builds treat warnings as errors; clang-tidy allows cognitive
+  complexity 25. `// TODO` must link an issue.
 - Scry-originated semantic failures are values (`std::expected` / `Result<T>`).
   Allocation failure is outside that contract. Observer exceptions propagate from
   `update()`; tool-handler exceptions become tool-error results.
@@ -65,5 +62,5 @@ selected Clang compiler with a libFuzzer runtime.
 ## PR conventions
 
 Trunk-based, squash-merged, conventional-commit messages. The template asks for
-what and why plus three checkboxes: preflight ran with skipped legs named, tests
-added or updated, and the load-bearing docs updated when behavior changed.
+what and why plus three checkboxes: test, format, and lint pass; tests added or
+updated; `docs/architecture.md` updated when behavior changed.

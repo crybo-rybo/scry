@@ -2,7 +2,6 @@
 
 <!-- What does this change do, and why is it the right change? -->
 
-- [ ] `./scripts/ci.sh` ran, and any skipped legs are named
+- [ ] `./scripts/test.sh`, `./scripts/format.sh --check`, and `./scripts/lint.sh` pass
 - [ ] Tests added or updated; bug fixes include a regression test
-- [ ] `docs/architecture.md` or `docs/contributing.md` updated if behavior or
-      process changed
+- [ ] `docs/architecture.md` updated if behavior changed

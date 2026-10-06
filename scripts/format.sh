@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
-# Shared by just and CI; formatting needs no configured CMake build.
+# clang-format over the C++ sources: --check (default) or --fix. CI pins
+# clang-format 18; set CLANG_FORMAT to use a specific binary.
 set -euo pipefail
 
 readonly root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

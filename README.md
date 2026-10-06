@@ -188,7 +188,7 @@ keep a handle on the toolbox the tools act on.
   library.
 - **CMake 3.30** and **libcurl 7.84** or newer, with development headers. 3.30
   is the first CMake that knows GCC's C++26 mode.
-- **Linux or macOS.** CI runs GCC 16 on Ubuntu 24.04 and macOS 15.
+- **Linux or macOS.** CI runs GCC 16 on Ubuntu 24.04.
 
 libcurl is the only library dependency; JSON is parsed and written by Scry's
 own code. Tests additionally fetch Catch2. See [Contributing](docs/contributing.md) for the
@@ -197,7 +197,6 @@ development toolchain.
 Run the unit and integration suites with `./scripts/test.sh`. For a live-model
 end-to-end test, use `./scripts/test-e2e.sh` with the server URL and model set
 as described in [Contributing](docs/contributing.md#end-to-end-testing).
-`./scripts/ci.sh` runs all local CI checks and the showcase build.
 
 ## Install
 
@@ -256,10 +255,9 @@ target_link_libraries(app PRIVATE scry::scry)
   grid world where the model drives an NPC through tools.
 - [Architecture](docs/architecture.md) — how it is built, what it guarantees,
   and its operating limits. Read this before relying on a specific behavior.
-- [Contributing](docs/contributing.md) — toolchain setup, presets, gates, and
+- [Contributing](docs/contributing.md) — toolchain setup, commands, and
   what a change needs before it lands.
-- API reference: `./.github/scripts/ci-docs.sh` writes the Doxygen site to
-  `build/docs/html/index.html`.
+- API reference: the public headers under [include/scry/](include/scry/).
 
 ## License
 

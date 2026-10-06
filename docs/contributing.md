@@ -1,247 +1,106 @@
 # Contributing to Scry
 
-Build commands, checks, and contribution requirements for the current tree.
-
 ## Toolchain
 
-Scry needs GCC 16 or newer (with reflection support), CMake 3.30 or newer,
-Ninja, and libcurl 7.84 or newer with development headers. CMake 3.30 is the
-first release that knows GCC's C++26 mode (`cxx_std_26`). Scry's only library
-dependency is libcurl; the tests fetch Catch2. Formatting uses
-clang-format; CI uses version 18. It runs independently of CMake and does not
-require a compiler or fetched dependencies.
-
-**Linux:**
-
-```sh
-sudo add-apt-repository --yes ppa:ubuntu-toolchain-r/test
-sudo apt-get update
-sudo apt-get install -y g++-16 libcurl4-openssl-dev ninja-build \
-  clang-format-18 doxygen graphviz
-# Ubuntu 24.04 packages CMake 3.28, which has no C++26 mode for GCC.
-# pip installs cmake into ~/.local/bin, which must precede /usr/bin on PATH.
-python3 -m pip install --user --break-system-packages 'cmake>=3.30'
-```
+Scry needs GCC 16 or newer, CMake 3.30 or newer, Ninja, and libcurl 7.84 or
+newer with development headers. Tests fetch Catch2. Formatting uses
+clang-format 18 (newer versions lay out reflection annotations differently);
+linting uses clang-tidy 21 or newer.
 
 **macOS:**
 
 ```sh
-brew install gcc cmake llvm@21 ninja doxygen graphviz
-export PATH="$(brew --prefix llvm@21)/bin:$PATH"
+brew install gcc cmake ninja llvm llvm@18
+export CLANG_FORMAT="$(brew --prefix llvm@18)/bin/clang-format"
+export CLANG_TIDY="$(brew --prefix llvm)/bin/clang-tidy"
 ```
 
-Both platforms also need the complexity checker, which CI pins:
+**Linux (Ubuntu 24.04):**
 
 ```sh
-python3 -m pip install --user --break-system-packages lizard==1.24.0
+sudo add-apt-repository --yes ppa:ubuntu-toolchain-r/test
+sudo apt-get install -y g++-16 libcurl4-openssl-dev ninja-build clang-format-18
+# clang-tidy 21 comes from https://apt.llvm.org; see .github/workflows/ci.yml.
+# Ubuntu 24.04 packages CMake 3.28; install a newer one with pip if needed.
 ```
 
-Ensure `g++-16 --version` succeeds. When the compiler has another path, pass it
-with `-DCMAKE_CXX_COMPILER=...`. Select a versioned formatter with
-`CLANG_FORMAT=clang-format-18 ./scripts/format.sh --check`. Doxygen and Graphviz
-are needed for the documentation gate; Doxygen 1.9.8 is the minimum.
+The presets select `g++-16`; when yours has another name or path, set `CXX`
+for the scripts or pass `-DCMAKE_CXX_COMPILER=...` to `cmake --preset`.
 
-The optional clang-tidy gate and the kernel's libFuzzer targets need Clang 21
-with clang-tidy and libFuzzer; on macOS that is the `llvm@21` export above, and
-on Linux the apt.llvm.org packages that `.github/actions/fuzz-toolchain`
-installs.
+## Commands
 
-## Presets
+```sh
+./scripts/test.sh                  # configure, build, and run ctest (dev preset)
+./scripts/test.sh -R 'runtime\.'   # extra arguments go to ctest
+PRESET=asan ./scripts/test.sh      # or PRESET=tsan
+./scripts/format.sh --fix          # --check (the default) to verify only
+./scripts/lint.sh                  # clang-tidy and repository rules
+./scripts/test-e2e.sh              # live model; see below
+```
 
-Build directories live under `build/<preset>`, Ninja, with
-`compile_commands.json` exported; `.clangd` points at `build/dev`.
+CI (`.github/workflows/ci.yml`) runs exactly these: format and lint, then
+`test.sh` under the `dev`, `asan`, and `tsan` presets on Linux. Run all three
+before opening a pull request. GCC ships no thread sanitizer runtime on Apple
+Silicon, so `tsan` runs only on Linux.
+
+Presets build into `build/<preset>` and export `compile_commands.json`;
+`.clangd` points editors at `build/dev`.
 
 | Preset | For |
 |---|---|
-| `dev` | Debug. The everyday edit-build-test loop. |
-| `ci` | RelWithDebInfo. What `.github/scripts/ci-local.sh` builds, installs, and audits. |
+| `dev` | Debug. The everyday loop. |
 | `asan` | Debug plus ASan and non-recovering UBSan. |
-| `tsan` | Debug plus TSan for race detection. |
-| `fuzz` | Clang with `SCRY_CLANG_TOOLING`: the kernel's libFuzzer targets, ASan and UBSan. |
-
-Every GCC preset pins `CMAKE_CXX_COMPILER` to `g++-16` through a hidden `gcc`
-preset. Override it when your GCC 16 is spelled differently:
-`cmake --preset dev -DCMAKE_CXX_COMPILER=/opt/homebrew/bin/g++-16`.
-The `fuzz` preset does not select its compiler:
-
-```sh
-cmake --preset fuzz -DCMAKE_CXX_COMPILER=clang++-21
-cmake --build build/fuzz
-ctest --test-dir build/fuzz --output-on-failure
-```
-
-Use a compatible local Clang path in place of `clang++-21` as needed. When
-changing a compiler in an existing build directory, add `--fresh` to the
-configure command so CMake reapplies the preset without stale cache settings.
-
-The root `CMakeLists.txt` defines the kernel and library sources, dependencies,
-and package. The kernel is the `scry_kernel` object library, compiled as C++23
-and archived into `scry`. Compiler compatibility checks live in
-`cmake/ScryCompilerChecks.cmake`, with the reflection probe in
-`cmake/probes/reflection.cpp`. Warning flags, sanitizers, clang-tidy, and the
-public-header audit live in `cmake/ScryDeveloperTools.cmake`; the kernel include
-audit in `cmake/CheckKernelBoundary.cmake`; fuzz target registration in
-`cmake/ScryFuzz.cmake`. Standalone header checks share one build target, with a
-separate translation unit per header.
-
-## Build options
+| `tsan` | Debug plus TSan. |
 
 | Option | Default | Purpose |
 |---|---|---|
-| `SCRY_BUILD_TESTS` | On at top level | Build tests and standalone header checks |
-| `SCRY_BUILD_EXAMPLES` | On at top level | Compile the programs under `examples/` |
+| `SCRY_BUILD_TESTS` | On at top level | Build the tests |
+| `SCRY_BUILD_EXAMPLES` | On at top level | Compile `examples/` |
 | `SCRY_BUILD_TESTING_SUPPORT` | On | Build and install `scry::testing` |
-| `SCRY_WARNINGS_AS_ERRORS` | On at top level | Treat project warnings as errors |
-| `SCRY_ENABLE_CLANG_TIDY` | Off | Analyze the kernel's sources while compiling |
-| `SCRY_CLANG_TOOLING` | Off | Build only the C++23 kernel with Clang for tooling |
-| `SCRY_BUILD_FUZZERS` | Off | Build the kernel's libFuzzer targets with Clang |
-| `SCRY_SANITIZER` | `none` | Select `none`, `address-undefined`, or `thread` |
+| `SCRY_WARNINGS_AS_ERRORS` | On at top level | `-Werror` |
+| `SCRY_SANITIZER` | `none` | `none`, `address-undefined`, or `thread` |
 
-Tests, examples, and warnings-as-errors default to off when Scry is embedded.
-Clang tooling mode builds the kernel alone: no `scry::scry`, `scry::testing`,
-examples, or ordinary tests. Fuzzers require that mode and are registered
-separately under `tests/fuzz/`, even when `SCRY_BUILD_TESTS=OFF`. The consumer
-build always includes reflection in `scry::scry`.
-
-## The loop
-
-Build and run the unit and integration tests with one command. These tests
-need no live model; transport suites use local loopback servers.
-
-```sh
-./scripts/test.sh                           # just test
-./scripts/test.sh -R 'runtime\.'            # filter ctest cases
-```
-
-The script configures and builds the `dev` preset, then runs ctest. Set
-`CXX=/path/to/g++-16` when the compiler has a different name. The individual
-steps remain available:
-
-```sh
-cmake --preset dev                                # just configure
-cmake --build build/dev                           # just build
-ctest --test-dir build/dev --output-on-failure    # just test
-```
+## Tests
 
 Catch2 suites are registered with ctest under a per-suite prefix (`kernel.`,
 `runtime.`, `machine.`, `protocol.`, `provider.`, `transport.`, `integration.`,
-`reflection.`, `testing.`); `public-api-contract` is a plain executable test,
-and `kernel.include-boundary` runs `cmake/CheckKernelBoundary.cmake`.
+`reflection.`, `testing.`). Every public header also compiles on its own as part
+of the build, and `reflection.compile-fail.*` checks the diagnostics a misuse of
+the reflected API produces.
 
 ```sh
-ctest --test-dir build/dev -R 'runtime\.'                     # one suite
-ctest --test-dir build/dev -R 'event queue coalesces'         # one case by name
-./build/dev/tests/scry_runtime_tests "event queue coalesces adjacent deltas"
+ctest --test-dir build/dev -R 'runtime\.'                  # one suite
+ctest --test-dir build/dev -R 'event queue coalesces'      # one case by name
 ```
 
-Formatting is clang-format, LLVM base, 88 columns. The shared script checks
-tracked and untracked C++ sources, excluding ignored files:
+`tests/fuzz/corpus/` holds seed corpora for six `LLVMFuzzerTestOneInput`
+harnesses (SSE parser, transport response policy, JSON, the two provider stream
+decoders, conversation persistence). `tests/fuzz/replay_main.cpp` replays each
+corpus once as an ordinary `*-fuzz-replay` test, so the `asan` preset runs them
+under ASan and UBSan. Nothing runs a coverage-guided search.
 
-```sh
-./scripts/format.sh --fix      # just format
-./scripts/format.sh --check    # just format-check
-```
-
-## Gates
-
-CI helpers live under `.github/scripts/`. Workflows supply their toolchains
-and invoke those helpers; `scripts/ci.sh` runs them locally. User commands
-live under `scripts/`, including formatting and the two test entry points.
-
-**Per commit** (`.github/workflows/ci.yml`):
-
-| Job | Runs |
-|---|---|
-| Doxygen API site + clang-format | `./.github/scripts/ci-docs.sh`, then `CLANG_FORMAT=clang-format-18 ./scripts/format.sh --check` |
-| Core, Linux GCC 16 and macOS GCC 16 | `./.github/scripts/ci-local.sh` |
-| clang-tidy | `./.github/scripts/ci-tidy.sh` with Clang 21 |
-| ASan + UBSan, TSan | `./.github/scripts/ci-sanitizer.sh asan` and `... tsan` |
-| Kernel fuzz corpus replay | `./.github/scripts/ci-fuzz-replay.sh` |
-
-**On a tag** (`release.yml`): `check-release-tag.sh`, the core gate, the API
-site, and the GitHub release built from the checked-in notes.
-
-Run the CI checks and showcase build locally before every pull request:
-
-```sh
-./scripts/ci.sh    # just ci
-```
-
-It runs documentation, format, core, clang-tidy, sanitizers, kernel fuzz replay, and
-the showcase build, and continues after failures. Missing documentation, tidy,
-sanitizer, or fuzz capabilities are reported as `SKIP` and listed in the closing
-summary. The format
-and core gates are always attempted: a missing formatter fails the format gate,
-and a missing compiler or complexity checker fails the core gate. Each sanitizer
-leg probes its own flag with `g++-16` first, because GCC ships no
-thread-sanitizer runtime on Apple Silicon, so TSan skips there while ASan still
-runs. `./.github/scripts/ci-local.sh` (`just ci-fast`) is the faster inner loop: a
-whitespace check over the branch against `origin/main`, complexity, unlinked
-TODOs, build, tests, a staged install, and a downstream `find_package(scry)`
-consumer.
-
-The showcase is a standalone project under `extras/showcase/` that the root build
-never configures; `./.github/scripts/ci-showcase.sh` (`just showcase`) only builds it.
-
-There are six fuzz targets, each with a checked-in seed corpus under
-`tests/fuzz/corpus/` that it replays per commit.
-
-| Target | Exercises | Built as | Per-commit test |
-|---|---|---|---|
-| `sse` | Kernel SSE parser | libFuzzer, `fuzz` preset | `protocol.sse-fuzz` |
-| `response_policy` | Kernel transport response policy | libFuzzer, `fuzz` preset | `transport.response_policy-fuzz` |
-| `json` | Kernel JSON layer: parse and validate agree, canonical text round-trips and is idempotent | libFuzzer, `fuzz` preset; also GCC corpus replay | `kernel.json-fuzz`, `kernel.json-fuzz-replay` |
-| `anthropic` | Anthropic stream decoder | GCC corpus replay | `provider.anthropic-fuzz-replay` |
-| `openai` | OpenAI-compatible stream decoder | GCC corpus replay | `provider.openai-fuzz-replay` |
-| `conversation` | Conversation persistence | GCC corpus replay | `runtime.conversation-fuzz-replay` |
-
-The kernel targets run under `.github/scripts/ci-fuzz-replay.sh`. The other
-three link the whole library, which only GCC compiles, so the ordinary test
-build links each to `tests/fuzz/replay_main.cpp` instead of libFuzzer: every GCC
-leg replays their corpora, with ASan and UBSan under the `asan` preset, but
-nothing runs a coverage-guided search on them. The JSON layer's acceptance
-boundary and canonical bytes are also pinned by golden fixtures, checked by
-`kernel.` tests; see [`tests/fixtures/json/`](../tests/fixtures/json/README.md).
+- **Test behavior at seams, not implementation inside them.** Tests target the
+  machine, adapter, and transport interfaces.
+- **Fakes over mocks.** A hand-written fake transport with scriptable responses
+  survives refactors and reads as documentation.
+- **Determinism.** No real sleeps, wall-clock time, or network in unit tests;
+  time is an injected event. Transport and integration tests use local
+  loopback HTTP/TLS servers.
+- **Every bug becomes a test before it becomes a fix.**
 
 ## End-to-end testing
 
-Start an OpenAI-compatible server and load a model, then run the live-model
-smoke when needed:
+Start an OpenAI-compatible server, load a model, then:
 
 ```sh
 SCRY_LOCAL_MODEL_BASE_URL=http://127.0.0.1:11434/v1 \
 SCRY_LOCAL_MODEL_MODEL=qwen3:8b \
-./scripts/test-e2e.sh                        # just e2e with the same environment
+./scripts/test-e2e.sh
 ```
 
-This builds `scry_local_model_smoke` from `tests/e2e/` and checks a complete
-chat and required tool round through the public API. Set
-`SCRY_LOCAL_MODEL_API_KEY` if the server requires authentication, and use
-`SCRY_LOCAL_MODEL_TIMEOUT_SECONDS` to override the 180-second timeout. GNU
-timeout is required; on macOS, install coreutils. Logs are written to
-`build/e2e-artifacts/local-model-smoke.log`.
-
-The smoke executable is excluded from default builds and ctest registration;
-only `scripts/test-e2e.sh` explicitly builds and runs it. CI checks are
-independent of a live model.
-
-## Testing
-
-- **Test behavior at seams, not implementation inside them.** Tests target the
-  machine, adapter, and transport interfaces. If refactoring internals breaks a
-  test, the test was coupled to the wrong thing.
-- **Fakes over mocks.** A hand-written fake transport with scriptable responses
-  beats mock-framework expectations: fakes survive refactors and read as
-  documentation. The seams are few and narrow enough to fake properly.
-- **Determinism is non-negotiable.** No real sleeps, wall-clock time, or network
-  in unit tests; time is an injected event, so a fake clock makes backoff
-  testable to the millisecond. A flaky test is fixed or deleted the day it flakes.
-- **Every bug becomes a test before it becomes a fix**, usually a machine-level
-  event replay, committed with the fix permanently.
-- **Choose the relevant seam.** Machine tests cover transitions, adapters cover
-  wire mapping, runtime tests cover the pump and handles, and reflection tests
-  cover schemas and codecs. Transport and integration tests also use local
-  loopback HTTP/TLS servers; the optional local-model smoke uses a live model.
+This builds and runs `tests/e2e/`, a chat and a required tool round through the
+public API. Set `SCRY_LOCAL_MODEL_API_KEY` if the server requires one. It is not
+part of ctest or CI.
 
 ## Testing downstream with `scry::testing`
 
@@ -264,50 +123,31 @@ transport.enqueue({.body_chunks = {scry::testing::anthropic_text_stream("hi")}})
 auto harness = scry::testing::create_harness(my_config(), transport);
 ```
 
-`<scry/testing/scripted_transport.hpp>` and `<scry/testing/streams.hpp>` document
-the scripted statuses, failures, held transfers, and stream builders.
 `examples/testing_scripted.cpp` is a complete framework-free test in this shape;
 `tests/testing/scripted_transport_tests.cpp` is the Catch2 equivalent.
 
-## Mechanical limits
+## Rules
 
-- Top-level builds enable `-Wall -Wextra -Wconversion -Wshadow` and treat
-  warnings as errors on GCC and Clang. `SCRY_WARNINGS_AS_ERRORS` controls this.
-- lizard: cyclomatic complexity must not exceed 15 and argument count must not
-  exceed 6, for C++ in `include src testing examples tests extras`.
-- clang-tidy: cognitive complexity must not exceed 25, with a checked-in check
-  list. The tidy script uses `SCRY_CLANG_TOOLING` and analyzes the kernel
-  (`scry_kernel`); it does not analyze the rest of `src/`, examples, or tests.
-- The kernel is C++23 without reflection. Its sources compile without
-  `-freflection` and, under GCC, with `-Werror=c++26-extensions`, so a reflection
-  operator or annotation in anything they include fails the build;
-  `src/kernel/kernel.hpp` rejects a build that enables reflection; and
-  `kernel.include-boundary` fails when kernel code includes a public header
-  outside the allowlist or a `src/` header outside the kernel.
-- `// TODO` must link an issue or a URL. CI rejects any unlinked TODO outright.
-
-## Definition of done
-
-- `./scripts/ci.sh` ran, and any skipped legs are named.
-- Tests are added or updated; a bug fix includes its regression test.
-- [`docs/architecture.md`](architecture.md) is updated when behavior changes.
-- An example compiles the change when the public API changes.
-- A dependency change carries a written justification in the same commit.
+- Top-level builds use `-Wall -Wextra -Wconversion -Wshadow -Werror`.
+- The kernel (`src/kernel/`) is C++23 without reflection, so clang-tidy can
+  analyze it; the rest of `src/` is C++26 and GCC-only. The kernel compiles with
+  `-Werror=c++26-extensions`, and `src/kernel/kernel.hpp` rejects a build with
+  reflection enabled. `lint.sh` checks it includes only
+  `<scry/{config,error,json,turn_id,unique_function}.hpp>` and kernel headers.
+- clang-tidy uses the checked-in `.clang-tidy`, including cognitive complexity 25.
+- `// TODO` must link an issue or a URL.
 
 ## Pull requests
 
-Trunk-based: short-lived branches, squash merge, conventional-commit messages,
-`main` always green and always releasable. The pull-request template carries the
-preflight, test coverage, and documentation checkboxes.
+Trunk-based, squash-merged, conventional-commit messages. A change lands with
+tests, a bug fix with its regression test, a public API change with a compiling
+example, and a behavior change with a `docs/architecture.md` update.
 
 ## Releases
 
-1. Bump `project(VERSION ...)` in `CMakeLists.txt`. That is the version source of
-   truth; `<scry/version.hpp>` is generated from it.
-2. Update both the `find_package` version and FetchContent `GIT_TAG` in
-   `README.md`, the package version in `tests/package_consumer/CMakeLists.txt`,
+1. Bump `project(VERSION ...)` in `CMakeLists.txt`; `<scry/version.hpp>` is
+   generated from it.
+2. Update the `find_package` version and FetchContent `GIT_TAG` in `README.md`,
    and the version assertions in `tests/public_api_contract.cpp`.
 3. Write `docs/releases/vX.Y.Z.md`.
-4. Check the tag first: `./scripts/check-release-tag.sh vX.Y.Z`.
-5. Push the tag. The release workflow re-runs the core gate against the tagged
-   tree, builds the API site, and publishes the release from those notes.
+4. Tag and publish: `git tag vX.Y.Z && git push origin vX.Y.Z && gh release create vX.Y.Z --notes-file docs/releases/vX.Y.Z.md`.

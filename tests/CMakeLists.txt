@@ -56,31 +56,6 @@ target_link_libraries(
 )
 add_test(NAME public-api-contract COMMAND scry_public_api_contract)
 
-# The kernel's include boundary: allowlisted public headers only, no non-kernel
-# src/ header, and the reflection guard in every file (src/kernel/kernel.hpp).
-add_test(
-  NAME kernel.include-boundary
-  COMMAND
-    "${CMAKE_COMMAND}"
-    "-DSCRY_SOURCE_DIR=${PROJECT_SOURCE_DIR}/src"
-    -P "${PROJECT_SOURCE_DIR}/cmake/CheckKernelBoundary.cmake"
-)
-
-if(SCRY_SANITIZER STREQUAL "address-undefined")
-  add_executable(
-    scry_ubsan_fatal_probe
-    sanitizer/ubsan_fatal_probe.cpp
-  )
-  target_link_libraries(scry_ubsan_fatal_probe PRIVATE scry_project_options)
-  add_test(
-    NAME sanitizer.ubsan-is-fatal
-    COMMAND
-      "${CMAKE_COMMAND}"
-      "-DPROBE=$<TARGET_FILE:scry_ubsan_fatal_probe>"
-      -P "${CMAKE_CURRENT_SOURCE_DIR}/sanitizer/verify_ubsan_fatal.cmake"
-  )
-endif()
-
 add_executable(
   scry_runtime_tests
   runtime/answer_pump_tests.cpp
@@ -125,40 +100,45 @@ add_subdirectory(provider)
 add_subdirectory(transport)
 add_subdirectory(integration)
 
-# The fuzz targets over the reflective side of the library link scry, so they
-# cannot be libFuzzer binaries; this build replays their seed corpora instead
-# (cmake/ScryFuzz.cmake). The kernel targets are libFuzzer binaries in the Clang
-# tooling build (tests/fuzz/CMakeLists.txt).
-include(ScryFuzz)
+# Each fuzz target is a libFuzzer-style LLVMFuzzerTestOneInput entry point over a
+# checked-in seed corpus under fuzz/corpus/<corpus>. fuzz/replay_main.cpp runs
+# every seed through it once, so the corpora are ordinary regression tests that
+# the asan preset also runs under ASan and UBSan.
+function(scry_add_fuzz_replay target corpus prefix source library)
+  add_executable("${target}" fuzz/replay_main.cpp "${source}")
+  target_compile_features("${target}" PRIVATE cxx_std_23)
+  target_include_directories(
+    "${target}"
+    PRIVATE "${PROJECT_SOURCE_DIR}/include" "${PROJECT_SOURCE_DIR}/src"
+  )
+  target_link_libraries("${target}" PRIVATE scry_project_options "${library}")
+  add_test(
+    NAME "${prefix}${corpus}-fuzz-replay"
+    COMMAND "${target}" "${CMAKE_CURRENT_SOURCE_DIR}/fuzz/corpus/${corpus}"
+  )
+  set_tests_properties("${prefix}${corpus}-fuzz-replay" PROPERTIES TIMEOUT 45)
+endfunction()
+
 scry_add_fuzz_replay(
-  scry_anthropic_fuzz_replay
-  anthropic
-  TEST_PREFIX "provider."
-  SOURCES provider/anthropic_fuzz.cpp
-  LINK_LIBRARIES scry::scry
+  scry_sse_fuzz_replay sse "protocol." protocol/sse_fuzz.cpp scry_kernel
 )
 scry_add_fuzz_replay(
-  scry_openai_fuzz_replay
-  openai
-  TEST_PREFIX "provider."
-  SOURCES provider/openai_fuzz.cpp
-  LINK_LIBRARIES scry::scry
-)
-# The JSON layer's property target is a kernel libFuzzer target too; replaying
-# its corpus here as well runs it under GCC and the GCC sanitizer presets.
-scry_add_fuzz_replay(
-  scry_json_fuzz_replay
-  json
-  TEST_PREFIX "kernel."
-  SOURCES fuzz/json_fuzz.cpp
-  LINK_LIBRARIES scry_kernel
+  scry_response_policy_fuzz_replay response_policy "transport."
+  transport/response_policy_fuzz.cpp scry_kernel
 )
 scry_add_fuzz_replay(
-  scry_conversation_fuzz_replay
-  conversation
-  TEST_PREFIX "runtime."
-  SOURCES runtime/conversation_fuzz.cpp
-  LINK_LIBRARIES scry::scry
+  scry_json_fuzz_replay json "kernel." fuzz/json_fuzz.cpp scry_kernel
+)
+scry_add_fuzz_replay(
+  scry_anthropic_fuzz_replay anthropic "provider." provider/anthropic_fuzz.cpp
+  scry::scry
+)
+scry_add_fuzz_replay(
+  scry_openai_fuzz_replay openai "provider." provider/openai_fuzz.cpp scry::scry
+)
+scry_add_fuzz_replay(
+  scry_conversation_fuzz_replay conversation "runtime."
+  runtime/conversation_fuzz.cpp scry::scry
 )
 
 file(

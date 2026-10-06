@@ -949,8 +949,7 @@ and any input-size limit before loading.
 ## Build and package
 
 The consumer target is `scry::scry`, a static library requiring GCC 16 or newer
-with C++26 reflection and annotation support. CMake probes the P2996/P3394
-features used by the headers. Linux and macOS are the supported platforms.
+with C++26 reflection and annotation support. Linux and macOS are the supported platforms.
 API, ABI, and persistence-format stability are not promised before 1.0.
 
 The implementation is split in two. The kernel under `src/kernel/` is the code
@@ -964,14 +963,10 @@ bridge — is C++26 and maps Scry's types to and from their wire and JSON shapes
 using reflection where it replaces hand-written shape code. The kernel's objects
 are archived into `scry::scry`; it is not a separate installed target.
 
-The split keeps the layer that sees untrusted bytes within reach of Clang
-tooling, which cannot compile reflection. `SCRY_CLANG_TOOLING` mode builds the
-kernel alone with Clang, for clang-tidy and for libFuzzer targets over the SSE
-parser, the transport response policy, and the JSON layer; it excludes the rest
-of the library, `scry::testing`, examples, and ordinary tests, and is a tooling
-build, not a supported consumer configuration. Fuzz targets over the provider
-stream decoders and conversation persistence link the whole library, so the GCC
-test build replays their seed corpora instead of searching from them.
+The split keeps the layer that sees untrusted bytes within reach of clang-tidy,
+which cannot parse reflection. Seed corpora for the SSE parser, the transport
+response policy, the JSON layer, the provider stream decoders, and conversation
+persistence are replayed as ordinary tests, including under ASan and UBSan.
 
 `scry::testing` is an optional second static library, installed as the package
 component `testing` and built unless `SCRY_BUILD_TESTING_SUPPORT` is off. It
@@ -991,5 +986,5 @@ libcurl is the only linked dependency. The installed package discovers curl and
 Threads. Catch2 is used by tests, and Dear ImGui is confined to the standalone
 showcase.
 Public headers use Scry-owned types and move-only `UniqueFunction` callables;
-stateful handles use PImpl. Build, test, and packaging gates are described in
+stateful handles use PImpl. Building and testing are described in
 [contributing.md](contributing.md).
