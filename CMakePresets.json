@@ -7,65 +7,30 @@
   },
   "configurePresets": [
     {
-      "name": "base",
-      "hidden": true,
+      "name": "dev",
+      "displayName": "Developer build",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/${presetName}",
       "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_CXX_COMPILER": "g++-16",
         "CMAKE_EXPORT_COMPILE_COMMANDS": true
-      }
-    },
-    {
-      "name": "gcc",
-      "hidden": true,
-      "inherits": "base",
-      "cacheVariables": {
-        "CMAKE_CXX_COMPILER": "g++-16"
-      }
-    },
-    {
-      "name": "dev",
-      "displayName": "Developer build",
-      "inherits": "gcc",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug"
-      }
-    },
-    {
-      "name": "ci",
-      "displayName": "CI release-like build",
-      "inherits": "gcc",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
       }
     },
     {
       "name": "asan",
       "displayName": "Address and undefined behavior sanitizers",
-      "inherits": "gcc",
+      "inherits": "dev",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug",
         "SCRY_SANITIZER": "address-undefined"
       }
     },
     {
       "name": "tsan",
       "displayName": "Thread sanitizer",
-      "inherits": "gcc",
+      "inherits": "dev",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug",
         "SCRY_SANITIZER": "thread"
-      }
-    },
-    {
-      "name": "fuzz",
-      "displayName": "Fuzz corpus replay",
-      "inherits": "base",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug",
-        "SCRY_BUILD_FUZZERS": true,
-        "SCRY_CLANG_TOOLING": true,
-        "SCRY_SANITIZER": "address-undefined"
       }
     }
   ]

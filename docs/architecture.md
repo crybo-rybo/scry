@@ -1190,9 +1190,8 @@ input-size limit before it loads a document.
 ## Build and package
 
 The consumer target is `scry::scry`. It is a static library, and it requires GCC
-16 or newer with C++26 reflection and annotation support. CMake probes the
-P2996/P3394 features that the headers use. The supported platforms are Linux and
-macOS. Before 1.0, Scry does not promise API, ABI, or persistence-format
+16 or newer with C++26 reflection and annotation support. The supported
+platforms are Linux and macOS. Before 1.0, Scry does not promise API, ABI, or persistence-format
 stability.
 
 The implementation has two parts. The kernel under `src/kernel/` is the code
@@ -1209,16 +1208,13 @@ from their wire shapes and JSON shapes. It uses reflection where reflection
 replaces hand-written shape code. The build archives the kernel objects into
 `scry::scry`. The kernel is not a separate installed target.
 
-This split keeps the layer that sees untrusted bytes available to Clang
-tooling, because Clang tooling cannot compile reflection. `SCRY_CLANG_TOOLING`
-mode builds only the kernel with Clang. This mode is for clang-tidy, and for
-libFuzzer targets over the SSE parser, the transport response policy, and the
-JSON layer. It excludes the rest of the library, `scry::testing`, examples, and
-ordinary tests. It is a tooling build, not a supported consumer configuration.
+This split keeps the layer that sees untrusted bytes available to clang-tidy,
+because clang-tidy cannot parse reflection.
 
-Fuzz targets over the provider stream decoders and conversation persistence
-link the full library. Thus the GCC test build replays their seed corpora, and
-it does not search from them.
+The test build replays seed corpora for the SSE parser, the transport response
+policy, the JSON layer, the provider stream decoders, and conversation
+persistence. These replays are ordinary tests, and the `asan` preset runs them
+with ASan and UBSan. No build does a coverage-guided search.
 
 `scry::testing` is an optional second static library. It is installed as the
 package component `testing`, and it is built unless
@@ -1246,4 +1242,4 @@ Threads. Tests use Catch2, and only the standalone showcase uses Dear ImGui.
 
 Public headers use types that Scry owns and move-only `UniqueFunction`
 callables. Stateful handles use PImpl. [contributing.md](contributing.md)
-describes the build, test, and packaging gates.
+tells how to build and test Scry.

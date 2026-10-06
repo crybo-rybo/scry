@@ -5,7 +5,7 @@
 
 namespace inventory_tools {
 [[= scry::reflection::tool{"Only unit A declares this tool"}]] inline std::string
-only_a() {
+    only_a() {
   return "a";
 }
 } // namespace inventory_tools

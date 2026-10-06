@@ -200,7 +200,7 @@ change, give a `std::shared_ptr` to `add()`.
   headers need `-std=c++26 -freflection`. Clang and MSVC cannot use the library.
 - **CMake 3.30** and **libcurl 7.84** or newer, with development headers. CMake
   3.30 is the first CMake version that knows the C++26 mode of GCC.
-- **Linux or macOS.** CI runs GCC 16 on Ubuntu 24.04 and macOS 15.
+- **Linux or macOS.** CI runs GCC 16 on Ubuntu 24.04.
 
 libcurl is the only library dependency. The code of Scry parses and writes
 JSON. The tests also fetch Catch2. For the development toolchain, see
@@ -210,7 +210,6 @@ To run the unit and integration suites, use `./scripts/test.sh`. To run an
 end-to-end test with a live model, use `./scripts/test-e2e.sh`. Set the server
 URL and the model as
 [Contributing](docs/contributing.md#end-to-end-testing) tells you.
-`./scripts/ci.sh` runs all local CI checks and the showcase build.
 
 ## Install
 
@@ -270,10 +269,9 @@ target_link_libraries(app PRIVATE scry::scry)
 - [Architecture](docs/architecture.md) — how Scry is built, what it guarantees,
   and its operation limits. Read this document before you rely on a specific
   behavior.
-- [Contributing](docs/contributing.md) — the toolchain configuration, presets,
-  gates, and what a change needs before it is merged.
-- API reference: `./.github/scripts/ci-docs.sh` writes the Doxygen site to
-  `build/docs/html/index.html`.
+- [Contributing](docs/contributing.md) — the toolchain configuration, the
+  commands, and what a change needs before it is merged.
+- API reference: the public headers under [include/scry/](include/scry/).
 
 ## License
 

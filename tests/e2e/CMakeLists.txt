@@ -1,6 +1,6 @@
 # The local-model smoke drives a live OpenAI-compatible server through the
 # public API. It is a plain executable with no ctest registration on purpose:
-# scripts/test-e2e.sh builds and runs it on demand under an explicit timeout.
+# scripts/test-e2e.sh builds and runs it on demand.
 # No per-commit gate depends on a live model.
 add_executable(scry_local_model_smoke EXCLUDE_FROM_ALL local_model_smoke.cpp)
 target_link_libraries(

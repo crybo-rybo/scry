@@ -1,7 +1,6 @@
 # scry::testing drives the shipping runtime over a scripted transport, so it
 # links the library rather than recompiling any part of it. It reaches the
-# kernel's transport seam through private headers. Like scry, it is built only
-# by GCC; the SCRY_CLANG_TOOLING build defines neither.
+# kernel's transport seam through private headers.
 add_library(scry_testing STATIC src/scripted_transport.cpp)
 add_library(scry::testing ALIAS scry_testing)
 set_target_properties(

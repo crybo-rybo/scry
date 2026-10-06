@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 
-# Shared by just and CI; formatting needs no configured CMake build.
+# clang-format over the C++ sources: --check (default) or --fix. Uses the
+# clang-format on PATH, or CLANG_FORMAT. CI uses clang-format 22.
+
 set -euo pipefail
 
-readonly root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly formatter="${CLANG_FORMAT:-clang-format}"
 case "${1:---check}" in
   --check) format_args=(--dry-run --Werror) ;;
@@ -14,13 +15,12 @@ case "${1:---check}" in
     ;;
 esac
 
-cd "${root_dir}"
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
 # Include new, untracked sources as well as tracked files. NUL delimiters keep
 # paths containing spaces intact, and --exclude-standard skips build outputs.
 git ls-files --cached --others --exclude-standard -z -- \
   'examples/*.cpp' 'extras/*.cpp' 'extras/*.hpp' 'include/*.hpp' \
-  'src/*.cpp' 'src/*.hpp' 'testing/*.cpp' 'tests/*.cpp' 'tests/*.hpp' \
-  'cmake/probes/*.cpp' |
+  'src/*.cpp' 'src/*.hpp' 'testing/*.cpp' 'tests/*.cpp' 'tests/*.hpp' |
   while IFS= read -r -d '' source; do
     if [[ -f "${source}" ]]; then
       printf '%s\0' "${source}"

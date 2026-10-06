@@ -1,7 +1,6 @@
-// A libFuzzer-compatible corpus replay driver for fuzz targets that only GCC can
-// build. It runs every input once through the target's LLVMFuzzerTestOneInput,
-// the same deterministic replay a libFuzzer binary performs with -runs=0, without
-// coverage guidance or mutation.
+// A libFuzzer-compatible corpus replay driver. It runs every input once through
+// the target's LLVMFuzzerTestOneInput, the same deterministic replay a libFuzzer
+// binary performs with -runs=0, without coverage guidance or mutation.
 //
 // Usage: <target> <file-or-directory>...
 //

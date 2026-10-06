@@ -14,8 +14,8 @@ Read the current branch. Do not use the state that you remember. These are the
 sources of truth:
 
 - `docs/architecture.md`: what Scry is, how it works, and what it guarantees.
-- `docs/contributing.md`: the toolchain, the presets, the gates, and what a
-  change must have before it lands.
+- `docs/contributing.md`: the toolchain, the commands, and what a change must
+  have before it lands.
 - The public headers under `include/scry/`.
 
 Do not implement or promise behavior that these sources do not cover.
@@ -23,18 +23,17 @@ Do not implement or promise behavior that these sources do not cover.
 ## Commands
 
 ```sh
-cmake --preset dev && cmake --build build/dev   # presets: dev ci asan tsan fuzz
-ctest --test-dir build/dev --output-on-failure
-ctest --test-dir build/dev -R 'runtime\.'       # one suite, or one case by name
-./scripts/format.sh --fix                       # --check to verify only
-./scripts/test.sh                              # build and run unit/integration tests
-./scripts/test-e2e.sh                           # live model; requires URL and model
-./scripts/ci.sh                                 # all local CI checks before a PR
+./scripts/test.sh                   # configure, build, and run ctest (dev preset)
+./scripts/test.sh -R 'runtime\.'    # one suite, or one case by name
+PRESET=asan ./scripts/test.sh       # presets: dev asan tsan
+./scripts/format.sh --fix           # --check to verify only
+./scripts/lint.sh                   # clang-tidy on src/kernel/, and repo rules
+./scripts/test-e2e.sh               # live model; requires URL and model
 ```
 
-The `dev`, `ci`, `asan`, and `tsan` presets select `g++-16`. If necessary,
-override this with `-DCMAKE_CXX_COMPILER=...`. For the `fuzz` preset, select a
-Clang compiler explicitly. That compiler must have a libFuzzer runtime.
+CI runs the format check, the lint, and `test.sh` with each preset. The presets
+select `g++-16`. If necessary, set `CXX` or use `-DCMAKE_CXX_COMPILER=...`.
+CI uses clang-format 22 and clang-tidy 22.
 
 ## Directory map
 
@@ -45,21 +44,18 @@ Clang compiler explicitly. That compiler must have a libFuzzer runtime.
   (sans-I/O turn machine), `provider/` (Anthropic, OpenAI-compatible),
   `runtime/` (worker, pump, registry, conversation), `reflection/` (JSON bridge).
 - `tests/`, `examples/`, `extras/showcase/` (a standalone project that the root
-  build never configures), `scripts/` (local commands), `.github/scripts/` (CI
-  helpers), `cmake/`, `docs/`.
+  build never configures), `scripts/` (build, test, format, lint), `cmake/`,
+  `docs/`.
 
 ## Guardrails
 
 - `src/kernel/` is C++23 without reflection in every build. The compiler
-  enforces this rule. The `SCRY_CLANG_TOOLING` build (clang-tidy, libFuzzer)
-  compiles only the kernel. Kernel code can include only `<scry/error.hpp>`,
+  enforces this rule. clang-tidy analyzes only the kernel. Kernel code can include only `<scry/error.hpp>`,
   `<scry/json.hpp>`, `<scry/config.hpp>`, `<scry/turn_id.hpp>`,
   `<scry/unique_function.hpp>`, and other kernel headers. It must not include
-  the remaining files in `src/`. The `kernel.include-boundary` check finds such
-  includes. All other code in `src/` is C++26. Use reflection there when it
+  the remaining files in `src/`. `scripts/lint.sh` finds such includes. All other code in `src/` is C++26. Use reflection there when it
   replaces hand-written shape code.
-- Top-level builds treat warnings as errors. lizard allows a maximum cyclomatic
-  complexity of 15 and a maximum of 6 arguments. clang-tidy allows a maximum
+- Top-level builds treat warnings as errors. clang-tidy allows a maximum
   cognitive complexity of 25. A `// TODO` must link an issue.
 - Semantic failures that start in Scry are values (`std::expected` /
   `Result<T>`). Allocation failure is not part of that contract. Observer
@@ -78,6 +74,7 @@ The project is trunk-based. It uses squash merges and conventional-commit
 messages. The template asks what the change does and why. It also has three
 checkboxes:
 
-- `./scripts/ci.sh` ran, and the PR names each leg that it skipped.
+- `./scripts/test.sh`, `./scripts/format.sh --check`, and `./scripts/lint.sh`
+  pass.
 - The PR adds or updates tests.
 - If the behavior changed, the PR updates the load-bearing docs.

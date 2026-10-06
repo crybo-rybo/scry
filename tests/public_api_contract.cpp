@@ -281,13 +281,13 @@ struct CountArguments {
   std::int32_t by{};
 };
 [[= scry::reflection::tool{"Echo a label"}]] inline std::string
-echo(std::string label) {
+    echo(std::string label) {
   return label;
 }
 struct Counter {
   std::int32_t value{};
   [[= scry::reflection::tool{"Add to the counter"}]] std::int32_t
-  increment(CountArguments arguments) {
+      increment(CountArguments arguments) {
     return value += arguments.by;
   }
 };

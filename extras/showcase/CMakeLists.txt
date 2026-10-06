@@ -3,9 +3,9 @@
 # deliverable, and nothing here is built or installed by it. Configure this
 # directory directly:
 #
-#   cmake -S extras/showcase -B build/showcase -G Ninja -DCMAKE_BUILD_TYPE=Debug
-#
-# ./.github/scripts/ci-showcase.sh builds this project.
+#   cmake -S extras/showcase -B build/showcase -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+#     -DCMAKE_CXX_COMPILER=g++-16
+#   cmake --build build/showcase
 
 cmake_minimum_required(VERSION 3.30)
 

@@ -29,8 +29,9 @@ struct MoveResult {
 // framework failure: the turn continues and the model gets a chance to pick
 // another direction. Only the first string reaches the model; the second is the
 // host-side Error::message, which Scry never forwards.
-[[= scry::reflection::tool{"Step one room in a direction"}]] [[nodiscard]]
-scry::Result<MoveResult> move(const MoveArguments arguments) {
+[[= scry::reflection::tool{
+    "Step one room in a direction"}]] [[nodiscard]] scry::Result<MoveResult>
+    move(const MoveArguments arguments) {
   if (arguments.direction != Direction::north) {
     return std::unexpected(scry::tool_error(
         "a wall blocks that direction; only north is open from the entrance hall",

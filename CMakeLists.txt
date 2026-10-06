@@ -30,7 +30,6 @@ configure_file(
 # the macOS SDK. Scanning is off everywhere this project compiles C++.
 set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 
-list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
 include(CMakePackageConfigHelpers)
 include(FetchContent)
 include(GNUInstallDirs)
@@ -42,24 +41,7 @@ option(
   "Build and install scry::testing, the scripted-transport package component"
   ON
 )
-option(
-  SCRY_ENABLE_CLANG_TIDY
-  "Run clang-tidy over the kernel (src/kernel/) while compiling"
-  OFF
-)
 option(SCRY_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ${PROJECT_IS_TOP_LEVEL})
-option(
-  SCRY_CLANG_TOOLING
-  "Build only the C++23 kernel (src/kernel/) with a Clang compiler, for \
-clang-tidy and libFuzzer. Not a supported consumer build."
-  OFF
-)
-option(
-  SCRY_BUILD_FUZZERS
-  "Build the kernel's libFuzzer targets; requires SCRY_CLANG_TOOLING"
-  OFF
-)
-
 set(
   SCRY_SANITIZER
   "none"
@@ -71,19 +53,47 @@ set_property(
   PROPERTY STRINGS none address-undefined thread
 )
 
-include(ScryCompilerChecks)
+# The public API uses C++26 reflection (P2996), which only GCC 16+ compiles.
+if(
+  NOT CMAKE_CXX_COMPILER_ID STREQUAL "GNU"
+  OR CMAKE_CXX_COMPILER_VERSION VERSION_LESS 16
+)
+  message(FATAL_ERROR "Scry requires GCC 16 or newer (C++26 reflection)")
+endif()
 
 find_package(CURL 7.84 REQUIRED)
 find_package(Threads REQUIRED)
 
+# Warning and sanitizer flags for Scry's own targets; never exported.
+add_library(scry_project_options INTERFACE)
+target_compile_options(
+  scry_project_options
+  INTERFACE -Wall -Wextra -Wconversion -Wshadow
+)
+if(SCRY_WARNINGS_AS_ERRORS)
+  target_compile_options(scry_project_options INTERFACE -Werror)
+endif()
+if(SCRY_SANITIZER STREQUAL "address-undefined")
+  set(SCRY_SANITIZER_FLAGS -fsanitize=address,undefined -fno-sanitize-recover=undefined)
+elseif(SCRY_SANITIZER STREQUAL "thread")
+  set(SCRY_SANITIZER_FLAGS -fsanitize=thread)
+elseif(NOT SCRY_SANITIZER STREQUAL "none")
+  message(FATAL_ERROR "Unsupported SCRY_SANITIZER: ${SCRY_SANITIZER}")
+endif()
+if(SCRY_SANITIZER_FLAGS)
+  target_compile_options(
+    scry_project_options
+    INTERFACE ${SCRY_SANITIZER_FLAGS} -fno-omit-frame-pointer
+  )
+  target_link_options(scry_project_options INTERFACE ${SCRY_SANITIZER_FLAGS})
+endif()
+
 # The kernel is the reflection-free layer under the library: the JSON codec, the
 # SSE parser, retry delay arithmetic, and the transport seam with its libcurl
 # implementation, which is everything that parses untrusted bytes. It is compiled
-# as C++23 without -freflection in every build, so the same sources are what
-# clang-tidy and libFuzzer see in the SCRY_CLANG_TOOLING build.
-# It never links scry, so scry's PUBLIC C++26 and -freflection cannot reach it.
-# src/kernel/kernel.hpp states the include boundary; the kernel.include-boundary
-# test checks it.
+# as C++23 without -freflection, so plain clang-tidy can analyze it
+# (scripts/lint.sh). It never links scry, so scry's PUBLIC C++26 and -freflection
+# cannot reach it. src/kernel/kernel.hpp states the include boundary.
 add_library(
   scry_kernel
   OBJECT
@@ -102,11 +112,8 @@ add_library(
 target_compile_features(scry_kernel PRIVATE cxx_std_23)
 # In C++23 mode GCC rejects a reflection operator outright but accepts a P3394
 # annotation with only a -Wc++26-extensions warning, so that warning is an error
-# for the kernel even when SCRY_WARNINGS_AS_ERRORS is off. Clang rejects both.
-target_compile_options(
-  scry_kernel
-  PRIVATE "$<$<CXX_COMPILER_ID:GNU>:-Werror=c++26-extensions>"
-)
+# for the kernel even when SCRY_WARNINGS_AS_ERRORS is off.
+target_compile_options(scry_kernel PRIVATE -Werror=c++26-extensions)
 set_target_properties(
   scry_kernel
   PROPERTIES
@@ -121,26 +128,14 @@ target_include_directories(
     "${PROJECT_SOURCE_DIR}/include"
     "${PROJECT_SOURCE_DIR}/src"
 )
-# A target that links the kernel objects directly, such as a kernel fuzz target
-# or test, also needs libcurl and Threads at link time. scry takes the objects
-# through $<TARGET_OBJECTS:...> instead and declares both dependencies itself.
+# A target that links the kernel objects directly, such as a kernel test, also
+# needs libcurl and Threads at link time. scry takes the objects through
+# $<TARGET_OBJECTS:...> instead and declares both dependencies itself.
 target_link_libraries(
   scry_kernel
   PUBLIC CURL::libcurl Threads::Threads
   PRIVATE scry_project_options
 )
-
-include(ScryDeveloperTools)
-
-# The tooling build is the kernel alone, plus the libFuzzer targets over it:
-# everything else under src/ may use C++26 reflection, which only GCC compiles.
-if(SCRY_CLANG_TOOLING)
-  if(SCRY_BUILD_FUZZERS)
-    include(CTest)
-    add_subdirectory(tests/fuzz)
-  endif()
-  return()
-endif()
 
 add_library(
   scry
