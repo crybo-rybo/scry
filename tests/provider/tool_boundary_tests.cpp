@@ -1,7 +1,7 @@
-#include "core/json_codec.hpp"
 #include "core/model.hpp"
 #include "core/provider.hpp"
 #include "fixture_support.hpp"
+#include "kernel/json/codec.hpp"
 #include "provider/anthropic.hpp"
 #include "provider/anthropic_content.hpp"
 
@@ -172,9 +172,8 @@ TEST_CASE("Anthropic tool arguments require JSON object roots") {
   }
 
   SECTION("non-streaming input") {
-    const auto decoded = decode_anthropic_content(
-        json_value(R"({"type":"tool_use","id":"call-1","name":"lookup","input":[]})"),
-        false);
+    const auto decoded = anthropic_content(
+        R"({"type":"tool_use","id":"call-1","name":"lookup","input":[]})", false);
     REQUIRE_FALSE(decoded);
     CHECK(decoded.error().category == ErrorCategory::protocol);
   }

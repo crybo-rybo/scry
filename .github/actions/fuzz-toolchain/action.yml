@@ -1,10 +1,9 @@
-# Composite action for the pinned Clang 21 + libFuzzer toolchain shared by the
-# per-commit fuzz replay and the scheduled long fuzz runs. The caller must
-# check out the repository first.
+# Composite action for the pinned Clang 21 toolchain (clang-tidy and libFuzzer)
+# used by the per-commit clang-tidy and fuzz replay legs. The caller must check out the repository first.
 name: Fuzz toolchain
 description: >-
-  Install Clang 21 with its libFuzzer runtime from apt.llvm.org and lower ASLR
-  entropy.
+  Install Clang 21 with clang-tidy and its libFuzzer runtime from apt.llvm.org
+  and lower ASLR entropy.
 
 runs:
   using: composite
@@ -25,7 +24,7 @@ runs:
               | sudo tee /etc/apt/sources.list.d/llvm-21.list \
             && sudo apt-get update \
             && sudo apt-get install -y \
-              clang-21 g++-14 libclang-rt-21-dev libcurl4-openssl-dev \
+              clang-21 clang-tidy-21 g++-14 libclang-rt-21-dev libcurl4-openssl-dev \
               libfuzzer-21-dev ninja-build; then
             installed=1
             break

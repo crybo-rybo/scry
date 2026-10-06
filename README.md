@@ -7,12 +7,12 @@ Your application keeps control of its main loop. You keep your game loop, GUI
 event loop, or simulation tick. Scry runs the full conversation in the
 background. It gives you the results when you ask for them.
 
-Write a tool as an ordinary C++ function that takes a struct and returns a
-struct. Scry generates the JSON schema that the model sees. It checks the
-arguments that the model sends back, calls your function, and sends the answer
-to the model. All work that the model requests runs on your thread, at a time
-that you select. Thus, tools can read and write the state of your application
-directly.
+Write a tool as an ordinary C++ function. Or, give the model a full object, and
+each annotated member function of that object is a tool. Scry generates the JSON
+schema that the model sees. It checks the arguments that the model sends back,
+calls your function, and sends the answer to the model. All work that the model
+requests runs on your thread, at a time that you select. Thus, tools can read
+and write the state of your application directly.
 
 Scry is pre-1.0. The API, the ABI, and the format of saved conversations can
 change.
@@ -27,13 +27,18 @@ budget, it stops early so that your frame stays in its time limit. For scripts
 and tests, use `send_and_wait()`. It calls `update()` for you until the turn
 finishes.
 
-**Tools from ordinary structs.**
-Declare arguments and results as aggregates. Scry uses C++26 reflection to
-derive the schema, decode the arguments from the model strictly, and encode the
-return value. Scry supports nested structs, vectors, arrays, optionals, and
-enums. Each parameter description is an annotation on a member. If you already
-have a JSON schema, register that schema instead. Use a handler that takes JSON
-and returns JSON.
+**Tools from ordinary C++.**
+Annotate a member function with `[[= scry::reflection::tool{"..."}]]` and
+register the object. Each annotated member function becomes a tool that is bound
+to the object. Scry registers all of these tools or none of them. You register
+free functions and full namespaces of free functions in the same way. You can
+also register a lambda that takes an argument struct. Scry uses C++26 reflection
+to derive the schema from the parameters, decode the arguments from the model
+strictly, and encode the return value. Scry supports nested structs, vectors,
+arrays, optionals, enums, and tagged variants. Each parameter description is an
+annotation on a struct member. Some tools exist only at runtime, for example a
+tool that a script supplies. For such a tool, register a hand-written JSON
+schema. Use a handler that takes JSON and returns JSON.
 
 **Scry runs the tool loop.**
 When the model calls tools, Scry runs them and sends the results back to the
@@ -41,6 +46,14 @@ model. Scry continues until the model gives a final answer. Incorrect arguments,
 unknown tools, and handler failures do not cause a crash or abort the turn.
 Scry changes each of these into an error message. The model can read this
 message and recover.
+
+**Answers as C++ values.**
+You can ask for a struct instead of text. `ask<Verdict>()` gives the model a
+`respond` tool. Scry generates the schema of this tool from `Verdict`, and it
+decodes the answer strictly. If the answer is not correct, Scry sends it back
+to the model. The message names the incorrect field. `send<Verdict>()` does the
+same work from a main loop. `send_structured()` takes a `ResponseFormat` at
+runtime.
 
 **You control what the model can do.**
 Each turn can have a hook. The hook sees each tool call before the call runs,
@@ -107,16 +120,20 @@ struct StatusResult {
   std::string state{};
 };
 
+// A toolbox: each member function annotated as a tool becomes one the model can
+// call, named after the function and bound to this object.
+class HostTools {
+public:
+  [[= scry::reflection::tool{
+      "Report whether the host application's main loop is running"}]]
+  StatusResult get_application_status(StatusArguments arguments) const {
+    return {.running = true, .state = arguments.verbose ? "main loop running" : ""};
+  }
+};
+
 int main() {
   scry::ToolRegistry tools;
-  const auto registered = scry::reflection::add<StatusArguments>(
-      tools,
-      {.name = "get_application_status",
-       .description = "Report whether the host application's main loop is running"},
-      [](StatusArguments arguments) {
-        return StatusResult{.running = true,
-                            .state = arguments.verbose ? "main loop running" : ""};
-      });
+  const auto registered = tools.add(HostTools{});
   if (!registered) { std::cerr << registered.error().message << '\n'; return 1; }
 
   // Assumes `ollama serve` is running and `ollama pull qwen3:8b` has completed.
@@ -149,6 +166,16 @@ and answers. All work between `send()` and the final callback occurs on a worker
 thread. The exceptions are the tool handler and the callbacks. They run inside
 `update()`.
 
+The same tool can also be a free function. Register it with
+`tools.add<^^get_application_status>()`. Or, it can be one of the tool functions
+in a namespace. Register all of them with `tools.add<^^host_tools>()`. A tool
+function can also take plain parameters, for example
+`(int dx, std::string reason)`. Then Scry builds the argument object from these
+parameters. To register a lambda, use
+`tools.add<StatusArguments>({.name = ..., .description = ...},
+callable)`. To keep a handle on the toolbox that the tools
+change, give a `std::shared_ptr` to `add()`.
+
 ## How it fits into your application
 
 - **Your thread keeps control.** Each `Harness` has one worker thread that does
@@ -162,22 +189,28 @@ thread. The exceptions are the tool handler and the callbacks. They run inside
 - **The core of the loop is deterministic.** The agentic loop is a pure state
   machine. It has no I/O and no clock. Thus, the tests for retries,
   cancellation, and multi-round tool use do not need a network.
-- **JSON without a third-party type.** Explicit-schema handlers read arguments
-  with `scry::JsonView`. They build results with `scry::escape_json_string()`.
-  The public headers do not expose a parser library.
+- **JSON without a third-party type.** You register dynamic tools with
+  `add_dynamic()`. Their handlers read arguments with `scry::JsonView`. They
+  build results with `scry::escape_json_string()`. The public headers do not
+  expose a parser library.
 
 ## Requirements
 
 - **GCC 16 or newer.** You declare tools with C++26 reflection. Thus, the public
   headers need `-std=c++26 -freflection`. Clang and MSVC cannot use the library.
-- **CMake 3.31** and **libcurl 7.84** or newer, with development headers. The
-  Glaze revision that Scry fetches needs CMake 3.31. The build files of Scry
-  accept CMake 3.28 when CMake finds a Glaze package instead.
+- **CMake 3.30** and **libcurl 7.84** or newer, with development headers. CMake
+  3.30 is the first CMake version that knows the C++26 mode of GCC.
 - **Linux or macOS.** CI runs GCC 16 on Ubuntu 24.04 and macOS 15.
 
-Glaze is a private header-only dependency that CMake finds or fetches. The tests
-also fetch Catch2. For the development toolchain, see
+libcurl is the only library dependency. The code of Scry parses and writes
+JSON. The tests also fetch Catch2. For the development toolchain, see
 [Contributing](docs/contributing.md).
+
+To run the unit and integration suites, use `./scripts/test.sh`. To run an
+end-to-end test with a live model, use `./scripts/test-e2e.sh`. Set the server
+URL and the model as
+[Contributing](docs/contributing.md#end-to-end-testing) tells you.
+`./scripts/ci.sh` runs all local CI checks and the showcase build.
 
 ## Install
 
@@ -195,7 +228,7 @@ Then, add these lines to a project that you configure with GCC 16 and
 `-DCMAKE_PREFIX_PATH=/your/prefix`:
 
 ```cmake
-find_package(scry 0.5.0 CONFIG REQUIRED)
+find_package(scry 0.6.0 CONFIG REQUIRED)
 target_link_libraries(app PRIVATE scry::scry)
 ```
 
@@ -207,7 +240,7 @@ include(FetchContent)
 FetchContent_Declare(
   scry
   GIT_REPOSITORY https://github.com/crybo-rybo/scry.git
-  GIT_TAG v0.5.0
+  GIT_TAG v0.6.0
 )
 FetchContent_MakeAvailable(scry)
 target_link_libraries(app PRIVATE scry::scry)
@@ -216,12 +249,20 @@ target_link_libraries(app PRIVATE scry::scry)
 ## Learn more
 
 - [examples/main_loop.cpp](examples/main_loop.cpp) — the primary example. It
-  shows the two paths for tool registration and renders the history. Its
+  shows a reflected tool and a dynamic tool, and it renders the history. Its
   `--tool-manifest` option exports the tool contract without a live model.
+- [examples/toolbox.cpp](examples/toolbox.cpp) — all the ways to declare a
+  reflected tool: a toolbox class, a namespace of functions, one annotated
+  function, and parameters that Scry changes into an argument object.
 - [examples/tool_policy.cpp](examples/tool_policy.cpp) — a handler rejects a
   move with a message that the model reads. Then the model tries again.
 - [examples/seeded_trials.cpp](examples/seeded_trials.cpp) — the example runs
   the same prompt several times on a local model with a fixed sampling seed.
+- [examples/typed_values.cpp](examples/typed_values.cpp) — the reflected codec
+  alone. The example shows an annotated answer type, its schema, a strict
+  decode, and the error text that Scry sends back to a model.
+- [examples/typed_answer.cpp](examples/typed_answer.cpp) — a turn that ends
+  with a C++ value. A host validator checks the value.
 - [examples/testing_scripted.cpp](examples/testing_scripted.cpp) — a downstream
   test that uses a scripted provider and no network.
 - [extras/showcase](extras/showcase) — a standalone Dear ImGui chat panel, and a
@@ -231,7 +272,7 @@ target_link_libraries(app PRIVATE scry::scry)
   behavior.
 - [Contributing](docs/contributing.md) — the toolchain configuration, presets,
   gates, and what a change needs before it is merged.
-- API reference: `./scripts/ci-docs.sh` writes the Doxygen site to
+- API reference: `./.github/scripts/ci-docs.sh` writes the Doxygen site to
   `build/docs/html/index.html`.
 
 ## License

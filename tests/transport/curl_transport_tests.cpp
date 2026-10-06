@@ -1,6 +1,6 @@
+#include "kernel/transport/curl_global.hpp"
+#include "kernel/transport/curl_transport.hpp"
 #include "support/transport/loopback_server.hpp"
-#include "transport/curl_global.hpp"
-#include "transport/curl_transport.hpp"
 
 #include <array>
 #include <atomic>

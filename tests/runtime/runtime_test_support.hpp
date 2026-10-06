@@ -70,6 +70,22 @@ tool_event(const scry::TurnId turn_id, std::string name = "forecast",
   };
 }
 
+// A call to a typed turn's response tool, as the machine publishes it.
+[[nodiscard]] inline scry::detail::ToolCallEvent
+answer_event(const scry::TurnId turn_id,
+             const scry::detail::ToolCallRole role = scry::detail::ToolCallRole::answer,
+             std::string id = "answer-1",
+             std::string arguments = R"({"supported":true})") {
+  return {
+      .turn_id = turn_id,
+      .call = {.id = std::move(id),
+               .name = "respond",
+               .arguments = {.text = std::move(arguments)}},
+      .round = 1,
+      .role = role,
+  };
+}
+
 // The parts of a completion that suites vary: the assistant text and the retry
 // bookkeeping.
 struct CompletionOptions {
@@ -110,6 +126,7 @@ struct RouteOptions {
   std::size_t max_conversation_bytes{1024};
   std::optional<std::uint32_t> max_tool_calls{};
   scry::TurnCallbacks callbacks{};
+  scry::AnswerValidator validate_answer{};
 };
 
 struct PumpFixture {
@@ -137,6 +154,7 @@ struct PumpFixture {
             .max_conversation_bytes = options.max_conversation_bytes,
             .max_tool_calls = options.max_tool_calls,
             .callbacks = std::move(options.callbacks),
+            .validate_answer = std::move(options.validate_answer),
         });
   }
 

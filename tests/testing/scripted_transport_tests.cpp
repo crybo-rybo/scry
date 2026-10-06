@@ -101,16 +101,15 @@ struct RoundTrip {
   REQUIRE(conversation);
 
   RoundTrip observed;
-  REQUIRE(scry::reflection::add<CityArguments>(harness->tools(),
-                                               {
-                                                   .name = "lookup",
-                                                   .description = "Look up a city",
-                                               },
-                                               [&observed](CityArguments arguments) {
-                                                 observed.city =
-                                                     std::move(arguments.city);
-                                                 return std::string{"sunny"};
-                                               }));
+  REQUIRE(harness->tools().add<CityArguments>(
+      {
+          .name = "lookup",
+          .description = "Look up a city",
+      },
+      [&observed](CityArguments arguments) {
+        observed.city = std::move(arguments.city);
+        return std::string{"sunny"};
+      }));
 
   const auto completion = harness->send_and_wait(*conversation, "Weather?");
   REQUIRE(completion);
@@ -173,15 +172,15 @@ TEST_CASE("scripted tool turn dispatches a reflected tool across two rounds") {
   REQUIRE(conversation);
 
   std::string seen_city;
-  REQUIRE(scry::reflection::add<CityArguments>(harness->tools(),
-                                               {
-                                                   .name = "lookup",
-                                                   .description = "Look up a city",
-                                               },
-                                               [&seen_city](CityArguments arguments) {
-                                                 seen_city = arguments.city;
-                                                 return std::string{"sunny"};
-                                               }));
+  REQUIRE(harness->tools().add<CityArguments>(
+      {
+          .name = "lookup",
+          .description = "Look up a city",
+      },
+      [&seen_city](CityArguments arguments) {
+        seen_city = arguments.city;
+        return std::string{"sunny"};
+      }));
 
   std::string observed_tool;
   bool tool_failed = true;

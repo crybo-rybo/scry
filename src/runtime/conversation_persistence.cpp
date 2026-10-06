@@ -1,12 +1,16 @@
-#include "core/error.hpp"
-#include "core/json_codec.hpp"
+#include "kernel/error.hpp"
+#include "kernel/json/codec.hpp"
+#include "reflection/codec.hpp"
 #include "runtime/state.hpp"
 
+#include <cstddef>
 #include <cstdint>
-#include <initializer_list>
 #include <memory>
+#include <meta>
+#include <scry/annotations.hpp>
 #include <scry/error.hpp>
 #include <scry/json.hpp>
+#include <scry/message.hpp>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -18,353 +22,159 @@ namespace {
 
 constexpr std::uint64_t conversation_document_version = 1;
 
-[[nodiscard]] Error invalid_document(const std::string_view message) {
-  return detail::make_error(ErrorCategory::invalid_config, std::string{message});
+// The persisted document. Its members have no initializers, so decoding requires
+// each of them; unknown members are rejected at every level.
+struct ConversationDocument {
+  std::vector<Message> messages;
+  std::string system_prompt;
+  std::uint64_t version;
+};
+
+// The same document borrowed from a Conversation for encoding, member for member.
+struct ConversationDocumentView {
+  const std::vector<Message>& messages;
+  std::string_view system_prompt;
+  std::uint64_t version;
+};
+
+// Read before the document itself, so a document from another version reports its
+// version rather than whatever shape difference it has from this one.
+struct[[= reflection::ignore_unknown]] ConversationDocumentHeader {
+  std::uint64_t version;
+};
+
+[[nodiscard]] Error invalid_document(std::string message) {
+  return detail::make_error(ErrorCategory::invalid_config, std::move(message));
 }
 
-[[nodiscard]] Status
-require_fields(const detail::JsonValue& value,
-               const std::initializer_list<std::string_view> expected,
-               const std::string_view context) {
-  if (!value.is_object()) {
-    return std::unexpected(
-        invalid_document(std::string{context} + " must be an object"));
-  }
-  if (value.get_object().size() != expected.size()) {
-    return std::unexpected(
-        invalid_document(std::string{context} + " has missing or unknown fields"));
-  }
-  for (const auto name : expected) {
-    if (!value.contains(name)) {
-      return std::unexpected(
-          invalid_document(std::string{context} + " has missing or unknown fields"));
+[[nodiscard]] Error invalid_document(const detail::CodecFailure& failure) {
+  return invalid_document("Conversation document at " + detail::describe(failure));
+}
+
+[[nodiscard]] bool is_object_text(const std::string_view text) noexcept {
+  const auto first = text.find_first_not_of(" \t\n\r");
+  return first != std::string_view::npos && text[first] == '{';
+}
+
+// ---- Completeness ------------------------------------------------------------
+
+// The codec reads a member that has an initializer as optional, and every member
+// of the public message model has one, so it accepts a message or block that
+// omits one. Unknown members are already rejected, so this finds the declared
+// members the document left out. `path` is relative to the document root, as a
+// codec failure's is.
+template <typename Type>
+[[nodiscard]] Status require_members(const JsonView& object, const std::string& path) {
+  template for (constexpr auto field : reflection::detail::fields_v<Type>) {
+    constexpr std::string_view key = field.key_view();
+    if (!object.find(key).has_value()) {
+      return std::unexpected(invalid_document(detail::CodecFailure{
+          .reason = "is a required member",
+          .path = path + "." + std::string{key},
+      }));
     }
   }
   return {};
 }
 
-[[nodiscard]] Result<std::string_view> string_field(const detail::JsonValue& value,
-                                                    const std::string_view name,
-                                                    const std::string_view context) {
-  const auto* found = detail::json_field(value, name);
-  if (found == nullptr || !found->is_string()) {
-    return std::unexpected(invalid_document(std::string{context} + " field '" +
-                                            std::string{name} + "' must be a string"));
+[[nodiscard]] Status require_complete_message(const JsonView& value,
+                                              const Message& message,
+                                              const std::string& path) {
+  if (auto status = require_members<Message>(value, path); !status) {
+    return status;
   }
-  return found->get_string();
+  const auto content = *value.find("content");
+  for (std::size_t index = 0; index < message.content.size(); ++index) {
+    const auto block_path = path + ".content[" + std::to_string(index) + "]";
+    auto status = std::visit(
+        [&]<typename Block>(const Block&) {
+          return require_members<Block>(*content.at(index), block_path);
+        },
+        message.content[index]);
+    if (!status) {
+      return status;
+    }
+  }
+  return {};
 }
 
-[[nodiscard]] Result<std::string_view>
-nonempty_string_field(const detail::JsonValue& value, const std::string_view name,
-                      const std::string_view context) {
-  auto result = string_field(value, name, context);
-  if (!result) {
-    return std::unexpected(std::move(result.error()));
+[[nodiscard]] Status require_complete(const JsonView& root,
+                                      const std::vector<Message>& messages) {
+  const auto values = *root.find("messages");
+  for (std::size_t index = 0; index < messages.size(); ++index) {
+    if (auto status =
+            require_complete_message(*values.at(index), messages[index],
+                                     ".messages[" + std::to_string(index) + "]");
+        !status) {
+      return status;
+    }
   }
-  if (result->empty()) {
-    return std::unexpected(invalid_document(std::string{context} + " field '" +
-                                            std::string{name} + "' must not be empty"));
-  }
-  return result;
+  return {};
 }
 
-[[nodiscard]] Result<const detail::JsonValue::array_t*>
-array_field(const detail::JsonValue& value, const std::string_view name,
-            const std::string_view context) {
-  const auto* found = detail::json_field(value, name);
-  if (found == nullptr || !found->is_array()) {
-    return std::unexpected(invalid_document(std::string{context} + " field '" +
-                                            std::string{name} + "' must be an array"));
+// ---- Semantic rules ----------------------------------------------------------
+
+// What the codec cannot express: which role may carry which block, nonempty
+// text and identifiers, and object arguments. Both directions apply them, so a
+// document to_json() writes is one from_json() accepts.
+[[nodiscard]] Status validate_block(const TextBlock& block, Role) {
+  if (block.text.empty()) {
+    return std::unexpected(
+        invalid_document("Text block field 'text' must not be empty"));
   }
-  return &found->get_array();
+  return {};
 }
 
-[[nodiscard]] Result<bool> bool_field(const detail::JsonValue& value,
-                                      const std::string_view name,
-                                      const std::string_view context) {
-  const auto* found = detail::json_field(value, name);
-  if (found == nullptr || !found->is_boolean()) {
-    return std::unexpected(invalid_document(std::string{context} + " field '" +
-                                            std::string{name} + "' must be a boolean"));
-  }
-  return found->get_boolean();
-}
-
-[[nodiscard]] Result<detail::Role> decode_role(const detail::JsonValue& value) {
-  auto role = string_field(value, "role", "Conversation message");
-  if (!role) {
-    return std::unexpected(std::move(role.error()));
-  }
-  if (*role == "user") {
-    return detail::Role::user;
-  }
-  if (*role == "assistant") {
-    return detail::Role::assistant;
-  }
-  return std::unexpected(invalid_document("Conversation message has an unknown role"));
-}
-
-[[nodiscard]] Result<detail::ContentBlock>
-decode_text_block(const detail::JsonValue& value) {
-  if (auto status = require_fields(value, {"text", "type"}, "Text block"); !status) {
-    return std::unexpected(std::move(status.error()));
-  }
-  auto text = nonempty_string_field(value, "text", "Text block");
-  if (!text) {
-    return std::unexpected(std::move(text.error()));
-  }
-  return detail::TextBlock{.text = std::string{*text}};
-}
-
-[[nodiscard]] Result<detail::ContentBlock>
-decode_tool_call(const detail::JsonValue& value, const detail::Role role) {
-  if (role != detail::Role::assistant) {
+[[nodiscard]] Status validate_block(const ToolCallBlock& block, const Role role) {
+  if (role != Role::assistant) {
     return std::unexpected(
         invalid_document("Tool-call blocks require the assistant role"));
   }
-  if (auto status =
-          require_fields(value, {"arguments", "id", "name", "type"}, "Tool-call block");
-      !status) {
-    return std::unexpected(std::move(status.error()));
+  if (block.id.empty()) {
+    return std::unexpected(
+        invalid_document("Tool-call block field 'id' must not be empty"));
   }
-  auto id = nonempty_string_field(value, "id", "Tool-call block");
-  if (!id) {
-    return std::unexpected(std::move(id.error()));
+  if (block.name.empty()) {
+    return std::unexpected(
+        invalid_document("Tool-call block field 'name' must not be empty"));
   }
-  auto name = nonempty_string_field(value, "name", "Tool-call block");
-  if (!name) {
-    return std::unexpected(std::move(name.error()));
-  }
-  // require_fields has already established that every field is present.
-  const auto& arguments = *detail::json_field(value, "arguments");
-  if (!arguments.is_object()) {
+  // Decoded arguments are canonical text, and encoding validates the stored text
+  // as it splices it, so the first byte is all that is left to check.
+  if (!is_object_text(block.arguments.text)) {
     return std::unexpected(
         invalid_document("Tool-call block field 'arguments' must be an object"));
   }
-  auto encoded = detail::write_json(arguments, ErrorCategory::invalid_config,
-                                    "Tool-call arguments could not be encoded");
-  if (!encoded) {
-    return std::unexpected(std::move(encoded.error()));
-  }
-  return detail::ToolCallBlock{
-      .id = std::string{*id},
-      .name = std::string{*name},
-      .arguments = std::move(*encoded),
-  };
+  return {};
 }
 
-[[nodiscard]] Result<detail::ContentBlock>
-decode_tool_result(const detail::JsonValue& value, const detail::Role role) {
-  if (role != detail::Role::user) {
+[[nodiscard]] Status validate_block(const ToolResultBlock& block, const Role role) {
+  if (role != Role::user) {
     return std::unexpected(
         invalid_document("Tool-result blocks require the user role"));
   }
-  if (auto status = require_fields(
-          value, {"is_error", "result", "tool_call_id", "type"}, "Tool-result block");
-      !status) {
-    return std::unexpected(std::move(status.error()));
-  }
-  auto id = nonempty_string_field(value, "tool_call_id", "Tool-result block");
-  if (!id) {
-    return std::unexpected(std::move(id.error()));
-  }
-  auto is_error = bool_field(value, "is_error", "Tool-result block");
-  if (!is_error) {
-    return std::unexpected(std::move(is_error.error()));
-  }
-  // require_fields has already established that every field is present.
-  auto encoded = detail::write_json(*detail::json_field(value, "result"),
-                                    ErrorCategory::invalid_config,
-                                    "Tool result could not be encoded");
-  if (!encoded) {
-    return std::unexpected(std::move(encoded.error()));
-  }
-  return detail::ToolResultBlock{
-      .tool_call_id = std::string{*id},
-      .result = std::move(*encoded),
-      .is_error = *is_error,
-  };
-}
-
-[[nodiscard]] Result<detail::ContentBlock> decode_block(const detail::JsonValue& value,
-                                                        const detail::Role role) {
-  if (!value.is_object()) {
+  if (block.tool_call_id.empty()) {
     return std::unexpected(
-        invalid_document("Conversation content block must be an object"));
+        invalid_document("Tool-result block field 'tool_call_id' must not be empty"));
   }
-  auto type = string_field(value, "type", "Conversation content block");
-  if (!type) {
-    return std::unexpected(std::move(type.error()));
-  }
-  if (*type == "text") {
-    return decode_text_block(value);
-  }
-  if (*type == "tool_call") {
-    return decode_tool_call(value, role);
-  }
-  if (*type == "tool_result") {
-    return decode_tool_result(value, role);
-  }
-  return std::unexpected(
-      invalid_document("Conversation content block has an unknown type"));
+  return {};
 }
 
-[[nodiscard]] Result<detail::Message> decode_message(const detail::JsonValue& value) {
-  if (auto status = require_fields(value, {"content", "role"}, "Conversation message");
-      !status) {
-    return std::unexpected(std::move(status.error()));
-  }
-  auto role = decode_role(value);
-  if (!role) {
-    return std::unexpected(std::move(role.error()));
-  }
-  auto content = array_field(value, "content", "Conversation message");
-  if (!content) {
-    return std::unexpected(std::move(content.error()));
-  }
-  if ((*content)->empty()) {
-    return std::unexpected(
-        invalid_document("Conversation message content must not be empty"));
-  }
-  detail::Message message{.role = *role};
-  message.content.reserve((*content)->size());
-  for (const auto& value_block : **content) {
-    auto block = decode_block(value_block, *role);
-    if (!block) {
-      return std::unexpected(std::move(block.error()));
-    }
-    message.content.push_back(std::move(*block));
-  }
-  return message;
-}
-
-[[nodiscard]] Result<std::vector<detail::Message>>
-decode_messages(const detail::JsonValue& root) {
-  auto values = array_field(root, "messages", "Conversation document");
-  if (!values) {
-    return std::unexpected(std::move(values.error()));
-  }
-  std::vector<detail::Message> messages;
-  messages.reserve((*values)->size());
-  for (const auto& value : **values) {
-    auto message = decode_message(value);
-    if (!message) {
-      return std::unexpected(std::move(message.error()));
-    }
-    messages.push_back(std::move(*message));
-  }
-  return messages;
-}
-
-[[nodiscard]] Result<detail::JsonValue>
-parse_boundary_json(const Json& json, const bool require_object,
-                    const std::string_view message) {
-  auto value = detail::parse_json(json.text, ErrorCategory::invalid_config, message);
-  if (!value) {
-    return std::unexpected(std::move(value.error()));
-  }
-  if (require_object && !value->is_object()) {
-    return std::unexpected(invalid_document(std::string{message}));
-  }
-  return value;
-}
-
-[[nodiscard]] Result<detail::JsonValue>
-encode_block_value(const detail::TextBlock& block, detail::Role) {
-  if (block.text.empty()) {
-    return std::unexpected(invalid_document("Text block must not be empty"));
-  }
-  detail::JsonValue encoded{};
-  encoded["text"] = block.text;
-  encoded["type"] = "text";
-  return encoded;
-}
-
-[[nodiscard]] Result<detail::JsonValue>
-encode_block_value(const detail::ToolCallBlock& block, const detail::Role role) {
-  if (role != detail::Role::assistant || block.id.empty() || block.name.empty()) {
-    return std::unexpected(invalid_document("Invalid tool-call block"));
-  }
-  auto arguments = parse_boundary_json(block.arguments, true,
-                                       "Tool-call arguments must be a JSON object");
-  if (!arguments) {
-    return std::unexpected(std::move(arguments.error()));
-  }
-  detail::JsonValue encoded{};
-  encoded["arguments"] = std::move(*arguments);
-  encoded["id"] = block.id;
-  encoded["name"] = block.name;
-  encoded["type"] = "tool_call";
-  return encoded;
-}
-
-[[nodiscard]] Result<detail::JsonValue>
-encode_block_value(const detail::ToolResultBlock& block, const detail::Role role) {
-  if (role != detail::Role::user || block.tool_call_id.empty()) {
-    return std::unexpected(invalid_document("Invalid tool-result block"));
-  }
-  auto result =
-      parse_boundary_json(block.result, false, "Tool result must be valid JSON");
-  if (!result) {
-    return std::unexpected(std::move(result.error()));
-  }
-  detail::JsonValue encoded{};
-  encoded["is_error"] = block.is_error;
-  encoded["result"] = std::move(*result);
-  encoded["tool_call_id"] = block.tool_call_id;
-  encoded["type"] = "tool_result";
-  return encoded;
-}
-
-[[nodiscard]] Result<detail::JsonValue> encode_block(const detail::ContentBlock& block,
-                                                     const detail::Role role) {
-  return std::visit(
-      [role](const auto& value) { return encode_block_value(value, role); }, block);
-}
-
-[[nodiscard]] Result<detail::JsonValue> encode_message(const detail::Message& message) {
-  if (message.content.empty()) {
-    return std::unexpected(
-        invalid_document("Conversation message content must not be empty"));
-  }
-  detail::JsonValue::array_t content;
-  content.reserve(message.content.size());
-  for (const auto& block : message.content) {
-    auto encoded = encode_block(block, message.role);
-    if (!encoded) {
-      return std::unexpected(std::move(encoded.error()));
-    }
-    content.push_back(std::move(*encoded));
-  }
-  detail::JsonValue value{};
-  detail::JsonValue content_value{};
-  content_value.data = std::move(content);
-  value["content"] = std::move(content_value);
-  value["role"] = message.role == detail::Role::user ? "user" : "assistant";
-  return value;
-}
-
-[[nodiscard]] Result<detail::JsonValue::array_t>
-encode_messages(const std::vector<detail::Message>& messages) {
-  detail::JsonValue::array_t encoded;
-  encoded.reserve(messages.size());
+[[nodiscard]] Status validate_messages(const std::vector<Message>& messages) {
   for (const auto& message : messages) {
-    auto value = encode_message(message);
-    if (!value) {
-      return std::unexpected(std::move(value.error()));
+    if (message.content.empty()) {
+      return std::unexpected(
+          invalid_document("Conversation message content must not be empty"));
     }
-    encoded.push_back(std::move(*value));
+    for (const auto& block : message.content) {
+      auto status = std::visit(
+          [&message](const auto& value) { return validate_block(value, message.role); },
+          block);
+      if (!status) {
+        return status;
+      }
+    }
   }
-  return encoded;
-}
-
-[[nodiscard]] Result<std::uint64_t> decode_version(const detail::JsonValue& root) {
-  const auto* version = detail::json_field(root, "version");
-  if (version == nullptr || !version->is_uint64()) {
-    return std::unexpected(
-        invalid_document("Conversation document version must be an unsigned integer"));
-  }
-  return version->get<std::uint64_t>();
+  return {};
 }
 
 } // namespace
@@ -374,57 +184,58 @@ Result<Json> Conversation::to_json() const {
     return std::unexpected(
         detail::make_error(ErrorCategory::invalid_state, "Conversation is inactive"));
   }
-  auto messages = encode_messages(*impl_->messages);
-  if (!messages) {
-    return std::unexpected(std::move(messages.error()));
+  if (auto status = validate_messages(*impl_->messages); !status) {
+    return std::unexpected(std::move(status.error()));
   }
-  detail::JsonValue root{};
-  detail::JsonValue message_value{};
-  message_value.data = std::move(*messages);
-  root["messages"] = std::move(message_value);
-  root["system_prompt"] = impl_->config.system_prompt;
-  root["version"] = conversation_document_version;
-  return detail::write_json(root, ErrorCategory::invalid_config,
-                            "Conversation document could not be encoded");
+  auto encoded = detail::encode_text(ConversationDocumentView{
+      .messages = *impl_->messages,
+      .system_prompt = impl_->config.system_prompt,
+      .version = conversation_document_version,
+  });
+  if (!encoded) {
+    return std::unexpected(invalid_document(encoded.error()));
+  }
+  // The splice keeps stored arguments and results byte for byte; this pass is what
+  // makes the document canonical.
+  return detail::canonicalize_json(Json{.text = std::move(*encoded)},
+                                   ErrorCategory::invalid_config,
+                                   "Conversation document could not be encoded");
 }
 
 Result<Conversation> Conversation::from_json(const Json& json) {
-  auto root = detail::parse_json(json.text, ErrorCategory::invalid_config,
-                                 "Conversation document is not valid JSON");
+  auto root = JsonView::parse(json);
   if (!root) {
-    return std::unexpected(std::move(root.error()));
+    return std::unexpected(invalid_document("Conversation document is not valid JSON"));
   }
-  if (auto status = require_fields(*root, {"messages", "system_prompt", "version"},
-                                   "Conversation document");
-      !status) {
-    return std::unexpected(std::move(status.error()));
+  auto header = detail::decode_value<ConversationDocumentHeader>(*root);
+  if (!header) {
+    return std::unexpected(invalid_document(header.error()));
   }
-  auto version = decode_version(*root);
-  if (!version) {
-    return std::unexpected(std::move(version.error()));
-  }
-  if (*version != conversation_document_version) {
+  if (header->version != conversation_document_version) {
     return std::unexpected(
         invalid_document("Conversation document version is not supported"));
   }
-  auto prompt = string_field(*root, "system_prompt", "Conversation document");
-  if (!prompt) {
-    return std::unexpected(std::move(prompt.error()));
+  auto document = detail::decode_value<ConversationDocument>(*root);
+  if (!document) {
+    return std::unexpected(invalid_document(document.error()));
   }
-  auto messages = decode_messages(*root);
-  if (!messages) {
-    return std::unexpected(std::move(messages.error()));
+  if (auto status = require_complete(*root, document->messages); !status) {
+    return std::unexpected(std::move(status.error()));
   }
+  if (auto status = validate_messages(document->messages); !status) {
+    return std::unexpected(std::move(status.error()));
+  }
+
   auto impl = std::make_shared<Impl>();
-  impl->config.system_prompt = std::string{*prompt};
+  impl->config.system_prompt = std::move(document->system_prompt);
   // Every counted byte is resident in the parsed document, so the sum cannot
   // overflow; saturation only keeps the arithmetic obviously total.
   impl->payload_bytes = impl->config.system_prompt.size();
-  for (const auto& message : *messages) {
+  for (const auto& message : document->messages) {
     impl->payload_bytes = detail::saturating_payload_add(
         impl->payload_bytes, detail::message_payload_bytes(message));
   }
-  *impl->messages = std::move(*messages);
+  *impl->messages = std::move(document->messages);
   return Conversation{std::move(impl)};
 }
 

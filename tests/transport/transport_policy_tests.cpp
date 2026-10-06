@@ -1,5 +1,5 @@
-#include "transport/curl_error.hpp"
-#include "transport/transport_policy.hpp"
+#include "kernel/transport/curl_error.hpp"
+#include "kernel/transport/transport_policy.hpp"
 
 #include <array>
 #include <catch2/catch_test_macros.hpp>

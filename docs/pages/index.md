@@ -16,8 +16,9 @@ The public API has five core concepts:
 - `scry::Config` selects the provider and defines the operation limits.
 - `scry::Conversation` owns the committed history. Scry commits to this history
   only in transactions.
-- `scry::ToolRegistry` holds the tools. Scry takes a snapshot of these tools for
-  each accepted turn.
+- `scry::ToolRegistry` holds the tools. You declare these tools in C++, and Scry
+  registers them by reflection. Scry takes a snapshot of these tools for each
+  accepted turn.
 - `scry::Turn` is a move-only handle to one asynchronous exchange: `id()`,
   `finished()`, `cancel()`, and `disconnect()`.
 - `scry::Harness` owns the configured runtime, the worker, the tools, and the
@@ -60,9 +61,15 @@ Each callback and each tool handler runs inside `scry::Harness::update()`, on
 the thread that calls `update()`. `scry::Harness::send()` never waits for
 network I/O.
 
+A turn can also end with a C++ value instead of text. `scry::Harness::ask()`
+blocks until it gets this value. `scry::Harness::send()` with an answer type
+gives the value in `scry::Completion::structured`.
+`scry::Harness::send_structured()` is the dynamic form, and it takes a
+`scry::ResponseFormat`. `examples/typed_answer.cpp` shows the two forms.
+
 `examples/main_loop.cpp` in the source repository is a complete program.
 `docs/architecture.md` specifies the threading and lifetime rules, the tool
-registration (reflected and explicit-schema), and the error and history model.
+registration (reflected and dynamic), and the error and history model.
 The optional `scry::testing` package component replaces the HTTP transfer with a
 scripted transport. It replaces nothing else. `examples/testing_scripted.cpp` is
 a complete test that uses this component.

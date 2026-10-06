@@ -5,8 +5,7 @@ struct UnsupportedArguments {
 };
 
 void register_tool(scry::ToolRegistry& registry) {
-  const auto status = scry::reflection::add<UnsupportedArguments>(
-      registry,
+  const auto status = registry.add<UnsupportedArguments>(
       {
           .name = "unsupported_arguments",
           .description = "Must not compile",

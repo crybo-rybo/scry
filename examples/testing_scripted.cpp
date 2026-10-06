@@ -75,8 +75,7 @@ int main() {
   }
 
   std::string requested_room;
-  const auto registered = scry::reflection::add<RoomArguments>(
-      harness.tools(),
+  const auto registered = harness.tools().add<RoomArguments>(
       {
           .name = "read_sensor",
           .description = "Read the temperature of one room",

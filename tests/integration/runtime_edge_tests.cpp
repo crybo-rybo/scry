@@ -424,8 +424,8 @@ TEST_CASE("callbacks may use public operations and nested update is diagnosed") 
                 // A reentrant update is rejected, and budget_exhausted is the
                 // only signal of it.
                 nested_update_rejected = harness->update().budget_exhausted;
-                registration_succeeded = static_cast<bool>(
-                    harness->tools().add(tool(), static_handler(R"({"ok":true})")));
+                registration_succeeded = static_cast<bool>(harness->tools().add_dynamic(
+                    tool(), static_handler(R"({"ok":true})")));
                 auto nested_wait =
                     harness->send_and_wait(*second_conversation, "blocking second");
                 if (!nested_wait) {

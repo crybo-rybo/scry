@@ -76,6 +76,23 @@ anthropic_message_end(const std::string_view stop_reason,
   return frame;
 }
 
+[[nodiscard]] inline std::string anthropic_text_block(const std::size_t index,
+                                                      const std::string_view text) {
+  const auto position = std::to_string(index);
+  auto events = std::string{"event: content_block_start\ndata: "};
+  events += R"({"type":"content_block_start","index":)" + position + ",";
+  events += R"("content_block":{"type":"text","text":""}})";
+  events += "\n\nevent: content_block_delta\ndata: ";
+  events += R"({"type":"content_block_delta","index":)" + position + ",";
+  events += R"("delta":{"type":"text_delta","text":)";
+  events += escape_json_string(text);
+  events += R"(}})";
+  events += "\n\nevent: content_block_stop\ndata: ";
+  events += R"({"type":"content_block_stop","index":)" + position + "}";
+  events += "\n\n";
+  return events;
+}
+
 [[nodiscard]] inline std::string anthropic_tool_block(const std::size_t index,
                                                       const ToolUseBlock& block) {
   const auto position = std::to_string(index);
@@ -158,17 +175,7 @@ openai_stream_end(const std::string_view prefix, const std::string_view finish_r
     const std::uint32_t output_tokens = 2) {
   auto stream =
       stream_frames::anthropic_message_start(message_id, request_id, input_tokens);
-  stream += "event: content_block_start\ndata: ";
-  stream += R"({"type":"content_block_start","index":0,)";
-  stream += R"("content_block":{"type":"text","text":""}})";
-  stream += "\n\nevent: content_block_delta\ndata: ";
-  stream += R"({"type":"content_block_delta","index":0,)";
-  stream += R"("delta":{"type":"text_delta","text":)";
-  stream += escape_json_string(text);
-  stream += R"(}})";
-  stream += "\n\nevent: content_block_stop\ndata: ";
-  stream += R"({"type":"content_block_stop","index":0})";
-  stream += "\n\n";
+  stream += stream_frames::anthropic_text_block(0, text);
   stream += stream_frames::anthropic_message_end("end_turn", output_tokens);
   return stream;
 }
@@ -195,6 +202,35 @@ anthropic_tool_stream(const std::initializer_list<ToolUseBlock> blocks,
     ++index;
   }
   stream += stream_frames::anthropic_message_end(stop_reason, blocks.size());
+  return stream;
+}
+
+/// Builds an Anthropic stream whose content is a text block followed by one or
+/// more tool_use blocks.
+///
+/// This is how a model typically answers a typed turn: a sentence of prose, then
+/// the call to the response tool carrying the answer. Reported output tokens are
+/// the block count, the text block included.
+/// @param text Assistant text delivered as one content delta before the calls.
+/// @param blocks Calls the assistant announces after the text, in order.
+/// @param message_id Provider message identifier.
+/// @param stop_reason Anthropic stop reason reported by message_delta.
+/// @param input_tokens Prompt tokens reported by message_start.
+/// @return A complete Anthropic response body.
+[[nodiscard]] inline std::string
+anthropic_text_tool_stream(const std::string_view text,
+                           const std::initializer_list<ToolUseBlock> blocks,
+                           const std::string_view message_id = "msg_text_tools",
+                           const std::string_view stop_reason = "tool_use",
+                           const std::uint32_t input_tokens = 3) {
+  auto stream = stream_frames::anthropic_message_start(message_id, {}, input_tokens);
+  stream += stream_frames::anthropic_text_block(0, text);
+  auto index = std::size_t{1};
+  for (const auto& block : blocks) {
+    stream += stream_frames::anthropic_tool_block(index, block);
+    ++index;
+  }
+  stream += stream_frames::anthropic_message_end(stop_reason, index);
   return stream;
 }
 
@@ -255,6 +291,48 @@ openai_tool_stream(const std::initializer_list<ToolUseBlock> blocks,
   stream += R"(]},"finish_reason":null}]})";
   stream += "\n\n";
   stream += stream_frames::openai_stream_end(prefix, "tool_calls", prompt_tokens,
+                                             completion_tokens);
+  return stream;
+}
+
+/// Builds an OpenAI-compatible stream that delivers text and then announces one
+/// or more tool calls.
+///
+/// This is how a model typically answers a typed turn: a sentence of prose, then
+/// the call to the response tool carrying the answer. The finish reason is a
+/// parameter because a server forcing a tool call may report `stop` rather than
+/// `tool_calls`, which is itself a case worth scripting.
+/// @param text Assistant text delivered as one content delta before the calls.
+/// @param blocks Calls the assistant announces, in tool_calls order.
+/// @param completion_id Chat-completion identifier repeated by every chunk.
+/// @param finish_reason OpenAI finish reason reported by the finish chunk.
+/// @param prompt_tokens Prompt tokens reported by the usage chunk.
+/// @param completion_tokens Completion tokens reported by the usage chunk.
+/// @return A complete OpenAI-compatible response body.
+[[nodiscard]] inline std::string openai_text_tool_stream(
+    const std::string_view text, const std::initializer_list<ToolUseBlock> blocks,
+    const std::string_view completion_id = "chatcmpl-text-tools",
+    const std::string_view finish_reason = "tool_calls",
+    const std::uint32_t prompt_tokens = 4, const std::uint32_t completion_tokens = 3) {
+  const auto prefix = stream_frames::openai_chunk_prefix(completion_id);
+  auto stream = prefix;
+  stream += R"([{"index":0,"delta":{"role":"assistant","content":)";
+  stream += escape_json_string(text);
+  stream += R"(},"finish_reason":null}]})";
+  stream += "\n\n";
+  stream += prefix;
+  stream += R"([{"index":0,"delta":{"tool_calls":[)";
+  auto index = std::size_t{0};
+  for (const auto& block : blocks) {
+    if (index != 0) {
+      stream += ",";
+    }
+    stream += stream_frames::openai_tool_call(index, block);
+    ++index;
+  }
+  stream += R"(]},"finish_reason":null}]})";
+  stream += "\n\n";
+  stream += stream_frames::openai_stream_end(prefix, finish_reason, prompt_tokens,
                                              completion_tokens);
   return stream;
 }

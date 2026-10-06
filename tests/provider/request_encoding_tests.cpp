@@ -1,4 +1,3 @@
-#include "core/json_codec.hpp"
 #include "core/model.hpp"
 #include "core/provider.hpp"
 #include "fixture_support.hpp"
@@ -176,7 +175,7 @@ TEST_CASE("OpenAI request over a tool history matches the encoder golden") {
 TEST_CASE("Anthropic request splices stored JSON text byte for byte") {
   const auto body = encoded_body(anthropic_config(), unsorted_payload_request());
   // Still one JSON document, and still carrying the caller's own spelling.
-  REQUIRE(parse_json(body, ErrorCategory::protocol, "body is not valid JSON"));
+  REQUIRE(JsonView::parse(Json{.text = body}));
   CHECK(body.find(std::string{R"("input":)"} + std::string{unsorted_arguments}) !=
         std::string::npos);
   CHECK(body.find(std::string{R"("input_schema":)"} + std::string{unsorted_schema}) !=
@@ -185,7 +184,7 @@ TEST_CASE("Anthropic request splices stored JSON text byte for byte") {
 
 TEST_CASE("OpenAI request splices stored JSON text byte for byte") {
   const auto body = encoded_body(openai_config(), unsorted_payload_request());
-  REQUIRE(parse_json(body, ErrorCategory::protocol, "body is not valid JSON"));
+  REQUIRE(JsonView::parse(Json{.text = body}));
   CHECK(body.find(std::string{R"("parameters":)"} + std::string{unsorted_schema}) !=
         std::string::npos);
   // `arguments` is a JSON string, so the same bytes appear quoted and escaped.
@@ -246,7 +245,7 @@ enum class Embedded { schema, arguments, result };
     return false;
   }
   // Whatever was spliced, the body itself must still be one JSON document.
-  CHECK(parse_json(encoded->body, ErrorCategory::protocol, "body is not valid JSON"));
+  CHECK(JsonView::parse(Json{.text = encoded->body}));
   return true;
 }
 

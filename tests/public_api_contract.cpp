@@ -245,8 +245,8 @@ static_assert(!std::is_copy_constructible_v<scry::ToolHandler>);
 static_assert(std::is_move_constructible_v<scry::ContextualToolHandler>);
 static_assert(!std::is_copy_constructible_v<scry::ContextualToolHandler>);
 
-// The two add() overloads are separated by the handler's arity alone, so each
-// lambda shape has to reach exactly one of them. A converting constructor that
+// The two add_dynamic() overloads are separated by the handler's arity alone, so
+// each lambda shape has to reach exactly one of them. A converting constructor that
 // did not constrain on invocability would make both of these ambiguous.
 using PlainToolLambda =
     decltype([](scry::Json input) -> scry::Result<scry::Json> { return input; });
@@ -260,17 +260,51 @@ static_assert(
 static_assert(!std::is_constructible_v<scry::ContextualToolHandler, PlainToolLambda>);
 static_assert(requires(scry::ToolRegistry& registry) {
   {
-    registry.add(scry::ToolDefinition{}, PlainToolLambda{})
+    registry.add_dynamic(scry::ToolDefinition{}, PlainToolLambda{})
   } -> std::same_as<scry::Status>;
   {
-    registry.add(scry::ToolDefinition{}, ContextualToolLambda{})
+    registry.add_dynamic(scry::ToolDefinition{}, ContextualToolLambda{})
   } -> std::same_as<scry::Status>;
   {
-    registry.add(scry::ToolDefinition{}, scry::ToolHandler{})
+    registry.add_dynamic(scry::ToolDefinition{}, scry::ToolHandler{})
   } -> std::same_as<scry::Status>;
   {
-    registry.add(scry::ToolDefinition{}, scry::ContextualToolHandler{})
+    registry.add_dynamic(scry::ToolDefinition{}, scry::ContextualToolHandler{})
   } -> std::same_as<scry::Status>;
+});
+
+// Reflected registration is the primary add(): an argument aggregate with a
+// callable, one annotated function or a namespace of them, and a toolbox shared
+// or owned. The overloads are told apart by their template arguments and arity.
+namespace contract {
+struct CountArguments {
+  std::int32_t by{};
+};
+[[= scry::reflection::tool{"Echo a label"}]] inline std::string
+echo(std::string label) {
+  return label;
+}
+struct Counter {
+  std::int32_t value{};
+  [[= scry::reflection::tool{"Add to the counter"}]] std::int32_t
+  increment(CountArguments arguments) {
+    return value += arguments.by;
+  }
+};
+} // namespace contract
+static_assert(scry::reflection::Toolbox<contract::Counter>);
+// A const toolbox admits only const member tools.
+static_assert(!scry::reflection::Toolbox<const contract::Counter>);
+static_assert(!scry::reflection::Toolbox<contract::CountArguments>);
+static_assert(std::same_as<decltype(scry::ToolMetadata::name), std::string>);
+static_assert(requires(scry::ToolRegistry& registry) {
+  {
+    registry.add<contract::CountArguments>(
+        scry::ToolMetadata{}, [](contract::CountArguments) { return std::int32_t{}; })
+  } -> std::same_as<scry::Status>;
+  { registry.add<^^contract::echo>() } -> std::same_as<scry::Status>;
+  { registry.add(std::make_shared<contract::Counter>()) } -> std::same_as<scry::Status>;
+  { registry.add(contract::Counter{}) } -> std::same_as<scry::Status>;
 });
 static_assert(requires(const scry::Conversation& conversation) {
   { conversation.messages() } -> std::same_as<const std::vector<scry::Message>&>;
@@ -288,7 +322,111 @@ static_assert(requires(scry::Harness& harness, scry::Conversation& conversation)
   } -> std::same_as<scry::Result<scry::Turn>>;
 });
 
+// Typed completions: a turn can ask for a structured answer, dynamically through
+// a ResponseFormat or by reflection through send<Answer>() and ask<Answer>().
+namespace contract {
+struct Verdict {
+  [[= scry::reflection::description{"Is the claim supported?"}]] bool supported{};
+  std::string reason{};
+};
+struct Opaque {
+  scry::Json payload{};
+};
+} // namespace contract
+static_assert(
+    std::same_as<decltype(scry::Completion::structured), std::optional<scry::Json>>);
+static_assert(
+    std::same_as<decltype(scry::Completion::answer_attempt_count), std::uint32_t>);
+static_assert(std::is_aggregate_v<scry::ResponseFormat>);
+static_assert(std::is_move_constructible_v<scry::ResponseFormat>);
+static_assert(!std::is_copy_constructible_v<scry::ResponseFormat>);
+static_assert(std::same_as<decltype(scry::ResponseFormat::name), std::string>);
+static_assert(std::same_as<decltype(scry::ResponseFormat::description), std::string>);
+static_assert(std::same_as<decltype(scry::ResponseFormat::schema), scry::Json>);
+static_assert(
+    std::same_as<decltype(scry::ResponseFormat::validate), scry::AnswerValidator>);
+static_assert(std::same_as<scry::AnswerValidator,
+                           scry::UniqueFunction<scry::Status(const scry::Json&)>>);
+static_assert(std::is_aggregate_v<scry::Answered<contract::Verdict>>);
+static_assert(std::same_as<decltype(scry::Answered<contract::Verdict>::value),
+                           contract::Verdict>);
+static_assert(std::same_as<decltype(scry::Answered<contract::Verdict>::completion),
+                           scry::Completion>);
+// An answer is a tool input, so it is an object: ToolArguments is the check.
+static_assert(scry::reflection::ToolArguments<contract::Verdict>);
+static_assert(!scry::reflection::ToolArguments<contract::Opaque>);
+static_assert(!scry::reflection::ToolArguments<bool>);
+static_assert(
+    std::same_as<decltype(scry::reflection::response_format<contract::Verdict>()),
+                 scry::ResponseFormat>);
+static_assert(requires(scry::Harness& harness, scry::Conversation& conversation) {
+  {
+    harness.send_structured(conversation, std::string{}, scry::ResponseFormat{})
+  } -> std::same_as<scry::Result<scry::Turn>>;
+  {
+    harness.send_structured(conversation, std::string{}, scry::ResponseFormat{},
+                            scry::TurnCallbacks{})
+  } -> std::same_as<scry::Result<scry::Turn>>;
+  {
+    harness.send<contract::Verdict>(conversation, std::string{})
+  } -> std::same_as<scry::Result<scry::Turn>>;
+  {
+    harness.send<contract::Verdict>(conversation, std::string{}, scry::TurnCallbacks{})
+  } -> std::same_as<scry::Result<scry::Turn>>;
+  {
+    harness.send_and_wait_structured(conversation, std::string{},
+                                     scry::ResponseFormat{})
+  } -> std::same_as<scry::Result<scry::Completion>>;
+  {
+    harness.ask<contract::Verdict>(conversation, std::string{})
+  } -> std::same_as<scry::Result<scry::Answered<contract::Verdict>>>;
+});
+
+// The structured sends have their own names, so the plain overload sets are what
+// they were before typed turns: `{}` as the third argument of send() still names
+// the callbacks, and nothing else is a candidate for it. The absence checks need a
+// dependent type, or the missing overload is a hard error.
+static_assert(requires(scry::Harness& harness, scry::Conversation& conversation) {
+  {
+    harness.send(conversation, std::string{}, {})
+  } -> std::same_as<scry::Result<scry::Turn>>;
+});
+static_assert(
+    std::same_as<decltype(static_cast<scry::Result<scry::Turn> (scry::Harness::*)(
+                              scry::Conversation&, std::string, scry::TurnCallbacks)>(
+                     &scry::Harness::send)),
+                 scry::Result<scry::Turn> (scry::Harness::*)(
+                     scry::Conversation&, std::string, scry::TurnCallbacks)>);
+template <typename H>
+concept sends_a_format_through_send = requires(H& harness, scry::Conversation& c) {
+  harness.send(c, std::string{}, scry::ResponseFormat{});
+};
+template <typename H>
+concept waits_on_a_format_through_send_and_wait =
+    requires(H& harness, scry::Conversation& c) {
+      harness.send_and_wait(c, std::string{}, scry::ResponseFormat{});
+    };
+static_assert(!sends_a_format_through_send<scry::Harness>);
+static_assert(!waits_on_a_format_through_send_and_wait<scry::Harness>);
+
 namespace {
+
+// response_format<Answer>() carries the generated schema, the default tool name,
+// and a validator that decodes strictly and publishes a schema-derived error.
+bool response_format_for_a_type_works() {
+  auto format = scry::reflection::response_format<contract::Verdict>();
+  if (format.name != "respond" || !format.description.empty() ||
+      format.schema.text != scry::reflection::input_schema_v<contract::Verdict> ||
+      !format.validate) {
+    return false;
+  }
+  const auto accepted =
+      format.validate(scry::Json{.text = R"({"reason":"rock","supported":false})"});
+  const auto rejected = format.validate(scry::Json{.text = R"({"supported":"no"})"});
+  return accepted.has_value() && !rejected.has_value() &&
+         rejected.error().category == scry::ErrorCategory::invalid_argument &&
+         rejected.error().model_message.starts_with("$.");
+}
 
 bool move_only_callback_works() {
   bool callback_ran = false;
@@ -464,21 +602,16 @@ int main() {
     return 1;
   }
 
-  if (!move_only_callback_works()) {
+  // The runtime checks that live in their own functions, run in one pass so
+  // main stays within the complexity limit as the list grows.
+  constexpr std::array runtime_checks{
+      &move_only_callback_works,         &nonvoid_callable_in_void_signature_works,
+      &null_pointer_callables_are_empty, &json_view_reads_a_parsed_document,
+      &response_format_for_a_type_works,
+  };
+  if (!std::ranges::all_of(runtime_checks, [](const auto check) { return check(); })) {
     return 1;
   }
 
-  if (!nonvoid_callable_in_void_signature_works()) {
-    return 1;
-  }
-
-  if (!null_pointer_callables_are_empty()) {
-    return 1;
-  }
-
-  if (!json_view_reads_a_parsed_document()) {
-    return 1;
-  }
-
-  return scry::version == "0.5.0" ? 0 : 1;
+  return scry::version == "0.6.0" ? 0 : 1;
 }

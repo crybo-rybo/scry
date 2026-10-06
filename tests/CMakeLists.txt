@@ -56,6 +56,16 @@ target_link_libraries(
 )
 add_test(NAME public-api-contract COMMAND scry_public_api_contract)
 
+# The kernel's include boundary: allowlisted public headers only, no non-kernel
+# src/ header, and the reflection guard in every file (src/kernel/kernel.hpp).
+add_test(
+  NAME kernel.include-boundary
+  COMMAND
+    "${CMAKE_COMMAND}"
+    "-DSCRY_SOURCE_DIR=${PROJECT_SOURCE_DIR}/src"
+    -P "${PROJECT_SOURCE_DIR}/cmake/CheckKernelBoundary.cmake"
+)
+
 if(SCRY_SANITIZER STREQUAL "address-undefined")
   add_executable(
     scry_ubsan_fatal_probe
@@ -73,10 +83,13 @@ endif()
 
 add_executable(
   scry_runtime_tests
+  runtime/answer_pump_tests.cpp
+  runtime/codec_internals_tests.cpp
   runtime/config_tests.cpp
   runtime/conversation_persistence_tests.cpp
   runtime/json_codec_validation_tests.cpp
   runtime/json_view_tests.cpp
+  runtime/message_reflection_tests.cpp
   runtime/pump_regression_tests.cpp
   runtime/queue_tests.cpp
   runtime/runtime_tests.cpp
@@ -87,12 +100,7 @@ add_executable(
 target_include_directories(
   scry_runtime_tests PRIVATE "${PROJECT_SOURCE_DIR}/src" "${PROJECT_SOURCE_DIR}/tests"
 )
-target_include_directories(
-  scry_runtime_tests
-  SYSTEM PRIVATE "${SCRY_GLAZE_INCLUDE_DIR}"
-)
-# The fuzz targets need Clang, so runtime/json_codec_validation_tests.cpp replays the
-# checked-in corpora through the JSON codec under the GCC build as well.
+# runtime/conversation_persistence_tests.cpp reads a conversation corpus seed.
 target_compile_definitions(
   scry_runtime_tests
   PRIVATE "SCRY_FUZZ_CORPUS_DIR=\"${PROJECT_SOURCE_DIR}/tests/fuzz/corpus\""
@@ -101,7 +109,6 @@ target_link_libraries(
   scry_runtime_tests
   PRIVATE
     Catch2::Catch2WithMain
-    glaze::glaze
     scry::scry
     scry_project_options
 )
@@ -110,12 +117,49 @@ catch_discover_tests(scry_runtime_tests TEST_PREFIX "runtime.")
 if(SCRY_BUILD_TESTING_SUPPORT)
   add_subdirectory(testing)
 endif()
+add_subdirectory(kernel)
 add_subdirectory(machine)
-add_subdirectory(nightly)
+add_subdirectory(e2e)
 add_subdirectory(protocol)
 add_subdirectory(provider)
 add_subdirectory(transport)
 add_subdirectory(integration)
+
+# The fuzz targets over the reflective side of the library link scry, so they
+# cannot be libFuzzer binaries; this build replays their seed corpora instead
+# (cmake/ScryFuzz.cmake). The kernel targets are libFuzzer binaries in the Clang
+# tooling build (tests/fuzz/CMakeLists.txt).
+include(ScryFuzz)
+scry_add_fuzz_replay(
+  scry_anthropic_fuzz_replay
+  anthropic
+  TEST_PREFIX "provider."
+  SOURCES provider/anthropic_fuzz.cpp
+  LINK_LIBRARIES scry::scry
+)
+scry_add_fuzz_replay(
+  scry_openai_fuzz_replay
+  openai
+  TEST_PREFIX "provider."
+  SOURCES provider/openai_fuzz.cpp
+  LINK_LIBRARIES scry::scry
+)
+# The JSON layer's property target is a kernel libFuzzer target too; replaying
+# its corpus here as well runs it under GCC and the GCC sanitizer presets.
+scry_add_fuzz_replay(
+  scry_json_fuzz_replay
+  json
+  TEST_PREFIX "kernel."
+  SOURCES fuzz/json_fuzz.cpp
+  LINK_LIBRARIES scry_kernel
+)
+scry_add_fuzz_replay(
+  scry_conversation_fuzz_replay
+  conversation
+  TEST_PREFIX "runtime."
+  SOURCES runtime/conversation_fuzz.cpp
+  LINK_LIBRARIES scry::scry
+)
 
 file(
   GLOB
@@ -141,6 +185,32 @@ if(SCRY_REFLECTION_TEST_SOURCES)
   catch_discover_tests(scry_reflection_tests TEST_PREFIX "reflection.")
 endif()
 
+# A registration must generate code from the declarations its own translation
+# unit sees (a namespace's tools, a function's parameter names and annotations),
+# however the linker orders the units, so the same program is linked in both
+# orders.
+foreach(SCRY_LINK_ORDER IN ITEMS a_then_b b_then_a)
+  if(SCRY_LINK_ORDER STREQUAL "a_then_b")
+    set(SCRY_MULTI_TU_UNITS tools_a.cpp tools_b.cpp)
+  else()
+    set(SCRY_MULTI_TU_UNITS tools_b.cpp tools_a.cpp)
+  endif()
+  list(TRANSFORM SCRY_MULTI_TU_UNITS PREPEND "reflection/multi_tu/")
+  add_executable(
+    scry_multi_tu_${SCRY_LINK_ORDER}
+    reflection/multi_tu/main.cpp
+    ${SCRY_MULTI_TU_UNITS}
+  )
+  target_link_libraries(
+    scry_multi_tu_${SCRY_LINK_ORDER}
+    PRIVATE scry::scry scry_project_options
+  )
+  add_test(
+    NAME "reflection.multi-tu-${SCRY_LINK_ORDER}"
+    COMMAND scry_multi_tu_${SCRY_LINK_ORDER}
+  )
+endforeach()
+
 function(
   scry_add_reflection_compile_fail_test
   TEST_NAME
@@ -162,20 +232,91 @@ endfunction()
 scry_add_reflection_compile_fail_test(
   unsupported-arguments
   unsupported_arguments.cpp
-  "ToolArguments"
+  "does not satisfy scry::reflection::ToolArguments: UnsupportedArguments::value: char is a character type"
 )
 scry_add_reflection_compile_fail_test(
   wrong-context-order
   wrong_context_order.cpp
-  "ToolHandlerFor"
+  "is not invocable as (Arguments) or as (const scry::ToolCallContext&, Arguments)"
 )
 scry_add_reflection_compile_fail_test(
   duplicate-description
   duplicate_description.cpp
-  "a reflected member may have at most one scry::reflection::description annotation"
+  "Arguments::value: a reflected member may have at most one scry::reflection::description annotation"
 )
 scry_add_reflection_compile_fail_test(
   unsupported-schema-root
   unsupported_schema_root.cpp
-  "SupportedValue"
+  "does not satisfy scry::reflection::SupportedValue: scry::Json is raw JSON, which has no schema"
+)
+scry_add_reflection_compile_fail_test(
+  untagged-variant
+  untagged_variant.cpp
+  "Arguments::shape: std::variant<Circle, Square> has the alternative Circle without a scry::reflection::tag annotation"
+)
+scry_add_reflection_compile_fail_test(
+  duplicate-key
+  duplicate_key.cpp
+  "does not satisfy scry::reflection::Encodable: Limits has members limit and max_tokens that both map to the JSON key"
+)
+# The type after the path is the dealiased std::chrono::seconds, whose spelling
+# varies with the platform's int64_t, so the assertion stops at the path.
+scry_add_reflection_compile_fail_test(
+  unsupported-nested-member
+  unsupported_nested_member.cpp
+  "does not satisfy scry::reflection::ToolArguments: ForecastArgs::window.when: std::chrono::duration<"
+)
+
+# Reflected tool declarations: each rejection names the function, member, or
+# namespace at fault and the reason.
+scry_add_reflection_compile_fail_test(
+  toolbox-without-tools
+  toolbox_without_tools.cpp
+  "Lamp does not satisfy scry::reflection::Toolbox: Lamp declares no function annotated with scry::reflection::tool"
+)
+scry_add_reflection_compile_fail_test(
+  tool-on-non-function
+  tool_on_non_function.cpp
+  "scry::ToolRegistry::add<^^lamp_tools>(): lamp_tools::brightness carries scry::reflection::tool, which applies to functions"
+)
+scry_add_reflection_compile_fail_test(
+  unnamed-parameter
+  unnamed_parameter.cpp
+  "lamp_tools::dim has the unnamed parameter 2; an argument synthesized from a parameter is named after it"
+)
+scry_add_reflection_compile_fail_test(
+  mutable-reference-parameter
+  mutable_reference_parameter.cpp
+  "lamp_tools::rename has parameter `name` of type"
+)
+scry_add_reflection_compile_fail_test(
+  unsupported-tool-result
+  unsupported_tool_result.cpp
+  "Lamp::describe returns scry::Json, which is not void, scry::Status, a SupportedValue, or a Result of one"
+)
+scry_add_reflection_compile_fail_test(
+  duplicate-tool-name
+  duplicate_tool_name.cpp
+  "bool Lamp::toggle() and bool Lamp::switch_off() are both tools named \"toggle\""
+)
+scry_add_reflection_compile_fail_test(
+  borrowed-toolbox
+  borrowed_toolbox.cpp
+  "Lamp is passed as an lvalue: ToolRegistry::add(Toolbox&&) takes ownership of a toolbox"
+)
+# Typed answers are tool inputs, so an answer type is held to ToolArguments.
+scry_add_reflection_compile_fail_test(
+  scalar-answer
+  scalar_answer.cpp
+  "int does not satisfy scry::reflection::ToolArguments: int is not a plain aggregate"
+)
+scry_add_reflection_compile_fail_test(
+  explicit-object-const-toolbox
+  explicit_object_const_toolbox.cpp
+  "Lamp::toggle takes its explicit object parameter by non-const reference, and the toolbox is const"
+)
+scry_add_reflection_compile_fail_test(
+  unbound-member-tool
+  unbound_member_tool.cpp
+  "Lamp::toggle is a non-static member function; register an object of Lamp as a toolbox"
 )

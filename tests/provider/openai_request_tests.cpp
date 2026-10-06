@@ -1,4 +1,3 @@
-#include "core/json_codec.hpp"
 #include "core/model.hpp"
 #include "fixture_support.hpp"
 #include "provider/openai.hpp"
@@ -296,16 +295,6 @@ TEST_CASE("OpenAI request leaves a history ending in tool results unmerged") {
 
   const auto encoded = adapter.make_request(openai_config(), model_request);
   REQUIRE(encoded);
-  const auto body =
-      parse_json(encoded->body, ErrorCategory::protocol, "body is not valid JSON");
-  REQUIRE(body);
-  const auto messages = required_json_array(*body, "messages");
-  REQUIRE(messages);
-  REQUIRE((*messages)->size() == 5);
-  const std::array expected{"system", "user", "assistant", "tool", "user"};
-  for (std::size_t index = 0; index < expected.size(); ++index) {
-    const auto role = required_json_string((**messages)[index], "role");
-    REQUIRE(role);
-    CHECK(*role == expected[index]);
-  }
+  CHECK(member_strings(json_view(encoded->body), "messages", "role") ==
+        std::vector<std::string>{"system", "user", "assistant", "tool", "user"});
 }

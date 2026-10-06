@@ -27,7 +27,9 @@ cmake --preset dev && cmake --build build/dev   # presets: dev ci asan tsan fuzz
 ctest --test-dir build/dev --output-on-failure
 ctest --test-dir build/dev -R 'runtime\.'       # one suite, or one case by name
 ./scripts/format.sh --fix                       # --check to verify only
-./scripts/preflight.sh                          # the full local ring before a PR
+./scripts/test.sh                              # build and run unit/integration tests
+./scripts/test-e2e.sh                           # live model; requires URL and model
+./scripts/ci.sh                                 # all local CI checks before a PR
 ```
 
 The `dev`, `ci`, `asan`, and `tsan` presets select `g++-16`. If necessary,
@@ -38,18 +40,24 @@ Clang compiler explicitly. That compiler must have a libFuzzer runtime.
 
 - `include/scry/`: the public headers. Each header compiles standalone and has
   no third-party types. Reflection is here, in `detail/reflection_*.hpp`.
-- `src/`, by layer: `core/` (neutral model, seams, JSON codec), `machine/`
-  (sans-I/O turn machine), `protocol/` (SSE), `provider/` (Anthropic,
-  OpenAI-compatible), `runtime/` (worker, pump, registry, conversation),
-  `transport/` (curl), `reflection/` (JSON bridge).
+- `src/`, by layer: `kernel/` (C++23: error factory, JSON codec, SSE, retry,
+  transport seam and curl), `core/` (neutral model, provider seam), `machine/`
+  (sans-I/O turn machine), `provider/` (Anthropic, OpenAI-compatible),
+  `runtime/` (worker, pump, registry, conversation), `reflection/` (JSON bridge).
 - `tests/`, `examples/`, `extras/showcase/` (a standalone project that the root
-  build never configures), `scripts/` (one script for each CI leg), `cmake/`,
-  `docs/`.
+  build never configures), `scripts/` (local commands), `.github/scripts/` (CI
+  helpers), `cmake/`, `docs/`.
 
 ## Guardrails
 
-- Do not put reflection syntax in `src/**`. Then the `SCRY_CLANG_TOOLING` build
-  (clang-tidy, libFuzzer) continues to compile.
+- `src/kernel/` is C++23 without reflection in every build. The compiler
+  enforces this rule. The `SCRY_CLANG_TOOLING` build (clang-tidy, libFuzzer)
+  compiles only the kernel. Kernel code can include only `<scry/error.hpp>`,
+  `<scry/json.hpp>`, `<scry/config.hpp>`, `<scry/turn_id.hpp>`,
+  `<scry/unique_function.hpp>`, and other kernel headers. It must not include
+  the remaining files in `src/`. The `kernel.include-boundary` check finds such
+  includes. All other code in `src/` is C++26. Use reflection there when it
+  replaces hand-written shape code.
 - Top-level builds treat warnings as errors. lizard allows a maximum cyclomatic
   complexity of 15 and a maximum of 6 arguments. clang-tidy allows a maximum
   cognitive complexity of 25. A `// TODO` must link an issue.
@@ -70,6 +78,6 @@ The project is trunk-based. It uses squash merges and conventional-commit
 messages. The template asks what the change does and why. It also has three
 checkboxes:
 
-- `./scripts/preflight.sh` ran, and the PR names each leg that it skipped.
+- `./scripts/ci.sh` ran, and the PR names each leg that it skipped.
 - The PR adds or updates tests.
 - If the behavior changed, the PR updates the load-bearing docs.

@@ -7,7 +7,9 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <scry/error.hpp>
+#include <scry/json.hpp>
 #include <scry/turn_id.hpp>
 #include <string>
 #include <variant>
@@ -31,8 +33,15 @@ struct ToolResultCommand {
   Result<ToolResultBlock> result{};
 };
 
-using WorkerCommand =
-    std::variant<SendTurnCommand, CancelTurnCommand, ToolResultCommand>;
+// The host accepted a typed turn's answer. A rejected one is posted as an
+// ordinary ToolResultCommand carrying the error the model is given.
+struct AnswerAcceptedCommand {
+  TurnId turn_id{};
+  std::string call_id{};
+};
+
+using WorkerCommand = std::variant<SendTurnCommand, CancelTurnCommand,
+                                   ToolResultCommand, AnswerAcceptedCommand>;
 
 struct TextDeltaEvent {
   TurnId turn_id{};
@@ -46,7 +55,9 @@ using ToolCallEvent = PublishToolCall;
 // final assistant text for the completion callback. The transcript opens with
 // the turn's user message. It and the calls dropped at the tool-round limit are
 // already reserved against the Conversation budget - the user message by send(),
-// the rest by the machine - so the queue charges neither them nor `text`.
+// the rest by the machine - so the queue charges neither them nor `text`. An
+// answered turn's transcript ends with the answer's text block; the pump copies
+// it into `structured` and leaves it out of `text`, uncharged for the same reason.
 struct CompletionEvent {
   TurnId turn_id{};
   std::vector<Message> transcript{};
@@ -58,6 +69,9 @@ struct CompletionEvent {
   std::uint32_t tool_round_count{};
   std::uint32_t tool_call_count{};
   std::vector<ToolCallBlock> unexecuted_tool_calls{};
+  bool answered{false};
+  std::uint32_t answer_attempt_count{};
+  std::optional<Json> structured{};
 };
 
 struct ErrorEvent {

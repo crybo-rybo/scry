@@ -7,8 +7,7 @@ struct Arguments {
 void register_tool(scry::ToolRegistry& registry) {
   // The call context is a leading parameter. Trailing it must not compile, or a
   // handler would silently never be reached.
-  const auto status = scry::reflection::add<Arguments>(
-      registry,
+  const auto status = registry.add<Arguments>(
       {
           .name = "wrong_context_order",
           .description = "Must not compile",

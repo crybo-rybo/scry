@@ -1,21 +1,17 @@
 add_executable(
   scry_provider_tests
   anthropic_edge_tests.cpp
-  json_accessor_tests.cpp
   openai_request_tests.cpp
   openai_stream_tests.cpp
   provider_tests.cpp
   request_encoding_tests.cpp
   stream_tests.cpp
   tool_boundary_tests.cpp
+  request_bytes_tests.cpp
 )
 target_include_directories(
   scry_provider_tests
   PRIVATE "${PROJECT_SOURCE_DIR}/src"
-)
-target_include_directories(
-  scry_provider_tests
-  SYSTEM PRIVATE "${SCRY_GLAZE_INCLUDE_DIR}"
 )
 target_compile_definitions(
   scry_provider_tests

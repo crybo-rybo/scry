@@ -1,4 +1,5 @@
-#include "core/json_codec.hpp"
+#include "kernel/json/codec.hpp"
+#include "reflection/codec.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 #include <filesystem>
@@ -218,19 +219,34 @@ TEST_CASE("Conversation persistence enforces tool block roles and shapes") {
 TEST_CASE("Conversation::from_json reports which part of the document it rejected") {
   const std::vector<std::pair<std::string, std::string_view>> cases{
       {R"({"messages":[],"system_prompt":"","version":-1})",
-       "Conversation document version must be an unsigned integer"},
+       "Conversation document at $.version is outside the integer range"},
       {R"({"messages":[],"system_prompt":"","version":2})",
        "Conversation document version is not supported"},
+      // The version is read first, so another version's shape is not reported.
+      {R"({"messages":{},"version":2})",
+       "Conversation document version is not supported"},
       {R"({"messages":[],"system_prompt":0,"version":1})",
-       "Conversation document field 'system_prompt' must be a string"},
+       "Conversation document at $.system_prompt must be a string"},
       {document(R"([{"content":[],"role":"system"}])"),
-       "Conversation message has an unknown role"},
+       "Conversation document at $.messages[0].role is not a declared enumerator; "
+       "must be one of: user, assistant"},
       {document(
            R"([{"content":[{"arguments":{},"id":"","name":"tool","type":"tool_call"}],"role":"assistant"}])"),
        "Tool-call block field 'id' must not be empty"},
       {document(
            R"([{"content":[{"is_error":0,"result":null,"tool_call_id":"id","type":"tool_result"}],"role":"user"}])"),
-       "Tool-result block field 'is_error' must be a boolean"},
+       "Conversation document at $.messages[0].content[0].is_error must be a boolean"},
+      {document(
+           R"([{"content":[{"is_error":false,"tool_call_id":"id","type":"tool_result"}],"role":"user"}])"),
+       "Conversation document at $.messages[0].content[0].result is a required member"},
+      {document(R"([{"content":[{"text":"x","type":"text"}]}])"),
+       "Conversation document at $.messages[0].role is a required member"},
+      {document(
+           R"([{"content":[{"arguments":{},"id":"id","name":"tool","type":"tool_call"}],"role":"user"}])"),
+       "Tool-call blocks require the assistant role"},
+      {document(
+           R"([{"content":[{"arguments":[],"id":"id","name":"tool","type":"tool_call"}],"role":"assistant"}])"),
+       "Tool-call block field 'arguments' must be an object"},
   };
   for (const auto& [input, message] : cases) {
     CAPTURE(input);
@@ -289,18 +305,16 @@ TEST_CASE("private JSON codec canonicalizes values and validates object roots") 
 TEST_CASE("private JSON codec safely quotes model-visible error strings") {
   const auto encoded = scry::detail::make_json_error_object("bad \"quote\"\nline\t\\");
   CHECK(encoded.text == R"({"error":"bad \"quote\"\nline\t\\"})");
-  auto parsed = scry::detail::parse_json(encoded.text, scry::ErrorCategory::tool,
-                                         "invalid error object");
+  auto parsed = scry::JsonView::parse(encoded);
   REQUIRE(parsed);
-  REQUIRE(parsed->is_object());
-  REQUIRE(parsed->contains("error"));
-  CHECK((*parsed)["error"].get_string() == "bad \"quote\"\nline\t\\");
+  REQUIRE(parsed->kind() == scry::JsonKind::object);
+  REQUIRE(parsed->find("error"));
+  CHECK(parsed->find("error")->string() == "bad \"quote\"\nline\t\\");
 }
 
 TEST_CASE("Conversation::from_json rejects a document truncated after a token") {
-  // A snapshot cut after a complete token is still a broken snapshot. Glaze's
-  // generic reader takes one as a whole document, so the codec's own completeness
-  // check is what rejects it.
+  // A snapshot cut after a complete token is still a broken snapshot: a prefix
+  // that stops inside a container must never read as a whole document.
   const auto complete =
       document(R"([{"role":"user","content":[{"type":"text","text":"hi"}]}])");
   REQUIRE(scry::Conversation::from_json(scry::Json{.text = complete}));
@@ -340,10 +354,10 @@ TEST_CASE("a history ending in tool results round-trips through persistence") {
 }
 
 TEST_CASE("private JSON codec escapes control characters without a short escape") {
-  // Glaze's default writer has no \u00XX form for a control byte outside
-  // \b \f \n \r \t and writes two NUL bytes in its place, which would turn a tool
-  // argument or an ANSI-coloured user string into invalid JSON on the way out.
-  // Every write path here must emit the escape instead.
+  // A control byte outside \b \f \n \r \t has only the \u00XX form; writing it
+  // any other way would turn a tool argument or an ANSI-coloured user string into
+  // invalid JSON on the way out. Every write path here must emit the escape, and
+  // the reflected codec, which writes request bodies, must spell it the same way.
   const scry::Json input{.text = R"({"a":"\u0001x\u001b"})"};
   auto canonical = scry::detail::canonicalize_json(
       input, scry::ErrorCategory::invalid_argument, "invalid JSON");
@@ -353,8 +367,7 @@ TEST_CASE("private JSON codec escapes control characters without a short escape"
   REQUIRE(reread);
   CHECK(reread->find("a")->string() == "\x01x\x1b");
 
-  auto wire = scry::detail::write_wire_json(
-      std::string{"\x1b[0m"}, scry::ErrorCategory::invalid_argument, "invalid wire");
+  auto wire = scry::detail::encode_text(std::string{"\x1b[0m"});
   REQUIRE(wire);
   CHECK(*wire == R"("\u001B[0m")");
 

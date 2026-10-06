@@ -148,8 +148,7 @@ struct MoveResult {
 
 TEST_CASE("a handler refusal reaches the model in the OpenAI tool message") {
   auto fixture = move_fixture(R"({"direction":"north"})");
-  REQUIRE(scry::reflection::add<MoveArguments>(
-      fixture.harness.tools(),
+  REQUIRE(fixture.harness.tools().add<MoveArguments>(
       {.name = "move", .description = "Move the player one square"},
       [](MoveArguments) -> scry::Result<MoveResult> {
         return std::unexpected(scry::tool_error("a wall blocks the way north",
@@ -166,8 +165,7 @@ TEST_CASE("a handler refusal reaches the model in the OpenAI tool message") {
 
 TEST_CASE("an invalid enum argument round-trips into the OpenAI tool message") {
   auto fixture = move_fixture(R"({"direction":"up"})");
-  REQUIRE(scry::reflection::add<MoveArguments>(
-      fixture.harness.tools(),
+  REQUIRE(fixture.harness.tools().add<MoveArguments>(
       {.name = "move", .description = "Move the player one square"},
       [](MoveArguments) -> scry::Result<MoveResult> {
         FAIL("the handler must not run when arguments do not decode");
@@ -196,12 +194,12 @@ TEST_CASE("OpenAI-compatible config drives a fragmented transactional tool round
 
   std::string arguments;
   std::thread::id handler_thread;
-  REQUIRE(harness.tools().add(lookup_tool(),
-                              [&](scry::Json value) -> scry::Result<scry::Json> {
-                                arguments = std::move(value.text);
-                                handler_thread = std::this_thread::get_id();
-                                return scry::Json{.text = R"({"forecast":"sunny"})"};
-                              }));
+  REQUIRE(harness.tools().add_dynamic(
+      lookup_tool(), [&](scry::Json value) -> scry::Result<scry::Json> {
+        arguments = std::move(value.text);
+        handler_thread = std::this_thread::get_id();
+        return scry::Json{.text = R"({"forecast":"sunny"})"};
+      }));
   auto conversation = scry::Conversation::create(
       {.system_prompt = "Use the lookup tool before answering."});
   REQUIRE(conversation);

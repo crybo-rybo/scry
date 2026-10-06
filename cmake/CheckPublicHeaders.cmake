@@ -20,7 +20,7 @@ foreach(SCRY_HEADER IN LISTS SCRY_AUDITED_HEADERS)
 
   if(
     SCRY_HEADER_CONTENTS
-    MATCHES "#[ \t]*include[ \t]*[<\"](curl|glaze)[^>\"]*[>\"]"
+    MATCHES "#[ \t]*include[ \t]*[<\"]curl[^>\"]*[>\"]"
   )
     message(FATAL_ERROR "Third-party include leaked into ${SCRY_HEADER}")
   endif()

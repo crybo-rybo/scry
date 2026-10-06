@@ -1,51 +1,53 @@
-// What the JSON codec accepts. parse_json reads a document in a single pass and
-// judges completeness itself from Glaze's nesting depth, so the whole acceptance
-// boundary is asserted here: a table of adversarial documents, and a differential
-// replay of the fuzz corpora against a two-pass oracle that runs the validating
-// skip pass before a plain read.
+// What the JSON codec accepts, seen from the rest of src/: the text-level entry
+// points in kernel/json/codec.hpp and the public JsonView are thin layers over the
+// kernel's JSON layer (kernel/json/document.hpp), which tests/kernel/ holds to the
+// golden fixtures. So every entry point must give the kernel's verdict and write
+// the kernel's canonical text, checked here on a table of adversarial documents
+// named by shape and a handful of representative ones.
 
-#include "core/json_codec.hpp"
+#include "kernel/json/codec.hpp"
+#include "kernel/json/document.hpp"
 
+#include <array>
 #include <catch2/catch_test_macros.hpp>
-#include <filesystem>
-#include <fstream>
-#include <glaze/glaze.hpp>
-#include <iterator>
 #include <scry/error.hpp>
 #include <scry/json.hpp>
 #include <string>
 #include <string_view>
-#include <vector>
 
 namespace {
 
 using scry::JsonView;
+namespace json = scry::detail::json;
 
-// The differential oracle: the allocation-free skip pass, which is exactly
-// production detail::validate_json, then a plain read.
-constexpr glz::opts two_pass_read_options{.null_terminated = false};
+constexpr auto category = scry::ErrorCategory::invalid_argument;
+constexpr std::string_view failure = "JSON text is not valid";
 
-[[nodiscard]] bool two_pass_accepts(const std::string_view input) {
-  if (!scry::detail::validate_json(input, scry::ErrorCategory::invalid_argument,
-                                   "JSON text is not valid")) {
+// Every entry point's verdict on `input`, each checked against the kernel's.
+[[nodiscard]] bool codec_accepts(const std::string_view input) {
+  const auto kernel = json::parse(input);
+  const scry::Json text{.text = std::string{input}};
+  const auto canonical = scry::detail::canonicalize_json(text, category, failure);
+  const auto viewed = JsonView::parse(text);
+  REQUIRE(scry::detail::validate_json(input, category, failure).has_value() ==
+          kernel.has_value());
+  REQUIRE(canonical.has_value() == kernel.has_value());
+  REQUIRE(viewed.has_value() == kernel.has_value());
+  // The object variants accept exactly the documents whose root is an object.
+  const bool object = kernel && kernel->kind() == scry::JsonKind::object;
+  CHECK(scry::detail::validate_json_object(input, category, failure).has_value() ==
+        object);
+  CHECK(scry::detail::canonicalize_json_object(text, category, failure).has_value() ==
+        object);
+  if (!kernel) {
+    CHECK(viewed.error().category == scry::ErrorCategory::invalid_argument);
+    CHECK(viewed.error().message == "JSON text is not valid");
     return false;
   }
-  scry::detail::JsonValue value{};
-  return !glz::read<two_pass_read_options>(value, input);
-}
-
-[[nodiscard]] bool codec_accepts(const std::string_view input) {
-  const auto parsed = scry::detail::parse_json(
-      input, scry::ErrorCategory::invalid_argument, "JSON text is not valid");
-  const auto viewed = JsonView::parse(scry::Json{.text = std::string{input}});
-  // The public view and the private codec are one parser; a disagreement is a bug
-  // whichever way it points.
-  REQUIRE(parsed.has_value() == viewed.has_value());
-  if (!parsed) {
-    CHECK(parsed.error().category == scry::ErrorCategory::invalid_argument);
-    CHECK(parsed.error().message == "JSON text is not valid");
-  }
-  return parsed.has_value();
+  const auto written = json::write(*kernel);
+  CHECK(canonical->text == written);
+  CHECK(viewed->to_json().text == written);
+  return true;
 }
 
 struct Adversarial {
@@ -54,30 +56,9 @@ struct Adversarial {
   bool accepted{};
 };
 
-[[nodiscard]] std::vector<std::filesystem::path> corpus_files() {
-  std::vector<std::filesystem::path> files{};
-  for (const auto& entry :
-       std::filesystem::recursive_directory_iterator{SCRY_FUZZ_CORPUS_DIR}) {
-    if (entry.is_regular_file()) {
-      files.push_back(entry.path());
-    }
-  }
-  return files;
-}
-
-[[nodiscard]] std::string read_file(const std::filesystem::path& path) {
-  std::ifstream input{path, std::ios::binary};
-  REQUIRE(input.good());
-  return {std::istreambuf_iterator<char>{input}, std::istreambuf_iterator<char>{}};
-}
-
 } // namespace
 
 TEST_CASE("the JSON codec rejects every shape of incomplete document") {
-  // Glaze reports a value that ended with a non-NUL-terminated buffer as the
-  // non-error code end_reached, and the variant reader behind glz::generic clears
-  // that code before the top level can settle it against the nesting depth, so a
-  // truncated container is rejected only by the codec's own completeness check.
   static constexpr Adversarial cases[] = {
       // Truncation: the buffer stops mid-value.
       {"truncated object", R"({"a":1)", false},
@@ -140,9 +121,17 @@ TEST_CASE("the JSON codec rejects every shape of incomplete document") {
   for (const auto& adversarial : cases) {
     INFO(adversarial.name);
     CHECK(codec_accepts(adversarial.text) == adversarial.accepted);
-    // The two-pass validator is the contract; the single pass must not drift from it.
-    CHECK(two_pass_accepts(adversarial.text) == adversarial.accepted);
   }
+}
+
+TEST_CASE("the JSON codec bounds malformed non-null-terminated input") {
+  // A lone brace in a buffer with no terminator after it: the read must stop at
+  // the view's end rather than look for a NUL.
+  constexpr std::array input{'{'};
+  const auto text = std::string_view{input.data(), input.size()};
+  CHECK_FALSE(scry::detail::validate_json(text, scry::ErrorCategory::protocol,
+                                          "invalid test JSON"));
+  CHECK_FALSE(codec_accepts(text));
 }
 
 TEST_CASE("the JSON codec still collapses duplicate object keys") {
@@ -159,33 +148,17 @@ TEST_CASE("the JSON codec still collapses duplicate object keys") {
   CHECK(nested->find("o")->find("k")->unsigned_integer() == 2U);
 }
 
-TEST_CASE("the JSON codec matches the two-pass validator on every fuzz corpus byte") {
-  // The fuzz targets need Clang, so the GCC build replays the corpora here too:
-  // every seed and every prefix of every seed, which is exactly the truncation the
-  // single pass has to reject. Acceptance and the re-serialized document must both
-  // match the two-pass oracle.
-  const auto files = corpus_files();
-  REQUIRE_FALSE(files.empty());
-
-  std::size_t checked = 0;
-  for (const auto& path : files) {
-    INFO(path.string());
-    const auto text = read_file(path);
-    for (std::size_t length = 0; length <= text.size(); ++length) {
-      const auto prefix = std::string_view{text}.substr(0, length);
-      INFO("prefix length " << length);
-      const bool expected = two_pass_accepts(prefix);
-      REQUIRE(codec_accepts(prefix) == expected);
-      if (expected) {
-        scry::detail::JsonValue oracle{};
-        REQUIRE_FALSE(glz::read<two_pass_read_options>(oracle, prefix));
-        const auto parsed = scry::detail::parse_json(
-            prefix, scry::ErrorCategory::invalid_argument, "JSON text is not valid");
-        REQUIRE(parsed);
-        REQUIRE(glz::write_json(*parsed) == glz::write_json(oracle));
-      }
-      ++checked;
-    }
+TEST_CASE("the JSON codec and JsonView write the kernel's canonical text") {
+  // One input per canonical-form rule; codec_accepts compares every entry point's
+  // output with the kernel writer's.
+  for (const std::string_view input : {
+           R"( { "b" : 1 , "a" : [ 2 , { "d" : 3 , "c" : 4 } ] , "a" : null } )",
+           "[1.0,-0,1e2,0.00001,1.5e16,18446744073709551615,-9223372036854775808]",
+           R"({"\u0041\u00e9\ud83d\ude00":"\/\u001f\b\t"})",
+           R"("\u0000")",
+           "true",
+       }) {
+    INFO(input);
+    CHECK(codec_accepts(input));
   }
-  CHECK(checked > 0);
 }

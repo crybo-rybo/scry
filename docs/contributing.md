@@ -6,12 +6,12 @@ contribution to the current tree.
 ## Toolchain
 
 To build Scry, you must have GCC 16 or newer with reflection support, and CMake
-3.31 or newer. You must also have Ninja, and libcurl 7.84 or newer with the
-development headers. The build files of Scry accept CMake 3.28. But the build
-fetches a Glaze revision that must have CMake 3.31. The build fetches this
-Glaze revision if CMake does not find a Glaze package. The formatter is
-clang-format, and CI uses version 18. The formatter runs independently of
-CMake. It does not need a compiler or the dependencies that the build fetches.
+3.30 or newer. You must also have Ninja, and libcurl 7.84 or newer with the
+development headers. CMake 3.30 is the first release that knows the C++26 mode
+of GCC (`cxx_std_26`). libcurl is the only library dependency of Scry. The
+tests fetch Catch2. The formatter is clang-format, and CI uses version 18. The
+formatter runs independently of CMake. It does not need a compiler or the
+dependencies that the build fetches.
 
 **Linux:**
 
@@ -20,16 +20,16 @@ sudo add-apt-repository --yes ppa:ubuntu-toolchain-r/test
 sudo apt-get update
 sudo apt-get install -y g++-16 libcurl4-openssl-dev ninja-build \
   clang-format-18 doxygen graphviz
-# Ubuntu 24.04 packages CMake 3.28, older than the fetched Glaze accepts.
+# Ubuntu 24.04 packages CMake 3.28, which has no C++26 mode for GCC.
 # pip installs cmake into ~/.local/bin, which must precede /usr/bin on PATH.
-python3 -m pip install --user --break-system-packages 'cmake>=3.31'
+python3 -m pip install --user --break-system-packages 'cmake>=3.30'
 ```
 
 **macOS:**
 
 ```sh
-brew install gcc cmake llvm@18 ninja doxygen graphviz
-export PATH="$(brew --prefix llvm@18)/bin:$PATH"
+brew install gcc cmake llvm@21 ninja doxygen graphviz
+export PATH="$(brew --prefix llvm@21)/bin:$PATH"
 ```
 
 On both platforms, also install the complexity checker at the version that CI
@@ -45,10 +45,10 @@ a version in its name, use
 `CLANG_FORMAT=clang-format-18 ./scripts/format.sh --check`. Doxygen and Graphviz
 are necessary for the documentation gate. The minimum Doxygen version is 1.9.8.
 
-For the optional clang-tidy gate, Clang and clang-tidy must be on `PATH`. CI
-uses version 18. On macOS, the `llvm@18` export above gives this version. To
-fuzz, you must have a Clang installation with libFuzzer. The hosted fuzz legs
-use Clang 21.
+The optional clang-tidy gate and the libFuzzer targets of the kernel need Clang
+21 with clang-tidy and libFuzzer. On macOS, the `llvm@21` export above gives
+this version. On Linux, use the apt.llvm.org packages that
+`.github/actions/fuzz-toolchain` installs.
 
 ## Presets
 
@@ -58,10 +58,10 @@ The build directories are in `build/<preset>`. They use Ninja and export
 | Preset | For |
 |---|---|
 | `dev` | Debug. For the usual edit-build-test loop. |
-| `ci` | RelWithDebInfo. `ci-local.sh` builds, installs, and audits this preset. |
+| `ci` | RelWithDebInfo. `.github/scripts/ci-local.sh` builds, installs, and audits this preset. |
 | `asan` | Debug, plus ASan and UBSan without recovery. |
 | `tsan` | Debug, plus TSan to find data races. |
-| `fuzz` | Clang with `SCRY_CLANG_TOOLING`, libFuzzer, ASan and UBSan. |
+| `fuzz` | Clang with `SCRY_CLANG_TOOLING`: the libFuzzer targets of the kernel, ASan and UBSan. |
 
 Each GCC preset pins `CMAKE_CXX_COMPILER` to `g++-16` through a hidden `gcc`
 preset. If your GCC 16 has a different name or path, override this value:
@@ -79,12 +79,16 @@ you change the compiler in an existing build directory, add `--fresh` to the
 configure command. Then CMake applies the preset again without old cache
 settings.
 
-The root `CMakeLists.txt` defines the library sources, the dependencies, and the
-package. `cmake/ScryCompilerChecks.cmake` has the compiler compatibility checks.
-The reflection probe is in `cmake/probes/reflection.cpp`.
+The root `CMakeLists.txt` defines the kernel sources, the library sources, the
+dependencies, and the package. The kernel is the `scry_kernel` object library.
+The build compiles it as C++23 and puts it in the `scry` archive.
+`cmake/ScryCompilerChecks.cmake` has the compiler compatibility checks. The
+reflection probe is in `cmake/probes/reflection.cpp`.
 `cmake/ScryDeveloperTools.cmake` has the warning flags, the sanitizers,
-clang-tidy, and the public-header audit. The standalone header checks share one
-build target. Each header has its own translation unit.
+clang-tidy, and the public-header audit. `cmake/CheckKernelBoundary.cmake` has
+the kernel include audit. `cmake/ScryFuzz.cmake` registers the fuzz targets.
+The standalone header checks share one build target. Each header has its own
+translation unit.
 
 ## Build options
 
@@ -94,19 +98,31 @@ build target. Each header has its own translation unit.
 | `SCRY_BUILD_EXAMPLES` | On at top level | Compile the programs under `examples/` |
 | `SCRY_BUILD_TESTING_SUPPORT` | On | Build and install `scry::testing` |
 | `SCRY_WARNINGS_AS_ERRORS` | On at top level | Treat project warnings as errors |
-| `SCRY_ENABLE_CLANG_TIDY` | Off | Analyze library sources during compilation |
-| `SCRY_CLANG_TOOLING` | Off | Build the C++23 implementation with Clang for tooling |
-| `SCRY_CLANG_TOOLING_LIBCXX` | Off | Select libc++ in Clang tooling mode |
-| `SCRY_BUILD_FUZZERS` | Off | Build libFuzzer targets with Clang |
+| `SCRY_ENABLE_CLANG_TIDY` | Off | Analyze the kernel sources during compilation |
+| `SCRY_CLANG_TOOLING` | Off | Build only the C++23 kernel with Clang for tooling |
+| `SCRY_BUILD_FUZZERS` | Off | Build the libFuzzer targets of the kernel with Clang |
 | `SCRY_SANITIZER` | `none` | Select `none`, `address-undefined`, or `thread` |
 
 When another project embeds Scry, tests, examples, and warnings-as-errors are
-off by default. Clang tooling mode disables examples and ordinary tests. Fuzzers
-must have that mode. The build registers them separately under `tests/fuzz/`,
-even if `SCRY_BUILD_TESTS=OFF`. The consumer build always includes reflection
-in `scry::scry`.
+off by default. Clang tooling mode builds only the kernel. It does not build
+`scry::scry`, `scry::testing`, examples, or ordinary tests. Fuzzers must have
+that mode. The build registers them separately under `tests/fuzz/`, even if
+`SCRY_BUILD_TESTS=OFF`. The consumer build always includes reflection in
+`scry::scry`.
 
 ## The loop
+
+One command builds and runs the unit and integration tests. These tests do not
+need a live model. The transport suites use local loopback servers.
+
+```sh
+./scripts/test.sh                           # just test
+./scripts/test.sh -R 'runtime\.'            # filter ctest cases
+```
+
+The script configures and builds the `dev` preset. Then it runs ctest. If the
+compiler has a different name, set `CXX=/path/to/g++-16`. You can also run each
+step separately:
 
 ```sh
 cmake --preset dev                                # just configure
@@ -115,8 +131,10 @@ ctest --test-dir build/dev --output-on-failure    # just test
 ```
 
 The build registers each Catch2 suite with ctest under a prefix for that suite:
-`runtime.`, `machine.`, `protocol.`, `provider.`, `transport.`, `integration.`,
-`reflection.`, or `testing.`. `public-api-contract` is a plain executable test.
+`kernel.`, `runtime.`, `machine.`, `protocol.`, `provider.`, `transport.`,
+`integration.`, `reflection.`, or `testing.`. `public-api-contract` is a plain
+executable test. `kernel.include-boundary` runs
+`cmake/CheckKernelBoundary.cmake`.
 
 ```sh
 ctest --test-dir build/dev -R 'runtime\.'                     # one suite
@@ -134,43 +152,36 @@ shared script checks tracked and untracked C++ sources, but not ignored files:
 
 ## Gates
 
-The core, documentation, clang-tidy, sanitizer, fuzz, showcase, and local-model
-checks have scripts under `scripts/`. The workflows supply the toolchains for
-these checks and run those scripts. CI and the local commands use the same
-format script, `scripts/format.sh`. CodeQL and the release publication have
-steps that are specific to their workflows.
+The CI helpers are in `.github/scripts/`. The workflows supply the toolchains
+for these helpers and run them. `scripts/ci.sh` runs them locally. The user
+commands are in `scripts/`. These include the format script and the two test
+entry points.
 
 **Per commit** (`.github/workflows/ci.yml`):
 
 | Job | Runs |
 |---|---|
-| Doxygen API site + clang-format | `./scripts/ci-docs.sh`, then `CLANG_FORMAT=clang-format-18 ./scripts/format.sh --check` |
-| Core, Linux GCC 16 and macOS GCC 16 | `./scripts/ci-local.sh` |
-| clang-tidy | `./scripts/ci-tidy.sh -DSCRY_CLANG_TOOLING_LIBCXX=ON`, because clang 18 cannot parse the libstdc++ `<expected>` of Ubuntu 24.04, which is too new |
-| ASan + UBSan, TSan | `./scripts/ci-sanitizer.sh asan` and `... tsan` |
-| Fuzz corpus replay | `./scripts/ci-fuzz-replay.sh` |
-
-**Weekly, on Mondays** (`.github/workflows/nightly.yml`): This workflow runs
-CodeQL and a long fuzz run on each of the five targets
-(`./scripts/ci-nightly-fuzz.sh <target>`). It also runs the showcase gate
-(`./scripts/ci-showcase.sh`). The end-to-end smoke against a real local model
-(`./scripts/ci-local-model.sh`) runs only on `workflow_dispatch`. This smoke
-uses a live model, so it does not gate pull requests.
+| Doxygen API site + clang-format | `./.github/scripts/ci-docs.sh`, then `CLANG_FORMAT=clang-format-18 ./scripts/format.sh --check` |
+| Core, Linux GCC 16 and macOS GCC 16 | `./.github/scripts/ci-local.sh` |
+| clang-tidy | `./.github/scripts/ci-tidy.sh` with Clang 21 |
+| ASan + UBSan, TSan | `./.github/scripts/ci-sanitizer.sh asan` and `... tsan` |
+| Kernel fuzz corpus replay | `./.github/scripts/ci-fuzz-replay.sh` |
 
 **On a tag** (`release.yml`): This workflow runs `check-release-tag.sh` and the
 core gate. It also builds the API site. Then it builds the GitHub release from
 the checked-in notes.
 
-Before each pull request, run the full per-commit ring locally:
+Before each pull request, run the CI checks and the showcase build locally:
 
 ```sh
-./scripts/preflight.sh    # just ci
+./scripts/ci.sh    # just ci
 ```
 
-It runs the documentation, format, core, clang-tidy, sanitizer, and fuzz replay
-gates. It continues after a failure. If the host cannot run the documentation,
-tidy, sanitizer, or fuzz gate, the script reports that gate as `SKIP`. The
-summary at the end lists each `SKIP` gate again.
+It runs the documentation, format, core, clang-tidy, sanitizer, and kernel fuzz
+replay gates. It also builds the showcase. It continues after a failure. If the
+host cannot run the documentation, tidy, sanitizer, or fuzz gate, the script
+reports that gate as `SKIP`. The summary at the end lists each `SKIP` gate
+again.
 
 The script always tries the format and core gates. If the formatter is missing,
 the format gate fails. If the compiler or the complexity checker is missing, the
@@ -178,25 +189,58 @@ core gate fails. Each sanitizer leg first probes its own flag with `g++-16`. The
 reason is that GCC supplies no thread-sanitizer runtime on Apple Silicon. Thus,
 on Apple Silicon, TSan skips but ASan runs.
 
-`./scripts/ci-local.sh` (`just ci-fast`) is the faster inner loop. It does a
-whitespace check of the branch against `origin/main`, the complexity check, and
-the check for unlinked TODOs. It also does the build, the tests, a staged
-install, and a downstream `find_package(scry)` consumer.
+`./.github/scripts/ci-local.sh` (`just ci-fast`) is the faster inner loop. It
+does a whitespace check of the branch against `origin/main`, the complexity
+check, and the check for unlinked TODOs. It also does the build, the tests, a
+staged install, and a downstream `find_package(scry)` consumer.
 
 The showcase is a standalone project under `extras/showcase/`. The root build
-never configures it. `./scripts/ci-showcase.sh` (`just showcase`) only builds it.
+never configures it. `./.github/scripts/ci-showcase.sh` (`just showcase`) only
+builds it.
 
-Default builds do not include the live-model smoke executable. When you run
-`ci-local-model.sh`, it builds that target explicitly.
+There are six fuzz targets. Each target has a checked-in seed corpus under
+`tests/fuzz/corpus/`, and it replays that corpus on each commit.
 
-The five fuzz targets are `sse`, `anthropic`, `openai`, `response_policy`, and
-`conversation`. On each commit, each target replays its checked-in seed corpus.
-Thus, a target cannot decay without notice between long runs. For a long local
-search, run:
+| Target | Tests | Build type | Per-commit test |
+|---|---|---|---|
+| `sse` | Kernel SSE parser | libFuzzer, `fuzz` preset | `protocol.sse-fuzz` |
+| `response_policy` | Kernel transport response policy | libFuzzer, `fuzz` preset | `transport.response_policy-fuzz` |
+| `json` | Kernel JSON layer: parse and validate give the same result, and canonical text round-trips and is idempotent | libFuzzer, `fuzz` preset; also GCC corpus replay | `kernel.json-fuzz`, `kernel.json-fuzz-replay` |
+| `anthropic` | Anthropic stream decoder | GCC corpus replay | `provider.anthropic-fuzz-replay` |
+| `openai` | OpenAI-compatible stream decoder | GCC corpus replay | `provider.openai-fuzz-replay` |
+| `conversation` | Conversation persistence | GCC corpus replay | `runtime.conversation-fuzz-replay` |
+
+`.github/scripts/ci-fuzz-replay.sh` runs the kernel targets. The other three
+targets link the full library, and only GCC compiles that library. Thus, the
+ordinary test build links each of these targets to `tests/fuzz/replay_main.cpp`
+instead of libFuzzer. Each GCC leg replays their corpora. The `asan` preset
+replays them with ASan and UBSan. But no gate runs a coverage-guided search on
+these targets. Golden fixtures also lock the acceptance boundary and the
+canonical bytes of the JSON layer. The `kernel.` tests check these fixtures.
+For more information, see
+[`tests/fixtures/json/`](../tests/fixtures/json/README.md).
+
+## End-to-end testing
+
+Start an OpenAI-compatible server and load a model. Then, if necessary, run the
+live-model smoke:
 
 ```sh
-SCRY_NIGHTLY_FUZZ_SECONDS=1200 ./scripts/ci-nightly-fuzz.sh sse
+SCRY_LOCAL_MODEL_BASE_URL=http://127.0.0.1:11434/v1 \
+SCRY_LOCAL_MODEL_MODEL=qwen3:8b \
+./scripts/test-e2e.sh                        # just e2e with the same environment
 ```
+
+This command builds `scry_local_model_smoke` from `tests/e2e/`. Through the
+public API, the smoke checks a full chat and a required tool round. If the
+server needs authentication, set `SCRY_LOCAL_MODEL_API_KEY`. To change the
+180-second timeout, set `SCRY_LOCAL_MODEL_TIMEOUT_SECONDS`. The script must have
+GNU timeout. On macOS, install coreutils. The script writes its log to
+`build/e2e-artifacts/local-model-smoke.log`.
+
+Default builds and the ctest registration do not include the smoke executable.
+Only `scripts/test-e2e.sh` builds and runs it explicitly. The CI checks do not
+use a live model.
 
 ## Testing
 
@@ -256,8 +300,15 @@ with Catch2.
   be more than 6.
 - clang-tidy: The cognitive complexity must not be more than 25. The repository
   has the list of checks. The tidy script uses `SCRY_CLANG_TOOLING` and
-  analyzes the library target. It does not analyze reflection, examples, or
-  ordinary tests.
+  analyzes the kernel (`scry_kernel`). It does not analyze the remaining code
+  in `src/`, examples, or tests.
+- The kernel is C++23 without reflection. Its sources compile without
+  `-freflection`. Under GCC, they also compile with `-Werror=c++26-extensions`.
+  Thus, if a file that they include has a reflection operator or annotation,
+  the build fails. `src/kernel/kernel.hpp` rejects a build that enables
+  reflection. `kernel.include-boundary` fails if kernel code includes a public
+  header that is not on the allowlist. It also fails if kernel code includes a
+  `src/` header that is not in the kernel.
 - A `// TODO` must link an issue or a URL. CI always rejects a TODO without a
   link.
 
@@ -265,7 +316,7 @@ with Catch2.
 
 A change is done when you complete these steps:
 
-- Run `./scripts/preflight.sh`, and name each leg that it skipped.
+- Run `./scripts/ci.sh`, and name each leg that it skipped.
 - Add or update tests. For a bug fix, include its regression test.
 - If the behavior changes, update [`docs/architecture.md`](architecture.md).
 - If the public API changes, make sure that an example compiles the change.

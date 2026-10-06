@@ -1,9 +1,11 @@
-#include "core/error.hpp"
-#include "core/json_codec.hpp"
+#include "kernel/error.hpp"
+#include "kernel/json/codec.hpp"
+#include "reflection/codec.hpp"
 #include "runtime/tool_registry_impl.hpp"
 
 #include <algorithm>
 #include <cstdint>
+#include <iterator>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -36,40 +38,76 @@ namespace {
 
 constexpr std::uint64_t tool_manifest_version = 1;
 
+// The ToolRegistry::to_json() document, borrowed from the registered definitions.
+struct ToolManifestEntry {
+  std::string_view name;
+  std::string_view description;
+  const Json& input_schema;
+};
+
+struct ToolManifest {
+  std::vector<ToolManifestEntry> tools;
+  std::uint64_t version;
+};
+
 [[nodiscard]] Error inactive_registry() {
   return detail::make_error(ErrorCategory::invalid_state, "ToolRegistry is not active");
 }
 
-} // namespace
+[[nodiscard]] std::unexpected<Error> invalid(std::string message) {
+  return std::unexpected(
+      detail::make_error(ErrorCategory::invalid_argument, std::move(message)));
+}
 
-Status ToolRegistry::Impl::add(ToolDefinition definition,
-                               ContextualToolHandler handler) {
-  const auto invalid = [](std::string message) {
-    return std::unexpected(
-        detail::make_error(ErrorCategory::invalid_argument, std::move(message)));
-  };
-  if (definition.name.empty()) {
+// Checks one entry on its own and canonicalizes its schema in place.
+[[nodiscard]] Status validate_entry(detail::ToolEntry& entry) {
+  if (entry.definition.name.empty()) {
     return invalid("tool name must not be empty");
   }
-  if (!handler) {
+  if (!entry.handler) {
     return invalid("tool handler must not be empty");
   }
   auto schema = detail::canonicalize_json_object(
-      definition.input_schema, ErrorCategory::invalid_argument,
+      entry.definition.input_schema, ErrorCategory::invalid_argument,
       "tool input schema must be a valid JSON object");
   if (!schema) {
     return std::unexpected(std::move(schema.error()));
   }
-  if (detail::find_tool(entries_, definition.name) != nullptr) {
-    return invalid("a tool with that name is already registered");
+  entry.definition.input_schema = std::move(*schema);
+  return {};
+}
+
+} // namespace
+
+Status ToolRegistry::Impl::add(std::vector<detail::ToolEntry> entries) {
+  for (auto entry = entries.begin(); entry != entries.end(); ++entry) {
+    if (auto valid = validate_entry(*entry); !valid) {
+      return valid;
+    }
+    const auto& name = entry->definition.name;
+    if (detail::find_tool(entries_, name) != nullptr) {
+      return invalid("a tool named \"" + name + "\" is already registered");
+    }
+    if (std::any_of(entries.begin(), entry, [&name](const detail::ToolEntry& earlier) {
+          return earlier.definition.name == name;
+        })) {
+      return invalid("a tool named \"" + name + "\" appears twice in one registration");
+    }
   }
 
-  definition.input_schema = std::move(*schema);
-  entries_.push_back(
-      std::make_shared<const detail::RegisteredTool>(detail::RegisteredTool{
-          .definition = std::move(definition),
-          .handler = std::move(handler),
-      }));
+  // Everything that can allocate happens before the registry changes, so even an
+  // allocation failure leaves no part of the batch registered.
+  detail::ToolSnapshot added{};
+  added.reserve(entries.size());
+  for (auto& entry : entries) {
+    added.push_back(
+        std::make_shared<const detail::RegisteredTool>(detail::RegisteredTool{
+            .definition = std::move(entry.definition),
+            .handler = std::move(entry.handler),
+        }));
+  }
+  entries_.reserve(entries_.size() + added.size());
+  std::ranges::move(added, std::back_inserter(entries_));
   return {};
 }
 
@@ -99,15 +137,26 @@ ToolRegistry::~ToolRegistry() = default;
 ToolRegistry::ToolRegistry(ToolRegistry&&) noexcept = default;
 ToolRegistry& ToolRegistry::operator=(ToolRegistry&&) noexcept = default;
 
-Status ToolRegistry::add(ToolDefinition definition, ToolHandler handler) {
-  return add(std::move(definition), detail::to_contextual_handler(std::move(handler)));
+Status ToolRegistry::add_dynamic(ToolDefinition definition, ToolHandler handler) {
+  return add_dynamic(std::move(definition),
+                     detail::to_contextual_handler(std::move(handler)));
 }
 
-Status ToolRegistry::add(ToolDefinition definition, ContextualToolHandler handler) {
+Status ToolRegistry::add_dynamic(ToolDefinition definition,
+                                 ContextualToolHandler handler) {
+  std::vector<detail::ToolEntry> entries{};
+  entries.push_back(detail::ToolEntry{
+      .definition = std::move(definition),
+      .handler = std::move(handler),
+  });
+  return add_all(std::move(entries));
+}
+
+Status ToolRegistry::add_all(std::vector<detail::ToolEntry> entries) {
   if (impl_ == nullptr) {
     return std::unexpected(inactive_registry());
   }
-  return impl_->add(std::move(definition), std::move(handler));
+  return impl_->add(std::move(entries));
 }
 
 std::size_t ToolRegistry::size() const noexcept {
@@ -137,31 +186,28 @@ Result<Json> ToolRegistry::to_json() const {
     return std::unexpected(inactive_registry());
   }
 
-  detail::JsonValue::array_t tools{};
-  tools.reserve(impl_->entries().size());
+  ToolManifest manifest{.tools = {}, .version = tool_manifest_version};
+  manifest.tools.reserve(impl_->entries().size());
   for (const auto& entry : impl_->entries()) {
     const auto& definition = entry->definition;
-    detail::JsonValue tool{};
-    tool["name"] = definition.name;
-    tool["description"] = definition.description;
-    // Registration already canonicalized the schema. Preserve a diagnostic if
-    // that invariant is broken instead of exporting a null or partial schema.
-    if (auto status =
-            detail::parse_json_into(tool["input_schema"], definition.input_schema.text,
-                                    ErrorCategory::invalid_state,
-                                    "Registered schema for tool '" + definition.name +
-                                        "' could not be encoded");
-        !status) {
-      return std::unexpected(std::move(status.error()));
-    }
-    tools.push_back(std::move(tool));
+    manifest.tools.push_back(ToolManifestEntry{
+        .name = definition.name,
+        .description = definition.description,
+        .input_schema = definition.input_schema,
+    });
   }
-
-  detail::JsonValue root{};
-  root["tools"].data = std::move(tools);
-  root["version"] = tool_manifest_version;
-  return detail::write_json(root, ErrorCategory::invalid_state,
-                            "Tool manifest could not be encoded");
+  // Registration already canonicalized each schema. The codec validates it as it
+  // splices it, so a broken invariant is a diagnostic rather than a null or
+  // partial schema, and the final pass keeps the manifest canonical regardless.
+  auto encoded = detail::encode_text(manifest);
+  if (!encoded) {
+    return std::unexpected(
+        detail::make_error(ErrorCategory::invalid_state,
+                           "Tool manifest at " + detail::describe(encoded.error())));
+  }
+  return detail::canonicalize_json(Json{.text = std::move(*encoded)},
+                                   ErrorCategory::invalid_state,
+                                   "Tool manifest could not be encoded");
 }
 
 } // namespace scry
