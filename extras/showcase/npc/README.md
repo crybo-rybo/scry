@@ -1,9 +1,10 @@
 # NPC showcase
 
-This one-shot example lets an OpenAI-compatible model control an in-memory NPC
-on a deterministic 5 by 5 grid. The host owns the `scry::Harness`, the world,
-and the `Harness::update()` loop. All five tools run on the application thread:
-`look`, `move_north`, `move_south`, `move_east`, and `move_west`.
+This example runs one time and then exits. It lets an OpenAI-compatible model
+control an in-memory NPC on a deterministic 5 by 5 grid. The host owns the
+`scry::Harness`, the world, and the `Harness::update()` loop. All five tools run
+on the application thread: `look`, `move_north`, `move_south`, `move_east`, and
+`move_west`.
 
 Build the standalone showcase from the repository root:
 
@@ -13,7 +14,7 @@ cmake -S extras/showcase -B build/showcase -G Ninja \
 cmake --build build/showcase --target scry_npc_showcase
 ```
 
-Configure a local or hosted OpenAI-compatible endpoint, then run the executable:
+Configure a local or hosted OpenAI-compatible endpoint. Then run the executable:
 
 ```sh
 export SCRY_LOCAL_MODEL_BASE_URL=http://127.0.0.1:11434/v1
@@ -22,28 +23,33 @@ export SCRY_LOCAL_MODEL_MODEL=qwen3:8b
 ./build/showcase/scry_npc_showcase
 ```
 
-Pass command-line arguments to replace the default movement request.
+To replace the default movement request, pass command-line arguments.
 
-The example disables model reasoning through Scry's OpenAI-compatible request
-configuration. The default prompt asks for `look`, `move_north`, and
-`move_east`; the model chooses which calls to issue. The example prints the
-calls it observes, streamed text (or the final answer if no text was streamed),
-and the final world state. A truncated response, empty final answer, or response that executes
-no NPC tool exits nonzero instead of presenting a no-op as success. The selected
-server must support `reasoning_effort: "none"`; leave `ReasoningMode` at its
-default in applications whose endpoint does not support that optional field.
+The example disables model reasoning with the OpenAI-compatible request
+configuration of Scry. The default prompt asks for `look`, `move_north`, and
+`move_east`. The model selects which calls it makes. The example prints the
+calls that it sees and the text that the model streams. If the model streamed no
+text, the example prints the final answer instead. It also prints the final
+world state.
 
-The tools are declared, not written: `World` in `world.hpp` is a toolbox, and
-each of its member functions annotated with `scry::reflection::tool` becomes a
-tool named after the function. `harness.tools().add(world)` registers all five
-against the shared `World`, which the host also keeps to print the final state.
-Scry generates each tool's schema from its parameters (none, so the model sends
-`{}` and anything else is rejected before the NPC moves) and encodes the
-`Observation` and `MoveOutcome` results from their members. Registration is
-atomic: if any of the five names were already taken, none of them would be
-registered.
+The example exits nonzero if the response is truncated or the final answer is
+empty. It also exits nonzero if the response executes no NPC tool. Thus, it does
+not show a no-op as a success. The server that you select must support
+`reasoning_effort: "none"`. If the endpoint of your application does not
+support that optional field, keep `ReasoningMode` at its default value.
 
-The world is intentionally ephemeral. A failed or cancelled model turn does not
-roll back movement that already occurred. Real applications that expose durable
-side effects must supply their own idempotency keys, persistence, and
-reconciliation policy.
+You declare the tools. You do not write them. `World` in `world.hpp` is a
+toolbox. Each member function of `World` with the `scry::reflection::tool`
+annotation becomes a tool, and the tool has the name of the function.
+`harness.tools().add(world)` registers all five tools against the shared
+`World`. The host also keeps this `World` to print the final state. Scry makes
+the schema of each tool from its parameters. These tools have no parameters.
+Thus, the model sends `{}`, and Scry rejects all other arguments before the NPC
+moves. Scry encodes the `Observation` and `MoveOutcome` results from their
+members. Registration is atomic. If one of the five names is already in use,
+Scry registers none of the five tools.
+
+The world is temporary by design. If a model turn fails or is cancelled, the
+example does not roll back the movement that already occurred. A real
+application that exposes durable side effects must supply its own idempotency
+keys, persistence, and reconciliation policy.

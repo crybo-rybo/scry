@@ -1,32 +1,36 @@
 # JSON golden fixtures
 
-Expected results for Scry's JSON layer (`src/kernel/json/document.hpp`),
-checked by `tests/kernel/json_fixture_tests.cpp`. They pin which inputs the
-parser accepts and the exact bytes of the canonical writer.
+These files hold the expected results for the JSON layer of Scry
+(`src/kernel/json/document.hpp`). `tests/kernel/json_fixture_tests.cpp` checks
+them. They pin which inputs the parser accepts. They also pin the exact bytes
+that the canonical writer writes.
 
 ## Provenance
 
-Every expectation was produced by the third-party header-only codec that Scry
-used through v0.5 (see `docs/releases/`), before its own layer replaced it, and
-every one was checked against the new layer as it was written. A differential
-fuzz target held the two together for 45 minutes and 4.3 million executions
-without a divergence before the old codec was removed. The layer departs from
-the old codec deliberately in two places, both about the kind a number reads
-as, and the expectations include those departures:
+Scry used a third-party header-only codec through v0.5 (see `docs/releases/`).
+That codec made each expectation before the JSON layer of Scry replaced it. We
+checked each expectation against the new layer when we wrote it. Before we
+removed the old codec, a differential fuzz target compared the two
+implementations for 45 minutes and 4.3 million executions. It found no
+divergence.
 
-- A number with an exponent is a double even when its value is whole, so
-  `1.0e19` and `1e19` both write as `1E19` (the old codec wrote the latter as
-  `10000000000000000000`).
-- `-0` is the double -0.0 and writes as `-0` (the old codec read it as the
-  integer 0 and wrote `0`).
+The layer is intentionally different from the old codec in two places. Both
+places are about the kind that a number reads as. The expectations include
+these differences:
 
-Without them the old canonical form was not idempotent.
+- A number with an exponent is a double, also when its value is whole. Thus,
+  `1.0e19` and `1e19` both write as `1E19`. The old codec wrote the second
+  number as `10000000000000000000`.
+- `-0` is the double -0.0, and it writes as `-0`. The old codec read it as the
+  integer 0 and wrote `0`.
+
+Without these differences, the old canonical form was not idempotent.
 
 ## Files
 
-The case files are generated, frozen text (about 16,000 lines), checked in as
-one archive, `goldens.tar.xz`, which the test build unpacks into
-`build/<preset>/tests/fixtures/json/` at configure time.
+The case files are generated, frozen text of approximately 16,000 lines. Git
+holds them as one archive, `goldens.tar.xz`. At configure time, the test build
+unpacks this archive into `build/<preset>/tests/fixtures/json/`.
 
 | File in the archive | Cases |
 |---|---|
@@ -37,30 +41,48 @@ one archive, `goldens.tar.xz`, which the test build unpacks into
 
 ## Format
 
-A `.txt` file is a list of cases. A case is an input line starting with `< `
-(a bare `<` for empty input) followed by an expectation line: `> ` and the
-canonical text, or `x` for a rejection. Lines starting with `#` name the case
-that follows or comment on the file; blank lines separate cases. In input and
-expectation text, `%HH` is the byte with hexadecimal value `HH`; every other
-character stands for itself. Bytes outside printable ASCII, `%` itself, and
-trailing spaces are always written as `%HH`, so each case is one line and the
-files are plain ASCII.
+A `.txt` file is a list of cases. Each case has an input line and then an
+expectation line:
 
-A line of `corpus_prefixes.list` is a corpus path relative to
-`tests/fuzz/corpus/`, a space, and the accepted prefix lengths as
-comma-separated lengths and inclusive `low-high` ranges, or `none`. Every other
-length from zero to the file's size must be rejected.
+- The input line starts with `< `. For empty input, the line is a bare `<`.
+- The expectation line is `> ` and the canonical text. For a rejection, the line
+  is `x`.
+
+A line that starts with `#` gives the name of the next case, or it is a comment
+on the file. Blank lines separate cases.
+
+In input and expectation text, `%HH` is the byte with the hexadecimal value
+`HH`. All other characters are literal. The files always write these as `%HH`:
+
+- bytes that are not printable ASCII
+- `%` itself
+- spaces at the end of a line.
+
+Thus, each case is one line, and the files are plain ASCII.
+
+A line of `corpus_prefixes.list` has three parts:
+
+1. A corpus path, relative to `tests/fuzz/corpus/`.
+2. A space.
+3. The accepted prefix lengths, or `none`. The list separates lengths and
+   inclusive `low-high` ranges with commas.
+
+The parser must reject each other length from zero to the size of the file.
 
 ## Adding a case or a corpus file
 
-The old codec is gone, so a new expectation comes from the layer itself and
-must be justified by the rules in `src/kernel/json/document.hpp`, not merely
-recorded. A new file under `tests/fuzz/corpus/` needs its line in
-`corpus_prefixes.list` (the prefix tests fail until it has one) and, if it should
-be pinned whole, a case in `corpus.txt`.
+The old codec is removed, so a new expectation comes from the layer itself. The
+rules in `src/kernel/json/document.hpp` must justify each new expectation. Do
+not only record the output of the layer.
 
-To edit the files, unpack the archive here, change them, and repack it
-reproducibly, then delete the unpacked copies:
+For a new file under `tests/fuzz/corpus/`, do these steps:
+
+1. Add its line to `corpus_prefixes.list`. The prefix tests fail until this
+   line is present.
+2. If the file must be pinned whole, add a case to `corpus.txt`.
+
+To edit the files, unpack the archive here and change the files. Then repack the
+archive reproducibly, and delete the unpacked copies:
 
 ```sh
 cd tests/fixtures/json

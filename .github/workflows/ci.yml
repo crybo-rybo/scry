@@ -17,20 +17,21 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
-      # scripts/format.sh fetches its pinned clang-format through uv. clang-tidy
-      # 21 comes from apt.llvm.org because Ubuntu's clang 18 cannot parse
-      # libstdc++'s <expected>.
-      - name: Install uv and clang-tidy
+      # Ubuntu 24.04 ships LLVM 18, which formats reflection annotations
+      # differently and cannot parse libstdc++'s <expected>, so both tools come
+      # from apt.llvm.org.
+      - name: Install clang-format and clang-tidy
         run: |
-          pipx install uv
           wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
-          echo "deb https://apt.llvm.org/noble/ llvm-toolchain-noble-21 main" | sudo tee /etc/apt/sources.list.d/llvm-21.list
+          echo "deb https://apt.llvm.org/noble/ llvm-toolchain-noble-22 main" | sudo tee /etc/apt/sources.list.d/llvm-22.list
           sudo apt-get update
-          sudo apt-get install -y clang-tidy-21 g++-14 libcurl4-openssl-dev
+          sudo apt-get install -y clang-format-22 clang-tidy-22 g++-14 libcurl4-openssl-dev
       - run: ./scripts/format.sh --check
+        env:
+          CLANG_FORMAT: clang-format-22
       - run: ./scripts/lint.sh
         env:
-          CLANG_TIDY: clang-tidy-21
+          CLANG_TIDY: clang-tidy-22
 
   test:
     name: test (${{ matrix.preset }})
