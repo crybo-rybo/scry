@@ -1,15 +1,17 @@
 # Contributing to Scry
 
-Build commands, checks, and contribution requirements for the current tree.
+This document gives the build commands, the checks, and the requirements for a
+contribution to the current tree.
 
 ## Toolchain
 
-Scry needs GCC 16 or newer (with reflection support), CMake 3.30 or newer,
-Ninja, and libcurl 7.84 or newer with development headers. CMake 3.30 is the
-first release that knows GCC's C++26 mode (`cxx_std_26`). Scry's only library
-dependency is libcurl; the tests fetch Catch2. Formatting uses
-clang-format; CI uses version 18. It runs independently of CMake and does not
-require a compiler or fetched dependencies.
+To build Scry, you must have GCC 16 or newer with reflection support, and CMake
+3.30 or newer. You must also have Ninja, and libcurl 7.84 or newer with the
+development headers. CMake 3.30 is the first release that knows the C++26 mode
+of GCC (`cxx_std_26`). libcurl is the only library dependency of Scry. The
+tests fetch Catch2. The formatter is clang-format, and CI uses version 18. The
+formatter runs independently of CMake. It does not need a compiler or the
+dependencies that the build fetches.
 
 **Linux:**
 
@@ -30,39 +32,41 @@ brew install gcc cmake llvm@21 ninja doxygen graphviz
 export PATH="$(brew --prefix llvm@21)/bin:$PATH"
 ```
 
-Both platforms also need the complexity checker, which CI pins:
+On both platforms, also install the complexity checker at the version that CI
+pins:
 
 ```sh
 python3 -m pip install --user --break-system-packages lizard==1.24.0
 ```
 
-Ensure `g++-16 --version` succeeds. When the compiler has another path, pass it
-with `-DCMAKE_CXX_COMPILER=...`. Select a versioned formatter with
+Make sure that `g++-16 --version` succeeds. If the compiler has a different
+path, set that path with `-DCMAKE_CXX_COMPILER=...`. To select a formatter with
+a version in its name, use
 `CLANG_FORMAT=clang-format-18 ./scripts/format.sh --check`. Doxygen and Graphviz
-are needed for the documentation gate; Doxygen 1.9.8 is the minimum.
+are necessary for the documentation gate. The minimum Doxygen version is 1.9.8.
 
-The optional clang-tidy gate and the kernel's libFuzzer targets need Clang 21
-with clang-tidy and libFuzzer; on macOS that is the `llvm@21` export above, and
-on Linux the apt.llvm.org packages that `.github/actions/fuzz-toolchain`
-installs.
+The optional clang-tidy gate and the libFuzzer targets of the kernel need Clang
+21 with clang-tidy and libFuzzer. On macOS, the `llvm@21` export above gives
+this version. On Linux, use the apt.llvm.org packages that
+`.github/actions/fuzz-toolchain` installs.
 
 ## Presets
 
-Build directories live under `build/<preset>`, Ninja, with
-`compile_commands.json` exported; `.clangd` points at `build/dev`.
+The build directories are in `build/<preset>`. They use Ninja and export
+`compile_commands.json`. The `.clangd` file points to `build/dev`.
 
 | Preset | For |
 |---|---|
-| `dev` | Debug. The everyday edit-build-test loop. |
-| `ci` | RelWithDebInfo. What `.github/scripts/ci-local.sh` builds, installs, and audits. |
-| `asan` | Debug plus ASan and non-recovering UBSan. |
-| `tsan` | Debug plus TSan for race detection. |
-| `fuzz` | Clang with `SCRY_CLANG_TOOLING`: the kernel's libFuzzer targets, ASan and UBSan. |
+| `dev` | Debug. For the usual edit-build-test loop. |
+| `ci` | RelWithDebInfo. `.github/scripts/ci-local.sh` builds, installs, and audits this preset. |
+| `asan` | Debug, plus ASan and UBSan without recovery. |
+| `tsan` | Debug, plus TSan to find data races. |
+| `fuzz` | Clang with `SCRY_CLANG_TOOLING`: the libFuzzer targets of the kernel, ASan and UBSan. |
 
-Every GCC preset pins `CMAKE_CXX_COMPILER` to `g++-16` through a hidden `gcc`
-preset. Override it when your GCC 16 is spelled differently:
+Each GCC preset pins `CMAKE_CXX_COMPILER` to `g++-16` through a hidden `gcc`
+preset. If your GCC 16 has a different name or path, override this value:
 `cmake --preset dev -DCMAKE_CXX_COMPILER=/opt/homebrew/bin/g++-16`.
-The `fuzz` preset does not select its compiler:
+The `fuzz` preset does not select its compiler. Select it when you configure:
 
 ```sh
 cmake --preset fuzz -DCMAKE_CXX_COMPILER=clang++-21
@@ -70,19 +74,21 @@ cmake --build build/fuzz
 ctest --test-dir build/fuzz --output-on-failure
 ```
 
-Use a compatible local Clang path in place of `clang++-21` as needed. When
-changing a compiler in an existing build directory, add `--fresh` to the
-configure command so CMake reapplies the preset without stale cache settings.
+If necessary, replace `clang++-21` with the path of a compatible local Clang. If
+you change the compiler in an existing build directory, add `--fresh` to the
+configure command. Then CMake applies the preset again without old cache
+settings.
 
-The root `CMakeLists.txt` defines the kernel and library sources, dependencies,
-and package. The kernel is the `scry_kernel` object library, compiled as C++23
-and archived into `scry`. Compiler compatibility checks live in
-`cmake/ScryCompilerChecks.cmake`, with the reflection probe in
-`cmake/probes/reflection.cpp`. Warning flags, sanitizers, clang-tidy, and the
-public-header audit live in `cmake/ScryDeveloperTools.cmake`; the kernel include
-audit in `cmake/CheckKernelBoundary.cmake`; fuzz target registration in
-`cmake/ScryFuzz.cmake`. Standalone header checks share one build target, with a
-separate translation unit per header.
+The root `CMakeLists.txt` defines the kernel sources, the library sources, the
+dependencies, and the package. The kernel is the `scry_kernel` object library.
+The build compiles it as C++23 and puts it in the `scry` archive.
+`cmake/ScryCompilerChecks.cmake` has the compiler compatibility checks. The
+reflection probe is in `cmake/probes/reflection.cpp`.
+`cmake/ScryDeveloperTools.cmake` has the warning flags, the sanitizers,
+clang-tidy, and the public-header audit. `cmake/CheckKernelBoundary.cmake` has
+the kernel include audit. `cmake/ScryFuzz.cmake` registers the fuzz targets.
+The standalone header checks share one build target. Each header has its own
+translation unit.
 
 ## Build options
 
@@ -92,30 +98,31 @@ separate translation unit per header.
 | `SCRY_BUILD_EXAMPLES` | On at top level | Compile the programs under `examples/` |
 | `SCRY_BUILD_TESTING_SUPPORT` | On | Build and install `scry::testing` |
 | `SCRY_WARNINGS_AS_ERRORS` | On at top level | Treat project warnings as errors |
-| `SCRY_ENABLE_CLANG_TIDY` | Off | Analyze the kernel's sources while compiling |
+| `SCRY_ENABLE_CLANG_TIDY` | Off | Analyze the kernel sources during compilation |
 | `SCRY_CLANG_TOOLING` | Off | Build only the C++23 kernel with Clang for tooling |
-| `SCRY_BUILD_FUZZERS` | Off | Build the kernel's libFuzzer targets with Clang |
+| `SCRY_BUILD_FUZZERS` | Off | Build the libFuzzer targets of the kernel with Clang |
 | `SCRY_SANITIZER` | `none` | Select `none`, `address-undefined`, or `thread` |
 
-Tests, examples, and warnings-as-errors default to off when Scry is embedded.
-Clang tooling mode builds the kernel alone: no `scry::scry`, `scry::testing`,
-examples, or ordinary tests. Fuzzers require that mode and are registered
-separately under `tests/fuzz/`, even when `SCRY_BUILD_TESTS=OFF`. The consumer
-build always includes reflection in `scry::scry`.
+When another project embeds Scry, tests, examples, and warnings-as-errors are
+off by default. Clang tooling mode builds only the kernel. It does not build
+`scry::scry`, `scry::testing`, examples, or ordinary tests. Fuzzers must have
+that mode. The build registers them separately under `tests/fuzz/`, even if
+`SCRY_BUILD_TESTS=OFF`. The consumer build always includes reflection in
+`scry::scry`.
 
 ## The loop
 
-Build and run the unit and integration tests with one command. These tests
-need no live model; transport suites use local loopback servers.
+One command builds and runs the unit and integration tests. These tests do not
+need a live model. The transport suites use local loopback servers.
 
 ```sh
 ./scripts/test.sh                           # just test
 ./scripts/test.sh -R 'runtime\.'            # filter ctest cases
 ```
 
-The script configures and builds the `dev` preset, then runs ctest. Set
-`CXX=/path/to/g++-16` when the compiler has a different name. The individual
-steps remain available:
+The script configures and builds the `dev` preset. Then it runs ctest. If the
+compiler has a different name, set `CXX=/path/to/g++-16`. You can also run each
+step separately:
 
 ```sh
 cmake --preset dev                                # just configure
@@ -123,10 +130,11 @@ cmake --build build/dev                           # just build
 ctest --test-dir build/dev --output-on-failure    # just test
 ```
 
-Catch2 suites are registered with ctest under a per-suite prefix (`kernel.`,
-`runtime.`, `machine.`, `protocol.`, `provider.`, `transport.`, `integration.`,
-`reflection.`, `testing.`); `public-api-contract` is a plain executable test,
-and `kernel.include-boundary` runs `cmake/CheckKernelBoundary.cmake`.
+The build registers each Catch2 suite with ctest under a prefix for that suite:
+`kernel.`, `runtime.`, `machine.`, `protocol.`, `provider.`, `transport.`,
+`integration.`, `reflection.`, or `testing.`. `public-api-contract` is a plain
+executable test. `kernel.include-boundary` runs
+`cmake/CheckKernelBoundary.cmake`.
 
 ```sh
 ctest --test-dir build/dev -R 'runtime\.'                     # one suite
@@ -134,8 +142,8 @@ ctest --test-dir build/dev -R 'event queue coalesces'         # one case by name
 ./build/dev/tests/scry_runtime_tests "event queue coalesces adjacent deltas"
 ```
 
-Formatting is clang-format, LLVM base, 88 columns. The shared script checks
-tracked and untracked C++ sources, excluding ignored files:
+The format style is clang-format with the LLVM base style and 88 columns. The
+shared script checks tracked and untracked C++ sources, but not ignored files:
 
 ```sh
 ./scripts/format.sh --fix      # just format
@@ -144,9 +152,10 @@ tracked and untracked C++ sources, excluding ignored files:
 
 ## Gates
 
-CI helpers live under `.github/scripts/`. Workflows supply their toolchains
-and invoke those helpers; `scripts/ci.sh` runs them locally. User commands
-live under `scripts/`, including formatting and the two test entry points.
+The CI helpers are in `.github/scripts/`. The workflows supply the toolchains
+for these helpers and run them. `scripts/ci.sh` runs them locally. The user
+commands are in `scripts/`. These include the format script and the two test
+entry points.
 
 **Per commit** (`.github/workflows/ci.yml`):
 
@@ -158,55 +167,63 @@ live under `scripts/`, including formatting and the two test entry points.
 | ASan + UBSan, TSan | `./.github/scripts/ci-sanitizer.sh asan` and `... tsan` |
 | Kernel fuzz corpus replay | `./.github/scripts/ci-fuzz-replay.sh` |
 
-**On a tag** (`release.yml`): `check-release-tag.sh`, the core gate, the API
-site, and the GitHub release built from the checked-in notes.
+**On a tag** (`release.yml`): This workflow runs `check-release-tag.sh` and the
+core gate. It also builds the API site. Then it builds the GitHub release from
+the checked-in notes.
 
-Run the CI checks and showcase build locally before every pull request:
+Before each pull request, run the CI checks and the showcase build locally:
 
 ```sh
 ./scripts/ci.sh    # just ci
 ```
 
-It runs documentation, format, core, clang-tidy, sanitizers, kernel fuzz replay, and
-the showcase build, and continues after failures. Missing documentation, tidy,
-sanitizer, or fuzz capabilities are reported as `SKIP` and listed in the closing
-summary. The format
-and core gates are always attempted: a missing formatter fails the format gate,
-and a missing compiler or complexity checker fails the core gate. Each sanitizer
-leg probes its own flag with `g++-16` first, because GCC ships no
-thread-sanitizer runtime on Apple Silicon, so TSan skips there while ASan still
-runs. `./.github/scripts/ci-local.sh` (`just ci-fast`) is the faster inner loop: a
-whitespace check over the branch against `origin/main`, complexity, unlinked
-TODOs, build, tests, a staged install, and a downstream `find_package(scry)`
-consumer.
+It runs the documentation, format, core, clang-tidy, sanitizer, and kernel fuzz
+replay gates. It also builds the showcase. It continues after a failure. If the
+host cannot run the documentation, tidy, sanitizer, or fuzz gate, the script
+reports that gate as `SKIP`. The summary at the end lists each `SKIP` gate
+again.
 
-The showcase is a standalone project under `extras/showcase/` that the root build
-never configures; `./.github/scripts/ci-showcase.sh` (`just showcase`) only builds it.
+The script always tries the format and core gates. If the formatter is missing,
+the format gate fails. If the compiler or the complexity checker is missing, the
+core gate fails. Each sanitizer leg first probes its own flag with `g++-16`. The
+reason is that GCC supplies no thread-sanitizer runtime on Apple Silicon. Thus,
+on Apple Silicon, TSan skips but ASan runs.
 
-There are six fuzz targets, each with a checked-in seed corpus under
-`tests/fuzz/corpus/` that it replays per commit.
+`./.github/scripts/ci-local.sh` (`just ci-fast`) is the faster inner loop. It
+does a whitespace check of the branch against `origin/main`, the complexity
+check, and the check for unlinked TODOs. It also does the build, the tests, a
+staged install, and a downstream `find_package(scry)` consumer.
 
-| Target | Exercises | Built as | Per-commit test |
+The showcase is a standalone project under `extras/showcase/`. The root build
+never configures it. `./.github/scripts/ci-showcase.sh` (`just showcase`) only
+builds it.
+
+There are six fuzz targets. Each target has a checked-in seed corpus under
+`tests/fuzz/corpus/`, and it replays that corpus on each commit.
+
+| Target | Tests | Build type | Per-commit test |
 |---|---|---|---|
 | `sse` | Kernel SSE parser | libFuzzer, `fuzz` preset | `protocol.sse-fuzz` |
 | `response_policy` | Kernel transport response policy | libFuzzer, `fuzz` preset | `transport.response_policy-fuzz` |
-| `json` | Kernel JSON layer: parse and validate agree, canonical text round-trips and is idempotent | libFuzzer, `fuzz` preset; also GCC corpus replay | `kernel.json-fuzz`, `kernel.json-fuzz-replay` |
+| `json` | Kernel JSON layer: parse and validate give the same result, and canonical text round-trips and is idempotent | libFuzzer, `fuzz` preset; also GCC corpus replay | `kernel.json-fuzz`, `kernel.json-fuzz-replay` |
 | `anthropic` | Anthropic stream decoder | GCC corpus replay | `provider.anthropic-fuzz-replay` |
 | `openai` | OpenAI-compatible stream decoder | GCC corpus replay | `provider.openai-fuzz-replay` |
 | `conversation` | Conversation persistence | GCC corpus replay | `runtime.conversation-fuzz-replay` |
 
-The kernel targets run under `.github/scripts/ci-fuzz-replay.sh`. The other
-three link the whole library, which only GCC compiles, so the ordinary test
-build links each to `tests/fuzz/replay_main.cpp` instead of libFuzzer: every GCC
-leg replays their corpora, with ASan and UBSan under the `asan` preset, but
-nothing runs a coverage-guided search on them. The JSON layer's acceptance
-boundary and canonical bytes are also pinned by golden fixtures, checked by
-`kernel.` tests; see [`tests/fixtures/json/`](../tests/fixtures/json/README.md).
+`.github/scripts/ci-fuzz-replay.sh` runs the kernel targets. The other three
+targets link the full library, and only GCC compiles that library. Thus, the
+ordinary test build links each of these targets to `tests/fuzz/replay_main.cpp`
+instead of libFuzzer. Each GCC leg replays their corpora. The `asan` preset
+replays them with ASan and UBSan. But no gate runs a coverage-guided search on
+these targets. Golden fixtures also lock the acceptance boundary and the
+canonical bytes of the JSON layer. The `kernel.` tests check these fixtures.
+For more information, see
+[`tests/fixtures/json/`](../tests/fixtures/json/README.md).
 
 ## End-to-end testing
 
-Start an OpenAI-compatible server and load a model, then run the live-model
-smoke when needed:
+Start an OpenAI-compatible server and load a model. Then, if necessary, run the
+live-model smoke:
 
 ```sh
 SCRY_LOCAL_MODEL_BASE_URL=http://127.0.0.1:11434/v1 \
@@ -214,40 +231,44 @@ SCRY_LOCAL_MODEL_MODEL=qwen3:8b \
 ./scripts/test-e2e.sh                        # just e2e with the same environment
 ```
 
-This builds `scry_local_model_smoke` from `tests/e2e/` and checks a complete
-chat and required tool round through the public API. Set
-`SCRY_LOCAL_MODEL_API_KEY` if the server requires authentication, and use
-`SCRY_LOCAL_MODEL_TIMEOUT_SECONDS` to override the 180-second timeout. GNU
-timeout is required; on macOS, install coreutils. Logs are written to
+This command builds `scry_local_model_smoke` from `tests/e2e/`. Through the
+public API, the smoke checks a full chat and a required tool round. If the
+server needs authentication, set `SCRY_LOCAL_MODEL_API_KEY`. To change the
+180-second timeout, set `SCRY_LOCAL_MODEL_TIMEOUT_SECONDS`. The script must have
+GNU timeout. On macOS, install coreutils. The script writes its log to
 `build/e2e-artifacts/local-model-smoke.log`.
 
-The smoke executable is excluded from default builds and ctest registration;
-only `scripts/test-e2e.sh` explicitly builds and runs it. CI checks are
-independent of a live model.
+Default builds and the ctest registration do not include the smoke executable.
+Only `scripts/test-e2e.sh` builds and runs it explicitly. The CI checks do not
+use a live model.
 
 ## Testing
 
-- **Test behavior at seams, not implementation inside them.** Tests target the
-  machine, adapter, and transport interfaces. If refactoring internals breaks a
-  test, the test was coupled to the wrong thing.
-- **Fakes over mocks.** A hand-written fake transport with scriptable responses
-  beats mock-framework expectations: fakes survive refactors and read as
-  documentation. The seams are few and narrow enough to fake properly.
-- **Determinism is non-negotiable.** No real sleeps, wall-clock time, or network
-  in unit tests; time is an injected event, so a fake clock makes backoff
-  testable to the millisecond. A flaky test is fixed or deleted the day it flakes.
-- **Every bug becomes a test before it becomes a fix**, usually a machine-level
-  event replay, committed with the fix permanently.
-- **Choose the relevant seam.** Machine tests cover transitions, adapters cover
-  wire mapping, runtime tests cover the pump and handles, and reflection tests
-  cover schemas and codecs. Transport and integration tests also use local
-  loopback HTTP/TLS servers; the optional local-model smoke uses a live model.
+- **Test behavior at the seams, not the implementation inside them.** Tests
+  target the machine, adapter, and transport interfaces. If a refactor of the
+  internals breaks a test, that test was coupled to the wrong thing.
+- **Use fakes, not mocks.** A hand-written fake transport with scriptable
+  responses is better than the expectations of a mock framework. Fakes continue
+  to work after refactors, and you can read them as documentation. The seams
+  are few and narrow, so you can fake them correctly.
+- **Tests must always be deterministic.** Do not use real sleeps, wall-clock
+  time, or the network in unit tests. Time is an injected event, so a fake
+  clock can test backoff to the millisecond. If a test is flaky, fix it or
+  delete it on the day that it flakes.
+- **Write a test for each bug before you write the fix.** This test is usually
+  an event replay at the machine level. Commit it with the fix, and keep it
+  permanently.
+- **Choose the correct seam.** Machine tests cover transitions. Adapter tests
+  cover wire mapping. Runtime tests cover the pump and the handles. Reflection
+  tests cover schemas and codecs. Transport and integration tests also use
+  local loopback HTTP/TLS servers. The optional local-model smoke uses a live
+  model.
 
 ## Testing downstream with `scry::testing`
 
-`scry::testing` is an optional package component that hands a consumer the same
-scripted-transport seam Scry's own suites use. It replaces the HTTP transfer and
-nothing else.
+`scry::testing` is an optional package component. It gives a consumer the same
+scripted-transport seam that the Scry test suites use. It replaces only the HTTP
+transfer.
 
 ```cmake
 find_package(scry CONFIG REQUIRED COMPONENTS testing)
@@ -265,49 +286,57 @@ auto harness = scry::testing::create_harness(my_config(), transport);
 ```
 
 `<scry/testing/scripted_transport.hpp>` and `<scry/testing/streams.hpp>` document
-the scripted statuses, failures, held transfers, and stream builders.
-`examples/testing_scripted.cpp` is a complete framework-free test in this shape;
-`tests/testing/scripted_transport_tests.cpp` is the Catch2 equivalent.
+the scripted statuses, the failures, the held transfers, and the stream builders.
+`examples/testing_scripted.cpp` is a complete test in this form, without a test
+framework. `tests/testing/scripted_transport_tests.cpp` is the equivalent test
+with Catch2.
 
 ## Mechanical limits
 
 - Top-level builds enable `-Wall -Wextra -Wconversion -Wshadow` and treat
   warnings as errors on GCC and Clang. `SCRY_WARNINGS_AS_ERRORS` controls this.
-- lizard: cyclomatic complexity must not exceed 15 and argument count must not
-  exceed 6, for C++ in `include src testing examples tests extras`.
-- clang-tidy: cognitive complexity must not exceed 25, with a checked-in check
-  list. The tidy script uses `SCRY_CLANG_TOOLING` and analyzes the kernel
-  (`scry_kernel`); it does not analyze the rest of `src/`, examples, or tests.
+- lizard: For C++ in `include src testing examples tests extras`, the
+  cyclomatic complexity must not be more than 15. The argument count must not
+  be more than 6.
+- clang-tidy: The cognitive complexity must not be more than 25. The repository
+  has the list of checks. The tidy script uses `SCRY_CLANG_TOOLING` and
+  analyzes the kernel (`scry_kernel`). It does not analyze the remaining code
+  in `src/`, examples, or tests.
 - The kernel is C++23 without reflection. Its sources compile without
-  `-freflection` and, under GCC, with `-Werror=c++26-extensions`, so a reflection
-  operator or annotation in anything they include fails the build;
-  `src/kernel/kernel.hpp` rejects a build that enables reflection; and
-  `kernel.include-boundary` fails when kernel code includes a public header
-  outside the allowlist or a `src/` header outside the kernel.
-- `// TODO` must link an issue or a URL. CI rejects any unlinked TODO outright.
+  `-freflection`. Under GCC, they also compile with `-Werror=c++26-extensions`.
+  Thus, if a file that they include has a reflection operator or annotation,
+  the build fails. `src/kernel/kernel.hpp` rejects a build that enables
+  reflection. `kernel.include-boundary` fails if kernel code includes a public
+  header that is not on the allowlist. It also fails if kernel code includes a
+  `src/` header that is not in the kernel.
+- A `// TODO` must link an issue or a URL. CI always rejects a TODO without a
+  link.
 
 ## Definition of done
 
-- `./scripts/ci.sh` ran, and any skipped legs are named.
-- Tests are added or updated; a bug fix includes its regression test.
-- [`docs/architecture.md`](architecture.md) is updated when behavior changes.
-- An example compiles the change when the public API changes.
-- A dependency change carries a written justification in the same commit.
+A change is done when you complete these steps:
+
+- Run `./scripts/ci.sh`, and name each leg that it skipped.
+- Add or update tests. For a bug fix, include its regression test.
+- If the behavior changes, update [`docs/architecture.md`](architecture.md).
+- If the public API changes, make sure that an example compiles the change.
+- If you change a dependency, write a justification in the same commit.
 
 ## Pull requests
 
-Trunk-based: short-lived branches, squash merge, conventional-commit messages,
-`main` always green and always releasable. The pull-request template carries the
-preflight, test coverage, and documentation checkboxes.
+The project is trunk-based. It uses short-lived branches, squash merges, and
+conventional-commit messages. `main` is always green and always releasable. The
+pull request template has three checkboxes: preflight, test coverage, and
+documentation.
 
 ## Releases
 
-1. Bump `project(VERSION ...)` in `CMakeLists.txt`. That is the version source of
-   truth; `<scry/version.hpp>` is generated from it.
-2. Update both the `find_package` version and FetchContent `GIT_TAG` in
-   `README.md`, the package version in `tests/package_consumer/CMakeLists.txt`,
-   and the version assertions in `tests/public_api_contract.cpp`.
+1. Increase the version in `project(VERSION ...)` in `CMakeLists.txt`. This is
+   the version source of truth. CMake generates `<scry/version.hpp>` from it.
+2. In `README.md`, update the `find_package` version and the FetchContent
+   `GIT_TAG`. In `tests/package_consumer/CMakeLists.txt`, update the package
+   version. In `tests/public_api_contract.cpp`, update the version assertions.
 3. Write `docs/releases/vX.Y.Z.md`.
-4. Check the tag first: `./scripts/check-release-tag.sh vX.Y.Z`.
-5. Push the tag. The release workflow re-runs the core gate against the tagged
-   tree, builds the API site, and publishes the release from those notes.
+4. Before you push the tag, check it: `./scripts/check-release-tag.sh vX.Y.Z`.
+5. Push the tag. The release workflow runs the core gate again on the tagged
+   tree. Then it builds the API site and publishes the release from those notes.
