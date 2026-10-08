@@ -70,10 +70,14 @@ public:
   Harness& operator=(const Harness&) = delete;
 
   /// Returns the Harness-owned additive tool registry.
+  ///
+  /// Must not be called on a moved-from Harness.
   /// @return Mutable registry for future turns.
   [[nodiscard]] ToolRegistry& tools() noexcept;
 
   /// Returns the Harness-owned additive tool registry.
+  ///
+  /// Must not be called on a moved-from Harness.
   /// @return Read-only registry view.
   [[nodiscard]] const ToolRegistry& tools() const noexcept;
 
