@@ -263,24 +263,6 @@ encode_messages(const ModelRequest& request, JoinedText& joined) {
   return {};
 }
 
-// The registered tools, then a typed turn's response tool.
-[[nodiscard]] Result<std::optional<std::vector<OpenAiTool>>>
-encode_tools(const ModelRequest& request) {
-  const auto registered = request.tools ? request.tools->size() : 0U;
-  if (registered == 0 && !request.response_tool) {
-    return std::nullopt;
-  }
-  std::vector<OpenAiTool> encoded{};
-  encoded.reserve(registered + 1U);
-  auto status = for_each_request_tool(request, [&encoded](const ToolDefinition& tool) {
-    return append_tool(encoded, tool);
-  });
-  if (!status) {
-    return std::unexpected(std::move(status.error()));
-  }
-  return encoded;
-}
-
 [[nodiscard]] std::string endpoint(const std::string& configured) {
   auto base_url = trim_trailing_slashes(configured);
   constexpr auto endpoint_path = std::string_view{"/v1/chat/completions"};
@@ -300,7 +282,7 @@ encode_tools(const ModelRequest& request) {
   if (!messages) {
     return std::unexpected(std::move(messages.error()));
   }
-  auto tools = encode_tools(request);
+  auto tools = encode_tools<OpenAiTool>(request, append_tool);
   if (!tools) {
     return std::unexpected(std::move(tools.error()));
   }

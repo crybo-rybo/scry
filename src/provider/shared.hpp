@@ -70,6 +70,28 @@ template <class Encode>
   return {};
 }
 
+// The registered tools, then a typed turn's response tool, as the dialect's wire
+// tools. `append` checks one tool and appends its wire form. A request without
+// tools yields nullopt rather than an empty list.
+template <typename Tool, typename Append>
+[[nodiscard]] Result<std::optional<std::vector<Tool>>>
+encode_tools(const ModelRequest& request, const Append& append) {
+  const auto registered = request.tools ? request.tools->size() : 0U;
+  if (registered == 0 && !request.response_tool) {
+    return std::nullopt;
+  }
+  std::vector<Tool> encoded{};
+  encoded.reserve(registered + 1U);
+  auto status =
+      for_each_request_tool(request, [&encoded, &append](const ToolDefinition& tool) {
+        return append(encoded, tool);
+      });
+  if (!status) {
+    return std::unexpected(std::move(status.error()));
+  }
+  return encoded;
+}
+
 [[nodiscard]] inline std::string trim_trailing_slashes(std::string url) {
   while (!url.empty() && url.back() == '/') {
     url.pop_back();
