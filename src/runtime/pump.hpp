@@ -40,7 +40,6 @@ public:
             std::shared_ptr<ConversationState> conversation, TurnRouteOptions options);
 
   [[nodiscard]] TurnId id() const noexcept;
-  [[nodiscard]] std::shared_ptr<std::atomic<bool>> cancel_flag() const noexcept;
   [[nodiscard]] bool cancel() noexcept;
   [[nodiscard]] bool disconnect() noexcept;
 
