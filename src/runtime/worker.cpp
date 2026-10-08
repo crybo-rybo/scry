@@ -2,6 +2,7 @@
 
 #include "kernel/retry.hpp"
 #include "kernel/sse.hpp"
+#include "runtime/config.hpp"
 
 #include <algorithm>
 #include <cassert>
@@ -17,8 +18,6 @@
 
 namespace scry::detail {
 namespace {
-
-constexpr std::size_t terminal_event_reserve = 512;
 
 [[nodiscard]] Error worker_error(const ErrorCategory category, std::string message,
                                  const TurnId turn_id,
