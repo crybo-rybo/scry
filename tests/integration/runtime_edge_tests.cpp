@@ -133,10 +133,18 @@ TEST_CASE("cancelling a pending retry wakes the worker without another attempt")
       });
   REQUIRE(turn);
   REQUIRE(fixture.server.wait_for_request(1));
+  // No public signal says that the worker has read the 503 and waits for its
+  // backoff, so the test gives the small transfer time to finish. This is not
+  // synchronization: a cancel that still lands during the transfer gives the
+  // same outcome, and only the backoff wake goes untested on that run.
+  std::this_thread::sleep_for(200ms);
 
-  // Without the wake, the 30 s backoff outlasts pump_until's deadline.
+  const auto cancelled_at = std::chrono::steady_clock::now();
   CHECK(turn->cancel());
   REQUIRE(pump_until(fixture.harness, [&cancelled] { return cancelled; }));
+  // Without the wake, the 30 s backoff outlasts pump_until's deadline. The
+  // bound only separates a wake from the full backoff.
+  CHECK(std::chrono::steady_clock::now() - cancelled_at < 5s);
   CHECK_FALSE(turn->cancel());
   CHECK(fixture.server.requests().size() == 1);
   CHECK(fixture.conversation.empty());
