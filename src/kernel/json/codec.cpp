@@ -49,11 +49,15 @@ Status validate_json_object(const std::string_view input, const ErrorCategory ca
     return status;
   }
   // A valid document starts, after whitespace, with its root's first byte.
-  const auto first = input.find_first_not_of(json_whitespace);
-  if (first == std::string_view::npos || input[first] != '{') {
+  if (!json_root_is_object(input)) {
     return std::unexpected(codec_error(category, failure_message));
   }
   return {};
+}
+
+bool json_root_is_object(const std::string_view text) noexcept {
+  const auto first = text.find_first_not_of(json_whitespace);
+  return first != std::string_view::npos && text[first] == '{';
 }
 
 Result<Json> canonicalize_json(const Json& json, const ErrorCategory category,

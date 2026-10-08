@@ -132,8 +132,7 @@ transport_request(const Config& config, std::string url,
 // as a JSON string is scanned here, since the codec only quotes it.
 [[nodiscard]] inline Status embedded_object_root(const std::string_view text,
                                                  const std::string_view message) {
-  const auto first = text.find_first_not_of(" \t\n\r");
-  if (first == std::string_view::npos || text[first] != '{') {
+  if (!json_root_is_object(text)) {
     return std::unexpected(
         make_error(ErrorCategory::invalid_config, std::string{message}));
   }

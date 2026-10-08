@@ -51,11 +51,6 @@ struct[[= reflection::ignore_unknown]] ConversationDocumentHeader {
   return invalid_document("Conversation document at " + detail::describe(failure));
 }
 
-[[nodiscard]] bool is_object_text(const std::string_view text) noexcept {
-  const auto first = text.find_first_not_of(" \t\n\r");
-  return first != std::string_view::npos && text[first] == '{';
-}
-
 // ---- Completeness ------------------------------------------------------------
 
 // The codec reads a member that has an initializer as optional, and every member
@@ -140,7 +135,7 @@ template <typename Type>
   }
   // Decoded arguments are canonical text, and encoding validates the stored text
   // as it splices it, so the first byte is all that is left to check.
-  if (!is_object_text(block.arguments.text)) {
+  if (!detail::json_root_is_object(block.arguments.text)) {
     return std::unexpected(
         invalid_document("Tool-call block field 'arguments' must be an object"));
   }
