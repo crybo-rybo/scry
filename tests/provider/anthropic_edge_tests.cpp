@@ -59,17 +59,23 @@ TEST_CASE("provider error tokens remain bounded and safe") {
 TEST_CASE("Anthropic content decoding covers text, tool, and rejection shapes") {
   auto text = anthropic_content("{\"type\":\"text\",\"text\":\"answer\"}", false);
   REQUIRE(text);
-  CHECK(std::get<TextBlock>(*text).text == "answer");
+  CHECK(std::get<TextBlock>(**text).text == "answer");
   auto streamed_tool = anthropic_content(
       "{\"type\":\"tool_use\",\"id\":\"id\",\"name\":\"lookup\",\"input\":{}}", true);
   REQUIRE(streamed_tool);
-  CHECK(std::get<ToolCallBlock>(*streamed_tool).arguments.text.empty());
+  CHECK(std::get<ToolCallBlock>(**streamed_tool).arguments.text.empty());
   auto tool =
       anthropic_content("{\"type\":\"tool_use\",\"id\":\"id\",\"name\":\"lookup\","
                         "\"input\":{\"x\":1}}",
                         false);
   REQUIRE(tool);
-  CHECK(std::get<ToolCallBlock>(*tool).arguments.text == "{\"x\":1}");
+  CHECK(std::get<ToolCallBlock>(**tool).arguments.text == "{\"x\":1}");
+  for (const auto json : {"{\"type\":\"thinking\",\"thinking\":\"hmm\"}",
+                          "{\"type\":\"redacted_thinking\",\"data\":\"x\"}"}) {
+    const auto skipped = anthropic_content(json, false);
+    REQUIRE(skipped);
+    CHECK_FALSE(*skipped);
+  }
   constexpr std::array invalid{
       "{}",
       "{\"type\":1}",

@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <fstream>
 #include <iterator>
+#include <optional>
 #include <scry/config.hpp>
 #include <scry/json.hpp>
 #include <string>
@@ -84,7 +85,7 @@ member_strings(const JsonView& owner, const std::string_view name,
 }
 
 // One Anthropic content block decoded as a stream event carries it.
-[[nodiscard]] inline Result<detail::ContentBlock>
+[[nodiscard]] inline Result<std::optional<detail::ContentBlock>>
 anthropic_content(const std::string_view json, const bool streaming_start) {
   return detail::decode_payload<detail::AnthropicContent>(json_view(json), "Anthropic")
       .and_then([streaming_start](detail::AnthropicContent content) {

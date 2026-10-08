@@ -998,7 +998,10 @@ After the finish reason and before `[DONE]`, the stream can have a chunk that
 has only usage. These
 conditions are protocol errors: missing, duplicate, or early terminal markers,
 and semantic content after finish. For Anthropic streams, Scry decodes Messages
-content blocks, usage, stop reasons, and tool-use arguments.
+content blocks, usage, stop reasons, and tool-use arguments. Scry ignores
+thinking and redacted thinking blocks. A compatible server can send these blocks
+without a request. Scry does not keep their text, and it does not send them
+back.
 
 The incremental SSE parser is in the kernel (`src/kernel/sse.cpp`). It handles
 byte splits at any position. A CR, LF, or
