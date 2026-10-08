@@ -8,17 +8,16 @@ add_executable(
   retry_timing_tests.cpp
   runtime_edge_tests.cpp
   tool_loop_tests.cpp
-  "${PROJECT_SOURCE_DIR}/tests/support/transport/loopback_server.cpp"
 )
+# The suite drives the public API against scry::testing's scripted server, so
+# it has no private include directory.
 target_include_directories(
   scry_harness_integration_tests
-  PRIVATE
-    "${PROJECT_SOURCE_DIR}/src"
-    "${PROJECT_SOURCE_DIR}/tests"
+  PRIVATE "${PROJECT_SOURCE_DIR}/tests"
 )
 target_link_libraries(
   scry_harness_integration_tests
-  PRIVATE Catch2::Catch2WithMain scry::scry scry_project_options
+  PRIVATE Catch2::Catch2WithMain scry::testing scry_project_options
 )
 catch_discover_tests(
   scry_harness_integration_tests

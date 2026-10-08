@@ -1,9 +1,7 @@
-#include "runtime/test_access.hpp"
 #include "support/harness_test_support.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 #include <cstddef>
-#include <memory>
 #include <scry/conversation.hpp>
 #include <scry/harness.hpp>
 #include <scry/json.hpp>
@@ -23,11 +21,10 @@ namespace {
   return config;
 }
 
+// No test pumps these turns, so they stay pending and need no server.
 [[nodiscard]] scry::Result<scry::Harness>
-fake_harness(const std::size_t conversation_bytes = 1024) {
-  return scry::detail::HarnessTestAccess::create(
-      bounded_config(conversation_bytes), provider(),
-      std::make_unique<scry::test::FakeTransport>());
+idle_harness(const std::size_t conversation_bytes = 1024) {
+  return scry::Harness::create(bounded_config(conversation_bytes));
 }
 
 // anthropic_text_stream with a bare content block ahead of the real one: the
@@ -108,7 +105,7 @@ TEST_CASE("Conversation persistence excludes busy and uncommitted turn state") {
   auto committed = conversation->to_json();
   REQUIRE(committed);
 
-  auto first_harness = fake_harness();
+  auto first_harness = idle_harness();
   REQUIRE(first_harness);
   auto pending = first_harness->send(*conversation, "not committed");
   REQUIRE(pending);
@@ -119,14 +116,14 @@ TEST_CASE("Conversation persistence excludes busy and uncommitted turn state") {
 
   auto restored = scry::Conversation::from_json(*while_busy);
   REQUIRE(restored);
-  auto second_harness = fake_harness();
+  auto second_harness = idle_harness();
   REQUIRE(second_harness);
   auto accepted = second_harness->send(*restored, "accepted because restored is idle");
   REQUIRE(accepted);
 
   auto bounded = scry::Conversation::from_json(*committed);
   REQUIRE(bounded);
-  auto bounded_harness = fake_harness(15);
+  auto bounded_harness = idle_harness(15);
   REQUIRE(bounded_harness);
   auto over_limit = bounded_harness->send(*bounded, "x");
   REQUIRE_FALSE(over_limit);
@@ -135,7 +132,7 @@ TEST_CASE("Conversation persistence excludes busy and uncommitted turn state") {
 
 TEST_CASE("an empty text block never reaches the committed Anthropic history") {
   auto fixture = make_harness_fixture(
-      test_config(), {scripted_exchange(leading_empty_text_stream("answered"))});
+      test_config(), {scripted_response(leading_empty_text_stream("answered"))});
 
   const auto completion =
       fixture.harness.send_and_wait(fixture.conversation, "empty block first");
@@ -151,7 +148,7 @@ TEST_CASE("an empty text block never reaches the committed Anthropic history") {
 
 TEST_CASE("an Anthropic response with only an empty text block fails the turn") {
   auto fixture = make_harness_fixture(test_config(),
-                                      {scripted_exchange(anthropic_text_stream(""))});
+                                      {scripted_response(anthropic_text_stream(""))});
 
   const auto completion =
       fixture.harness.send_and_wait(fixture.conversation, "nothing at all");
@@ -164,8 +161,7 @@ TEST_CASE("an Anthropic response with only an empty text block fails the turn") 
 
 TEST_CASE("an OpenAI response that streams no content fails the turn") {
   auto fixture = make_harness_fixture(openai_test_config(),
-                                      {scripted_exchange(openai_text_stream(""))},
-                                      scry::ProviderDialect::openai_compatible);
+                                      {scripted_response(openai_text_stream(""))});
 
   const auto completion =
       fixture.harness.send_and_wait(fixture.conversation, "nothing at all");
@@ -178,8 +174,7 @@ TEST_CASE("an OpenAI response that streams no content fails the turn") {
 
 TEST_CASE("an OpenAI text completion still round-trips through persistence") {
   auto fixture = make_harness_fixture(openai_test_config(),
-                                      {scripted_exchange(openai_text_stream("sunny"))},
-                                      scry::ProviderDialect::openai_compatible);
+                                      {scripted_response(openai_text_stream("sunny"))});
 
   const auto completion =
       fixture.harness.send_and_wait(fixture.conversation, "weather?");

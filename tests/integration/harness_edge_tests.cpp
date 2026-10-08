@@ -1,16 +1,12 @@
-#include "runtime/test_access.hpp"
 #include "support/harness_test_support.hpp"
 
-#include <atomic>
 #include <catch2/catch_test_macros.hpp>
 #include <memory>
 #include <optional>
 #include <scry/scry.hpp>
 #include <stdexcept>
-#include <stop_token>
 #include <string>
 #include <string_view>
-#include <thread>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -30,14 +26,6 @@ const std::string correlated_stream =
 const std::string tool_stream =
     anthropic_tool_stream({{.id = "call_1", .name = "lookup"}}, "msg_tool", "end_turn");
 
-[[nodiscard]] scry::Result<scry::Harness>
-fake_harness(scry::Config config, scry::test::ScriptedExchange scripted) {
-  auto fake = std::make_unique<scry::test::FakeTransport>();
-  fake->enqueue(std::move(scripted));
-  return scry::detail::HarnessTestAccess::create(std::move(config), provider(),
-                                                 std::move(fake));
-}
-
 // A single text delta larger than the part of the test's tightened event-queue
 // budget left for streamed events once the terminal reserve is held back.
 [[nodiscard]] std::string large_delta_stream() {
@@ -52,69 +40,14 @@ fake_harness(scry::Config config, scry::test::ScriptedExchange scripted) {
   };
 }
 
-class FailingProvider final : public scry::detail::ProviderAdapter {
-public:
-  [[nodiscard]] scry::Result<scry::detail::TransportRequest>
-  make_request(const scry::Config&, const scry::detail::ModelRequest&) const override {
-    return std::unexpected(scry::Error{
-        .category = scry::ErrorCategory::protocol,
-        .message = "provider could not construct the request",
-    });
-  }
-
-  [[nodiscard]] scry::Status
-  parse_stream_event(std::string_view, std::string_view,
-                     scry::detail::ProviderDecodeState&,
-                     std::vector<scry::detail::ProviderEvent>&) const override {
-    return {};
-  }
-};
-
-class DuplicateCompletionProvider final : public scry::detail::ProviderAdapter {
-public:
-  [[nodiscard]] scry::Result<scry::detail::TransportRequest>
-  make_request(const scry::Config& config,
-               const scry::detail::ModelRequest&) const override {
-    return scry::detail::TransportRequest{
-        .url = config.base_url,
-        .tls_verify_peer = config.tls_verify_peer,
-        .timeouts = config.timeouts,
-        .limits = config.limits,
-    };
-  }
-
-  [[nodiscard]] scry::Status
-  parse_stream_event(std::string_view, std::string_view,
-                     scry::detail::ProviderDecodeState&,
-                     std::vector<scry::detail::ProviderEvent>& out) const override {
-    const auto completed = scry::detail::ProviderCompleted{
-        .response =
-            scry::detail::ModelResponse{
-                .finish_reason = scry::FinishReason::completed,
-            },
-    };
-    out.push_back(completed);
-    out.push_back(completed);
-    return {};
-  }
-};
-
-// Deliberately violates the transport seam contract by throwing; the shared
-// fake reports failures as values and cannot express this.
-class ThrowingTransport final : public scry::detail::Transport {
-public:
-  [[nodiscard]] scry::Result<scry::detail::TransportResult>
-  perform(const scry::detail::TransportRequest&, std::stop_token,
-          const std::atomic<bool>&, scry::detail::BodyChunkSink&) override {
-    throw std::runtime_error{"transport escaped its failure contract"};
-  }
-};
-
 } // namespace
 
 TEST_CASE("moved-from public runtime handles remain safely observable") {
-  auto harness_result =
-      fake_harness(test_config(), scripted_exchange(completed_stream));
+  auto server = start_server();
+  server.enqueue(scripted_response(completed_stream));
+  auto config = test_config();
+  config.base_url = server.url();
+  auto harness_result = scry::Harness::create(config);
   REQUIRE(harness_result);
   auto harness = std::move(*harness_result);
   auto conversation_result = scry::Conversation::create();
@@ -149,7 +82,7 @@ TEST_CASE("a Turn does not cancel after its Harness has been destroyed") {
   scry::TurnId accepted_id{};
   {
     auto fixture =
-        make_harness_fixture(test_config(), {scripted_exchange(completed_stream)});
+        make_harness_fixture(test_config(), {scripted_response(completed_stream)});
     auto turn = fixture.harness.send(fixture.conversation, "outlive the harness");
     REQUIRE(turn);
     accepted_id = turn->id();
@@ -164,8 +97,9 @@ TEST_CASE("a Turn does not cancel after its Harness has been destroyed") {
 }
 
 TEST_CASE("a completed turn publishes its history, busy state, and finished flag") {
-  auto harness =
-      unwrap(fake_harness(test_config(), scripted_exchange(completed_stream)));
+  auto fixture =
+      make_harness_fixture(test_config(), {scripted_response(completed_stream)});
+  auto& harness = fixture.harness;
   auto conversation =
       unwrap(scry::Conversation::create({.system_prompt = "Be brief."}));
   CHECK(conversation.system_prompt() == "Be brief.");
@@ -201,7 +135,7 @@ TEST_CASE("a completed turn publishes its history, busy state, and finished flag
 
 TEST_CASE("a turn without on_finished still reports finished once update runs") {
   auto fixture =
-      make_harness_fixture(test_config(), {scripted_exchange(completed_stream)});
+      make_harness_fixture(test_config(), {scripted_response(completed_stream)});
 
   const auto turn = unwrap(fixture.harness.send(fixture.conversation, "question"));
   CHECK_FALSE(turn.finished());
@@ -212,8 +146,8 @@ TEST_CASE("a turn without on_finished still reports finished once update runs") 
 }
 
 TEST_CASE("Harness::cancel addresses an in-flight turn by identifier") {
-  // A held exchange blocks the worker mid-transfer until the turn is cancelled.
-  auto [transport, harness, conversation] =
+  // A held response keeps the transfer in flight until the turn is cancelled.
+  auto [server, harness, conversation] =
       make_harness_fixture(test_config(), {{.hold = true}});
 
   bool cancelled = false;
@@ -227,7 +161,7 @@ TEST_CASE("Harness::cancel addresses an in-flight turn by identifier") {
                                                         scry::ErrorCategory::cancelled;
                                   },
                           }));
-  transport->wait_for_call(1);
+  REQUIRE(server.wait_for_request(1));
 
   CHECK_FALSE(harness.cancel(scry::TurnId{999}));
   CHECK(harness.cancel(turn.id()));
@@ -240,8 +174,8 @@ TEST_CASE("Harness::cancel addresses an in-flight turn by identifier") {
 }
 
 TEST_CASE("Harness::disconnect stops delivery while the turn still runs") {
-  // A held exchange blocks the worker mid-transfer until the turn is cancelled.
-  auto [transport, harness, conversation] =
+  // A held response keeps the transfer in flight until the turn is cancelled.
+  auto [server, harness, conversation] =
       make_harness_fixture(test_config(), {{.hold = true}});
 
   std::string streamed;
@@ -254,7 +188,7 @@ TEST_CASE("Harness::disconnect stops delivery while the turn still runs") {
           .on_finished =
               [&reported](scry::Result<scry::Completion>) { reported = true; },
       }));
-  transport->wait_for_call(1);
+  REQUIRE(server.wait_for_request(1));
 
   CHECK_FALSE(harness.disconnect(scry::TurnId{999}));
   CHECK(harness.disconnect(turn.id()));
@@ -276,20 +210,10 @@ TEST_CASE("construction and synchronous admission failures are immediate") {
   REQUIRE_FALSE(public_invalid);
   CHECK(public_invalid.error().category == scry::ErrorCategory::invalid_config);
 
-  auto fake = std::make_unique<scry::test::FakeTransport>();
-  auto invalid =
-      scry::detail::HarnessTestAccess::create(scry::Config{}, nullptr, std::move(fake));
-  REQUIRE_FALSE(invalid);
-  auto null_provider = scry::detail::HarnessTestAccess::create(
-      test_config(), nullptr, std::make_unique<scry::test::FakeTransport>());
-  REQUIRE_FALSE(null_provider);
-  auto null_transport =
-      scry::detail::HarnessTestAccess::create(test_config(), provider(), nullptr);
-  REQUIRE_FALSE(null_transport);
-
+  // Admission fails before any transfer, so this Harness needs no server.
   auto config = test_config();
   config.limits.max_conversation_bytes = 1;
-  auto harness = fake_harness(config, scripted_exchange(completed_stream));
+  auto harness = scry::Harness::create(config);
   auto prompted = scry::Conversation::create({.system_prompt = "too large"});
   auto empty = scry::Conversation::create();
   REQUIRE(harness);
@@ -303,7 +227,7 @@ TEST_CASE("construction and synchronous admission failures are immediate") {
 
 TEST_CASE("a rejected send leaves the conversation and tool registry reusable") {
   auto fixture =
-      make_harness_fixture(test_config(), {scripted_exchange(completed_stream)});
+      make_harness_fixture(test_config(), {scripted_response(completed_stream)});
   auto& harness = fixture.harness;
   REQUIRE(harness.tools().add_dynamic(tool(), static_handler(R"({"ok":true})")));
 
@@ -312,7 +236,7 @@ TEST_CASE("a rejected send leaves the conversation and tool registry reusable") 
   CHECK(rejected.error().category == scry::ErrorCategory::invalid_argument);
   CHECK(fixture.conversation.empty());
   CHECK_FALSE(fixture.conversation.busy());
-  CHECK(fixture.transport->requests().empty());
+  CHECK(fixture.server.requests().empty());
 
   auto added_after_rejection = tool();
   added_after_rejection.name = "added_after_rejection";
@@ -326,31 +250,24 @@ TEST_CASE("a rejected send leaves the conversation and tool registry reusable") 
   CHECK(fixture.conversation.message_count() == 2);
   CHECK_FALSE(fixture.conversation.busy());
 
-  const auto requests = fixture.transport->requests();
+  const auto requests = fixture.server.requests();
   REQUIRE(requests.size() == 1);
   CHECK(requests.front().body.find("coverage_tool") != std::string::npos);
   CHECK(requests.front().body.find("added_after_rejection") != std::string::npos);
 }
 
+// An Anthropic in-stream error event can carry a request id of any size, so a
+// real server can make the terminal error larger than the worker's reserve.
 TEST_CASE("oversized terminal diagnostics are bounded before publication") {
-  auto fake = std::make_unique<scry::test::FakeTransport>();
-  fake->enqueue(scry::test::ScriptedExchange{
-      .result = std::unexpected(scry::Error{
-          .category = scry::ErrorCategory::network,
-          .attempt = 9,
-          .message = std::string(600, 'm'),
-          .provider_detail = std::string(600, 'd'),
-          .turn_id = scry::TurnId{.value = 999},
-          .provider_request_id = std::string(600, 'r'),
-      }),
-  });
-  auto harness = scry::detail::HarnessTestAccess::create(test_config(), provider(),
-                                                         std::move(fake));
-  auto conversation = scry::Conversation::create();
-  REQUIRE(harness);
-  REQUIRE(conversation);
+  const auto error_stream =
+      "event: error\ndata: "
+      R"({"type":"error","error":{"type":"overloaded_error","message":"busy"},)"
+      R"("request_id":")" +
+      std::string(600, 'r') + "\"}\n\n";
+  auto fixture = make_harness_fixture(test_config(), {scripted_response(error_stream)});
 
-  auto completion = harness->send_and_wait(*conversation, "bound the diagnostic");
+  auto completion =
+      fixture.harness.send_and_wait(fixture.conversation, "bound the diagnostic");
 
   REQUIRE_FALSE(completion);
   CHECK(completion.error().category == scry::ErrorCategory::network);
@@ -358,56 +275,52 @@ TEST_CASE("oversized terminal diagnostics are bounded before publication") {
         "turn failed; diagnostic exceeded the event buffer");
   CHECK(completion.error().provider_detail.empty());
   CHECK(completion.error().provider_request_id.empty());
-  REQUIRE(completion.error().turn_id);
-  CHECK(completion.error().turn_id->value != 999);
+  CHECK(completion.error().turn_id);
   CHECK(completion.error().attempt == 1);
 }
 
 TEST_CASE("accepted results redact the configured API key from correlation fields") {
+  // A key that the provider-detail sanitizer keeps, so an error body can echo it.
   auto config = test_config();
-  auto fake = std::make_unique<scry::test::FakeTransport>();
-  fake->enqueue({
-      .result = std::unexpected(scry::Error{
-          .category = scry::ErrorCategory::network,
-          .retryable = true,
-          .message = "transport echoed sanitized-test-key",
-          .provider_detail = "sanitized-test-key",
-          .provider_request_id = "request-sanitized-test-key",
-      }),
-  });
-  fake->enqueue(scripted_exchange(completed_stream, config.api_key));
-  auto harness =
-      scry::detail::HarnessTestAccess::create(config, provider(), std::move(fake));
-  auto failed_conversation = scry::Conversation::create();
-  auto completed_conversation = scry::Conversation::create();
-  REQUIRE(harness);
-  REQUIRE(failed_conversation);
-  REQUIRE(completed_conversation);
+  config.api_key = "scripted_secret_key";
+  auto fixture = make_harness_fixture(
+      config, {
+                  {
+                      .status = 500,
+                      .headers = {{.name = "request-id",
+                                   .value = "request-scripted_secret_key"}},
+                      .body_chunks = {anthropic_error_body("scripted_secret_key")},
+                  },
+                  scripted_response(completed_stream, config.api_key),
+              });
+  auto completed_conversation = unwrap(scry::Conversation::create());
 
   const auto failure =
-      harness->send_and_wait(*failed_conversation, "redact the failure");
+      fixture.harness.send_and_wait(fixture.conversation, "redact the failure");
   REQUIRE_FALSE(failure);
+  CHECK(failure.error().http_status == 500);
   CHECK(failure.error().message.find(config.api_key) == std::string::npos);
   CHECK(failure.error().provider_detail.empty());
   CHECK(failure.error().provider_request_id.empty());
 
   const auto completion =
-      harness->send_and_wait(*completed_conversation, "redact the completion");
+      fixture.harness.send_and_wait(completed_conversation, "redact the completion");
   REQUIRE(completion);
   CHECK(completion->provider_request_id.empty());
 }
 
 // The exchange a completion carries is reserved against the Conversation budget
 // by the machine, so the queue charges the completion only its correlation id.
-// An id past the terminal reserve is dropped rather than failing the turn;
-// transport policy caps a real one at 256 bytes, well inside that reserve.
+// Transport policy caps a header id at 256 bytes, well inside the terminal
+// reserve. An id from the stream has no such cap, and one past the reserve is
+// dropped rather than failing the turn.
 TEST_CASE("a completion is never charged against the queue limit") {
   auto config = test_config();
   config.limits.max_queued_event_bytes_per_turn = 1024;
 
   SECTION("a correlation id within the terminal reserve is delivered intact") {
     auto fixture = make_harness_fixture(
-        config, {scripted_exchange(completed_stream, std::string(256, 'r'))});
+        config, {scripted_response(completed_stream, std::string(256, 'r'))});
 
     auto completion =
         fixture.harness.send_and_wait(fixture.conversation, "correlated completion");
@@ -419,7 +332,8 @@ TEST_CASE("a completion is never charged against the queue limit") {
 
   SECTION("a correlation id past the terminal reserve is dropped, not failed") {
     auto fixture = make_harness_fixture(
-        config, {scripted_exchange(completed_stream, std::string(600, 'r'))});
+        config, {scripted_response(anthropic_text_stream(
+                    "coverage answer", "msg_large_id", std::string(600, 'r')))});
 
     auto completion =
         fixture.harness.send_and_wait(fixture.conversation, "oversized completion");
@@ -435,19 +349,21 @@ TEST_CASE("an oversized streamed delta terminates with a queue-limit error") {
   auto config = test_config();
   config.limits.max_queued_event_bytes_per_turn = 1024;
   auto fixture =
-      make_harness_fixture(config, {scripted_exchange(large_delta_stream())});
+      make_harness_fixture(config, {scripted_response(large_delta_stream())});
 
   auto completion =
       fixture.harness.send_and_wait(fixture.conversation, "oversized delta");
 
+  // The queue rejects the delta inside the transport's response sink, and the
+  // transport reports a sink failure with a fixed message of its own.
   REQUIRE_FALSE(completion);
   CHECK(completion.error().category == scry::ErrorCategory::resource_limit);
-  CHECK(completion.error().message == "turn events exceed the configured queue limit");
+  CHECK(completion.error().message == "response consumer rejected response data");
   CHECK(fixture.conversation.empty());
 }
 
 TEST_CASE("tool content and finish reason must agree before dispatch") {
-  auto fixture = make_harness_fixture(test_config(), {scripted_exchange(tool_stream)});
+  auto fixture = make_harness_fixture(test_config(), {scripted_response(tool_stream)});
 
   auto completion =
       fixture.harness.send_and_wait(fixture.conversation, "request a tool");
@@ -461,7 +377,7 @@ TEST_CASE("tool content and finish reason must agree before dispatch") {
 
 TEST_CASE("stream correlation wins over transport correlation") {
   auto fixture = make_harness_fixture(
-      test_config(), {scripted_exchange(correlated_stream, "transport-request")});
+      test_config(), {scripted_response(correlated_stream, "transport-request")});
 
   auto completion =
       fixture.harness.send_and_wait(fixture.conversation, "preserve correlation");
@@ -471,59 +387,10 @@ TEST_CASE("stream correlation wins over transport correlation") {
   CHECK(completion->text == "correlated");
 }
 
-TEST_CASE("provider request construction failures do not reach transport") {
-  auto fake = std::make_unique<scry::test::FakeTransport>();
-  auto* observer = fake.get();
-  auto harness = scry::detail::HarnessTestAccess::create(
-      test_config(), std::make_unique<FailingProvider>(), std::move(fake));
-  auto conversation = scry::Conversation::create();
-  REQUIRE(harness);
-  REQUIRE(conversation);
-
-  auto completion = harness->send_and_wait(*conversation, "fail before transport");
-
-  REQUIRE_FALSE(completion);
-  CHECK(completion.error().category == scry::ErrorCategory::protocol);
-  CHECK(completion.error().message == "provider could not construct the request");
-  CHECK(observer->requests().empty());
-}
-
-TEST_CASE("duplicate provider completions terminate the accepted turn") {
-  auto fake = std::make_unique<scry::test::FakeTransport>();
-  fake->enqueue(scripted_exchange("data: {}\n\n"));
-  auto harness = scry::detail::HarnessTestAccess::create(
-      test_config(), std::make_unique<DuplicateCompletionProvider>(), std::move(fake));
-  auto conversation = scry::Conversation::create();
-  REQUIRE(harness);
-  REQUIRE(conversation);
-
-  auto completion = harness->send_and_wait(*conversation, "duplicate completion");
-
-  REQUIRE_FALSE(completion);
-  CHECK(completion.error().category == scry::ErrorCategory::protocol);
-  CHECK(completion.error().message ==
-        "provider stream emitted more than one completion");
-}
-
-TEST_CASE("worker exceptions are contained and reported through the turn") {
-  auto harness = scry::detail::HarnessTestAccess::create(
-      test_config(), provider(), std::make_unique<ThrowingTransport>());
-  auto conversation = scry::Conversation::create();
-  REQUIRE(harness);
-  REQUIRE(conversation);
-
-  auto completion = harness->send_and_wait(*conversation, "contain exception");
-
-  REQUIRE_FALSE(completion);
-  CHECK(completion.error().category == scry::ErrorCategory::invalid_state);
-  CHECK(completion.error().message == "worker could not process the accepted turn");
-  CHECK(conversation->empty());
-}
-
 TEST_CASE("send_and_wait disconnects its turn when another turn's callback throws") {
   auto fixture = make_harness_fixture(
-      test_config(), {scripted_exchange(anthropic_text_stream("first")),
-                      scripted_exchange(anthropic_text_stream("second"))});
+      test_config(), {scripted_response(anthropic_text_stream("first")),
+                      scripted_response(anthropic_text_stream("second"))});
   // The throwing turn is accepted first, so its delta is delivered inside the
   // wait below and unwinds send_and_wait before its own turn terminates.
   auto first = unwrap(fixture.harness.send(
@@ -547,7 +414,7 @@ TEST_CASE("send_and_wait disconnects its turn when another turn's callback throw
 // runtime needed while the turn was running.
 TEST_CASE("a finished turn releases its callback captures while its handle lives") {
   auto fixture =
-      make_harness_fixture(test_config(), {scripted_exchange(completed_stream)});
+      make_harness_fixture(test_config(), {scripted_response(completed_stream)});
   auto captured = std::make_shared<int>(5);
   const std::weak_ptr<int> observed = captured;
   bool finished = false;
