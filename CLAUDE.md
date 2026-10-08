@@ -23,7 +23,7 @@ Do not implement or promise behavior that these sources do not cover.
 ## Commands
 
 ```sh
-./scripts/test.sh                   # configure, build, and run ctest (dev preset)
+./scripts/test.sh                   # configure, build, parallel ctest (dev preset)
 ./scripts/test.sh -R 'runtime\.'    # one suite, or one case by name
 PRESET=asan ./scripts/test.sh       # presets: dev asan tsan
 ./scripts/format.sh --fix           # --check to verify only

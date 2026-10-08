@@ -100,11 +100,13 @@ template <typename Predicate>
 // Wall-clock variant for suites driving a live endpoint, where progress depends
 // on the network rather than on a bounded number of updates. The final update
 // and check after the deadline keep a transfer that landed right on the
-// deadline from being reported as a timeout.
+// deadline from being reported as a timeout. The default only guards against a
+// hang, so it stays below the ctest TIMEOUT of 15 s but above any bound that a
+// caller checks afterwards.
 template <typename Predicate>
-[[nodiscard]] bool
-pump_until_deadline(scry::Harness& harness, Predicate&& predicate,
-                    const std::chrono::milliseconds timeout = std::chrono::seconds{2}) {
+[[nodiscard]] bool pump_until_deadline(
+    scry::Harness& harness, Predicate&& predicate,
+    const std::chrono::milliseconds timeout = std::chrono::seconds{10}) {
   const auto deadline = std::chrono::steady_clock::now() + timeout;
   while (std::chrono::steady_clock::now() < deadline) {
     static_cast<void>(harness.update());

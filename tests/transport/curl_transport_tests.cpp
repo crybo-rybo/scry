@@ -344,8 +344,10 @@ TEST_CASE("curl transport fails a silent response after the idle bound") {
   // the limit until the averaging window rolls past it. Measured on curl 8.7.1
   // (and reproducible with the stock curl CLI on a POST): failure lands at
   // roughly idle + 6 s, against idle + 0.05 s for a GET. The guarantee under
-  // test is that a permanently silent response fails instead of hanging.
-  CHECK(elapsed < 20s);
+  // test is that a permanently silent response fails instead of hanging. The
+  // bound stays below this suite's ctest TIMEOUT of 15 s, so a slow failure
+  // reports here instead of as a timeout.
+  CHECK(elapsed < 12s);
 }
 
 TEST_CASE("curl transport fails a held response after the total transfer bound") {

@@ -40,7 +40,7 @@ The presets select `g++-16`. If your compiler has a different name or path, set
 ## Commands
 
 ```sh
-./scripts/test.sh                  # configure, build, and run ctest (dev preset)
+./scripts/test.sh                  # configure, build, parallel ctest (dev preset)
 ./scripts/test.sh -R 'runtime\.'   # the script sends extra arguments to ctest
 PRESET=asan ./scripts/test.sh      # or PRESET=tsan
 ./scripts/format.sh --fix          # --check (the default) only verifies

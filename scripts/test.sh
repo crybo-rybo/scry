@@ -11,4 +11,4 @@ preset="${PRESET:-dev}"
 
 cmake --preset "${preset}" -DCMAKE_CXX_COMPILER="${CXX:-g++-16}"
 cmake --build "build/${preset}"
-ctest --test-dir "build/${preset}" --output-on-failure --no-tests=error "$@"
+ctest --test-dir "build/${preset}" --parallel --output-on-failure --no-tests=error "$@"
