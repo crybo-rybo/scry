@@ -221,6 +221,47 @@ TEST_CASE("an invalid answer goes back to the model, which corrects it") {
   require_answer_only_as_text(conversation);
 }
 
+// The prose beside a rejected answer stays in history as an assistant message of
+// its own, directly before the assistant message that carries the accepted
+// answer. The Messages API takes one message per role turn, so the next request
+// must merge the two.
+TEST_CASE("an Anthropic follow-up after a rejected answer alternates roles") {
+  ScriptedTransport transport;
+  transport.enqueue(scripted(scry::testing::anthropic_text_tool_stream(
+      "Let me answer.",
+      {respond("toolu_1", R"({"supported":"no","reason":"It is rock."})")},
+      "msg_first")));
+  transport.enqueue(scripted(scry::testing::anthropic_text_tool_stream(
+      "Checked the almanac.", {respond("toolu_2", valid_answer)}, "msg_second")));
+  transport.enqueue(scripted(scry::testing::anthropic_text_stream("Anything else?")));
+  auto harness = unwrap(scry::testing::create_harness(anthropic_config(), transport));
+  auto conversation = unwrap(scry::Conversation::create());
+
+  const auto answered =
+      unwrap(harness.ask<Verdict>(conversation, "Is the moon made of cheese?"));
+  CHECK(answered.completion.answer_attempt_count == 2);
+  CHECK(answered.completion.text == "Checked the almanac.");
+  REQUIRE(conversation.message_count() == 3);
+  require_answer_only_as_text(conversation);
+
+  static_cast<void>(unwrap(harness.send_and_wait(conversation, "Thanks.")));
+  const auto follow_up = transport.requests().back().body;
+  const auto body = unwrap(scry::JsonView::parse(scry::Json{.text = follow_up}));
+  const auto messages = body.find("messages");
+  REQUIRE(messages);
+  std::vector<std::string> roles;
+  for (std::size_t index = 0; index < messages->size(); ++index) {
+    const auto role = messages->at(index).value().find("role").value().string();
+    REQUIRE(role);
+    roles.emplace_back(*role);
+  }
+  CHECK(roles == std::vector<std::string>{"user", "assistant", "user"});
+  CHECK_FALSE(contains(follow_up, "respond"));
+  CHECK_FALSE(contains(follow_up, "tool_use"));
+  CHECK(contains(follow_up, "Let me answer."));
+  CHECK(contains(follow_up, escaped(canonical_answer)));
+}
+
 // Past max_tool_calls_per_turn a plain turn is told to answer without tools, but
 // a typed turn still requires a tool call and can only end on its response tool,
 // so the refusal names that tool. A dynamic format with its own name and host
