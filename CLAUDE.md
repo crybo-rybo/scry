@@ -43,6 +43,8 @@ CI uses clang-format 22 and clang-tidy 22.
   transport seam and curl), `core/` (neutral model, provider seam), `machine/`
   (sans-I/O turn machine), `provider/` (Anthropic, OpenAI-compatible),
   `runtime/` (worker, pump, registry, conversation), `reflection/` (JSON bridge).
+- `testing/`: the sources of the optional `scry::testing` library. Its headers
+  are in `include/scry/testing/`.
 - `tests/`, `examples/`, `extras/showcase/` (a standalone project that the root
   build never configures), `scripts/` (build, test, format, lint), `cmake/`,
   `docs/`.
