@@ -498,19 +498,7 @@ Status WorkerActor::publish_text_delta(PublishTextDelta delta) {
 // worker hands it to that reserve.
 void WorkerActor::publish_terminal_command(MachineCommand command) {
   if (auto* completion = std::get_if<CommitCompletion>(&command)) {
-    publish_terminal_event(CompletionEvent{
-        .turn_id = completion->turn_id,
-        .transcript = std::move(completion->transcript),
-        .finish_reason = completion->finish_reason,
-        .usage = completion->usage,
-        .attempt_count = completion->attempt_count,
-        .provider_request_id = std::move(completion->provider_request_id),
-        .tool_round_count = completion->tool_round_count,
-        .tool_call_count = completion->tool_call_count,
-        .unexecuted_tool_calls = std::move(completion->unexecuted_tool_calls),
-        .answered = completion->answered,
-        .answer_attempt_count = completion->answer_attempt_count,
-    });
+    publish_terminal_event(CompletionEvent{std::move(*completion)});
     return;
   }
   if (auto* error = std::get_if<PublishError>(&command)) {
