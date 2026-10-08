@@ -97,13 +97,17 @@ boundary and the canonical bytes of the JSON layer. For more information, see
 - **Test behavior at the seams, not the implementation inside them.** Tests
   target the machine, adapter, and transport interfaces. If a refactor of the
   internals breaks a test, that test was coupled to the wrong thing.
-- **Use fakes, not mocks.** A hand-written fake transport with scriptable
-  responses is better than the expectations of a mock framework. Fakes continue
-  to work after refactors, and you can read them as documentation.
+- **Use fakes, not mocks.** A scripted server with scripted responses is better
+  than the expectations of a mock framework. Fakes continue to work after
+  refactors, and you can read them as documentation.
 - **Tests must always be deterministic.** Do not use real sleeps, wall-clock
   time, or the network in unit tests. Time is an injected event, so a fake
   clock can test backoff to the millisecond. Transport and integration tests
-  use local loopback HTTP/TLS servers.
+  use local loopback HTTP/TLS servers. The integration tests use only the
+  public API and `scry::testing::ScriptedServer`. They wait for a request, a
+  hold, or a callback, and never sleep to synchronize. A retry in these tests
+  waits in real time. Thus a test of a delay checks a lower bound, and it
+  checks an upper bound only to find a hang.
 - **Write a test for each bug before you write the fix.** Commit it with the
   fix, and keep it permanently.
 
