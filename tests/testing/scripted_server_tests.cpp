@@ -22,6 +22,7 @@
 #include <type_traits>
 #include <unistd.h>
 #include <utility>
+#include <variant>
 #include <vector>
 
 using namespace std::chrono_literals;
@@ -167,6 +168,67 @@ TEST_CASE("scripted Anthropic text turn runs the real decoder and commits") {
   CHECK(conversation->message_count() == 2);
   CHECK(server.requests().size() == 1);
   CHECK(server.remaining() == 0);
+}
+
+TEST_CASE("scripted Anthropic turn skips thinking and commits only the text") {
+  // An Anthropic-compatible server, such as Ollama, can send thinking without a
+  // request for it.
+  constexpr std::string_view body = R"(event: message_start
+data: {"type":"message_start","message":{"id":"msg_thinking","type":"message","role":"assistant","content":[],"model":"test-model","stop_reason":null,"usage":{"input_tokens":2,"output_tokens":0}}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Hidden."}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0}
+
+event: content_block_start
+data: {"type":"content_block_start","index":1,"content_block":{"type":"redacted_thinking","data":"x"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":1}
+
+event: content_block_start
+data: {"type":"content_block_start","index":2,"content_block":{"type":"text","text":""}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"Visible."}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":2}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}
+
+event: message_stop
+data: {"type":"message_stop"}
+
+)";
+
+  auto server = start_server();
+  server.enqueue(answer(std::string{body}));
+  auto harness = scry::Harness::create(anthropic_config(server));
+  REQUIRE(harness);
+  auto conversation = scry::Conversation::create();
+  REQUIRE(conversation);
+
+  const auto completion = harness->send_and_wait(*conversation, "Question");
+  REQUIRE(completion);
+  CHECK(completion->text == "Visible.");
+  const auto& messages = conversation->messages();
+  REQUIRE(messages.size() == 2);
+  const auto& reply = messages.back();
+  CHECK(reply.role == scry::Role::assistant);
+  REQUIRE(reply.content.size() == 1);
+  const auto* text = std::get_if<scry::TextBlock>(&reply.content.front());
+  REQUIRE(text != nullptr);
+  CHECK(text->text == "Visible.");
 }
 
 TEST_CASE("scripted OpenAI-compatible text turn runs the other dialect") {
