@@ -1,17 +1,12 @@
-# scry::testing drives the shipping runtime over a scripted transport, so it
-# links the library rather than recompiling any part of it. It reaches the
-# kernel's transport seam through private headers.
-add_library(scry_testing STATIC src/scripted_transport.cpp)
+# scry::testing is a scripted HTTP server on loopback. A test drives the public
+# Harness against it, so the library uses only the public headers of scry::scry.
+add_library(scry_testing STATIC src/scripted_server.cpp)
 add_library(scry::testing ALIAS scry_testing)
 set_target_properties(
   scry_testing
   PROPERTIES
     EXPORT_NAME testing
     POSITION_INDEPENDENT_CODE ON
-)
-target_include_directories(
-  scry_testing
-  PRIVATE "${PROJECT_SOURCE_DIR}/src"
 )
 target_link_libraries(
   scry_testing

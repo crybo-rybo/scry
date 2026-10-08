@@ -1,11 +1,12 @@
 // Typed turns end to end: the real worker, provider encoders and decoders, turn
-// machine, and pump, with only the HTTP transfer scripted. Like the rest of this
-// suite it reaches Scry through the installed public surface alone.
+// machine, pump, and HTTP transport, against a scripted server. Like the rest of
+// this suite it reaches Scry through the installed public surface alone.
 #include <catch2/catch_test_macros.hpp>
+#include <chrono>
 #include <cstddef>
 #include <optional>
 #include <scry/scry.hpp>
-#include <scry/testing/scripted_transport.hpp>
+#include <scry/testing/scripted_server.hpp>
 #include <scry/testing/streams.hpp>
 #include <string>
 #include <string_view>
@@ -14,8 +15,9 @@
 #include <variant>
 #include <vector>
 
+using namespace std::chrono_literals;
 using scry::testing::ScriptedResponse;
-using scry::testing::ScriptedTransport;
+using scry::testing::ScriptedServer;
 
 namespace {
 
@@ -33,9 +35,9 @@ constexpr std::string_view valid_answer =
 constexpr std::string_view canonical_answer =
     R"({"reason":"It is rock.","supported":false})";
 
-[[nodiscard]] scry::Config anthropic_config() {
+[[nodiscard]] scry::Config anthropic_config(const ScriptedServer& server) {
   auto config = scry::Config{
-      .base_url = "http://127.0.0.1:1",
+      .base_url = server.url(),
       .api_key = "sanitized-test-key",
       .model = "test-model",
   };
@@ -44,15 +46,14 @@ constexpr std::string_view canonical_answer =
   return config;
 }
 
-[[nodiscard]] scry::Config openai_config() {
-  auto config = anthropic_config();
-  config.base_url = "http://127.0.0.1:1/v1/";
+[[nodiscard]] scry::Config openai_config(const ScriptedServer& server) {
+  auto config = anthropic_config(server);
   config.dialect = scry::ProviderDialect::openai_compatible;
   return config;
 }
 
 [[nodiscard]] ScriptedResponse scripted(std::string body) {
-  return {.request_id = "scripted-request", .body_chunks = {std::move(body)}};
+  return {.body_chunks = {std::move(body)}};
 }
 
 [[nodiscard]] scry::testing::ToolUseBlock respond(const std::string_view id,
@@ -78,13 +79,14 @@ template <typename Value> [[nodiscard]] Value unwrap(scry::Result<Value> result)
 
 template <typename Predicate>
 [[nodiscard]] bool pump_until(scry::Harness& harness, Predicate&& predicate) {
-  constexpr std::size_t maximum_pumps = 100'000;
-  for (std::size_t pump = 0; pump < maximum_pumps; ++pump) {
+  constexpr auto deadline = 10s;
+  const auto start = std::chrono::steady_clock::now();
+  while (std::chrono::steady_clock::now() - start < deadline) {
     static_cast<void>(harness.update());
     if (predicate()) {
       return true;
     }
-    std::this_thread::yield();
+    std::this_thread::sleep_for(1ms);
   }
   return false;
 }
@@ -108,11 +110,11 @@ void require_answer_only_as_text(const scry::Conversation& conversation) {
 } // namespace
 
 TEST_CASE("ask decodes an Anthropic answer and the next turn re-encodes it") {
-  ScriptedTransport transport;
-  transport.enqueue(scripted(scry::testing::anthropic_text_tool_stream(
+  auto server = unwrap(ScriptedServer::create());
+  server.enqueue(scripted(scry::testing::anthropic_text_tool_stream(
       "Checked the almanac.", {respond("toolu_1", valid_answer)})));
-  transport.enqueue(scripted(scry::testing::anthropic_text_stream("Anything else?")));
-  auto harness = unwrap(scry::testing::create_harness(anthropic_config(), transport));
+  server.enqueue(scripted(scry::testing::anthropic_text_stream("Anything else?")));
+  auto harness = unwrap(scry::Harness::create(anthropic_config(server)));
   auto conversation = unwrap(scry::Conversation::create());
 
   auto answered =
@@ -127,7 +129,7 @@ TEST_CASE("ask decodes an Anthropic answer and the next turn re-encodes it") {
   CHECK(completion.structured->text == canonical_answer);
   CHECK(completion.answer_attempt_count == 1);
 
-  const auto first = transport.requests().front().body;
+  const auto first = server.requests().front().body;
   CHECK(contains(first, R"("tool_choice":{"type":"any"})"));
   CHECK(contains(first, R"("name":"respond")"));
   CHECK(contains(first, "Is the claim supported?"));
@@ -140,7 +142,7 @@ TEST_CASE("ask decodes an Anthropic answer and the next turn re-encodes it") {
   const auto follow_up = unwrap(harness.send_and_wait(conversation, "Thanks."));
   CHECK(follow_up.text == "Anything else?");
   CHECK_FALSE(follow_up.structured);
-  const auto second = transport.requests().back().body;
+  const auto second = server.requests().back().body;
   CHECK_FALSE(contains(second, "tool_choice"));
   CHECK_FALSE(contains(second, "respond"));
   CHECK_FALSE(contains(second, "tool_use"));
@@ -149,12 +151,12 @@ TEST_CASE("ask decodes an Anthropic answer and the next turn re-encodes it") {
 }
 
 TEST_CASE("send<T> completes an OpenAI-compatible answer that persists and replays") {
-  ScriptedTransport transport;
+  auto server = unwrap(ScriptedServer::create());
   // A server forcing a tool call may finish with `stop` rather than `tool_calls`.
-  transport.enqueue(scripted(scry::testing::openai_text_tool_stream(
+  server.enqueue(scripted(scry::testing::openai_text_tool_stream(
       "Checked.", {respond("call_1", valid_answer)}, "chatcmpl-answer", "stop")));
-  transport.enqueue(scripted(scry::testing::openai_text_stream("Anything else?")));
-  auto harness = unwrap(scry::testing::create_harness(openai_config(), transport));
+  server.enqueue(scripted(scry::testing::openai_text_stream("Anything else?")));
+  auto harness = unwrap(scry::Harness::create(openai_config(server)));
   auto conversation = unwrap(scry::Conversation::create());
 
   std::string streamed;
@@ -178,7 +180,7 @@ TEST_CASE("send<T> completes an OpenAI-compatible answer that persists and repla
   const auto verdict =
       unwrap(scry::reflection::decode<Verdict>(*(*finished)->structured));
   CHECK(verdict.reason == "It is rock.");
-  CHECK(contains(transport.requests().front().body, R"("tool_choice":"required")"));
+  CHECK(contains(server.requests().front().body, R"("tool_choice":"required")"));
   require_answer_only_as_text(conversation);
 
   // The answered history round-trips through persistence and replays as text.
@@ -187,20 +189,20 @@ TEST_CASE("send<T> completes an OpenAI-compatible answer that persists and repla
   CHECK(unwrap(restored.to_json()).text == saved.text);
   require_answer_only_as_text(restored);
   static_cast<void>(unwrap(harness.send_and_wait(restored, "Thanks.")));
-  const auto second = transport.requests().back().body;
+  const auto second = server.requests().back().body;
   CHECK_FALSE(contains(second, "tool_choice"));
   CHECK_FALSE(contains(second, "tool_calls"));
   CHECK(contains(second, escaped(canonical_answer)));
 }
 
 TEST_CASE("an invalid answer goes back to the model, which corrects it") {
-  ScriptedTransport transport;
-  transport.enqueue(scripted(scry::testing::anthropic_tool_stream(
+  auto server = unwrap(ScriptedServer::create());
+  server.enqueue(scripted(scry::testing::anthropic_tool_stream(
       {respond("toolu_1", R"({"supported":"no","reason":"It is rock."})")},
       "msg_first")));
-  transport.enqueue(scripted(scry::testing::anthropic_tool_stream(
+  server.enqueue(scripted(scry::testing::anthropic_tool_stream(
       {respond("toolu_2", valid_answer)}, "msg_second")));
-  auto harness = unwrap(scry::testing::create_harness(anthropic_config(), transport));
+  auto harness = unwrap(scry::Harness::create(anthropic_config(server)));
   auto conversation = unwrap(scry::Conversation::create());
 
   const auto answered =
@@ -212,7 +214,7 @@ TEST_CASE("an invalid answer goes back to the model, which corrects it") {
   CHECK(answered.completion.tool_call_count == 0);
   CHECK(answered.completion.attempt_count == 2);
   // The retry request carried the rejection, whose text names the path at fault.
-  const auto requests = transport.requests();
+  const auto requests = server.requests();
   REQUIRE(requests.size() == 2);
   CHECK(contains(requests[1].body, R"("is_error":true,"tool_use_id":"toolu_1")"));
   CHECK(contains(requests[1].body, "$.supported"));
@@ -226,15 +228,15 @@ TEST_CASE("an invalid answer goes back to the model, which corrects it") {
 // answer. The Messages API takes one message per role turn, so the next request
 // must merge the two.
 TEST_CASE("an Anthropic follow-up after a rejected answer alternates roles") {
-  ScriptedTransport transport;
-  transport.enqueue(scripted(scry::testing::anthropic_text_tool_stream(
+  auto server = unwrap(ScriptedServer::create());
+  server.enqueue(scripted(scry::testing::anthropic_text_tool_stream(
       "Let me answer.",
       {respond("toolu_1", R"({"supported":"no","reason":"It is rock."})")},
       "msg_first")));
-  transport.enqueue(scripted(scry::testing::anthropic_text_tool_stream(
+  server.enqueue(scripted(scry::testing::anthropic_text_tool_stream(
       "Checked the almanac.", {respond("toolu_2", valid_answer)}, "msg_second")));
-  transport.enqueue(scripted(scry::testing::anthropic_text_stream("Anything else?")));
-  auto harness = unwrap(scry::testing::create_harness(anthropic_config(), transport));
+  server.enqueue(scripted(scry::testing::anthropic_text_stream("Anything else?")));
+  auto harness = unwrap(scry::Harness::create(anthropic_config(server)));
   auto conversation = unwrap(scry::Conversation::create());
 
   const auto answered =
@@ -245,7 +247,7 @@ TEST_CASE("an Anthropic follow-up after a rejected answer alternates roles") {
   require_answer_only_as_text(conversation);
 
   static_cast<void>(unwrap(harness.send_and_wait(conversation, "Thanks.")));
-  const auto follow_up = transport.requests().back().body;
+  const auto follow_up = server.requests().back().body;
   const auto body = unwrap(scry::JsonView::parse(scry::Json{.text = follow_up}));
   const auto messages = body.find("messages");
   REQUIRE(messages);
@@ -267,22 +269,21 @@ TEST_CASE("an Anthropic follow-up after a rejected answer alternates roles") {
 // so the refusal names that tool. A dynamic format with its own name and host
 // validator shows the name is the turn's; ask<T> reaches the same path.
 TEST_CASE("the per-turn call limit tells a typed turn to finish on its response tool") {
-  ScriptedTransport transport;
-  transport.enqueue(scripted(scry::testing::openai_tool_stream({
+  auto server = unwrap(ScriptedServer::create());
+  server.enqueue(scripted(scry::testing::openai_tool_stream({
       {.id = "call_first", .name = "lookup", .arguments = R"({"topic":"moon"})"},
       {.id = "call_second", .name = "lookup", .arguments = R"({"topic":"rock"})"},
   })));
-  transport.enqueue(scripted(scry::testing::openai_tool_stream(
+  server.enqueue(scripted(scry::testing::openai_tool_stream(
       {{.id = "call_answer", .name = "verdict", .arguments = valid_answer}},
       "chatcmpl-answer")));
   scry::ToolRegistry tools;
   REQUIRE(tools.add<LookupArguments>(
       {.name = "lookup", .description = "Look a topic up"},
       [](LookupArguments arguments) { return "notes on " + arguments.topic; }));
-  auto config = openai_config();
+  auto config = openai_config(server);
   config.max_tool_calls_per_turn = 1;
-  auto harness =
-      unwrap(scry::testing::create_harness(config, transport, std::move(tools)));
+  auto harness = unwrap(scry::Harness::create(config, std::move(tools)));
   auto conversation = unwrap(scry::Conversation::create());
 
   std::vector<std::string> validated;
@@ -301,7 +302,7 @@ TEST_CASE("the per-turn call limit tells a typed turn to finish on its response 
   REQUIRE(completion.structured);
   // The host's validator saw the canonical answer once.
   CHECK(validated == std::vector<std::string>{std::string{canonical_answer}});
-  const auto requests = transport.requests();
+  const auto requests = server.requests();
   REQUIRE(requests.size() == 2);
   CHECK(contains(requests[0].body, R"("name":"verdict")"));
   // An empty description selects Scry's instruction for the response tool.
@@ -314,12 +315,12 @@ TEST_CASE("the per-turn call limit tells a typed turn to finish on its response 
 }
 
 TEST_CASE("send_structured rejects a response format that cannot be offered") {
-  ScriptedTransport transport;
+  auto server = unwrap(ScriptedServer::create());
   scry::ToolRegistry tools;
   REQUIRE(tools.add<LookupArguments>({.name = "lookup", .description = "Look it up"},
                                      [](LookupArguments) { return 1; }));
-  auto harness = unwrap(
-      scry::testing::create_harness(anthropic_config(), transport, std::move(tools)));
+  auto harness =
+      unwrap(scry::Harness::create(anthropic_config(server), std::move(tools)));
   auto conversation = unwrap(scry::Conversation::create());
 
   const auto rejected = [&](scry::ResponseFormat format) {
@@ -336,8 +337,8 @@ TEST_CASE("send_structured rejects a response format that cannot be offered") {
   CHECK(rejected({.schema = {.text = "[]"}}) ==
         "response format schema must be a valid JSON object");
   // Nothing was accepted, so the Conversation is free and nothing was sent.
-  CHECK(transport.calls() == 0);
-  transport.enqueue(scripted(
+  CHECK(server.requests().empty());
+  server.enqueue(scripted(
       scry::testing::anthropic_tool_stream({respond("toolu_1", valid_answer)})));
   CHECK(harness.ask<Verdict>(conversation, "Is the moon made of cheese?"));
 }

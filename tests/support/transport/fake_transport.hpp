@@ -121,9 +121,8 @@ private:
     return shutdown.stop_requested() || cancelled.load(std::memory_order_acquire);
   }
 
-  // Same hold as scry::testing::ScriptedTransport: the turn's cancel flag has no
-  // notifier, so a held exchange polls it, and either cancellation or shutdown
-  // ends the hold without a release().
+  // The turn's cancel flag has no notifier, so a held exchange polls it, and
+  // either cancellation or shutdown ends the hold without a release().
   [[nodiscard]] bool await_release(std::unique_lock<std::mutex>& lock,
                                    const std::stop_token& shutdown,
                                    const std::atomic<bool>& cancelled) {

@@ -131,9 +131,10 @@ the smoke.
 
 ## Testing downstream with `scry::testing`
 
-`scry::testing` is an optional package component. It gives a consumer the same
-scripted-transport seam that the Scry test suites use. It replaces only the HTTP
-transfer.
+`scry::testing` is an optional package component. It gives a consumer a
+scripted HTTP server on 127.0.0.1. The test sets `Config::base_url` to the URL
+of the server and creates the Harness with `Harness::create`. Thus the test
+runs all of Scry, libcurl included, and needs no model.
 
 ```cmake
 find_package(scry CONFIG REQUIRED COMPONENTS testing)
@@ -142,16 +143,22 @@ target_link_libraries(my_tests PRIVATE scry::scry scry::testing)
 
 ```cpp
 #include <scry/scry.hpp>
-#include <scry/testing/scripted_transport.hpp>
+#include <scry/testing/scripted_server.hpp>
 #include <scry/testing/streams.hpp>
 
-scry::testing::ScriptedTransport transport;
-transport.enqueue({.body_chunks = {scry::testing::anthropic_text_stream("hi")}});
-auto harness = scry::testing::create_harness(my_config(), transport);
+auto server = scry::testing::ScriptedServer::create();
+server->enqueue({.body_chunks = {scry::testing::anthropic_text_stream("hi")}});
+auto config = my_config();
+config.base_url = server->url();
+auto harness = scry::Harness::create(config);
 ```
 
+For a fast scripted retry, set `config.retry.jitter_ratio` to 0 and set
+millisecond backoffs. For a fast cancellation, set a low
+`config.timeouts.shutdown`.
+
 `examples/testing_scripted.cpp` is a complete test in this form, without a test
-framework. `tests/testing/scripted_transport_tests.cpp` is the equivalent test
+framework. `tests/testing/scripted_server_tests.cpp` is the equivalent test
 with Catch2.
 
 ## Rules

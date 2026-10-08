@@ -8,7 +8,7 @@
 #include <string_view>
 
 /// @file
-/// Builders for the provider response bodies a ScriptedTransport replays.
+/// Builders for the provider response bodies a ScriptedServer sends.
 ///
 /// These produce the exact server-sent-event bytes each dialect's decoder
 /// accepts, so a downstream test can describe a turn by what the model said
@@ -21,8 +21,8 @@
 ///
 /// The error-body builders are the non-2xx counterpart: pair one with a
 /// ScriptedResponse::status the provider would have returned with it, because
-/// the scripted transport classifies that status the way a real HTTP response
-/// is classified rather than decoding the body as a stream.
+/// Scry classifies the response by that status rather than decoding the body as
+/// a stream.
 namespace scry::testing {
 
 /// One tool call announced by a scripted stream.
