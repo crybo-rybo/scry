@@ -109,19 +109,25 @@ boundary and the canonical bytes of the JSON layer. For more information, see
 
 ## End-to-end testing
 
-Start an OpenAI-compatible server and load a model. Then run the live-model
-smoke:
+Start a model server and load a model. Then run the live smoke:
 
 ```sh
-SCRY_LOCAL_MODEL_BASE_URL=http://127.0.0.1:11434/v1 \
-SCRY_LOCAL_MODEL_MODEL=qwen3:8b \
+SCRY_E2E_BASE_URL=http://127.0.0.1:11434/v1 \
+SCRY_E2E_MODEL=qwen3:8b \
 ./scripts/test-e2e.sh
 ```
 
-This command builds and runs `scry_local_model_smoke` from `tests/e2e/`.
-Through the public API, the smoke checks a full chat and a required tool round.
-If the server needs authentication, set `SCRY_LOCAL_MODEL_API_KEY`. ctest and CI
-do not run the smoke.
+This command builds and runs `scry_e2e_smoke` from `tests/e2e/`. Through the
+public API, the smoke runs a typed `ask<T>()` and a streamed turn with one
+reflected tool round. Then it restores the conversation from `to_json()` and
+sends a follow-up turn. Thus the server must accept a history with a tool call
+and its result.
+
+`SCRY_E2E_DIALECT` selects `openai` (the default) or `anthropic`. For
+Anthropic, set the origin as the URL, for example `https://api.anthropic.com`,
+and set `SCRY_E2E_API_KEY`. The smoke stops immediately if the key is missing.
+For an OpenAI-compatible server, the key is optional. ctest and CI do not run
+the smoke.
 
 ## Testing downstream with `scry::testing`
 
