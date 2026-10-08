@@ -144,7 +144,7 @@ TEST_CASE("moved-from public runtime handles remain safely observable") {
   CHECK(turn.id());
 }
 
-TEST_CASE("a Turn can cancel safely after its Harness has been destroyed") {
+TEST_CASE("a Turn does not cancel after its Harness has been destroyed") {
   std::optional<scry::Turn> survivor;
   scry::TurnId accepted_id{};
   {
@@ -158,7 +158,8 @@ TEST_CASE("a Turn can cancel safely after its Harness has been destroyed") {
 
   REQUIRE(survivor);
   CHECK(survivor->id() == accepted_id);
-  CHECK(survivor->cancel());
+  CHECK(survivor->finished());
+  CHECK_FALSE(survivor->cancel());
   CHECK_FALSE(survivor->cancel());
 }
 
