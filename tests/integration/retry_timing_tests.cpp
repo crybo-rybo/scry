@@ -129,19 +129,25 @@ TEST_CASE("the elapsed-time cap ends retrying") {
       fixture.harness.send_and_wait(fixture.conversation, "exhaust the window");
   const auto elapsed = Clock::now() - start;
 
-  // The retry window ends 500 ms after the turn starts. Attempt 1 fails at once,
-  // so its 200 ms backoff wakes inside the window and attempt 2 runs. Attempt 2
-  // fails at about 200 ms, and its backoff doubles to 400 ms, which wakes past
-  // the window. So the turn ends with the second failure and does not wait for
-  // that wake. Only a delay of 300 ms in attempt 1 could move its wake past the
-  // window too.
+  // The retry window ends 500 ms after the turn starts, and max_attempts is high
+  // enough that only the window stops retrying. Attempt 1 fails at once, so its
+  // 200 ms backoff wakes inside the window and attempt 2 runs. Attempt 2 fails at
+  // 200 ms or later, and its backoff doubles to 400 ms, which wakes past the
+  // window, so the turn ends with the second failure. On a loaded runner, the
+  // first failure can arrive more than 300 ms late, or its wake can fire after
+  // the window ends; the turn then ends with the first failure instead. No third
+  // attempt can run. The machine tests pin the exact schedule.
   REQUIRE_FALSE(completion);
   CHECK(completion.error().category == scry::ErrorCategory::network);
   CHECK(completion.error().retryable);
   CHECK(completion.error().http_status == 503);
-  CHECK(completion.error().attempt == 2);
-  CHECK(fixture.server.requests().size() == 2);
-  CHECK(fixture.server.remaining() == 1);
-  CHECK(elapsed >= 200ms);
+  const auto attempts = completion.error().attempt;
+  CHECK(attempts >= 1);
+  CHECK(attempts <= 2);
+  CHECK(fixture.server.requests().size() == attempts);
+  CHECK(fixture.server.remaining() == 3 - attempts);
+  if (attempts == 2) {
+    CHECK(elapsed >= 200ms);
+  }
   CHECK(fixture.conversation.empty());
 }
