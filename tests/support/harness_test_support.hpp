@@ -1,14 +1,9 @@
 #pragma once
 
-#include "core/provider.hpp"
-#include "runtime/test_access.hpp"
-#include "support/transport/fake_transport.hpp"
-
 #include <catch2/catch_test_macros.hpp>
 #include <chrono>
-#include <cstddef>
-#include <memory>
 #include <scry/scry.hpp>
+#include <scry/testing/scripted_server.hpp>
 #include <scry/testing/streams.hpp>
 #include <string>
 #include <string_view>
@@ -16,14 +11,15 @@
 #include <utility>
 #include <vector>
 
-// Helpers shared by every suite that drives a real Harness over a scripted
-// transport. Suites that need a deliberately different shape - a live curl
-// endpoint, retries left enabled, a byte-at-a-time stream - keep their own
-// variant next to the tests that depend on it.
+// Helpers for suites that drive a Harness through the public API. A scripted
+// turn goes to a scry::testing::ScriptedServer on loopback, so each test runs
+// the shipping provider, transport, worker, and pump.
 namespace scry::test_support {
 
-// Port 1 is never listening, so a suite that accidentally drops its scripted
-// transport fails fast instead of reaching the network.
+// Port 1 is never listening, so a Harness that no test points at a server
+// fails fast instead of reaching the network. Millisecond backoffs without
+// jitter keep a scripted retry fast, and a short shutdown bound lets a
+// cancelled transfer end promptly.
 [[nodiscard]] inline scry::Config test_config() {
   auto config = scry::Config{
       .base_url = "http://127.0.0.1:1",
@@ -31,26 +27,11 @@ namespace scry::test_support {
       .model = "test-model",
   };
   config.retry.max_attempts = 1;
+  config.retry.initial_backoff = std::chrono::milliseconds{1};
+  config.retry.max_backoff = std::chrono::milliseconds{5};
   config.retry.jitter_ratio = 0.0;
+  config.timeouts.shutdown = std::chrono::milliseconds{25};
   return config;
-}
-
-[[nodiscard]] inline std::unique_ptr<scry::detail::ProviderAdapter>
-provider(const scry::ProviderDialect dialect = scry::ProviderDialect::anthropic) {
-  return scry::detail::make_provider_adapter(dialect);
-}
-
-[[nodiscard]] inline scry::test::ScriptedExchange
-scripted_exchange(const std::string_view stream,
-                  std::string request_id = "transport-request") {
-  return {
-      .body_chunks = {std::string{stream}},
-      .result =
-          scry::detail::TransportResult{
-              .status_code = 200,
-              .provider_request_id = std::move(request_id),
-          },
-  };
 }
 
 // The stream builders are the installed scry::testing ones, so scry's own tests
@@ -61,7 +42,20 @@ using scry::testing::anthropic_tool_stream;
 using scry::testing::openai_error_body;
 using scry::testing::openai_text_stream;
 using scry::testing::openai_tool_stream;
+using scry::testing::ScriptedResponse;
+using scry::testing::ScriptedServer;
 using scry::testing::ToolUseBlock;
+
+// A 200 response with `body` in one chunk. A non-empty `request_id` goes out as
+// the `request-id` header, which both dialects read as the correlation id.
+[[nodiscard]] inline ScriptedResponse scripted_response(const std::string_view body,
+                                                        std::string request_id = {}) {
+  auto response = ScriptedResponse{.body_chunks = {std::string{body}}};
+  if (!request_id.empty()) {
+    response.headers.push_back({.name = "request-id", .value = std::move(request_id)});
+  }
+  return response;
+}
 
 [[nodiscard]] inline scry::ToolHandler static_handler(std::string result) {
   return [result = std::move(result)](scry::Json) -> scry::Result<scry::Json> {
@@ -76,18 +70,27 @@ template <typename Value> [[nodiscard]] Value unwrap(scry::Result<Value> result)
   return std::move(*result);
 }
 
+[[nodiscard]] inline ScriptedServer start_server() {
+  return unwrap(ScriptedServer::create());
+}
+
+// Pumps until `predicate` holds. The deadline only guards against a hang, so it
+// stays below the ctest TIMEOUT of 15 s. The final update and check after the
+// deadline keep a transfer that landed right on it from being reported as a
+// timeout.
 template <typename Predicate>
 [[nodiscard]] bool pump_until(scry::Harness& harness, Predicate&& predicate,
                               const scry::UpdateOptions options = {}) {
-  constexpr std::size_t maximum_pumps = 100'000;
-  for (std::size_t pump = 0; pump < maximum_pumps; ++pump) {
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{10};
+  while (std::chrono::steady_clock::now() < deadline) {
     static_cast<void>(harness.update(options));
     if (predicate()) {
       return true;
     }
     std::this_thread::yield();
   }
-  return false;
+  static_cast<void>(harness.update(options));
+  return predicate();
 }
 
 // Delivers at most one callback per update so a test can observe the ordering
@@ -97,47 +100,28 @@ template <typename Predicate>
   return pump_until(harness, std::forward<Predicate>(predicate), {.max_callbacks = 1});
 }
 
-// Wall-clock variant for suites driving a live endpoint, where progress depends
-// on the network rather than on a bounded number of updates. The final update
-// and check after the deadline keep a transfer that landed right on the
-// deadline from being reported as a timeout.
-template <typename Predicate>
-[[nodiscard]] bool
-pump_until_deadline(scry::Harness& harness, Predicate&& predicate,
-                    const std::chrono::milliseconds timeout = std::chrono::seconds{2}) {
-  const auto deadline = std::chrono::steady_clock::now() + timeout;
-  while (std::chrono::steady_clock::now() < deadline) {
-    static_cast<void>(harness.update());
-    if (predicate()) {
-      return true;
-    }
-    std::this_thread::yield();
-  }
-  static_cast<void>(harness.update());
-  return predicate();
-}
-
-// A Harness over a scripted FakeTransport plus the Conversation to drive it.
-// The transport pointer stays valid for the fixture's lifetime because the
-// Harness owns the transport it was created with.
+// A scripted server, a Harness pointed at it, and a Conversation to drive it.
+// Members are destroyed in reverse order, so the Harness stops its transfers
+// before the server goes away.
 struct HarnessFixture {
-  scry::test::FakeTransport* transport;
+  ScriptedServer server;
   scry::Harness harness;
   scry::Conversation conversation;
 };
 
-[[nodiscard]] inline HarnessFixture make_harness_fixture(
-    scry::Config config, std::vector<scry::test::ScriptedExchange> exchanges,
-    const scry::ProviderDialect dialect = scry::ProviderDialect::anthropic) {
-  auto fake = std::make_unique<scry::test::FakeTransport>();
-  auto* observer = fake.get();
-  for (auto& exchange : exchanges) {
-    fake->enqueue(std::move(exchange));
+// Starts a server that answers with `responses` in order, and a Harness whose
+// `config` points at it.
+[[nodiscard]] inline HarnessFixture
+make_harness_fixture(scry::Config config, std::vector<ScriptedResponse> responses) {
+  auto server = start_server();
+  for (auto& response : responses) {
+    server.enqueue(std::move(response));
   }
+  config.base_url = server.url();
+  auto harness = unwrap(scry::Harness::create(std::move(config)));
   return HarnessFixture{
-      .transport = observer,
-      .harness = unwrap(scry::detail::HarnessTestAccess::create(
-          std::move(config), provider(dialect), std::move(fake))),
+      .server = std::move(server),
+      .harness = std::move(harness),
       .conversation = unwrap(scry::Conversation::create()),
   };
 }

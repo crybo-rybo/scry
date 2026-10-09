@@ -4,7 +4,6 @@
 #include "machine/turn_machine.hpp"
 
 #include <atomic>
-#include <cstdint>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -13,7 +12,6 @@
 #include <scry/turn_id.hpp>
 #include <string>
 #include <variant>
-#include <vector>
 
 namespace scry::detail {
 
@@ -51,26 +49,16 @@ struct TextDeltaEvent {
 // The machine's publication already carries exactly what the pump needs.
 using ToolCallEvent = PublishToolCall;
 
-// The pump moves `transcript` into the Conversation and fills `text` with the
-// final assistant text for the completion callback. The transcript opens with
-// the turn's user message. It and the calls dropped at the tool-round limit are
+// The machine's completion, plus the two values the pump derives from it. The
+// pump moves `transcript` into the Conversation and fills `text` with the final
+// assistant text for the completion callback. The transcript opens with the
+// turn's user message. It and the calls dropped at the tool-round limit are
 // already reserved against the Conversation budget - the user message by send(),
 // the rest by the machine - so the queue charges neither them nor `text`. An
 // answered turn's transcript ends with the answer's text block; the pump copies
 // it into `structured` and leaves it out of `text`, uncharged for the same reason.
-struct CompletionEvent {
-  TurnId turn_id{};
-  std::vector<Message> transcript{};
+struct CompletionEvent : CommitCompletion {
   std::string text{};
-  FinishReason finish_reason{FinishReason::unknown};
-  Usage usage{};
-  std::uint32_t attempt_count{};
-  std::string provider_request_id{};
-  std::uint32_t tool_round_count{};
-  std::uint32_t tool_call_count{};
-  std::vector<ToolCallBlock> unexecuted_tool_calls{};
-  bool answered{false};
-  std::uint32_t answer_attempt_count{};
   std::optional<Json> structured{};
 };
 

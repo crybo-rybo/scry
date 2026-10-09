@@ -58,17 +58,22 @@ request_identifier(const JsonView& root,
 }
 
 // Appends a decoded block to the response, publishing any text it starts with.
+// A skipped thinking block only counts toward the next block's index.
 [[nodiscard]] Status push_block(AnthropicContent content, const bool streaming_start,
                                 EventContext& context) {
   auto block = anthropic_content_block(std::move(content), streaming_start);
   if (!block) {
     return std::unexpected(std::move(block.error()));
   }
-  if (const auto* text = std::get_if<TextBlock>(&*block);
+  if (!*block) {
+    ++context.decode.skipped_blocks;
+    return {};
+  }
+  if (const auto* text = std::get_if<TextBlock>(&**block);
       text != nullptr && !text->text.empty()) {
     context.out.push_back(ProviderTextDelta{.text = text->text});
   }
-  context.state.response.content.push_back(std::move(*block));
+  context.state.response.content.push_back(std::move(**block));
   context.state.semantic_output_consumed = true;
   return {};
 }
@@ -114,22 +119,27 @@ void apply_stop_reason(const std::optional<std::string>& reason,
         make_error(ErrorCategory::protocol,
                    "Anthropic content block began outside the message lifecycle"));
   }
-  if (event.index != context.state.response.content.size()) {
+  if (event.index !=
+      context.state.response.content.size() + context.decode.skipped_blocks) {
     return std::unexpected(
         make_error(ErrorCategory::protocol,
                    "Anthropic content blocks did not begin in contiguous order"));
   }
+  const auto skipped = anthropic_skipped_block(event.content_block);
   if (auto status = push_block(std::move(event.content_block), true, context);
       !status) {
     return status;
   }
   context.decode.active_content_index = event.index;
+  context.decode.active_skipped = skipped;
   return {};
 }
 
+// The active block, or null when it is a skipped thinking block. The active
+// block is always the last to begin, so a response block is the last one.
 [[nodiscard]] Result<ContentBlock*> indexed_block(const std::size_t index,
                                                   EventContext& context) {
-  if (index >= context.state.response.content.size()) {
+  if (index >= context.state.response.content.size() + context.decode.skipped_blocks) {
     return std::unexpected(
         make_error(ErrorCategory::protocol,
                    "Anthropic content event referenced an unknown block"));
@@ -139,12 +149,15 @@ void apply_stop_reason(const std::optional<std::string>& reason,
         make_error(ErrorCategory::protocol,
                    "Anthropic content event targeted a block that is not active"));
   }
-  return &context.state.response.content[index];
+  if (context.decode.active_skipped != AnthropicSkippedBlock::none) {
+    return nullptr;
+  }
+  return &context.state.response.content.back();
 }
 
-[[nodiscard]] Status apply_delta(AnthropicTextDelta& delta, ContentBlock& block,
+[[nodiscard]] Status apply_delta(AnthropicTextDelta& delta, ContentBlock* block,
                                  EventContext& context) {
-  auto* destination = std::get_if<TextBlock>(&block);
+  auto* destination = std::get_if<TextBlock>(block);
   if (destination == nullptr) {
     return std::unexpected(make_error(
         ErrorCategory::protocol, "Anthropic text delta targeted a non-text block"));
@@ -156,8 +169,8 @@ void apply_stop_reason(const std::optional<std::string>& reason,
 }
 
 [[nodiscard]] Status apply_delta(const AnthropicInputJsonDelta& delta,
-                                 ContentBlock& block, EventContext& context) {
-  auto* destination = std::get_if<ToolCallBlock>(&block);
+                                 ContentBlock* block, EventContext& context) {
+  auto* destination = std::get_if<ToolCallBlock>(block);
   if (destination == nullptr) {
     return std::unexpected(
         make_error(ErrorCategory::protocol,
@@ -174,13 +187,34 @@ void apply_stop_reason(const std::optional<std::string>& reason,
   return {};
 }
 
+// Scry drops thinking text and signatures, so it keeps no thinking bytes and
+// consumes no semantic output.
+[[nodiscard]] Status skip_thinking_delta(const EventContext& context) {
+  if (context.decode.active_skipped != AnthropicSkippedBlock::thinking) {
+    return std::unexpected(
+        make_error(ErrorCategory::protocol,
+                   "Anthropic thinking delta targeted a non-thinking block"));
+  }
+  return {};
+}
+
+[[nodiscard]] Status apply_delta(const AnthropicThinkingDelta&, ContentBlock*,
+                                 EventContext& context) {
+  return skip_thinking_delta(context);
+}
+
+[[nodiscard]] Status apply_delta(const AnthropicSignatureDelta&, ContentBlock*,
+                                 EventContext& context) {
+  return skip_thinking_delta(context);
+}
+
 [[nodiscard]] Status handle(AnthropicContentBlockDelta& event, EventContext& context) {
   auto block = indexed_block(event.index, context);
   if (!block) {
     return std::unexpected(std::move(block.error()));
   }
   return std::visit(
-      [&block, &context](auto& delta) { return apply_delta(delta, **block, context); },
+      [&block, &context](auto& delta) { return apply_delta(delta, *block, context); },
       event.delta);
 }
 

@@ -1,18 +1,78 @@
-#include "tool_loop_test_support.hpp"
+#include "support/harness_test_support.hpp"
 
+#include <catch2/catch_test_macros.hpp>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
+#include <scry/scry.hpp>
 #include <string>
+#include <string_view>
+#include <thread>
+#include <utility>
 #include <vector>
 
 using namespace scry::test_support;
 
+namespace {
+
+const std::string two_tool_stream = anthropic_tool_stream({
+    {.id = "call-a", .name = "first_tool", .arguments = R"({"ordinal":1})"},
+    {.id = "call-b", .name = "second_tool", .arguments = R"({"ordinal":2})"},
+});
+
+const std::string final_stream =
+    anthropic_text_stream("all done", "msg_final", {}, 7, 5);
+
+[[nodiscard]] scry::ToolDefinition ordinal_tool_definition(std::string name) {
+  return {
+      .name = std::move(name),
+      .description = "Accepts an explicit ordinal",
+      .input_schema =
+          {
+              .text =
+                  R"({"type":"object","properties":{"ordinal":{"type":"integer"}},"required":["ordinal"],"additionalProperties":false})",
+          },
+  };
+}
+
+// Two tool calls whose long names push the batch past a tightened event-queue
+// budget.
+[[nodiscard]] std::string large_tool_batch_stream(const std::string_view first,
+                                                  const std::string_view second) {
+  return anthropic_tool_stream({
+      {.id = "call-a", .name = first},
+      {.id = "call-b", .name = second},
+  });
+}
+
+[[nodiscard]] std::size_t count_occurrences(const std::string& text,
+                                            const std::string_view needle) {
+  std::size_t total = 0;
+  for (auto position = text.find(needle); position != std::string::npos;
+       position = text.find(needle, position + needle.size())) {
+    ++total;
+  }
+  return total;
+}
+
+void require_order(const std::string& text, const std::string_view first,
+                   const std::string_view second) {
+  const auto first_position = text.find(first);
+  const auto second_position = text.find(second);
+  REQUIRE(first_position != std::string::npos);
+  REQUIRE(second_position != std::string::npos);
+  CHECK(first_position < second_position);
+}
+
+} // namespace
+
 TEST_CASE("two-tool turn snapshots tools, resends results, and commits atomically") {
   auto fixture = make_harness_fixture(
-      test_config(), {scripted_exchange(two_tool_stream, "tool-request"),
-                      scripted_exchange(final_stream, "final-request")});
-  auto* requests = fixture.transport;
+      test_config(), {scripted_response(two_tool_stream, "tool-request"),
+                      scripted_response(final_stream, "final-request")});
+  auto& server = fixture.server;
   auto& harness = fixture.harness;
   auto& conversation = fixture.conversation;
 
@@ -148,7 +208,7 @@ TEST_CASE("two-tool turn snapshots tools, resends results, and commits atomicall
       serialized->text ==
       R"({"messages":[{"content":[{"text":"Run both tools","type":"text"}],"role":"user"},{"content":[{"arguments":{"ordinal":1},"id":"call-a","name":"first_tool","type":"tool_call"},{"arguments":{"ordinal":2},"id":"call-b","name":"second_tool","type":"tool_call"}],"role":"assistant"},{"content":[{"is_error":false,"result":{"handled":"first"},"tool_call_id":"call-a","type":"tool_result"},{"is_error":false,"result":{"handled":"second"},"tool_call_id":"call-b","type":"tool_result"}],"role":"user"},{"content":[{"text":"all done","type":"text"}],"role":"assistant"}],"system_prompt":"","version":1})");
 
-  const auto recorded = requests->requests();
+  const auto recorded = server.requests();
   REQUIRE(recorded.size() == 2);
   const auto& initial_body = recorded[0].body;
   const auto& resend_body = recorded[1].body;
@@ -173,8 +233,8 @@ TEST_CASE("two-tool turn snapshots tools, resends results, and commits atomicall
 
 TEST_CASE("a failing tool handler reaches the observer as an error result") {
   auto fixture = make_harness_fixture(
-      test_config(), {scripted_exchange(two_tool_stream, "tool-request"),
-                      scripted_exchange(final_stream, "final-request")});
+      test_config(), {scripted_response(two_tool_stream, "tool-request"),
+                      scripted_response(final_stream, "final-request")});
   auto& harness = fixture.harness;
   auto& conversation = fixture.conversation;
 
@@ -222,26 +282,22 @@ TEST_CASE("a failing tool handler reaches the observer as an error result") {
 }
 
 TEST_CASE("a queued turn waits for the active turn's app-thread tool round") {
-  auto fake = std::make_unique<scry::test::FakeTransport>();
-  auto* requests = fake.get();
-  fake->enqueue(scripted_exchange(two_tool_stream, "tool-request"));
-  fake->enqueue(scripted_exchange(final_stream, "first-final-request"));
-  fake->enqueue(scripted_exchange(final_stream, "second-final-request"));
-  auto harness = unwrap(scry::detail::HarnessTestAccess::create(
-      test_config(), provider(), std::move(fake)));
+  auto fixture = make_harness_fixture(
+      test_config(), {scripted_response(two_tool_stream, "tool-request"),
+                      scripted_response(final_stream, "first-final-request"),
+                      scripted_response(final_stream, "second-final-request")});
+  auto& harness = fixture.harness;
+  auto& first_conversation = fixture.conversation;
   REQUIRE(harness.tools().add_dynamic(ordinal_tool_definition("first_tool"),
                                       static_handler(R"({"queue":1})")));
   REQUIRE(harness.tools().add_dynamic(ordinal_tool_definition("second_tool"),
                                       static_handler(R"({"queue":2})")));
 
-  auto first_conversation = scry::Conversation::create();
-  auto second_conversation = scry::Conversation::create();
-  REQUIRE(first_conversation);
-  REQUIRE(second_conversation);
+  auto second_conversation = unwrap(scry::Conversation::create());
   bool first_completed = false;
   bool second_completed = false;
   auto first_turn =
-      harness.send(*first_conversation, "first queued turn",
+      harness.send(first_conversation, "first queued turn",
                    {
                        .on_finished =
                            [&first_completed](scry::Result<scry::Completion> finished) {
@@ -249,7 +305,7 @@ TEST_CASE("a queued turn waits for the active turn's app-thread tool round") {
                            },
                    });
   auto second_turn = harness.send(
-      *second_conversation, "second queued turn",
+      second_conversation, "second queued turn",
       {
           .on_finished =
               [&second_completed](scry::Result<scry::Completion> finished) {
@@ -260,15 +316,15 @@ TEST_CASE("a queued turn waits for the active turn's app-thread tool round") {
   REQUIRE(second_turn);
   REQUIRE(pump_until(harness, [&] { return first_completed && second_completed; }));
 
-  const auto recorded = requests->requests();
+  const auto recorded = fixture.server.requests();
   REQUIRE(recorded.size() == 3);
   CHECK(recorded[0].body.find("first queued turn") != std::string::npos);
   CHECK(recorded[1].body.find("first queued turn") != std::string::npos);
   CHECK(recorded[1].body.find(R"("tool_use_id":"call-a")") != std::string::npos);
   CHECK(recorded[2].body.find("second queued turn") != std::string::npos);
   CHECK(recorded[2].body.find("call-a") == std::string::npos);
-  CHECK(first_conversation->message_count() == 4);
-  CHECK(second_conversation->message_count() == 2);
+  CHECK(first_conversation.message_count() == 4);
+  CHECK(second_conversation.message_count() == 2);
 }
 
 TEST_CASE("tool call batches fail atomically at the event queue boundary") {
@@ -277,9 +333,9 @@ TEST_CASE("tool call batches fail atomically at the event queue boundary") {
   auto config = test_config();
   config.limits.max_queued_event_bytes_per_turn = 1024;
   auto fixture = make_harness_fixture(
-      config, {scripted_exchange(large_tool_batch_stream(first_name, second_name),
+      config, {scripted_response(large_tool_batch_stream(first_name, second_name),
                                  "tool-request")});
-  auto* requests = fixture.transport;
+  auto& server = fixture.server;
   auto& harness = fixture.harness;
   auto& conversation = fixture.conversation;
   std::size_t handler_calls = 0;
@@ -306,22 +362,25 @@ TEST_CASE("tool call batches fail atomically at the event queue boundary") {
   CHECK(failure->category == scry::ErrorCategory::resource_limit);
   CHECK(handler_calls == 0);
   CHECK(conversation.empty());
-  CHECK(requests->requests().size() == 1);
+  CHECK(server.requests().size() == 1);
 }
 
 // A tool result may be far larger than the per-turn event budget. The machine
 // reserves the whole exchange against the Conversation limit before resending
 // it, so the completion that hands that exchange to the host is not charged a
-// second time at the queue boundary.
+// second time at the queue boundary. The budget is at its minimum, so a small
+// request body can carry a result four times larger.
 TEST_CASE("a tool result larger than the queue limit still completes when it fits "
           "the Conversation limit") {
-  const std::string large_result = "\"" + std::string(3 * 1024 * 1024, 'x') + "\"";
+  auto config = test_config();
+  config.limits.max_queued_event_bytes_per_turn = 1024;
+  const std::string large_result = "\"" + std::string(4 * 1024, 'x') + "\"";
   auto fixture = make_harness_fixture(
-      test_config(),
-      {scripted_exchange(anthropic_tool_stream(
+      config,
+      {scripted_response(anthropic_tool_stream(
                              {{.id = "call-1", .name = "large", .arguments = "{}"}}),
                          "tool-request"),
-       scripted_exchange(anthropic_text_stream("done"), "final-request")});
+       scripted_response(anthropic_text_stream("done"), "final-request")});
   REQUIRE(fixture.harness.tools().add_dynamic(
       scry::ToolDefinition{
           .name = "large",
@@ -337,13 +396,13 @@ TEST_CASE("a tool result larger than the queue limit still completes when it fit
 
   REQUIRE(completion);
   CHECK(completion->text == "done");
-  CHECK(fixture.transport->requests().size() == 2);
+  CHECK(fixture.server.requests().size() == 2);
   CHECK(fixture.conversation.message_count() == 4);
 }
 
 TEST_CASE("Harness destruction stops a worker awaiting an app-thread tool result") {
   auto fixture = make_harness_fixture(
-      test_config(), {scripted_exchange(two_tool_stream, "tool-request")});
+      test_config(), {scripted_response(two_tool_stream, "tool-request")});
   auto& harness = fixture.harness;
   auto& conversation = fixture.conversation;
   std::size_t handler_calls = 0;
@@ -362,9 +421,10 @@ TEST_CASE("Harness destruction stops a worker awaiting an app-thread tool result
       });
   REQUIRE(turn);
 
-  constexpr std::size_t maximum_pumps = 100'000;
+  // An update that delivers nothing still reports the queued tool calls.
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{10};
   bool tool_calls_pending = false;
-  for (std::size_t pump = 0; pump < maximum_pumps && !tool_calls_pending; ++pump) {
+  while (!tool_calls_pending && std::chrono::steady_clock::now() < deadline) {
     tool_calls_pending = harness.update({.max_callbacks = 0}).events_remaining == 2;
     std::this_thread::yield();
   }
@@ -381,11 +441,11 @@ TEST_CASE("Harness destruction stops a worker awaiting an app-thread tool result
 TEST_CASE("a tool handler that disconnects suppresses its own observer") {
   auto fixture = make_harness_fixture(
       test_config(),
-      {scripted_exchange(
+      {scripted_response(
            anthropic_tool_stream(
                {{.id = "call-1", .name = "disconnect_me", .arguments = "{}"}}),
            "tool-request"),
-       scripted_exchange(anthropic_text_stream("done"), "final-request")});
+       scripted_response(anthropic_text_stream("done"), "final-request")});
   auto& harness = fixture.harness;
   auto& conversation = fixture.conversation;
 
@@ -422,9 +482,9 @@ TEST_CASE(
   auto config = test_config();
   config.max_tool_calls_per_turn = 1;
   auto fixture =
-      make_harness_fixture(config, {scripted_exchange(two_tool_stream, "tool-request"),
-                                    scripted_exchange(final_stream, "final-request")});
-  auto* requests = fixture.transport;
+      make_harness_fixture(config, {scripted_response(two_tool_stream, "tool-request"),
+                                    scripted_response(final_stream, "final-request")});
+  auto& server = fixture.server;
   auto& harness = fixture.harness;
   auto& conversation = fixture.conversation;
 
@@ -468,7 +528,7 @@ TEST_CASE(
   CHECK(completion->tool_call_count == 2);
   CHECK(completion->rejected_tool_call_count == 1);
 
-  const auto recorded = requests->requests();
+  const auto recorded = server.requests();
   REQUIRE(recorded.size() == 2);
   const auto& resend_body = recorded[1].body;
   require_order(
@@ -488,10 +548,10 @@ TEST_CASE("the per-turn call limit counts across rounds and admits exactly its b
       },
       "msg_second_round");
   auto fixture = make_harness_fixture(
-      config, {scripted_exchange(two_tool_stream, "first-round-request"),
-               scripted_exchange(second_round, "second-round-request"),
-               scripted_exchange(final_stream, "final-request")});
-  auto* requests = fixture.transport;
+      config, {scripted_response(two_tool_stream, "first-round-request"),
+               scripted_response(second_round, "second-round-request"),
+               scripted_response(final_stream, "final-request")});
+  auto& server = fixture.server;
   auto& harness = fixture.harness;
   auto& conversation = fixture.conversation;
 
@@ -539,7 +599,7 @@ TEST_CASE("the per-turn call limit counts across rounds and admits exactly its b
   CHECK(completion->tool_call_count == 3);
   CHECK(completion->rejected_tool_call_count == 1);
 
-  const auto recorded = requests->requests();
+  const auto recorded = server.requests();
   REQUIRE(recorded.size() == 3);
   CHECK(recorded[1].body.find("tool call limit for this turn reached") ==
         std::string::npos);
@@ -551,9 +611,9 @@ TEST_CASE("the per-turn call limit counts across rounds and admits exactly its b
 
 TEST_CASE("an admission hook's refusal text reaches the model on the wire") {
   auto fixture = make_harness_fixture(
-      test_config(), {scripted_exchange(two_tool_stream, "tool-request"),
-                      scripted_exchange(final_stream, "final-request")});
-  auto* requests = fixture.transport;
+      test_config(), {scripted_response(two_tool_stream, "tool-request"),
+                      scripted_response(final_stream, "final-request")});
+  auto& server = fixture.server;
   auto& harness = fixture.harness;
   auto& conversation = fixture.conversation;
 
@@ -600,7 +660,7 @@ TEST_CASE("an admission hook's refusal text reaches the model on the wire") {
   CHECK(completion->rejected_tool_call_count == 1);
   CHECK(conversation.message_count() == 4);
 
-  const auto recorded = requests->requests();
+  const auto recorded = server.requests();
   REQUIRE(recorded.size() == 2);
   CHECK(recorded[1].body.find(R"({\"error\":\"budget spent before second_tool\"})") !=
         std::string::npos);
@@ -610,7 +670,7 @@ TEST_CASE("cancelling from the admission hook runs no handler and commits nothin
   // Only the tool round is scripted: a cancelled turn never asks for a final
   // response, so a second exchange would go unused.
   auto fixture = make_harness_fixture(
-      test_config(), {scripted_exchange(two_tool_stream, "tool-request")});
+      test_config(), {scripted_response(two_tool_stream, "tool-request")});
   auto& harness = fixture.harness;
   auto& conversation = fixture.conversation;
 
@@ -676,12 +736,12 @@ TEST_CASE("the soft round limit commits one round and keeps the history sendable
   auto fixture = make_harness_fixture(
       std::move(config),
       {
-          scripted_exchange(first_round, "tool-request"),
-          scripted_exchange(excess_round, "stop-request"),
-          scripted_exchange(anthropic_text_stream("second answer", "msg_second"),
+          scripted_response(first_round, "tool-request"),
+          scripted_response(excess_round, "stop-request"),
+          scripted_response(anthropic_text_stream("second answer", "msg_second"),
                             "second-request"),
       });
-  auto* requests = fixture.transport;
+  auto& server = fixture.server;
   auto& harness = fixture.harness;
   auto& conversation = fixture.conversation;
 
@@ -740,7 +800,7 @@ TEST_CASE("the soft round limit commits one round and keeps the history sendable
   REQUIRE(second);
   CHECK(second->text == "second answer");
 
-  const auto recorded = requests->requests();
+  const auto recorded = server.requests();
   REQUIRE(recorded.size() == 3);
   const auto& resumed_body = recorded[2].body;
   // The Messages API takes one message per role turn, so the tool results and the
@@ -777,8 +837,8 @@ TEST_CASE("large dropped calls reach the host intact") {
       "msg_excess");
   auto fixture = make_harness_fixture(
       std::move(config), {
-                             scripted_exchange(first_round, "tool-request"),
-                             scripted_exchange(excess_round, "stop-request"),
+                             scripted_response(first_round, "tool-request"),
+                             scripted_response(excess_round, "stop-request"),
                          });
   auto& harness = fixture.harness;
   auto& conversation = fixture.conversation;
@@ -805,4 +865,35 @@ TEST_CASE("large dropped calls reach the host intact") {
   CHECK(completion->unexecuted_tool_calls[1].id == "call-c");
   CHECK(completion->unexecuted_tool_calls[1].arguments.text == second_arguments);
   CHECK(conversation.message_count() == 3);
+}
+
+TEST_CASE("a Harness adopts a registry built before it and runs its handlers") {
+  std::size_t calls = 0;
+  scry::ToolRegistry tools;
+  REQUIRE(tools.add_dynamic(ordinal_tool_definition("first_tool"),
+                            [&calls](scry::Json) -> scry::Result<scry::Json> {
+                              ++calls;
+                              return scry::Json{.text = R"({"handled":"first"})"};
+                            }));
+
+  auto server = start_server();
+  server.enqueue(scripted_response(anthropic_tool_stream({
+      {.id = "call-a", .name = "first_tool", .arguments = R"({"ordinal":1})"},
+  })));
+  server.enqueue(scripted_response(final_stream));
+  auto config = test_config();
+  config.base_url = server.url();
+  auto harness = unwrap(scry::Harness::create(config, std::move(tools)));
+
+  CHECK(harness.tools().names() == std::vector<std::string>{"first_tool"});
+  // Registration stays open through tools() after create().
+  REQUIRE(harness.tools().add_dynamic(ordinal_tool_definition("second_tool"),
+                                      static_handler(R"({"handled":"second"})")));
+  CHECK(harness.tools().size() == 2);
+
+  auto conversation = unwrap(scry::Conversation::create());
+  const auto completion = harness.send_and_wait(conversation, "Run the first tool");
+  REQUIRE(completion);
+  CHECK(completion->text == "all done");
+  CHECK(calls == 1);
 }

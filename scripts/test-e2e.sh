@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 
-# Build and run the public-API smoke against a running OpenAI-compatible server.
-# Set SCRY_LOCAL_MODEL_BASE_URL and SCRY_LOCAL_MODEL_MODEL first.
+# Build and run the public-API smoke against a live model server.
+# Set SCRY_E2E_BASE_URL and SCRY_E2E_MODEL first. SCRY_E2E_DIALECT selects
+# openai (the default) or anthropic. SCRY_E2E_API_KEY is optional for openai.
 
 set -euo pipefail
 
-: "${SCRY_LOCAL_MODEL_BASE_URL:?Set SCRY_LOCAL_MODEL_BASE_URL to the server /v1 URL}"
-: "${SCRY_LOCAL_MODEL_MODEL:?Set SCRY_LOCAL_MODEL_MODEL to the model name}"
+: "${SCRY_E2E_BASE_URL:?Set SCRY_E2E_BASE_URL to the server URL}"
+: "${SCRY_E2E_MODEL:?Set SCRY_E2E_MODEL to the model name}"
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 cmake --preset dev -DCMAKE_CXX_COMPILER="${CXX:-g++-16}"
-cmake --build build/dev --target scry_local_model_smoke
-build/dev/tests/e2e/scry_local_model_smoke
+cmake --build build/dev --target scry_e2e_smoke
+build/dev/tests/e2e/scry_e2e_smoke

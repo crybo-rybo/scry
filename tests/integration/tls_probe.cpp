@@ -49,8 +49,11 @@ int main(const int argc, char** argv) {
   };
   config.retry.initial_backoff = 0ms;
   config.retry.max_backoff = 0ms;
-  config.timeouts.connect = 1s;
-  config.timeouts.transfer = 2s;
+  // These bounds only guard against a hang. A passing run makes one attempt, and
+  // the transfer bound includes the connect, so each probe ends within 5 s. That
+  // is inside the 6 s that tls_server_test.py gives each probe.
+  config.timeouts.connect = 5s;
+  config.timeouts.transfer = 5s;
   config.timeouts.shutdown = 50ms;
 
   auto harness = scry::Harness::create(std::move(config));

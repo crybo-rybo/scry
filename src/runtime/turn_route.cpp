@@ -116,10 +116,6 @@ TurnRoute::TurnRoute(const TurnId turn_id, std::shared_ptr<std::atomic<bool>> ca
 
 TurnId TurnRoute::id() const noexcept { return turn_id_; }
 
-std::shared_ptr<std::atomic<bool>> TurnRoute::cancel_flag() const noexcept {
-  return cancelled_;
-}
-
 bool TurnRoute::cancel() noexcept {
   if (terminal_) {
     return false;

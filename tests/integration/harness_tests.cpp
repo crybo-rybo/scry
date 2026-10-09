@@ -1,4 +1,3 @@
-#include "runtime/test_access.hpp"
 #include "support/harness_test_support.hpp"
 
 #include <catch2/catch_test_macros.hpp>
@@ -15,22 +14,22 @@ namespace {
 const std::string anthropic_stream =
     anthropic_text_stream("Hello runtime.", "msg_integration");
 
-[[nodiscard]] scry::test::ScriptedExchange successful_exchange() {
-  return scripted_exchange(anthropic_stream, "request-integration");
+[[nodiscard]] ScriptedResponse successful_response() {
+  return scripted_response(anthropic_stream, "request-integration");
 }
 
-// Blocks inside perform() until the transport is released, so a test can act
-// while exactly one transfer is in flight.
-[[nodiscard]] scry::test::ScriptedExchange held_exchange() {
-  auto exchange = scripted_exchange(anthropic_stream, "controlled-request");
-  exchange.hold = true;
-  return exchange;
+// Sends nothing until the server is released, so a test can act while exactly
+// one transfer is in flight.
+[[nodiscard]] ScriptedResponse held_response() {
+  auto response = scripted_response(anthropic_stream, "controlled-request");
+  response.hold = true;
+  return response;
 }
 
 } // namespace
 
 TEST_CASE("public async path streams and commits only inside update") {
-  auto fixture = make_harness_fixture(test_config(), {successful_exchange()});
+  auto fixture = make_harness_fixture(test_config(), {successful_response()});
 
   std::string streamed;
   std::string completed;
@@ -55,14 +54,14 @@ TEST_CASE("public async path streams and commits only inside update") {
   CHECK(completed == "Hello runtime.");
   CHECK(callback_thread == std::this_thread::get_id());
   CHECK(fixture.conversation.message_count() == 2);
-  const auto requests = fixture.transport->requests();
+  const auto requests = fixture.server.requests();
   REQUIRE(requests.size() == 1);
   CHECK(requests.front().body.find("Question") != std::string::npos);
   CHECK(requests.front().body.find("sanitized-test-key") == std::string::npos);
 }
 
 TEST_CASE("send-and-wait layers over the async path") {
-  auto fixture = make_harness_fixture(test_config(), {successful_exchange()});
+  auto fixture = make_harness_fixture(test_config(), {successful_response()});
 
   auto completion = fixture.harness.send_and_wait(fixture.conversation, "Question");
   REQUIRE(completion);
@@ -78,14 +77,10 @@ TEST_CASE("send-and-wait layers over the async path") {
 TEST_CASE("accepted failure uses one async error channel and commits nothing") {
   auto config = test_config();
   config.retry.max_attempts = 1;
-  auto fixture =
-      make_harness_fixture(config, {{
-                                       .result = std::unexpected(scry::Error{
-                                           .category = scry::ErrorCategory::network,
-                                           .retryable = true,
-                                           .message = "scripted failure",
-                                       }),
-                                   }});
+  auto fixture = make_harness_fixture(config, {{
+                                                  .status = 503,
+                                                  .body_chunks = {"scripted failure"},
+                                              }});
 
   auto completion = fixture.harness.send_and_wait(fixture.conversation, "Question");
   REQUIRE_FALSE(completion);
@@ -98,7 +93,7 @@ TEST_CASE("accepted failure uses one async error channel and commits nothing") {
 TEST_CASE("busy conversations and queued cancellation issue no second transfer") {
   auto config = test_config();
   config.limits.max_pending_turns = 2;
-  auto fixture = make_harness_fixture(config, {held_exchange()});
+  auto fixture = make_harness_fixture(config, {held_response()});
   auto second_conversation = scry::Conversation::create();
   REQUIRE(second_conversation);
 
@@ -113,7 +108,7 @@ TEST_CASE("busy conversations and queued cancellation issue no second transfer")
               },
       });
   REQUIRE(first);
-  fixture.transport->wait_for_call(1);
+  REQUIRE(fixture.server.wait_for_request(1));
   auto busy = fixture.harness.send(fixture.conversation, "Duplicate");
   REQUIRE_FALSE(busy);
   CHECK(busy.error().category == scry::ErrorCategory::busy);
@@ -129,10 +124,10 @@ TEST_CASE("busy conversations and queued cancellation issue no second transfer")
   REQUIRE(second);
   CHECK(second->cancel());
 
-  fixture.transport->release();
+  fixture.server.release();
   REQUIRE(
       pump_until(fixture.harness, [&] { return first_completed && second_cancelled; }));
-  CHECK(fixture.transport->calls() == 1);
+  CHECK(fixture.server.requests().size() == 1);
   CHECK(fixture.conversation.message_count() == 2);
   CHECK(second_conversation->empty());
 }
@@ -141,7 +136,7 @@ TEST_CASE("serialized turns begin in FIFO order with one active transfer") {
   auto config = test_config();
   config.limits.max_pending_turns = 3;
   auto fixture = make_harness_fixture(
-      config, {held_exchange(), successful_exchange(), successful_exchange()});
+      config, {held_response(), successful_response(), successful_response()});
   auto second_conversation = scry::Conversation::create();
   auto third_conversation = scry::Conversation::create();
   REQUIRE(second_conversation);
@@ -159,19 +154,19 @@ TEST_CASE("serialized turns begin in FIFO order with one active transfer") {
   auto first = fixture.harness.send(fixture.conversation, "First FIFO request",
                                     count_completion());
   REQUIRE(first);
-  fixture.transport->wait_for_call(1);
+  REQUIRE(fixture.server.wait_for_request(1));
   auto second = fixture.harness.send(*second_conversation, "Second FIFO request",
                                      count_completion());
   auto third = fixture.harness.send(*third_conversation, "Third FIFO request",
                                     count_completion());
   REQUIRE(second);
   REQUIRE(third);
-  CHECK(fixture.transport->calls() == 1);
+  CHECK(fixture.server.requests().size() == 1);
 
-  fixture.transport->release();
+  fixture.server.release();
   REQUIRE(pump_until(fixture.harness, [&completed] { return completed == 3; }));
 
-  const auto requests = fixture.transport->requests();
+  const auto requests = fixture.server.requests();
   REQUIRE(requests.size() == 3);
   CHECK(requests[0].body.find("First FIFO request") != std::string::npos);
   CHECK(requests[1].body.find("Second FIFO request") != std::string::npos);
@@ -181,7 +176,7 @@ TEST_CASE("serialized turns begin in FIFO order with one active transfer") {
 TEST_CASE("pending-turn admission limit rejects before acceptance") {
   auto config = test_config();
   config.limits.max_pending_turns = 1;
-  auto fixture = make_harness_fixture(config, {held_exchange()});
+  auto fixture = make_harness_fixture(config, {held_response()});
   auto second_conversation = scry::Conversation::create();
   REQUIRE(second_conversation);
 
@@ -195,16 +190,16 @@ TEST_CASE("pending-turn admission limit rejects before acceptance") {
               },
       });
   REQUIRE(first);
-  fixture.transport->wait_for_call(1);
+  REQUIRE(fixture.server.wait_for_request(1));
   auto rejected = fixture.harness.send(*second_conversation, "Second");
   REQUIRE_FALSE(rejected);
   CHECK(rejected.error().category == scry::ErrorCategory::resource_limit);
-  fixture.transport->release();
+  fixture.server.release();
   REQUIRE(pump_until(fixture.harness, [&completed] { return completed; }));
 }
 
 TEST_CASE("dropping a Turn detaches without cancelling its callbacks or commit") {
-  auto fixture = make_harness_fixture(test_config(), {successful_exchange()});
+  auto fixture = make_harness_fixture(test_config(), {successful_response()});
 
   bool completed = false;
   {
@@ -224,8 +219,8 @@ TEST_CASE("dropping a Turn detaches without cancelling its callbacks or commit")
 }
 
 TEST_CASE("two Harness instances keep provider and worker state isolated") {
-  auto first = make_harness_fixture(test_config(), {successful_exchange()});
-  auto second = make_harness_fixture(test_config(), {successful_exchange()});
+  auto first = make_harness_fixture(test_config(), {successful_response()});
+  auto second = make_harness_fixture(test_config(), {successful_response()});
 
   auto first_completion = first.harness.send_and_wait(first.conversation, "First");
   auto second_completion = second.harness.send_and_wait(second.conversation, "Second");

@@ -25,6 +25,11 @@ namespace scry::detail {
                                           ErrorCategory category,
                                           std::string_view failure_message);
 
+// Whether the first byte after leading whitespace opens an object. Only that byte
+// is read, so the rest of the text must be valid JSON already or be validated
+// separately.
+[[nodiscard]] bool json_root_is_object(std::string_view text) noexcept;
+
 // Rewrites JSON text in canonical form: object keys in lexical order, no
 // insignificant whitespace, and the canonical spelling of every number and
 // string escape.

@@ -248,3 +248,71 @@ TEST_CASE("Anthropic stream rejects events after the completion claims the respo
   REQUIRE_FALSE(late);
   CHECK(late.error().category == ErrorCategory::protocol);
 }
+
+// An Anthropic-compatible server can send thinking without a request for it.
+// Each skipped block still holds its index.
+constexpr std::string_view thinking_stream = R"(event: message_start
+data: {"type":"message_start","message":{"type":"message","content":[],"stop_reason":null}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Hidden reasoning."}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"c2lnbmF0dXJl"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0}
+
+event: content_block_start
+data: {"type":"content_block_start","index":1,"content_block":{"type":"redacted_thinking","data":"cmVkYWN0ZWQ="}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":1}
+
+event: content_block_start
+data: {"type":"content_block_start","index":2,"content_block":{"type":"text","text":""}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"Visible."}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":2}
+
+event: content_block_start
+data: {"type":"content_block_start","index":3,"content_block":{"type":"tool_use","id":"tool_1","name":"lookup","input":{}}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":3,"delta":{"type":"input_json_delta","partial_json":"{\"city\":\"Boston\"}"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":3}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":9}}
+
+event: message_stop
+data: {"type":"message_stop"}
+
+)";
+
+TEST_CASE("Anthropic stream decoder skips thinking and redacted thinking blocks") {
+  const auto adapter = make_provider_adapter(ProviderDialect::anthropic);
+  REQUIRE(adapter);
+  ProviderDecodeState state{};
+
+  const auto events = decode_stream(*adapter, state, thinking_stream);
+  REQUIRE(events.size() == 2);
+  CHECK(std::get<ProviderTextDelta>(events[0]).text == "Visible.");
+
+  const auto& completed = std::get<ProviderCompleted>(events[1]).response;
+  REQUIRE(completed.content.size() == 2);
+  CHECK(std::get<TextBlock>(completed.content[0]).text == "Visible.");
+  const auto& tool = std::get<ToolCallBlock>(completed.content[1]);
+  CHECK(tool.id == "tool_1");
+  CHECK(tool.name == "lookup");
+  CHECK(tool.arguments.text == R"({"city":"Boston"})");
+  CHECK(completed.finish_reason == FinishReason::tool_use);
+}

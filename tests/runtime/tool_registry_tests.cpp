@@ -288,42 +288,6 @@ TEST_CASE("a standalone registry exports its manifest without a Harness") {
       R"({"tools":[{"description":"Get a forecast","input_schema":{"properties":{"city":{"description":"Place","type":"string"}},"required":["city"],"type":"object"},"name":"forecast"},{"description":"Get a forecast","input_schema":{"type":"object"},"name":"another"}],"version":1})");
 }
 
-TEST_CASE("a Harness adopts a registry built before it and runs its handlers") {
-  using namespace scry::test_support;
-
-  auto calls = std::make_shared<int>(0);
-  scry::ToolRegistry tools;
-  REQUIRE(tools.add_dynamic(definition(), handler(calls)));
-
-  auto fake = std::make_unique<scry::test::FakeTransport>();
-  fake->enqueue(scripted_exchange(
-      anthropic_tool_stream({ToolUseBlock{
-          .id = "call-a", .name = "forecast", .arguments = R"({"city":"Detroit"})"}}),
-      "tool-request"));
-  fake->enqueue(scripted_exchange(anthropic_text_stream("done"), "final-request"));
-  auto harness = unwrap(scry::detail::HarnessTestAccess::create(
-      test_config(), provider(), std::move(fake), 0, {}, std::move(tools)));
-
-  CHECK(harness.tools().names() == std::vector<std::string>{"forecast"});
-  // Registration stays open through tools() after create().
-  REQUIRE(harness.tools().add_dynamic(definition("another", R"({"type":"object"})"),
-                                      handler()));
-  CHECK(harness.tools().size() == 2);
-
-  auto conversation = unwrap(scry::Conversation::create());
-  bool finished = false;
-  auto turn = harness.send(conversation, "what is the forecast?",
-                           {
-                               .on_finished =
-                                   [&finished](scry::Result<scry::Completion> outcome) {
-                                     finished = outcome.has_value();
-                                   },
-                           });
-  REQUIRE(turn);
-  REQUIRE(pump_until(harness, [&finished] { return finished; }));
-  CHECK(*calls == 1);
-}
-
 TEST_CASE("a moved-from registry is inactive and reports invalid_state") {
   scry::ToolRegistry tools;
   REQUIRE(tools.add_dynamic(definition(), handler()));

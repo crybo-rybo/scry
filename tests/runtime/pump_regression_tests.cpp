@@ -30,7 +30,7 @@ namespace {
 // if the transcript were charged to it.
 [[nodiscard]] scry::detail::CompletionEvent
 large_completion(const scry::TurnId turn_id) {
-  return {
+  return {{
       .turn_id = turn_id,
       .transcript = {scry::detail::Message{
           .role = scry::detail::Role::assistant,
@@ -41,7 +41,7 @@ large_completion(const scry::TurnId turn_id) {
       .finish_reason = scry::detail::FinishReason::completed,
       .attempt_count = 1,
       .provider_request_id = "request-id",
-  };
+  }};
 }
 
 // The pump derives the callback text while committing, before the transcript
@@ -64,13 +64,12 @@ delivered_text(PumpFixture& fixture, const std::uint64_t id,
                           },
                   },
           });
-  REQUIRE(fixture.events->push(
-      scry::detail::CompletionEvent{
-          .turn_id = route->id(),
-          .transcript = std::move(transcript),
-          .finish_reason = scry::FinishReason::completed,
-      },
-      1024));
+  REQUIRE(fixture.events->push(scry::detail::CompletionEvent{{
+                                   .turn_id = route->id(),
+                                   .transcript = std::move(transcript),
+                                   .finish_reason = scry::FinishReason::completed,
+                               }},
+                               1024));
   static_cast<void>(fixture.pump.update({}));
   REQUIRE(delivered);
   return observed;

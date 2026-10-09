@@ -23,21 +23,19 @@ bool Turn::finished() const noexcept {
 }
 
 bool Turn::cancel() noexcept {
-  if (impl_ == nullptr || impl_->cancelled == nullptr) {
+  if (impl_ == nullptr) {
     return false;
   }
   if (const auto route = impl_->route.lock()) {
     return route->cancel();
   }
-  return !impl_->cancelled->exchange(true, std::memory_order_relaxed);
+  return false;
 }
 
 bool Turn::disconnect() noexcept {
   if (impl_ == nullptr) {
     return false;
   }
-  // Unlike cancellation there is no flag outliving the route: with the Harness
-  // gone there are no callbacks left to clear.
   if (const auto route = impl_->route.lock()) {
     return route->disconnect();
   }

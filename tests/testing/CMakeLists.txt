@@ -2,7 +2,7 @@
 # the installed public surface, so it links no private include directory.
 add_executable(
   scry_testing_tests
-  scripted_transport_tests.cpp
+  scripted_server_tests.cpp
   typed_answer_tests.cpp
 )
 target_link_libraries(

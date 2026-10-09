@@ -118,7 +118,9 @@ def run_probe(probe: Path, url: str, mode: str) -> None:
         check=False,
         capture_output=True,
         text=True,
-        timeout=5,
+        # One attempt of the probe takes at most 5 s. Two probes stay inside the
+        # ctest TIMEOUT of 15 s.
+        timeout=6,
     )
     if completed.returncode != 0:
         raise RuntimeError(

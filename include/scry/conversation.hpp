@@ -19,8 +19,9 @@ struct ConversationConfig {
 /// Move-only owner of committed model conversation history.
 ///
 /// A Conversation may have at most one queued or active turn. History is committed
-/// transactionally when Harness::update() delivers a successful terminal event; failed
-/// and cancelled turns do not modify it.
+/// transactionally when Harness::update() processes a successful terminal event, before
+/// any on_finished delivery and whether or not one is supplied; failed and cancelled
+/// turns do not modify it.
 class Conversation final {
 public:
   /// Creates an empty conversation.

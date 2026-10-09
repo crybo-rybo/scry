@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/model.hpp"
+#include "core/provider.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -33,7 +34,20 @@ struct[[ = reflection::tag{"tool_use"}, = reflection::ignore_unknown ]]
   Json input;
 };
 
-using AnthropicContent = std::variant<AnthropicTextContent, AnthropicToolUseContent>;
+// Scry reads thinking blocks only to skip them; see anthropic_content_block.
+struct[[ = reflection::tag{"thinking"}, = reflection::ignore_unknown ]]
+    AnthropicThinkingContent {
+  std::string thinking;
+};
+
+struct[[ = reflection::tag{"redacted_thinking"}, = reflection::ignore_unknown ]]
+    AnthropicRedactedThinkingContent {
+  std::string data;
+};
+
+using AnthropicContent =
+    std::variant<AnthropicTextContent, AnthropicToolUseContent,
+                 AnthropicThinkingContent, AnthropicRedactedThinkingContent>;
 
 // Only non-negative integers that fit 64 bits are counts; null reads as absent.
 struct[[ = reflection::ignore_unknown, = reflection::skip_null ]] AnthropicUsage {
@@ -66,7 +80,18 @@ struct[[ = reflection::tag{"input_json_delta"}, = reflection::ignore_unknown ]]
   std::string partial_json;
 };
 
-using AnthropicDelta = std::variant<AnthropicTextDelta, AnthropicInputJsonDelta>;
+struct[[ = reflection::tag{"thinking_delta"}, = reflection::ignore_unknown ]]
+    AnthropicThinkingDelta {
+  std::string thinking;
+};
+
+struct[[ = reflection::tag{"signature_delta"}, = reflection::ignore_unknown ]]
+    AnthropicSignatureDelta {
+  std::string signature;
+};
+
+using AnthropicDelta = std::variant<AnthropicTextDelta, AnthropicInputJsonDelta,
+                                    AnthropicThinkingDelta, AnthropicSignatureDelta>;
 
 // The stream's events, selected by their `type`. `request_id` is read apart from
 // these, best-effort, because a malformed one must not fail its event.
@@ -115,8 +140,13 @@ using AnthropicEvent =
 
 // Builds a response block. A streamed tool_use starts with empty arguments, which
 // its input_json_delta events fill; one inside message_start carries its input.
-[[nodiscard]] Result<ContentBlock> anthropic_content_block(AnthropicContent content,
-                                                           bool streaming_start);
+// A thinking block builds no response block, so Scry never sends it back.
+[[nodiscard]] Result<std::optional<ContentBlock>>
+anthropic_content_block(AnthropicContent content, bool streaming_start);
+
+// Which thinking block `content` is, if Scry skips it.
+[[nodiscard]] AnthropicSkippedBlock
+anthropic_skipped_block(const AnthropicContent& content) noexcept;
 
 [[nodiscard]] FinishReason
 decode_anthropic_finish(std::optional<std::string_view> reason);

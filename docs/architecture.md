@@ -998,7 +998,10 @@ After the finish reason and before `[DONE]`, the stream can have a chunk that
 has only usage. These
 conditions are protocol errors: missing, duplicate, or early terminal markers,
 and semantic content after finish. For Anthropic streams, Scry decodes Messages
-content blocks, usage, stop reasons, and tool-use arguments.
+content blocks, usage, stop reasons, and tool-use arguments. Scry ignores
+thinking and redacted thinking blocks. A compatible server can send these blocks
+without a request. Scry does not keep their text, and it does not send them
+back.
 
 The incremental SSE parser is in the kernel (`src/kernel/sse.cpp`). It handles
 byte splits at any position. A CR, LF, or
@@ -1218,24 +1221,28 @@ with ASan and UBSan. No build does a coverage-guided search.
 
 `scry::testing` is an optional second static library. It is installed as the
 package component `testing`, and it is built unless
-`SCRY_BUILD_TESTING_SUPPORT` is off. It publishes
-`scry::testing::ScriptedTransport`, which is a queue of scripted responses. It
-also publishes `create_harness`, which builds a Harness over that transport with
-a seeded retry jitter.
+`SCRY_BUILD_TESTING_SUPPORT` is off. It links only `scry::scry` and uses only
+the public headers. It publishes `scry::testing::ScriptedServer`, an HTTP/1.1
+server on 127.0.0.1 with an ephemeral port. The server answers each request with
+the next response of a script, and it records each request.
 
-The scripted transport replaces only the HTTP transfer. A scripted turn uses the
-real worker, the real provider request encoder and stream decoder, and the real
-retry schedule. It also uses the real tool dispatch and the real pump. Thus its
-guarantees are the guarantees that this document gives above. A scripted
-response has a status. The same transport policy as for a live response
-classifies a non-2xx scripted response.
+A test sets `Config::base_url` to the URL of the server and calls
+`Harness::create`. Thus a scripted turn uses all of the shipping code: libcurl,
+the HTTP response policy, the SSE parser, the provider request encoder and
+stream decoder, the retry schedule, the tool dispatch, and the pump. Its
+guarantees are the guarantees that this document gives above.
 
-Thus a scripted 429 or 500 gets to the runtime as the same retryable error as a
-real one. The scripted transport does not exercise libcurl, TLS, or any timeout
-that curl enforces. The loopback transport suites and the integration suites
-cover those items. The headers of `scry::testing` depend only on `<scry/*>`.
-Its retry waits are real time, and the retry policy of the `Config` sets their
-bound.
+A scripted response has a status, headers, and body chunks. The server sends
+each chunk as one HTTP chunk. Each response has `Connection: close`, and the
+server closes the connection after the response. A response can hold before
+its first byte, or pause after a number of chunks, until the test releases it.
+A response can also close the connection after a number of chunks. libcurl then
+reports a retryable `network` failure. A request that arrives when the script
+is empty gets status 404. Scry reports it as a `protocol` failure.
+
+Retry waits are real time, and the retry policy of the `Config` sets their
+bound. The server does not test TLS. The headers of `scry::testing` depend only
+on `<scry/*>`.
 
 libcurl is the only linked dependency. The installed package finds curl and
 Threads. Tests use Catch2, and only the standalone showcase uses Dear ImGui.

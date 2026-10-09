@@ -49,8 +49,8 @@ public:
   /// outcome is an Error whose category is ErrorCategory::cancelled. An outcome
   /// already produced by the worker is not reversed.
   /// @return true only when this call issued the cancellation request; false if
-  /// cancellation was already requested, the turn was terminal, or the handle is moved
-  /// from.
+  /// cancellation was already requested, the turn was terminal, the handle is moved
+  /// from, or the Harness is gone.
   /// @see disconnect()
   bool cancel() noexcept;
 

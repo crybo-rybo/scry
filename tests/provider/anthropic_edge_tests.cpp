@@ -38,6 +38,17 @@ using namespace scry::test_fixtures;
   REQUIRE(result);
   return state;
 }
+constexpr std::string_view thinking_start =
+    R"({"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}})";
+constexpr std::string_view redacted_start =
+    R"({"type":"content_block_start","index":0,"content_block":{"type":"redacted_thinking","data":"x"}})";
+[[nodiscard]] ProviderDecodeState started_state(AnthropicAdapter& adapter,
+                                                const std::string_view start) {
+  ProviderDecodeState state;
+  start_anthropic_message(adapter, state);
+  REQUIRE(decode(adapter, "content_block_start", start, state));
+  return state;
+}
 } // namespace
 TEST_CASE("provider error tokens remain bounded and safe") {
   CHECK_FALSE(sanitize_error_token(""));
@@ -48,17 +59,23 @@ TEST_CASE("provider error tokens remain bounded and safe") {
 TEST_CASE("Anthropic content decoding covers text, tool, and rejection shapes") {
   auto text = anthropic_content("{\"type\":\"text\",\"text\":\"answer\"}", false);
   REQUIRE(text);
-  CHECK(std::get<TextBlock>(*text).text == "answer");
+  CHECK(std::get<TextBlock>(**text).text == "answer");
   auto streamed_tool = anthropic_content(
       "{\"type\":\"tool_use\",\"id\":\"id\",\"name\":\"lookup\",\"input\":{}}", true);
   REQUIRE(streamed_tool);
-  CHECK(std::get<ToolCallBlock>(*streamed_tool).arguments.text.empty());
+  CHECK(std::get<ToolCallBlock>(**streamed_tool).arguments.text.empty());
   auto tool =
       anthropic_content("{\"type\":\"tool_use\",\"id\":\"id\",\"name\":\"lookup\","
                         "\"input\":{\"x\":1}}",
                         false);
   REQUIRE(tool);
-  CHECK(std::get<ToolCallBlock>(*tool).arguments.text == "{\"x\":1}");
+  CHECK(std::get<ToolCallBlock>(**tool).arguments.text == "{\"x\":1}");
+  for (const auto json : {"{\"type\":\"thinking\",\"thinking\":\"hmm\"}",
+                          "{\"type\":\"redacted_thinking\",\"data\":\"x\"}"}) {
+    const auto skipped = anthropic_content(json, false);
+    REQUIRE(skipped);
+    CHECK_FALSE(*skipped);
+  }
   constexpr std::array invalid{
       "{}",
       "{\"type\":1}",
@@ -247,6 +264,86 @@ TEST_CASE("Anthropic stream content stop canonicalizes tools and closes text") {
       tool));
   require_protocol(decode(adapter, "content_block_stop",
                           R"({"type":"content_block_stop","index":0})", tool));
+}
+TEST_CASE("Anthropic stream skips thinking blocks but still validates them") {
+  AnthropicAdapter adapter;
+  constexpr std::array invalid_start{
+      R"({"type":"content_block_start","index":0,"content_block":{"type":"thinking"}})",
+      R"({"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":7}})",
+      R"({"type":"content_block_start","index":0,"content_block":{"type":"redacted_thinking"}})",
+      R"({"type":"content_block_start","index":0,"content_block":{"type":"redacted_thinking","data":7}})",
+  };
+  for (const auto body : invalid_start) {
+    ProviderDecodeState state;
+    start_anthropic_message(adapter, state);
+    require_protocol(decode(adapter, "content_block_start", body, state));
+  }
+
+  // Thinking produces no event, no response block, and no semantic output, so
+  // a retry stays possible.
+  auto thinking = started_state(adapter, thinking_start);
+  for (
+      const auto body : {
+          R"({"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"hmm"}})",
+          R"({"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig"}})",
+      }) {
+    const auto skipped = decode(adapter, "content_block_delta", body, thinking);
+    REQUIRE(skipped);
+    CHECK(skipped->empty());
+  }
+  CHECK(thinking.response.content.empty());
+  CHECK_FALSE(thinking.semantic_output_consumed);
+
+  constexpr std::array invalid_on_thinking{
+      R"({"type":"content_block_delta","index":1,"delta":{"type":"thinking_delta","thinking":"x"}})",
+      R"({"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta"}})",
+      R"({"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":7}})",
+      R"({"type":"content_block_delta","index":0,"delta":{"type":"signature_delta"}})",
+      R"({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"x"}})",
+      R"({"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{}"}})",
+  };
+  for (const auto body : invalid_on_thinking) {
+    auto state = started_state(adapter, thinking_start);
+    require_protocol(decode(adapter, "content_block_delta", body, state));
+  }
+  constexpr std::array thinking_deltas{
+      R"({"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"x"}})",
+      R"({"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"x"}})",
+  };
+  for (const auto body : thinking_deltas) {
+    auto redacted = started_state(adapter, redacted_start);
+    require_protocol(decode(adapter, "content_block_delta", body, redacted));
+    auto text = text_state(adapter);
+    require_protocol(decode(adapter, "content_block_delta", body, text));
+  }
+
+  // A skipped block holds its index: its stop is accepted, and the next block
+  // takes the index after it.
+  REQUIRE(decode(adapter, "content_block_stop",
+                 R"({"type":"content_block_stop","index":0})", thinking));
+  require_protocol(decode(
+      adapter, "content_block_start",
+      R"({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}})",
+      thinking));
+  REQUIRE(decode(
+      adapter, "content_block_start",
+      R"({"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}})",
+      thinking));
+  REQUIRE(thinking.response.content.size() == 1);
+  CHECK(std::holds_alternative<TextBlock>(thinking.response.content.front()));
+
+  // Thinking inside message_start holds its index the same way.
+  ProviderDecodeState initial;
+  REQUIRE(decode(
+      adapter, "message_start",
+      R"({"type":"message_start","message":{"type":"message","content":[{"type":"thinking","thinking":"hmm","signature":"sig"},{"type":"redacted_thinking","data":"x"},{"type":"text","text":"hi"}],"stop_reason":null}})",
+      initial));
+  REQUIRE(initial.response.content.size() == 1);
+  CHECK(std::get<TextBlock>(initial.response.content.front()).text == "hi");
+  REQUIRE(decode(
+      adapter, "content_block_start",
+      R"({"type":"content_block_start","index":3,"content_block":{"type":"text","text":""}})",
+      initial));
 }
 TEST_CASE("Anthropic stream message finish enforces lifecycle and usage") {
   AnthropicAdapter adapter;
