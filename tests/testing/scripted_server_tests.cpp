@@ -3,17 +3,24 @@
 // public Harness::create, so a change that breaks a consumer's test breaks this
 // suite first.
 #include <algorithm>
+#include <arpa/inet.h>
 #include <catch2/catch_test_macros.hpp>
+#include <charconv>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
+#include <future>
+#include <netinet/in.h>
 #include <optional>
 #include <scry/scry.hpp>
 #include <scry/testing/scripted_server.hpp>
 #include <scry/testing/streams.hpp>
 #include <string>
 #include <string_view>
+#include <sys/socket.h>
 #include <thread>
 #include <type_traits>
+#include <unistd.h>
 #include <utility>
 #include <vector>
 
@@ -627,4 +634,62 @@ TEST_CASE("captured requests expose the method, target, headers, and body") {
       request.headers, [](const auto& header) { return header.name == "X-Scry-Test"; });
   REQUIRE(extra != request.headers.end());
   CHECK(extra->value == "captured");
+}
+
+namespace {
+
+// Connects a raw client with a tiny receive buffer and sends one request, then
+// never reads, so a large response fills the server's send buffer.
+[[nodiscard]] int connect_stalled_reader(const ScriptedServer& server) {
+  const auto url = server.url();
+  const auto port_text = std::string_view{url}.substr(url.rfind(':') + 1);
+  std::uint16_t port = 0;
+  REQUIRE(
+      std::from_chars(port_text.data(), port_text.data() + port_text.size(), port).ec ==
+      std::errc{});
+
+  const auto client = ::socket(AF_INET, SOCK_STREAM, 0);
+  REQUIRE(client >= 0);
+  constexpr int receive_buffer = 1024;
+  REQUIRE(::setsockopt(client, SOL_SOCKET, SO_RCVBUF, &receive_buffer,
+                       sizeof(receive_buffer)) == 0);
+  sockaddr_in address{};
+  address.sin_family = AF_INET;
+  address.sin_port = htons(port);
+  address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  REQUIRE(::connect(client, reinterpret_cast<const sockaddr*>(&address),
+                    sizeof(address)) == 0);
+  constexpr std::string_view request =
+      "POST /v1/messages HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 0\r\n\r\n";
+  REQUIRE(::send(client, request.data(), request.size(), 0) ==
+          static_cast<ssize_t>(request.size()));
+  return client;
+}
+
+} // namespace
+
+TEST_CASE("destroying the server does not wait on a client that stopped reading") {
+  auto server = start_server();
+  // Far more than a loopback send buffer holds, so the response cannot finish
+  // while the client is not reading.
+  constexpr std::size_t body_size = std::size_t{32} * 1024 * 1024;
+  server.enqueue({.body_chunks = {std::string(body_size, 'x')}});
+  const auto client = connect_stalled_reader(server);
+  REQUIRE(server.wait_for_request(1));
+
+  std::promise<void> destroyed;
+  auto done = destroyed.get_future();
+  std::thread destroyer{
+      [stopping = std::move(server), destroyed = std::move(destroyed)]() mutable {
+        {
+          const auto last = std::move(stopping);
+        }
+        destroyed.set_value();
+      }};
+  const auto finished = done.wait_for(5s) == std::future_status::ready;
+  // Closing the client fails a stuck write, so the destroyer can be joined
+  // either way.
+  ::close(client);
+  destroyer.join();
+  CHECK(finished);
 }
