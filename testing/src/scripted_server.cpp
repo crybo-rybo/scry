@@ -106,9 +106,11 @@ void configure_client(const int client) {
 #endif
 }
 
-// Waits until the descriptor is readable. False means the server is stopping.
-[[nodiscard]] bool wait_readable(const int descriptor, const std::stop_token& stop) {
-  pollfd entry{.fd = descriptor, .events = POLLIN, .revents = 0};
+// Waits until the descriptor is ready for `events`. False means the server is
+// stopping.
+[[nodiscard]] bool wait_ready(const int descriptor, const short events,
+                              const std::stop_token& stop) {
+  pollfd entry{.fd = descriptor, .events = events, .revents = 0};
   while (!stop.stop_requested()) {
     const auto ready = ::poll(&entry, 1, static_cast<int>(poll_period.count()));
     if (ready > 0) {
@@ -128,10 +130,17 @@ void configure_client(const int client) {
   return ::poll(&entry, 1, 0) != 0;
 }
 
-[[nodiscard]] bool send_all(const int client, std::string_view bytes) {
+// Never blocks in send, so a client that stops reading cannot keep the server
+// from stopping. False if the client left or the server stops first.
+[[nodiscard]] bool send_all(const int client, std::string_view bytes,
+                            const std::stop_token& stop) {
   while (!bytes.empty()) {
-    const auto sent = ::send(client, bytes.data(), bytes.size(), send_flags);
-    if (sent < 0 && errno == EINTR) {
+    if (!wait_ready(client, POLLOUT, stop)) {
+      return false;
+    }
+    const auto sent =
+        ::send(client, bytes.data(), bytes.size(), send_flags | MSG_DONTWAIT);
+    if (sent < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)) {
       continue;
     }
     if (sent <= 0) {
@@ -220,7 +229,7 @@ receive_request(const int client, const std::stop_token& stop) {
       request->body = received.substr(body_start, body_size);
       return request;
     }
-    if (!wait_readable(client, stop)) {
+    if (!wait_ready(client, POLLIN, stop)) {
       return std::nullopt;
     }
     const auto count = ::recv(client, buffer.data(), buffer.size(), 0);
@@ -324,7 +333,7 @@ public:
 
 private:
   void serve(const std::stop_token& stop) {
-    while (wait_readable(listener_.get(), stop)) {
+    while (wait_ready(listener_.get(), POLLIN, stop)) {
       const Socket client{::accept(listener_.get(), nullptr, nullptr)};
       if (client.get() >= 0) {
         configure_client(client.get());
@@ -344,7 +353,7 @@ private:
     if (response.hold && !await_release(client, stop)) {
       return;
     }
-    if (!send_all(client, response_head(response))) {
+    if (!send_all(client, response_head(response), stop)) {
       return;
     }
     const auto& chunks = response.body_chunks;
@@ -357,7 +366,7 @@ private:
       }
       const auto frame =
           index < chunks.size() ? chunk_frame(chunks[index]) : std::string{last_chunk};
-      if (!send_all(client, frame)) {
+      if (!send_all(client, frame, stop)) {
         return;
       }
     }
