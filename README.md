@@ -87,11 +87,12 @@ and each limit has a good default value. These limits include byte limits on
 payloads, tool arguments, tool results, and conversation size. They also include
 the connect, idle, and transfer timeouts.
 
-**Test without a server.**
-The optional `scry::testing` library replaces only the HTTP transfer. It uses a
-script of prepared responses instead. All other parts, from request encoding to
-tool dispatch, are the production code. Thus, your integration tests run the
-real runtime without a network.
+**Test with a scripted provider.**
+The optional `scry::testing` library gives a scripted HTTP server on loopback.
+The server sends prepared responses. Your test sets `base_url` to the server and
+uses the usual `Harness::create`. All parts of Scry, from libcurl to tool
+dispatch, are the production code. Thus, your integration tests run the real
+runtime without a model.
 
 **Export your tool contract.**
 A registry can write a JSON manifest of every registered tool. The manifest
@@ -263,7 +264,7 @@ target_link_libraries(app PRIVATE scry::scry)
 - [examples/typed_answer.cpp](examples/typed_answer.cpp) — a turn that ends
   with a C++ value. A host validator checks the value.
 - [examples/testing_scripted.cpp](examples/testing_scripted.cpp) — a downstream
-  test that uses a scripted provider and no network.
+  test that uses a scripted server on loopback and no model.
 - [extras/showcase](extras/showcase) — a standalone Dear ImGui chat panel, and a
   grid world where the model controls an NPC with tools.
 - [Architecture](docs/architecture.md) — how Scry is built, what it guarantees,

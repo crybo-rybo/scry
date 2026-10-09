@@ -3,6 +3,8 @@
 #include "core/model.hpp"
 #include "kernel/transport/transport.hpp"
 
+#include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -25,8 +27,14 @@ struct ProviderCompleted {
 // Unknown optional events are ignored without producing an event.
 using ProviderEvent = std::variant<ProviderTextDelta, ProviderCompleted>;
 
+// Scry skips thinking blocks: each holds its index, but the response never
+// holds the block.
+enum class AnthropicSkippedBlock : std::uint8_t { none, thinking, redacted_thinking };
+
 struct AnthropicProviderDecodeState {
   std::optional<std::size_t> active_content_index{};
+  std::size_t skipped_blocks{};
+  AnthropicSkippedBlock active_skipped{AnthropicSkippedBlock::none};
   bool message_started{false};
   bool finish_observed{false};
 };

@@ -1,11 +1,9 @@
-#include "support/transport/loopback_server.hpp"
+#include "loopback_server.hpp"
 
 #include <arpa/inet.h>
 #include <array>
-#include <cerrno>
 #include <charconv>
 #include <cstddef>
-#include <cstring>
 #include <netinet/in.h>
 #include <stdexcept>
 #include <string_view>
@@ -61,17 +59,18 @@ private:
   return request.size() >= body_start + content_length(request);
 }
 
-[[nodiscard]] std::string receive_request(const int client) {
+// False if the client closed the connection before a complete request.
+[[nodiscard]] bool receive_request(const int client) {
   std::string request;
   std::array<char, 4096> buffer{};
   while (!request_complete(request)) {
     const auto received = ::recv(client, buffer.data(), buffer.size(), 0);
     if (received <= 0) {
-      break;
+      return false;
     }
     request.append(buffer.data(), static_cast<std::size_t>(received));
   }
-  return request;
+  return true;
 }
 
 void send_all(const int client, const std::string_view response) {
@@ -115,10 +114,9 @@ void send_all(const int client, const std::string_view response) {
 
 } // namespace
 
-LoopbackServer::LoopbackServer(std::string response, const bool hold_response,
+LoopbackServer::LoopbackServer(std::string response,
                                const std::size_t requests_to_serve)
-    : response_(std::move(response)), requests_to_serve_(requests_to_serve),
-      response_released_(!hold_response) {
+    : response_(std::move(response)), requests_to_serve_(requests_to_serve) {
   // create_listener throws rather than returning an invalid descriptor.
   listener_ = create_listener(port_);
   thread_ = std::jthread{[this](const std::stop_token stop) { serve(stop); }};
@@ -126,65 +124,18 @@ LoopbackServer::LoopbackServer(std::string response, const bool hold_response,
 
 LoopbackServer::~LoopbackServer() {
   thread_.request_stop();
-  release_response();
   ::shutdown(listener_, SHUT_RDWR);
   ::close(listener_);
   thread_.join();
 }
 
-std::string LoopbackServer::url(const std::string_view path) const {
-  return "http://127.0.0.1:" + std::to_string(port_) + std::string{path};
-}
-
-std::string LoopbackServer::request() const {
-  const std::scoped_lock lock{state_mutex_};
-  return request_;
-}
-
-void LoopbackServer::wait_until_request() {
-  std::unique_lock lock{state_mutex_};
-  state_changed_.wait(lock, [this] { return request_received_; });
-}
-
-void LoopbackServer::release_response() {
-  {
-    const std::scoped_lock lock{state_mutex_};
-    response_released_ = true;
-  }
-  state_changed_.notify_all();
+std::string LoopbackServer::url() const {
+  return "http://127.0.0.1:" + std::to_string(port_) + "/";
 }
 
 std::size_t LoopbackServer::accepted_connections() const {
   const std::scoped_lock lock{state_mutex_};
   return accepted_connections_;
-}
-
-bool LoopbackServer::serve_connection(const int client, const std::stop_token& stop,
-                                      std::size_t& served) {
-  while (served < requests_to_serve_ && !stop.stop_requested()) {
-    auto request = receive_request(client);
-    if (request.empty()) {
-      // The peer closed without another request; wait for a fresh connection.
-      return true;
-    }
-    {
-      const std::scoped_lock lock{state_mutex_};
-      request_ = std::move(request);
-      request_received_ = true;
-    }
-    state_changed_.notify_all();
-    {
-      std::unique_lock lock{state_mutex_};
-      state_changed_.wait(
-          lock, [this, &stop] { return response_released_ || stop.stop_requested(); });
-    }
-    if (stop.stop_requested()) {
-      return false;
-    }
-    send_all(client, response_);
-    ++served;
-  }
-  return true;
 }
 
 void LoopbackServer::serve(const std::stop_token stop) {
@@ -200,8 +151,10 @@ void LoopbackServer::serve(const std::stop_token stop) {
       const std::scoped_lock lock{state_mutex_};
       ++accepted_connections_;
     }
-    if (!serve_connection(client.get(), stop, served)) {
-      return;
+    // A connection serves requests until the client closes it.
+    while (served < requests_to_serve_ && receive_request(client.get())) {
+      send_all(client.get(), response_);
+      ++served;
     }
   }
 }

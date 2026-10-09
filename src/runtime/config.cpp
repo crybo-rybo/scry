@@ -145,14 +145,14 @@ namespace {
 }
 
 [[nodiscard]] Status validate_runtime_bounds(const Config& config) {
-  constexpr std::size_t minimum_event_bytes = 1024;
   if (auto timeouts = transport_policy::validate_timeouts(config.timeouts); !timeouts) {
     return timeouts;
   }
   if (!positive_limits(config.limits)) {
     return invalid("resource limits must be greater than 0");
   }
-  if (config.limits.max_queued_event_bytes_per_turn < minimum_event_bytes) {
+  if (config.limits.max_queued_event_bytes_per_turn <
+      minimum_queued_event_bytes_per_turn) {
     return invalid("per-turn queued-event limit must be at least 1024 bytes");
   }
   if (config.max_tool_rounds == 0) {

@@ -3,14 +3,14 @@
 // register the tools the application registers, run the turn, then assert on
 // what the application observed and on the request bytes Scry actually sent.
 //
-// Everything between the script and the assertions is the shipping runtime:
-// the worker thread, the dialect's request encoder and stream decoder, tool
-// dispatch, and the pump. Only the HTTP transfer is replaced, so nothing here
-// touches the network.
+// The provider is a scripted HTTP server on 127.0.0.1, and the Harness comes from
+// the ordinary Harness::create. Thus everything between the script and the
+// assertions is the shipping runtime: libcurl, the dialect's request encoder and
+// stream decoder, tool dispatch, and the pump. Nothing leaves the machine.
 
 #include <cstdio>
 #include <scry/scry.hpp>
-#include <scry/testing/scripted_transport.hpp>
+#include <scry/testing/scripted_server.hpp>
 #include <scry/testing/streams.hpp>
 #include <string>
 #include <string_view>
@@ -23,11 +23,10 @@ struct RoomArguments {
   std::string room{};
 };
 
-[[nodiscard]] scry::Config scripted_config() {
-  // No request leaves the process, but a base URL that is never listening keeps
-  // a mistake from becoming a live call.
+[[nodiscard]] scry::Config
+scripted_config(const scry::testing::ScriptedServer& server) {
   auto config = scry::Config{
-      .base_url = "http://127.0.0.1:1",
+      .base_url = server.url(),
       .api_key = "example-key",
       .model = "example-model",
   };
@@ -44,15 +43,13 @@ struct RoomArguments {
 }
 
 // Two rounds: the model asks for the tool, then answers using its result.
-void script_two_rounds(scry::testing::ScriptedTransport& transport) {
-  transport.enqueue({
-      .request_id = "round-one",
+void script_two_rounds(scry::testing::ScriptedServer& server) {
+  server.enqueue({
       .body_chunks = {scry::testing::anthropic_tool_stream({
           {.id = "call-1", .name = "read_sensor", .arguments = R"({"room":"attic"})"},
       })},
   });
-  transport.enqueue({
-      .request_id = "round-two",
+  server.enqueue({
       .body_chunks = {scry::testing::anthropic_text_stream("The attic is at 19C.")},
   });
 }
@@ -60,11 +57,15 @@ void script_two_rounds(scry::testing::ScriptedTransport& transport) {
 } // namespace
 
 int main() {
-  scry::testing::ScriptedTransport transport;
-  script_two_rounds(transport);
+  auto started = scry::testing::ScriptedServer::create();
+  if (!check(started.has_value(), "the scripted server was started")) {
+    return 1;
+  }
+  auto server = std::move(*started);
+  script_two_rounds(server);
 
-  auto created = scry::testing::create_harness(scripted_config(), transport);
-  if (!check(created.has_value(), "the scripted harness was created")) {
+  auto created = scry::Harness::create(scripted_config(server));
+  if (!check(created.has_value(), "the harness was created")) {
     return 1;
   }
   auto harness = std::move(*created);
@@ -118,7 +119,7 @@ int main() {
     return 1;
   }
 
-  const auto requests = transport.requests();
+  const auto requests = server.requests();
   const auto passed =
       check(outcome->text == "The attic is at 19C.", "the final text was decoded") &&
       check(streamed == "The attic is at 19C.", "the text arrived as deltas") &&
@@ -126,6 +127,8 @@ int main() {
       check(observed_tool == "read_sensor", "the tool call was observed") &&
       check(conversation->message_count() == 4, "the whole round trip committed") &&
       check(requests.size() == 2, "two requests were sent") &&
+      check(requests.front().target == "/v1/messages",
+            "the requests went to the Anthropic endpoint") &&
       check(requests.back().body.find("19C") != std::string::npos,
             "the tool result reached the second request") &&
       check(requests.front().body.find("example-key") == std::string::npos,

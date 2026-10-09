@@ -38,7 +38,7 @@ option(SCRY_BUILD_TESTS "Build Scry's tests" ${PROJECT_IS_TOP_LEVEL})
 option(SCRY_BUILD_EXAMPLES "Compile Scry's examples" ${PROJECT_IS_TOP_LEVEL})
 option(
   SCRY_BUILD_TESTING_SUPPORT
-  "Build and install scry::testing, the scripted-transport package component"
+  "Build and install scry::testing, the scripted-server package component"
   ON
 )
 option(SCRY_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ${PROJECT_IS_TOP_LEVEL})
@@ -233,7 +233,7 @@ target_sources(
 
 set(
   SCRY_TESTING_PUBLIC_HEADERS
-  "${PROJECT_SOURCE_DIR}/include/scry/testing/scripted_transport.hpp"
+  "${PROJECT_SOURCE_DIR}/include/scry/testing/scripted_server.hpp"
   "${PROJECT_SOURCE_DIR}/include/scry/testing/streams.hpp"
 )
 if(SCRY_BUILD_TESTING_SUPPORT)

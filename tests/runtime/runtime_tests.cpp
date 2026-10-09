@@ -271,10 +271,16 @@ TEST_CASE("detaching retains the callbacks supplied at send") {
 
 TEST_CASE("turn cancellation sets the atomic and queues a command once") {
   PumpFixture fixture;
-  const auto route = fixture.route(14);
+  auto cancelled = std::make_shared<std::atomic<bool>>(false);
+  const auto route = std::make_shared<scry::detail::TurnRoute>(
+      scry::TurnId{.value = 14}, cancelled, fixture.commands, fixture.conversation,
+      scry::detail::TurnRouteOptions{
+          .max_tool_result_bytes = 1024,
+          .max_conversation_bytes = 1024,
+      });
   CHECK(route->cancel());
   CHECK_FALSE(route->cancel());
-  CHECK(route->cancel_flag()->load());
+  CHECK(cancelled->load(std::memory_order_relaxed));
 
   const auto command = fixture.commands->try_pop();
   REQUIRE(command);

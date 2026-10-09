@@ -20,6 +20,8 @@ jobs:
       # Ubuntu 24.04 ships LLVM 18, which formats reflection annotations
       # differently and cannot parse libstdc++'s <expected>, so both tools come
       # from apt.llvm.org.
+      # clang-tidy reads the libstdc++ headers of the newest GCC that it finds.
+      # g++-14 makes sure that the headers of that GCC are installed.
       - name: Install clang-format and clang-tidy
         run: |
           wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc

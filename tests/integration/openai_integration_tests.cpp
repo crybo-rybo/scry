@@ -1,9 +1,6 @@
-#include "runtime/test_access.hpp"
 #include "support/harness_test_support.hpp"
 
 #include <catch2/catch_test_macros.hpp>
-#include <cstddef>
-#include <memory>
 #include <optional>
 #include <scry/reflection.hpp>
 #include <scry/scry.hpp>
@@ -47,44 +44,32 @@ const std::string anthropic_final_stream =
     anthropic_text_stream("anthropic", "msg-final", {}, 2, 1);
 
 [[nodiscard]] scry::Config openai_config() {
-  auto config = scry::Config{
-      .base_url = "http://127.0.0.1:1/v1/",
-      .model = "local-model",
-      .dialect = scry::ProviderDialect::openai_compatible,
-  };
-  config.retry.max_attempts = 1;
-  config.retry.jitter_ratio = 0.0;
+  auto config = test_config();
+  config.api_key.clear();
+  config.model = "local-model";
+  config.dialect = scry::ProviderDialect::openai_compatible;
   return config;
 }
 
 [[nodiscard]] scry::Config anthropic_config() {
-  auto config = scry::Config{
-      .base_url = "http://127.0.0.1:1",
-      .api_key = "anthropic-test-key",
-      .model = "anthropic-model",
-  };
-  config.retry.max_attempts = 1;
-  config.retry.jitter_ratio = 0.0;
+  auto config = test_config();
+  config.api_key = "anthropic-test-key";
+  config.model = "anthropic-model";
   return config;
 }
 
 // Splitting the stream into single-byte chunks proves the decoder reassembles
 // frames that arrive without regard for event boundaries.
-[[nodiscard]] scry::test::ScriptedExchange
-byte_chunked_exchange(const std::string_view stream, std::string request_id) {
-  std::vector<std::string> chunks;
-  chunks.reserve(stream.size());
-  for (const char byte : stream) {
-    chunks.emplace_back(1, byte);
-  }
-  return {
-      .body_chunks = std::move(chunks),
-      .result =
-          scry::detail::TransportResult{
-              .status_code = 200,
-              .provider_request_id = std::move(request_id),
-          },
+[[nodiscard]] ScriptedResponse byte_chunked_response(const std::string_view stream,
+                                                     std::string request_id) {
+  ScriptedResponse response{
+      .headers = {{.name = "request-id", .value = std::move(request_id)}},
   };
+  response.body_chunks.reserve(stream.size());
+  for (const char byte : stream) {
+    response.body_chunks.emplace_back(1, byte);
+  }
+  return response;
 }
 
 [[nodiscard]] scry::ToolDefinition lookup_tool() {
@@ -114,19 +99,18 @@ struct MoveResult {
 
 // One scripted tool round followed by a plain text turn, which is the shortest
 // script that puts a tool result on the wire.
-[[nodiscard]] scry::test_support::HarnessFixture move_fixture(std::string_view call) {
-  return scry::test_support::make_harness_fixture(
+[[nodiscard]] HarnessFixture move_fixture(std::string_view call) {
+  return make_harness_fixture(
       openai_config(),
       {
-          scripted_exchange(
+          scripted_response(
               openai_tool_stream({{.id = "call-a", .name = "move", .arguments = call}}),
               "openai-tool-request"),
-          scripted_exchange(openai_text_stream("done"), "openai-final-request"),
-      },
-      scry::ProviderDialect::openai_compatible);
+          scripted_response(openai_text_stream("done"), "openai-final-request"),
+      });
 }
 
-[[nodiscard]] std::string run_move_turn(scry::test_support::HarnessFixture& fixture) {
+[[nodiscard]] std::string run_move_turn(HarnessFixture& fixture) {
   std::optional<scry::Completion> completion;
   const auto turn = fixture.harness.send(
       fixture.conversation, "Move north.",
@@ -139,7 +123,7 @@ struct MoveResult {
       });
   REQUIRE(turn);
   REQUIRE(pump_until(fixture.harness, [&] { return completion.has_value(); }));
-  const auto recorded = fixture.transport->requests();
+  const auto recorded = fixture.server.requests();
   REQUIRE(recorded.size() == 2);
   return recorded.back().body;
 }
@@ -182,15 +166,14 @@ TEST_CASE("an invalid enum argument round-trips into the OpenAI tool message") {
 }
 
 TEST_CASE("OpenAI-compatible config drives a fragmented transactional tool round") {
-  auto fake = std::make_unique<scry::test::FakeTransport>();
-  auto* requests = fake.get();
-  fake->enqueue(byte_chunked_exchange(openai_tool_call_fixture, "openai-tool-request"));
-  fake->enqueue(byte_chunked_exchange(openai_final_stream, "openai-final-request"));
-  auto created = scry::detail::HarnessTestAccess::create(
-      openai_config(), provider(scry::ProviderDialect::openai_compatible),
-      std::move(fake));
-  REQUIRE(created);
-  auto harness = std::move(*created);
+  auto server = start_server();
+  server.enqueue(
+      byte_chunked_response(openai_tool_call_fixture, "openai-tool-request"));
+  server.enqueue(byte_chunked_response(openai_final_stream, "openai-final-request"));
+  auto config = openai_config();
+  // The endpoint path is appended to a base URL that already ends in /v1/.
+  config.base_url = server.url() + "/v1/";
+  auto harness = unwrap(scry::Harness::create(config));
 
   std::string arguments;
   std::thread::id handler_thread;
@@ -230,10 +213,10 @@ TEST_CASE("OpenAI-compatible config drives a fragmented transactional tool round
   CHECK(completion->provider_request_id == "openai-final-request");
   CHECK(conversation->message_count() == 4);
 
-  const auto recorded = requests->requests();
+  const auto recorded = server.requests();
   REQUIRE(recorded.size() == 2);
   for (const auto& request : recorded) {
-    CHECK(request.url == "http://127.0.0.1:1/v1/chat/completions");
+    CHECK(request.target == "/v1/chat/completions");
     CHECK(request.body.find("anthropic") == std::string::npos);
     CHECK(request.body.find(R"("model":"local-model")") != std::string::npos);
   }
@@ -248,30 +231,12 @@ TEST_CASE("OpenAI-compatible config drives a fragmented transactional tool round
 }
 
 TEST_CASE("concurrent Harnesses keep Anthropic and OpenAI dialect state isolated") {
-  auto anthropic_transport = std::make_unique<scry::test::FakeTransport>();
-  auto* anthropic_requests = anthropic_transport.get();
-  anthropic_transport->enqueue(
-      byte_chunked_exchange(anthropic_final_stream, "anthropic-request"));
-  auto openai_transport = std::make_unique<scry::test::FakeTransport>();
-  auto* openai_requests = openai_transport.get();
-  openai_transport->enqueue(
-      byte_chunked_exchange(openai_final_stream, "openai-request"));
+  auto anthropic = make_harness_fixture(
+      anthropic_config(),
+      {byte_chunked_response(anthropic_final_stream, "anthropic-request")});
+  auto openai = make_harness_fixture(
+      openai_config(), {byte_chunked_response(openai_final_stream, "openai-request")});
 
-  auto anthropic = scry::detail::HarnessTestAccess::create(
-      anthropic_config(), provider(scry::ProviderDialect::anthropic),
-      std::move(anthropic_transport));
-  auto openai = scry::detail::HarnessTestAccess::create(
-      openai_config(), provider(scry::ProviderDialect::openai_compatible),
-      std::move(openai_transport));
-  REQUIRE(anthropic);
-  REQUIRE(openai);
-  auto anthropic_harness = std::move(*anthropic);
-  auto openai_harness = std::move(*openai);
-
-  auto anthropic_conversation = scry::Conversation::create();
-  auto openai_conversation = scry::Conversation::create();
-  REQUIRE(anthropic_conversation);
-  REQUIRE(openai_conversation);
   std::optional<scry::Completion> anthropic_completion;
   std::optional<scry::Completion> openai_completion;
   const auto capture = [](std::optional<scry::Completion>& target) {
@@ -283,30 +248,28 @@ TEST_CASE("concurrent Harnesses keep Anthropic and OpenAI dialect state isolated
             },
     };
   };
-  auto anthropic_turn = anthropic_harness.send(*anthropic_conversation, "first",
+  auto anthropic_turn = anthropic.harness.send(anthropic.conversation, "first",
                                                capture(anthropic_completion));
   auto openai_turn =
-      openai_harness.send(*openai_conversation, "second", capture(openai_completion));
+      openai.harness.send(openai.conversation, "second", capture(openai_completion));
   REQUIRE(anthropic_turn);
   REQUIRE(openai_turn);
 
-  for (std::size_t pump = 0;
-       pump < 100'000 && (!anthropic_completion || !openai_completion); ++pump) {
-    static_cast<void>(anthropic_harness.update());
-    static_cast<void>(openai_harness.update());
-    std::this_thread::yield();
-  }
+  // Both workers run at once; each Harness delivers only its own turn.
+  REQUIRE(pump_until(anthropic.harness, [&anthropic_completion] {
+    return anthropic_completion.has_value();
+  }));
+  REQUIRE(pump_until(openai.harness,
+                     [&openai_completion] { return openai_completion.has_value(); }));
 
-  REQUIRE(anthropic_completion);
-  REQUIRE(openai_completion);
   CHECK(anthropic_completion->text == "anthropic");
   CHECK(openai_completion->text == "sunny");
-  const auto anthropic_recorded = anthropic_requests->requests();
-  const auto openai_recorded = openai_requests->requests();
+  const auto anthropic_recorded = anthropic.server.requests();
+  const auto openai_recorded = openai.server.requests();
   REQUIRE(anthropic_recorded.size() == 1);
   REQUIRE(openai_recorded.size() == 1);
-  CHECK(anthropic_recorded.front().url.ends_with("/v1/messages"));
-  CHECK(openai_recorded.front().url.ends_with("/v1/chat/completions"));
+  CHECK(anthropic_recorded.front().target == "/v1/messages");
+  CHECK(openai_recorded.front().target == "/v1/chat/completions");
   CHECK(anthropic_recorded.front().body.find("stream_options") == std::string::npos);
   CHECK(openai_recorded.front().body.find("stream_options") != std::string::npos);
 }

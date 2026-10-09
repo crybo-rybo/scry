@@ -98,7 +98,7 @@ struct CompletionOptions {
 // opens with the user message the turn was sent with.
 [[nodiscard]] inline scry::detail::CompletionEvent
 completion_event(const scry::TurnId turn_id, CompletionOptions options = {}) {
-  return {
+  return {{
       .turn_id = turn_id,
       .transcript =
           {
@@ -114,7 +114,7 @@ completion_event(const scry::TurnId turn_id, CompletionOptions options = {}) {
       .finish_reason = scry::FinishReason::completed,
       .attempt_count = options.attempt_count,
       .provider_request_id = std::move(options.provider_request_id),
-  };
+  }};
 }
 
 // Everything a test wants to vary about a route, shared by the tool-dispatch,

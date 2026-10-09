@@ -40,7 +40,7 @@ The presets select `g++-16`. If your compiler has a different name or path, set
 ## Commands
 
 ```sh
-./scripts/test.sh                  # configure, build, and run ctest (dev preset)
+./scripts/test.sh                  # configure, build, parallel ctest (dev preset)
 ./scripts/test.sh -R 'runtime\.'   # the script sends extra arguments to ctest
 PRESET=asan ./scripts/test.sh      # or PRESET=tsan
 ./scripts/format.sh --fix          # --check (the default) only verifies
@@ -97,37 +97,48 @@ boundary and the canonical bytes of the JSON layer. For more information, see
 - **Test behavior at the seams, not the implementation inside them.** Tests
   target the machine, adapter, and transport interfaces. If a refactor of the
   internals breaks a test, that test was coupled to the wrong thing.
-- **Use fakes, not mocks.** A hand-written fake transport with scriptable
-  responses is better than the expectations of a mock framework. Fakes continue
-  to work after refactors, and you can read them as documentation.
+- **Use fakes, not mocks.** A scripted server with scripted responses is better
+  than the expectations of a mock framework. Fakes continue to work after
+  refactors, and you can read them as documentation.
 - **Tests must always be deterministic.** Do not use real sleeps, wall-clock
   time, or the network in unit tests. Time is an injected event, so a fake
   clock can test backoff to the millisecond. Transport and integration tests
-  use local loopback HTTP/TLS servers.
+  use local loopback HTTP/TLS servers. The integration tests use only the
+  public API and `scry::testing::ScriptedServer`. They wait for a request, a
+  hold, or a callback, and never sleep to synchronize. A retry in these tests
+  waits in real time. Thus a test of a delay checks a lower bound, and it
+  checks an upper bound only to find a hang.
 - **Write a test for each bug before you write the fix.** Commit it with the
   fix, and keep it permanently.
 
 ## End-to-end testing
 
-Start an OpenAI-compatible server and load a model. Then run the live-model
-smoke:
+Start a model server and load a model. Then run the live smoke:
 
 ```sh
-SCRY_LOCAL_MODEL_BASE_URL=http://127.0.0.1:11434/v1 \
-SCRY_LOCAL_MODEL_MODEL=qwen3:8b \
+SCRY_E2E_BASE_URL=http://127.0.0.1:11434/v1 \
+SCRY_E2E_MODEL=qwen3:8b \
 ./scripts/test-e2e.sh
 ```
 
-This command builds and runs `scry_local_model_smoke` from `tests/e2e/`.
-Through the public API, the smoke checks a full chat and a required tool round.
-If the server needs authentication, set `SCRY_LOCAL_MODEL_API_KEY`. ctest and CI
-do not run the smoke.
+This command builds and runs `scry_e2e_smoke` from `tests/e2e/`. Through the
+public API, the smoke runs a typed `ask<T>()` and a streamed turn with one
+reflected tool round. Then it restores the conversation from `to_json()` and
+sends a follow-up turn. Thus the server must accept a history with a tool call
+and its result.
+
+`SCRY_E2E_DIALECT` selects `openai` (the default) or `anthropic`. For
+Anthropic, set the origin as the URL, for example `https://api.anthropic.com`,
+and set `SCRY_E2E_API_KEY`. The smoke stops immediately if the key is missing.
+For an OpenAI-compatible server, the key is optional. ctest and CI do not run
+the smoke.
 
 ## Testing downstream with `scry::testing`
 
-`scry::testing` is an optional package component. It gives a consumer the same
-scripted-transport seam that the Scry test suites use. It replaces only the HTTP
-transfer.
+`scry::testing` is an optional package component. It gives a consumer a
+scripted HTTP server on 127.0.0.1. The test sets `Config::base_url` to the URL
+of the server and creates the Harness with `Harness::create`. Thus the test
+runs all of Scry, libcurl included, and needs no model.
 
 ```cmake
 find_package(scry CONFIG REQUIRED COMPONENTS testing)
@@ -136,16 +147,22 @@ target_link_libraries(my_tests PRIVATE scry::scry scry::testing)
 
 ```cpp
 #include <scry/scry.hpp>
-#include <scry/testing/scripted_transport.hpp>
+#include <scry/testing/scripted_server.hpp>
 #include <scry/testing/streams.hpp>
 
-scry::testing::ScriptedTransport transport;
-transport.enqueue({.body_chunks = {scry::testing::anthropic_text_stream("hi")}});
-auto harness = scry::testing::create_harness(my_config(), transport);
+auto server = scry::testing::ScriptedServer::create();
+server->enqueue({.body_chunks = {scry::testing::anthropic_text_stream("hi")}});
+auto config = my_config();
+config.base_url = server->url();
+auto harness = scry::Harness::create(config);
 ```
 
+For a fast scripted retry, set `config.retry.jitter_ratio` to 0 and set
+millisecond backoffs. For a fast cancellation, set a low
+`config.timeouts.shutdown`.
+
 `examples/testing_scripted.cpp` is a complete test in this form, without a test
-framework. `tests/testing/scripted_transport_tests.cpp` is the equivalent test
+framework. `tests/testing/scripted_server_tests.cpp` is the equivalent test
 with Catch2.
 
 ## Rules

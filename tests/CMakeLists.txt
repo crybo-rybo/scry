@@ -89,16 +89,17 @@ target_link_libraries(
 )
 catch_discover_tests(scry_runtime_tests TEST_PREFIX "runtime.")
 
+# These suites run against scry::testing's scripted server.
 if(SCRY_BUILD_TESTING_SUPPORT)
   add_subdirectory(testing)
+  add_subdirectory(transport)
+  add_subdirectory(integration)
 endif()
 add_subdirectory(kernel)
 add_subdirectory(machine)
 add_subdirectory(e2e)
 add_subdirectory(protocol)
 add_subdirectory(provider)
-add_subdirectory(transport)
-add_subdirectory(integration)
 
 # Each fuzz target is a libFuzzer-style LLVMFuzzerTestOneInput entry point over a
 # checked-in seed corpus under fuzz/corpus/<corpus>. fuzz/replay_main.cpp runs

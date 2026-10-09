@@ -11,8 +11,10 @@ namespace scry {
 
 /// Move-only owning callable wrapper specialized by function signature.
 ///
-/// UniqueFunction is Scry's public callback and handler boundary until all supported
-/// standard libraries provide a conforming `std::move_only_function`.
+/// UniqueFunction is Scry's public callback and handler boundary. Scry keeps its own
+/// wrapper because the C++23 kernel uses it, and clang-tidy analyzes the kernel against
+/// libc++ on macOS, which does not provide `std::move_only_function`. Unlike that type,
+/// invoking an empty wrapper throws `std::bad_function_call`.
 template <typename Signature> class UniqueFunction;
 
 /// Move-only owning callable wrapper for `Return(Args...)`.
