@@ -1,7 +1,5 @@
 # Scry
 
-> *To scry: to look into a mirror to get answers from an oracle.*
-
 Scry is a C++26 library that connects an application to a large language model
 (LLM). The model can call C++ functions in your application as tools.
 
