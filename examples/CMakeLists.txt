@@ -1,3 +1,11 @@
+# The README shows quickstart.cpp verbatim, and the readme-quickstart test fails
+# when the two differ.
+add_executable(scry_quickstart_example quickstart.cpp)
+target_link_libraries(
+  scry_quickstart_example
+  PRIVATE scry::scry scry_project_options
+)
+
 add_executable(scry_canonical_example main_loop.cpp)
 target_link_libraries(
   scry_canonical_example

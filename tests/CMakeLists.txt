@@ -56,6 +56,16 @@ target_link_libraries(
 )
 add_test(NAME public-api-contract COMMAND scry_public_api_contract)
 
+# The README's code block must match examples/quickstart.cpp, which CI compiles.
+add_test(
+  NAME readme-quickstart
+  COMMAND
+    "${CMAKE_COMMAND}"
+    "-DREADME=${PROJECT_SOURCE_DIR}/README.md"
+    "-DEXAMPLE=${PROJECT_SOURCE_DIR}/examples/quickstart.cpp"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/readme_quickstart.cmake"
+)
+
 add_executable(
   scry_runtime_tests
   runtime/answer_pump_tests.cpp
