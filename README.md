@@ -8,9 +8,6 @@ a background thread. Your tools and callbacks run on your thread, and only when
 you call `update()`. Thus, a game loop, a GUI event loop, or a simulation tick
 can use Scry without locks.
 
-Scry is pre-1.0. The API, the ABI, and the format of saved conversations can
-change.
-
 ## Quickstart
 
 <!-- examples/quickstart.cpp -->
