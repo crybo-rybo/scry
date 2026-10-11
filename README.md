@@ -114,8 +114,8 @@ name `water`:
 
 - **The types set the schema.** `std::int32_t` gives an integer with the range
   of the type. `litres` has a default value, thus it is not required.
-- **The same types decode the arguments.** Scry rejects a missing field, an
-  incorrect type, a value out of range, and an unknown field. The model gets an
+- **The same types decode the arguments.** Scry rejects a missing required
+  member, an incorrect type, a value out of range, and an unknown member. The model gets an
   error message that identifies the field, and the turn continues. Your
   function gets only valid arguments.
 - **Errors occur at compile time.** If a declaration uses a type that Scry
@@ -135,7 +135,7 @@ reflection.
 | Form | Registration | Use it when |
 | --- | --- | --- |
 | Free function | `tools.add<^^to_fahrenheit>()` | One tool that has no state. |
-| Namespace | `tools.add<^^almanac>()` | A group of tools that have no state. Each annotated function in the namespace becomes a tool. |
+| Namespace | `tools.add<^^almanac>()` | A group of tools that have no state. Each annotated function declared in the namespace before the call becomes a tool. |
 | Toolbox object | `tools.add(Greenhouse{})` | Tools that share state. Each annotated member function becomes a tool bound to the object. The registry owns the object. |
 | Shared toolbox | `tools.add(std::make_shared<Greenhouse>())` | Tools that share state, and your application also reads that state. |
 | Lambda | `tools.add<WaterArguments>({.name = "water", .description = "Water one bed"}, handler)` | The name or description is known only at runtime, or the handler captures local data. Reflection still makes the schema from the struct. |
@@ -207,6 +207,7 @@ text and can try again. Refer to
 | `description{"..."}` | Data member | Describes the parameter to the model. |
 | `tag{"..."}` | Class | Identifies a `std::variant` alternative, under the key `"type"`. |
 | `skip_null` | Class or data member | Omits an empty `std::optional` instead of writing `null`. |
+| `emit_null` | Data member | Writes `null` for one `std::optional` member of a `skip_null` class. |
 | `ignore_unknown` | Class | Decoding ignores JSON members that the class does not declare. |
 
 All annotations are in the `scry::reflection` namespace.
@@ -228,7 +229,8 @@ loop. Refer to [examples/typed_answer.cpp](examples/typed_answer.cpp).
 - **One worker thread.** Each `Harness` has one worker thread for network I/O.
   Scry calls your code only inside `update()`, on the calling thread, thus your
   tools do not need locks. Many conversations can share one `Harness`. Their
-  turns run in first-in, first-out order.
+  turns run in first-in, first-out order. Each conversation can have one
+  queued or active turn at a time.
 - **Managed tool loop.** Scry runs each tool call and sends the result to the
   model until the model gives a final answer. Incorrect arguments, unknown
   tools, and refusals do not stop the turn. A hook can examine each tool call
