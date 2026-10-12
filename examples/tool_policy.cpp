@@ -15,29 +15,29 @@ enum class Direction {
   west,
 };
 
-struct MoveArguments {
+struct WalkArguments {
   [[= scry::reflection::description{
       "Compass direction to step toward"}]] Direction direction{};
 };
 
-struct MoveResult {
+struct WalkResult {
   std::string room{};
 };
 
-// The annotation makes this function a tool named "move"; its one aggregate
+// The annotation makes this function a tool named "walk"; its one aggregate
 // parameter is the argument object the model fills in. A refusal is not a
 // framework failure: the turn continues and the model gets a chance to pick
 // another direction. Only the first string reaches the model; the second is the
 // host-side Error::message, which Scry never forwards.
 [[= scry::reflection::tool{
-    "Step one room in a direction"}]] [[nodiscard]] scry::Result<MoveResult>
-    move(const MoveArguments arguments) {
+    "Step one room in a direction"}]] [[nodiscard]] scry::Result<WalkResult>
+    walk(const WalkArguments arguments) {
   if (arguments.direction != Direction::north) {
     return std::unexpected(scry::tool_error(
         "a wall blocks that direction; only north is open from the entrance hall",
-        "player attempted a blocked move from the entrance hall"));
+        "player attempted a blocked walk from the entrance hall"));
   }
-  return MoveResult{.room = "library"};
+  return WalkResult{.room = "library"};
 }
 
 // An unknown tool name and an argument that fails the generated schema arrive
@@ -65,7 +65,7 @@ struct MoveResult {
 
 int main() {
   scry::ToolRegistry tools;
-  if (const auto registered = tools.add<^^move>(); !registered) {
+  if (const auto registered = tools.add<^^walk>(); !registered) {
     std::cerr << registered.error().message << '\n';
     return 1;
   }
@@ -85,7 +85,7 @@ int main() {
   auto harness = std::move(*harness_result);
 
   auto conversation_result = scry::Conversation::create(
-      {.system_prompt = "You are in an entrance hall. Use the move tool."});
+      {.system_prompt = "You are in an entrance hall. Use the walk tool."});
   if (!conversation_result) {
     std::cerr << conversation_result.error().message << '\n';
     return 1;

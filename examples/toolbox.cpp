@@ -18,7 +18,7 @@ struct Climate {
 // An argument aggregate: the form for descriptions, defaults, or optional members.
 struct WaterArguments {
   [[= scry::reflection::description{"Bed number, from 1 to 3"}]] std::int32_t bed;
-  [[= scry::reflection::description{"Litres to pour"}]] double litres{1.0};
+  [[= scry::reflection::description{"Liters to pour"}]] double liters{1.0};
 };
 
 // A toolbox: each annotated member function is a tool bound to one object. Its
@@ -45,15 +45,15 @@ public:
     if (arguments.bed < 1 || arguments.bed > 3) {
       return std::unexpected(scry::tool_error("there are only beds 1 to 3"));
     }
-    litres_ += arguments.litres;
+    liters_ += arguments.liters;
     return {};
   }
 
-  [[nodiscard]] double litres() const noexcept { return litres_; } // not a tool
+  [[nodiscard]] double liters() const noexcept { return liters_; } // not a tool
 
 private:
   Climate climate_{.temperature_c = 27.0};
-  double litres_{};
+  double liters_{};
 };
 
 // A namespace of free tools, registered together with add<^^almanac>().
@@ -107,6 +107,6 @@ int main(const int argc, char* argv[]) {
       *conversation, "Cool the greenhouse, water bed 2, and give me the temperature "
                      "in Fahrenheit.");
   std::cout << (answer ? answer->text : answer.error().message) << '\n';
-  std::cout << "litres poured: " << house->litres() << '\n';
+  std::cout << "liters poured: " << house->liters() << '\n';
   return answer ? 0 : 1;
 }

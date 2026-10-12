@@ -355,7 +355,7 @@ TEST_CASE("a history ending in tool results round-trips through persistence") {
 
 TEST_CASE("private JSON codec escapes control characters without a short escape") {
   // A control byte outside \b \f \n \r \t has only the \u00XX form; writing it
-  // any other way would turn a tool argument or an ANSI-coloured user string into
+  // any other way would turn a tool argument or an ANSI-colored user string into
   // invalid JSON on the way out. Every write path here must emit the escape, and
   // the reflected codec, which writes request bodies, must spell it the same way.
   const scry::Json input{.text = R"({"a":"\u0001x\u001b"})"};

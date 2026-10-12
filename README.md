@@ -3,10 +3,15 @@
 Scry is a C++26 library that connects an application to a large language model
 (LLM). The model can call C++ functions in your application as tools.
 
+You write a usual C++ function and add one annotation. At compile time, Scry
+uses C++26 static reflection to read the declaration. From the declaration,
+Scry makes the tool name, the JSON schema, a strict argument decoder, and a
+result encoder. You do not write JSON, and the schema always agrees with the
+code.
+
 Your application keeps control of its main loop. Scry does the network work on
 a background thread. Your tools and callbacks run on your thread, and only when
-you call `update()`. Thus, a game loop, a GUI event loop, or a simulation tick
-can use Scry without locks.
+you call `update()`.
 
 ## Quickstart
 
@@ -70,88 +75,178 @@ int main() {
 }
 ```
 
-The model reads the tool schema, calls the tool, and answers. The network work
-occurs on a worker thread. The tool handler and the callbacks run inside
-`update()`, on your thread. This program is
+The model reads the tool schema, calls the tool, and answers. This program is
 [examples/quickstart.cpp](examples/quickstart.cpp), and CI compiles it.
 
-A tool can also take one argument struct. Annotate each member with
-`scry::reflection::description` to describe the parameter to the model. You can
-register tools in these ways:
+## Tools from C++ declarations
 
-| Tool form | Registration |
-| --- | --- |
-| Toolbox object | `tools.add(HostTools{})` |
-| Toolbox that you keep a handle to | `tools.add(std::make_shared<HostTools>())` |
-| Free function | `tools.add<^^subsystem_state>()` |
-| All tool functions in a namespace | `tools.add<^^host_tools>()` |
-| Lambda that takes an argument struct | `tools.add<Arguments>({.name = ..., .description = ...}, callable)` |
+### One declaration makes the full tool
 
-## Features
+```cpp
+struct WaterArguments {
+  [[= scry::reflection::description{"Bed number, from 1 to 3"}]] std::int32_t bed;
+  [[= scry::reflection::description{"Liters to pour"}]] double liters{1.0};
+};
+
+[[= scry::reflection::tool{"Water one bed"}]] scry::Status
+    water(WaterArguments arguments);
+```
+
+Scry makes this schema from the declaration. The model gets it with the tool
+name `water`:
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "bed": {
+      "type": "integer",
+      "description": "Bed number, from 1 to 3",
+      "minimum": -2147483648,
+      "maximum": 2147483647
+    },
+    "liters": { "type": "number", "description": "Liters to pour" }
+  },
+  "required": ["bed"],
+  "additionalProperties": false
+}
+```
+
+- **The types set the schema.** `std::int32_t` gives an integer with the range
+  of the type. `liters` has a default value, thus it is not required.
+- **The same types decode the arguments.** Scry rejects a missing required
+  member, an incorrect type, a value out of range, and an unknown member. The model gets an
+  error message that identifies the field, and the turn continues. Your
+  function gets only valid arguments.
+- **Errors occur at compile time.** If a declaration uses a type that Scry
+  cannot encode, the compiler stops. The diagnostic gives the member and the
+  reason.
+
+Scry supports `bool`, integers, floating-point types, `std::string`, enums (as
+strings), nested structs, `std::vector`, `std::array`, `std::optional`, and
+tagged `std::variant`.
+
+### Ways to package tools
+
+Each form is optional. Use the form that agrees with your code, or use many
+forms in one registry. All forms, except `add_dynamic()`, get the schema from
+reflection.
+
+| Form | Registration | Use it when |
+| --- | --- | --- |
+| Free function | `tools.add<^^to_fahrenheit>()` | One tool that has no state. |
+| Namespace | `tools.add<^^almanac>()` | A group of tools that have no state. Each annotated function declared in the namespace before the call becomes a tool. |
+| Toolbox object | `tools.add(Greenhouse{})` | Tools that share state. Each annotated member function becomes a tool bound to the object. The registry owns the object. |
+| Shared toolbox | `tools.add(std::make_shared<Greenhouse>())` | Tools that share state, and your application also reads that state. |
+| Lambda | `tools.add<WaterArguments>({.name = "water", .description = "Water one bed"}, handler)` | The name or description is known only at runtime, or the handler captures local data. Reflection still makes the schema from the struct. |
+| Dynamic | `tools.add_dynamic(definition, handler)` | The tool exists only at runtime, for example a tool from a script. You write the JSON schema and read the JSON arguments. |
+
+The first four forms in one program:
+
+```cpp
+// A free function. The name annotation changes the tool name for the model.
+[[= scry::reflection::tool{"Convert Celsius to Fahrenheit"},
+  = scry::reflection::name{"celsius_to_fahrenheit"}]]
+double to_fahrenheit(double celsius);
+
+// A namespace. Each annotated function is a tool.
+namespace almanac {
+[[= scry::reflection::tool{"Planting advice for one crop"}]]
+std::string advice(Crop crop);
+}
+
+// A toolbox. Each annotated member function is a tool bound to one object.
+class Greenhouse {
+public:
+  [[= scry::reflection::tool{"Read the temperature and the roof vents"}]]
+  Climate climate() const;
+  [[= scry::reflection::tool{"Open or close the roof vents"}]]
+  Climate set_vents(bool open);
+  [[= scry::reflection::tool{"Water one bed"}]]
+  scry::Status water(WaterArguments arguments);
+
+  double liters() const; // no annotation, thus not a tool
+};
+
+auto house = std::make_shared<Greenhouse>();
+scry::ToolRegistry tools;
+tools.add(house);               // each add() returns scry::Status: examine it
+tools.add<^^almanac>();
+tools.add<^^to_fahrenheit>();
+```
+
+Each `add()` registers all of its tools or none of them. The full program is
+[examples/toolbox.cpp](examples/toolbox.cpp). Run it with `--tool-manifest` to
+print each generated schema. This does not need a model or a network.
+
+### Parameters and results
+
+A tool function can have one of these parameter lists:
+
+- **No parameters.** The tool takes `{}`.
+- **Plain parameters.** Scry makes an argument object with one required member
+  for each parameter. `set_vents(bool open)` takes `{"open": true}`.
+- **One struct.** The struct is the argument object. Use this form for
+  descriptions, default values, and optional members.
+
+Before these parameters, a tool can take `const scry::ToolCallContext&`. The
+context gives the turn, the round, and the call ID.
+
+A tool can return a supported value, a `scry::Result` of one, `void`, or
+`scry::Status`. To refuse a call, return
+`std::unexpected(scry::tool_error("text for the model"))`. The model reads the
+text and can try again. Refer to
+[examples/tool_policy.cpp](examples/tool_policy.cpp).
+
+### Annotations
+
+| Annotation | Applies to | Effect |
+| --- | --- | --- |
+| `tool{"..."}` | Function | Makes the function a tool. The text is the tool description. |
+| `name{"..."}` | Function or data member | Changes the tool name or the JSON key. |
+| `description{"..."}` | Data member | Describes the parameter to the model. |
+| `tag{"..."}` | Class | Identifies a `std::variant` alternative, under the key `"type"`. |
+| `skip_null` | Class or data member | Omits an empty `std::optional` instead of writing `null`. |
+| `emit_null` | Data member | Writes `null` for one `std::optional` member of a `skip_null` class. |
+| `ignore_unknown` | Class | Decoding ignores JSON members that the class does not declare. |
+
+All annotations are in the `scry::reflection` namespace.
+
+### Typed answers
+
+The same reflection codec also decodes the answer of the model.
+`ask<Verdict>()` makes the model answer with a `Verdict` value instead of text.
+Scry decodes the answer strictly. If a field is incorrect, Scry identifies the
+field to the model and asks again. `send<Verdict>()` does the same from a main
+loop. Refer to [examples/typed_answer.cpp](examples/typed_answer.cpp).
+
+## Runtime
 
 - **Non-blocking turns.** `send()` returns immediately. Each call to `update()`
   delivers the streamed text, runs the requested tools, and reports when the
   turn is complete. A time budget makes `update()` stop early to protect your
   frame time. For scripts and tests, `send_and_wait()` calls `update()` for you.
-- **Tools from C++ functions.** Annotate a member function with
-  `[[= scry::reflection::tool{"..."}]]` and register the object. You can also
-  register free functions, full namespaces, and lambdas. Scry uses C++26
-  reflection to make the JSON schema, decode the arguments strictly, and encode
-  the result. Scry supports nested structs, vectors, arrays, optionals, enums,
-  and tagged variants.
-- **Runtime tools.** For a tool that exists only at runtime, register a JSON
-  schema and a handler that takes JSON and returns JSON.
+- **One worker thread.** Each `Harness` has one worker thread for network I/O.
+  Scry calls your code only inside `update()`, on the calling thread, thus your
+  tools do not need locks. Many conversations can share one `Harness`. Their
+  turns run in first-in, first-out order. Each conversation can have one
+  queued or active turn at a time.
 - **Managed tool loop.** Scry runs each tool call and sends the result to the
   model until the model gives a final answer. Incorrect arguments, unknown
-  tools, and handler failures do not stop the turn. Scry sends each failure to
-  the model as an error message, and the model can recover.
-- **Typed answers.** `ask<Verdict>()` makes the model answer with a `Verdict`
-  value instead of text. Scry decodes the answer strictly. If a field is
-  incorrect, Scry identifies the field to the model and asks again.
-  `send<Verdict>()` does the same from a main loop. `send_structured()` takes a
-  `ResponseFormat` at runtime.
-- **Tool policy.** A hook examines each tool call before the call runs. The
-  hook can refuse the call with a message to the model. Limits on tool rounds
-  and tool calls set the maximum size of each turn. At the round limit, the
-  turn fails or returns the calls that did not run.
-- **Streamed output, retries, and cancellation.** Scry delivers text while the
-  model streams it. Scry retries after network failures, rate limits, and
-  server errors, with exponential backoff that obeys `Retry-After`. You can
-  cancel or detach a turn at any time.
+  tools, and refusals do not stop the turn. A hook can examine each tool call
+  before it runs. Limits on tool rounds and tool calls set the maximum size of
+  a turn.
+- **Streamed output, retries, and cancellation.** Scry retries after network
+  failures, rate limits, and server errors, with exponential backoff that obeys
+  `Retry-After`. You can cancel or detach a turn at any time.
 - **Atomic history.** A conversation records a turn only when the full turn
-  succeeds. If a turn fails or you cancel it, the history does not change. You
-  can save a conversation to JSON and load it again.
+  succeeds. You can save a conversation to JSON and load it again.
 - **Two provider dialects.** Scry supports the Anthropic Messages API and the
-  OpenAI-compatible Chat Completions API, for example Ollama. Local servers do
-  not need an API key. TLS verification is on by default, and you can set a CA
-  bundle, a proxy, and custom headers.
-- **Errors as values, explicit limits.** Calls that can fail return
-  `std::expected`. One `Config` holds all limits, and each limit has a safe
-  default. These include byte limits on payloads, tool data, and conversation
-  size, and the connect, idle, and transfer timeouts.
+  OpenAI-compatible Chat Completions API, for example Ollama.
+- **Errors as values.** Calls that can fail return `std::expected`. One
+  `Config` holds all limits, and each limit has a safe default.
 - **Scripted test provider.** The optional `scry::testing` library supplies a
-  scripted HTTP server on loopback. Set `base_url` to this server to test the
-  full production code, from libcurl to tool dispatch, without a model.
-- **Tool manifest export.** A registry can write a JSON manifest of all
-  registered tools. This operation does not need a model, a network, or
-  libcurl. Thus, you can use it in a build step.
-
-## Threading model
-
-- **Your thread keeps control.** Each `Harness` has one worker thread for
-  network I/O. Scry calls your code only inside `update()`, on the calling
-  thread. A slow tool handler uses more frame time, but Scry never preempts
-  your thread.
-- **Turns run in order.** Many conversations can share one `Harness`. Each
-  conversation has a maximum of one queued or active turn. Turns run in
-  first-in, first-out order.
-- **Deterministic core.** The agentic loop is a pure state machine with no I/O
-  and no clock. Thus, the tests for retries, cancellation, and multi-round tool
-  use do not need a network.
-- **No third-party JSON types.** Dynamic tools from `add_dynamic()` read
-  arguments with `scry::JsonView` and make results with
-  `scry::escape_json_string()`. The public headers do not expose a parser
-  library.
+  scripted HTTP server on loopback, to test your tools without a model.
 
 ## Requirements
 
@@ -209,8 +304,8 @@ download Catch2. To run the end-to-end tests with a live model, use
 | Resource | Content |
 | --- | --- |
 | [examples/main_loop.cpp](examples/main_loop.cpp) | The primary example: a reflected tool, a dynamic tool, and the history. `--tool-manifest` exports the tool contract without a model. |
-| [examples/toolbox.cpp](examples/toolbox.cpp) | All the ways to declare a reflected tool. |
-| [examples/tool_policy.cpp](examples/tool_policy.cpp) | A handler refuses a move with a message, and the model tries again. |
+| [examples/toolbox.cpp](examples/toolbox.cpp) | Each way to package a reflected tool in one program. `--tool-manifest` prints the generated schemas. |
+| [examples/tool_policy.cpp](examples/tool_policy.cpp) | A tool refuses a call with a message, and the model tries again. |
 | [examples/seeded_trials.cpp](examples/seeded_trials.cpp) | The same prompt, many times, on a local model with a fixed sampling seed. |
 | [examples/typed_values.cpp](examples/typed_values.cpp) | The reflected codec alone: an answer type, its schema, a strict decode, and the error text. |
 | [examples/typed_answer.cpp](examples/typed_answer.cpp) | A turn that ends with a C++ value that a host validator checks. |
