@@ -441,7 +441,7 @@ template <typename Value> struct expected_traits<std::expected<Value, scry::Erro
 
 // A result that tells the model only that the call succeeded: `void`, or a
 // Status that may instead carry the handler's error. Either is sent as `{}`.
-consteval bool is_acknowledgement(const std::meta::info result) {
+consteval bool is_acknowledgment(const std::meta::info result) {
   const auto type = plain_type(result);
   return type == (^^void) || type == plain_type(^^scry::Status);
 }
@@ -452,7 +452,7 @@ consteval std::string result_type_problem(const std::meta::info result) {
   if (std::meta::is_reference_type(result)) {
     return "the reference " + display(result) + "; a reflected tool returns a value";
   }
-  if (is_acknowledgement(result)) {
+  if (is_acknowledgment(result)) {
     return {};
   }
   const auto type = plain_type(result);

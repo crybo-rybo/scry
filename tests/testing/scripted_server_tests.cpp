@@ -508,7 +508,7 @@ TEST_CASE("max_backoff bounds the delay that a Retry-After header asks for") {
   CHECK(completion->text == "after the limit");
   CHECK(completion->attempt_count == 2);
   CHECK(server.requests().size() == 2);
-  // An honoured Retry-After of one second would take at least one second.
+  // An honored Retry-After of one second would take at least one second.
   CHECK(elapsed < 1s);
 }
 

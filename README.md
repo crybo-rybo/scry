@@ -85,7 +85,7 @@ The model reads the tool schema, calls the tool, and answers. This program is
 ```cpp
 struct WaterArguments {
   [[= scry::reflection::description{"Bed number, from 1 to 3"}]] std::int32_t bed;
-  [[= scry::reflection::description{"Litres to pour"}]] double litres{1.0};
+  [[= scry::reflection::description{"Liters to pour"}]] double liters{1.0};
 };
 
 [[= scry::reflection::tool{"Water one bed"}]] scry::Status
@@ -105,7 +105,7 @@ name `water`:
       "minimum": -2147483648,
       "maximum": 2147483647
     },
-    "litres": { "type": "number", "description": "Litres to pour" }
+    "liters": { "type": "number", "description": "Liters to pour" }
   },
   "required": ["bed"],
   "additionalProperties": false
@@ -113,7 +113,7 @@ name `water`:
 ```
 
 - **The types set the schema.** `std::int32_t` gives an integer with the range
-  of the type. `litres` has a default value, thus it is not required.
+  of the type. `liters` has a default value, thus it is not required.
 - **The same types decode the arguments.** Scry rejects a missing required
   member, an incorrect type, a value out of range, and an unknown member. The model gets an
   error message that identifies the field, and the turn continues. Your
@@ -165,7 +165,7 @@ public:
   [[= scry::reflection::tool{"Water one bed"}]]
   scry::Status water(WaterArguments arguments);
 
-  double litres() const; // no annotation, thus not a tool
+  double liters() const; // no annotation, thus not a tool
 };
 
 auto house = std::make_shared<Greenhouse>();

@@ -137,7 +137,7 @@ std::optional<double> parse_double(const char* first, const char* last) noexcept
 
 void append_double(std::string& output, const double value) {
   // A whole double below 2^53 is an exact integer whose shortest spelling is
-  // its own digits (a neighbour is at most 1 away, so no shorter decimal rounds
+  // its own digits (a neighbor is at most 1 away, so no shorter decimal rounds
   // to it), and below 10^16 the canonical form spells it positionally.
   constexpr double max_exact_whole = 9007199254740992.0;
   if (value != 0.0 && value > -max_exact_whole && value < max_exact_whole) {

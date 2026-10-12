@@ -28,7 +28,7 @@ namespace scry::reflection::detail {
 
 template <typename Return>
   requires(handler_result_problem<std::remove_cvref_t<Return>>({}).empty() &&
-           !is_acknowledgement(^^Return))
+           !is_acknowledgment(^^Return))
 [[nodiscard]] Result<Json> encode_handler_result(Return&& result) {
   using ResultType = std::remove_cvref_t<Return>;
   if constexpr (expected_traits<ResultType>::recognized) {
@@ -44,7 +44,7 @@ template <typename Return>
 }
 
 // What the model receives from a tool that returns void or a successful Status.
-[[nodiscard]] inline Json acknowledgement() { return Json{.text = "{}"}; }
+[[nodiscard]] inline Json acknowledgment() { return Json{.text = "{}"}; }
 
 // Runs a tool body and turns whatever it returns into the tool result. The body
 // is invoked exactly once, and its return value is encoded where it lands, with
@@ -53,13 +53,13 @@ template <typename Body> [[nodiscard]] Result<Json> run_tool(Body&& body) {
   using Return = decltype(std::forward<Body>(body)());
   if constexpr (std::is_void_v<Return>) {
     std::forward<Body>(body)();
-    return acknowledgement();
-  } else if constexpr (is_acknowledgement(^^Return)) {
+    return acknowledgment();
+  } else if constexpr (is_acknowledgment(^^Return)) {
     auto status = std::forward<Body>(body)();
     if (!status) {
       return std::unexpected(std::move(status).error());
     }
-    return acknowledgement();
+    return acknowledgment();
   } else {
     return encode_handler_result(std::forward<Body>(body)());
   }

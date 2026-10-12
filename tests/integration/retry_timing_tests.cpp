@@ -111,7 +111,7 @@ TEST_CASE("max_backoff caps the delay that Retry-After asks for") {
 
   REQUIRE(completion);
   CHECK(completion->attempt_count == 2);
-  // An honoured Retry-After takes ten seconds, so this bound only separates a
+  // An honored Retry-After takes ten seconds, so this bound only separates a
   // capped wait from an uncapped one.
   CHECK(elapsed < 5s);
 }

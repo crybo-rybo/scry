@@ -262,7 +262,7 @@ std::optional<Result<ToolResultBlock>> TurnRoute::admit(const ToolCallEvent& eve
 
 // What the model is told about one call, or nothing when the turn was cancelled
 // before the handler ran. A hook may cancel the turn and still admit the call.
-// Cancellation is honoured before the handler runs, because a handler's side
+// Cancellation is honored before the handler runs, because a handler's side
 // effects on host state are the one thing the rollback cannot undo; the limit and
 // the hook have already spent their counts by then, and a suppressed call is not
 // a refusal.

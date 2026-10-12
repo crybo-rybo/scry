@@ -20,7 +20,7 @@ namespace {
 [[nodiscard]] Result<ToolResultBlock>
 successful_result(const ToolCallBlock& call, const Json& value,
                   const std::size_t max_result_bytes) {
-  // Canonicalising parses and re-serialises, so rejecting an already-oversized
+  // Canonicalizing parses and re-serializes, so rejecting an already-oversized
   // payload here keeps an unbounded handler return from being parsed at all.
   if (value.text.size() > max_result_bytes) {
     return std::unexpected(oversized_result());

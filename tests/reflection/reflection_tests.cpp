@@ -196,7 +196,7 @@ static_assert(
     scry::reflection::ToolHandlerFor<ConstExpectedHandler, PresenceArguments>);
 static_assert(!scry::reflection::ToolHandlerFor<ReferenceHandler, PresenceArguments>);
 static_assert(!scry::reflection::ToolHandlerFor<RawJsonHandler, PresenceArguments>);
-// void and Status acknowledge a call with {}; see the acknowledgement test below.
+// void and Status acknowledge a call with {}; see the acknowledgment test below.
 static_assert(scry::reflection::ToolHandlerFor<VoidHandler, PresenceArguments>);
 static_assert(scry::reflection::ToolHandlerFor<ContextHandler, PresenceArguments>);
 static_assert(

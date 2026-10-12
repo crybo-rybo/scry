@@ -255,7 +255,7 @@ struct TurnCallbacks {
   /// so can have no side effects.
   ///
   /// Cancelling the turn from inside this callback, by Turn::cancel() or
-  /// Harness::cancel(), is honoured before the handler runs even when the call is
+  /// Harness::cancel(), is honored before the handler runs even when the call is
   /// admitted: no handler runs, no result reaches the model, on_tool_call does not
   /// fire, and the turn ends as cancelled.
   ToolAdmissionCallback on_tool_request{};
