@@ -5,8 +5,8 @@
 #include <cstdint>
 #include <meta>
 #include <optional>
-#include <scry/annotations.hpp>
-#include <scry/detail/reflection_json_string.hpp>
+#include <scrydantic/annotations.hpp>
+#include <scrydantic/detail/json_string.hpp>
 #include <scrydantic/json.hpp>
 #include <string>
 #include <string_view>
@@ -17,7 +17,7 @@
 // generator. Everything here is a consteval function of std::meta::info, so a
 // question such as "which JSON key does this member use" has one answer no matter
 // which of those three asks it.
-namespace scry::reflection::detail {
+namespace scrydantic::detail {
 
 // The key under which a tagged variant alternative carries its discriminator.
 inline constexpr std::string_view tag_key = "type";
@@ -354,4 +354,4 @@ consteval std::string_view tag_names(const std::meta::info variant) {
   return joined_names(names);
 }
 
-} // namespace scry::reflection::detail
+} // namespace scrydantic::detail

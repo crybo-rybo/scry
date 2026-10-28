@@ -4,7 +4,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <cstdint>
 #include <scry/error.hpp>
-#include <scry/reflection.hpp>
+#include <scrydantic/codec.hpp>
 #include <scrydantic/json.hpp>
 #include <string>
 #include <string_view>
@@ -30,8 +30,8 @@ struct OwnedFrame {
 
 } // namespace
 
-static_assert(scry::reflection::Encodable<BorrowedFrame>);
-static_assert(!scry::reflection::Decodable<BorrowedFrame>);
+static_assert(scrydantic::Encodable<BorrowedFrame>);
+static_assert(!scrydantic::Decodable<BorrowedFrame>);
 
 TEST_CASE("an encode-only aggregate may borrow members through references") {
   const scrydantic::Json body{.text = R"({"z":1,"a":2})"};

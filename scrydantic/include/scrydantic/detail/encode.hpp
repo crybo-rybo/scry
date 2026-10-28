@@ -6,11 +6,11 @@
 #include <concepts>
 #include <cstddef>
 #include <meta>
-#include <scry/detail/reflection_codec.hpp>
-#include <scry/detail/reflection_json.hpp>
-#include <scry/detail/reflection_json_string.hpp>
-#include <scry/detail/reflection_model.hpp>
-#include <scry/error.hpp>
+#include <scrydantic/detail/failure.hpp>
+#include <scrydantic/detail/json_string.hpp>
+#include <scrydantic/detail/json_text.hpp>
+#include <scrydantic/detail/model.hpp>
+#include <scrydantic/error.hpp>
 #include <scrydantic/json.hpp>
 #include <string>
 #include <string_view>
@@ -19,10 +19,10 @@
 #include <variant>
 
 // Reflected encoding. The writer emits objects in canonical key order directly, so
-// its output differs from Scry's canonical form only in number spelling and in the
-// bytes of spliced scrydantic::Json payloads. Every function here is reached only
-// through an entry point that has already checked the type against a value family.
-namespace scry::reflection::detail {
+// its output differs from Scrydantic's canonical form only in number spelling and in
+// the bytes of spliced Json payloads. Every function here is reached only through an
+// entry point that has already checked the type against a value family.
+namespace scrydantic::detail {
 
 template <typename Type>
 [[nodiscard]] codec_result<void> write_value(std::string& output, const Type& value);
@@ -61,11 +61,11 @@ template <typename Enum>
   return {};
 }
 
-// A scrydantic::Json value is checked and then written byte for byte; the caller owns
+// A Json value is checked and then written byte for byte; the caller owns
 // its spelling.
-[[nodiscard]] inline codec_result<void>
-write_json_value(std::string& output, const scrydantic::Json& value) {
-  if (!is_valid_json_text(value.text)) {
+[[nodiscard]] inline codec_result<void> write_json_value(std::string& output,
+                                                         const Json& value) {
+  if (!validate_json(value.text)) {
     return codec_fail("is not valid JSON");
   }
   output.append(value.text);
@@ -182,14 +182,24 @@ codec_result<void> write_value(std::string& output, const Type& value) {
 }
 
 // Encodes a value checked against a family without canonicalizing the result.
-// Failures are host-only ErrorCategory::tool diagnostics rooted at `$`.
-template <typename Type>
-[[nodiscard]] Result<scrydantic::Json> encode_value(const Type& value) {
+// Failures are host-only diagnostics, with no model_message, rooted at `$`.
+template <typename Type> [[nodiscard]] Result<Json> encode_value(const Type& value) {
   std::string output{};
   if (auto status = write_value(output, value); !status) {
     return std::unexpected(encode_failure_error(status.error()));
   }
-  return scrydantic::Json{.text = std::move(output)};
+  return Json{.text = std::move(output)};
 }
 
-} // namespace scry::reflection::detail
+// The canonicalizing pass encode() ends with: the writer's text is canonical
+// apart from number spelling and the bytes of spliced Json payloads.
+[[nodiscard]] inline Result<Json> canonicalize_encoded_json(const Json& json) {
+  auto canonical = canonicalize_json(json);
+  if (!canonical) {
+    return std::unexpected(
+        Error{.message = "reflected value could not be encoded as JSON"});
+  }
+  return std::move(*canonical);
+}
+
+} // namespace scrydantic::detail

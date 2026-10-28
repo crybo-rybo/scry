@@ -4,11 +4,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <meta>
-#include <scry/annotations.hpp>
-#include <scry/detail/reflection_meta.hpp>
-#include <scry/detail/reflection_model.hpp>
-#include <scry/error.hpp>
 #include <scry/tool.hpp>
+#include <scrydantic/annotations.hpp>
+#include <scrydantic/detail/meta.hpp>
+#include <scrydantic/detail/model.hpp>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -19,6 +18,11 @@
 // declaration cannot be registered. Everything here is a consteval function of a
 // reflection; reflection_registration.hpp turns the answers into handlers.
 namespace scry::reflection::detail {
+
+// The reflected type model and the codec's checks live in Scrydantic; this tool
+// layer moves there next.
+using namespace ::scrydantic;
+using namespace ::scrydantic::detail;
 
 // ---- Tool declarations -------------------------------------------------------
 
@@ -260,10 +264,10 @@ consteval std::string entity_name(const std::meta::info entity) {
 
 consteval std::string tool_annotation_problem(const std::meta::info function) {
   if (annotation_count(function, ^^tool) > 1) {
-    return "has more than one scry::reflection::tool annotation";
+    return "has more than one scrydantic::tool annotation";
   }
   if (annotation_count(function, ^^name) > 1) {
-    return "has more than one scry::reflection::name annotation";
+    return "has more than one scrydantic::name annotation";
   }
   if (has_annotation(function, ^^description) || has_annotation(function, ^^tag) ||
       has_annotation(function, ^^skip_null_t) ||
@@ -271,11 +275,11 @@ consteval std::string tool_annotation_problem(const std::meta::info function) {
       has_annotation(function, ^^ignore_unknown_t)) {
     return "carries a codec annotation (description, tag, skip_null, emit_null, or "
            "ignore_unknown), which applies to data members or classes; a tool's "
-           "description is its scry::reflection::tool text";
+           "description is its scrydantic::tool text";
   }
   if (!has_annotation(function, ^^name) && !std::meta::has_identifier(function)) {
     return "has no identifier to name the tool after; give it a "
-           "scry::reflection::name annotation";
+           "scrydantic::name annotation";
   }
   return {};
 }
@@ -433,7 +437,7 @@ consteval std::string misplaced_tool_problem(const std::meta::info scope) {
        std::meta::members_of(scope, std::meta::access_context::unchecked())) {
     if (!std::meta::is_function(member) && is_tool_declaration(member)) {
       return entity_name(member) +
-             " carries scry::reflection::tool, which applies to functions";
+             " carries scrydantic::tool, which applies to functions";
     }
   }
   return {};
@@ -464,7 +468,7 @@ consteval std::string tool_scope_problem(const std::meta::info scope,
   const auto tools = tool_functions_of(scope);
   if (tools.empty()) {
     return (toolbox == std::meta::info{} ? "namespace " : "") + entity_name(scope) +
-           " declares no function annotated with scry::reflection::tool";
+           " declares no function annotated with scrydantic::tool";
   }
   for (const auto function : tools) {
     if (auto reason = tool_function_problem(function, toolbox, const_toolbox);
@@ -494,7 +498,7 @@ consteval std::string entity_problem(const std::meta::info entity) {
   if (std::meta::is_function(entity)) {
     return is_tool_declaration(entity)
                ? tool_function_problem(entity, {}, false)
-               : entity_name(entity) + " has no scry::reflection::tool annotation";
+               : entity_name(entity) + " has no scrydantic::tool annotation";
   }
   if (std::meta::is_type(entity)) {
     return display(entity) + " is a type; register an object of it as a toolbox with "
@@ -587,7 +591,7 @@ template <typename Passed> consteval std::string_view owned_toolbox_diagnostic()
 
 namespace scry::reflection {
 
-/// Classes whose `[[= scry::reflection::tool{...}]]` member functions
+/// Classes whose `[[= scrydantic::tool{...}]]` member functions
 /// ToolRegistry::add() registers as tools bound to one object.
 ///
 /// A toolbox is a complete class that declares at least one tool member function

@@ -1,8 +1,8 @@
 #include <catch2/catch_test_macros.hpp>
 #include <cstdint>
 #include <optional>
-#include <scry/annotations.hpp>
-#include <scry/reflection.hpp>
+#include <scrydantic/annotations.hpp>
+#include <scrydantic/codec.hpp>
 #include <string>
 #include <string_view>
 #include <variant>
@@ -10,17 +10,15 @@
 
 namespace {
 
-namespace reflection = scry::reflection;
-
 // ---- Tagged variants ---------------------------------------------------------
 
-struct[[= reflection::tag{"circle"}]] Circle {
+struct[[= scrydantic::tag{"circle"}]] Circle {
   double radius{};
 };
 
 // "height" sorts before the "type" tag key and "width" after it, so the tag lands
 // between them.
-struct[[= reflection::tag{"rectangle"}]] Rectangle {
+struct[[= scrydantic::tag{"rectangle"}]] Rectangle {
   double height{};
   double width{};
 };
@@ -28,14 +26,14 @@ struct[[= reflection::tag{"rectangle"}]] Rectangle {
 using Shape = std::variant<Circle, Rectangle>;
 
 struct Drawing {
-  [[= reflection::description{"Shapes to draw"}]] std::vector<Shape> shapes;
+  [[= scrydantic::description{"Shapes to draw"}]] std::vector<Shape> shapes;
   std::optional<Shape> highlight = std::nullopt;
 };
 
 // Alternatives with no members, and one whose only key sorts after the tag.
-struct[[= reflection::tag{"empty"}]] EmptyAlternative {};
+struct[[= scrydantic::tag{"empty"}]] EmptyAlternative {};
 
-struct[[= reflection::tag{"late"}]] LateAlternative {
+struct[[= scrydantic::tag{"late"}]] LateAlternative {
   int zulu{};
 };
 
@@ -44,33 +42,33 @@ using Edge = std::variant<EmptyAlternative, LateAlternative>;
 // ---- Keys and null policy ----------------------------------------------------
 
 struct Renamed {
-  [[= reflection::name{"max_tokens"}]] std::uint32_t limit{};
+  [[= scrydantic::name{"max_tokens"}]] std::uint32_t limit{};
   // One bracket may hold several annotations, each introduced by its own `=`.
   [[
-    = reflection::name{"a_first"},
-    = reflection::description{"Sorted by its key"}
+    = scrydantic::name{"a_first"},
+    = scrydantic::description{"Sorted by its key"}
   ]] std::string zed;
 };
 
-struct[[= reflection::skip_null]] Sparse {
+struct[[= scrydantic::skip_null]] Sparse {
   std::optional<int> absent;
-  [[= reflection::emit_null]] std::optional<int> explicit_null;
+  [[= scrydantic::emit_null]] std::optional<int> explicit_null;
   std::optional<int> initialized = 3;
   int plain{};
 };
 
 struct MemberSkip {
-  [[= reflection::skip_null]] std::optional<std::string> note;
+  [[= scrydantic::skip_null]] std::optional<std::string> note;
   std::optional<std::string> other;
 };
 
 // ---- Lenient decoding --------------------------------------------------------
 
-struct[[= reflection::ignore_unknown]] LenientInner {
+struct[[= scrydantic::ignore_unknown]] LenientInner {
   int kept{};
 };
 
-struct[[= reflection::ignore_unknown]] LenientEvent {
+struct[[= scrydantic::ignore_unknown]] LenientEvent {
   LenientInner inner;
   std::string kind;
 };
@@ -79,11 +77,11 @@ struct StrictHolder {
   LenientInner inner;
 };
 
-struct[[= reflection::tag{"delta"}]][[= reflection::ignore_unknown]] LenientDelta {
+struct[[= scrydantic::tag{"delta"}]][[= scrydantic::ignore_unknown]] LenientDelta {
   std::string text;
 };
 
-struct[[= reflection::tag{"stop"}]] StrictStop {};
+struct[[= scrydantic::tag{"stop"}]] StrictStop {};
 
 using StreamEvent = std::variant<LenientDelta, StrictStop>;
 
@@ -95,7 +93,7 @@ struct WireTool {
   std::string_view name{};
 };
 
-struct[[= reflection::skip_null]] WireBody {
+struct[[= scrydantic::skip_null]] WireBody {
   std::optional<std::uint32_t> max_tokens{};
   std::string_view model{};
   bool stream{true};
@@ -110,17 +108,17 @@ enum class Role {
   assistant,
 };
 
-struct[[= reflection::tag{"text"}]] DocText {
+struct[[= scrydantic::tag{"text"}]] DocText {
   std::string text;
 };
 
-struct[[= reflection::tag{"tool_call"}]] DocToolCall {
+struct[[= scrydantic::tag{"tool_call"}]] DocToolCall {
   scrydantic::Json arguments;
   std::string id;
   std::string name;
 };
 
-struct[[= reflection::tag{"tool_result"}]] DocToolResult {
+struct[[= scrydantic::tag{"tool_result"}]] DocToolResult {
   bool is_error{};
   scrydantic::Json result;
   std::string tool_call_id;
@@ -154,25 +152,25 @@ struct Unannotated {
   int value{};
 };
 
-struct[[= reflection::tag{"left"}]] Left {
+struct[[= scrydantic::tag{"left"}]] Left {
   int value{};
 };
 
-struct[[= reflection::tag{"left"}]] AlsoLeft {
+struct[[= scrydantic::tag{"left"}]] AlsoLeft {
   int other{};
 };
 
-struct[[= reflection::tag{"typed"}]] TypedAlternative {
-  [[= reflection::name{"type"}]] std::string kind;
+struct[[= scrydantic::tag{"typed"}]] TypedAlternative {
+  [[= scrydantic::name{"type"}]] std::string kind;
 };
 
 struct Colliding {
-  [[= reflection::name{"key"}]] int first{};
-  [[= reflection::name{"key"}]] int second{};
+  [[= scrydantic::name{"key"}]] int first{};
+  [[= scrydantic::name{"key"}]] int second{};
 };
 
 struct MisplacedSkip {
-  [[= reflection::skip_null]] int value{};
+  [[= scrydantic::skip_null]] int value{};
 };
 
 struct HoldsView {
@@ -187,7 +185,7 @@ struct Outer {
   Nested nested;
 };
 
-struct[[= reflection::tag{"bad"}]] BadAlternative {
+struct[[= scrydantic::tag{"bad"}]] BadAlternative {
   char letter{};
 };
 
@@ -196,57 +194,57 @@ struct HoldsBad {
 };
 
 template <typename Type>
-[[nodiscard]] scry::Result<Type> decode_text(const std::string_view text) {
-  return reflection::decode<Type>(scrydantic::Json{.text = std::string{text}});
+[[nodiscard]] scrydantic::Result<Type> decode_text(const std::string_view text) {
+  return scrydantic::decode<Type>(scrydantic::Json{.text = std::string{text}});
 }
 
 } // namespace
 
 // ---- Family membership -------------------------------------------------------
 
-static_assert(reflection::SupportedValue<Shape>);
-static_assert(reflection::SupportedValue<Drawing>);
-static_assert(reflection::ToolArguments<Drawing>);
-static_assert(reflection::SupportedValue<Edge>);
-static_assert(reflection::SupportedValue<Renamed>);
-static_assert(reflection::SupportedValue<Sparse>);
-static_assert(reflection::SupportedValue<StreamEvent>);
-static_assert(!reflection::ToolArguments<Shape>);
+static_assert(scrydantic::SupportedValue<Shape>);
+static_assert(scrydantic::SupportedValue<Drawing>);
+static_assert(scrydantic::ToolArguments<Drawing>);
+static_assert(scrydantic::SupportedValue<Edge>);
+static_assert(scrydantic::SupportedValue<Renamed>);
+static_assert(scrydantic::SupportedValue<Sparse>);
+static_assert(scrydantic::SupportedValue<StreamEvent>);
+static_assert(!scrydantic::ToolArguments<Shape>);
 
-static_assert(reflection::Encodable<WireBody>);
-static_assert(!reflection::Decodable<WireBody>);
-static_assert(!reflection::SupportedValue<WireBody>);
+static_assert(scrydantic::Encodable<WireBody>);
+static_assert(!scrydantic::Decodable<WireBody>);
+static_assert(!scrydantic::SupportedValue<WireBody>);
 
-static_assert(reflection::Encodable<Document>);
-static_assert(reflection::Decodable<Document>);
-static_assert(!reflection::SupportedValue<Document>);
-static_assert(!reflection::ToolArguments<Document>);
+static_assert(scrydantic::Encodable<Document>);
+static_assert(scrydantic::Decodable<Document>);
+static_assert(!scrydantic::SupportedValue<Document>);
+static_assert(!scrydantic::ToolArguments<Document>);
 
-static_assert(reflection::Encodable<ConstView>);
-static_assert(!reflection::Decodable<ConstView>);
-static_assert(reflection::Decodable<Payload>);
-static_assert(reflection::Encodable<scrydantic::Json>);
-static_assert(reflection::Decodable<std::optional<scrydantic::Json>>);
-static_assert(!reflection::SupportedValue<scrydantic::Json>);
-static_assert(reflection::Encodable<std::string_view>);
-static_assert(!reflection::Decodable<std::string_view>);
+static_assert(scrydantic::Encodable<ConstView>);
+static_assert(!scrydantic::Decodable<ConstView>);
+static_assert(scrydantic::Decodable<Payload>);
+static_assert(scrydantic::Encodable<scrydantic::Json>);
+static_assert(scrydantic::Decodable<std::optional<scrydantic::Json>>);
+static_assert(!scrydantic::SupportedValue<scrydantic::Json>);
+static_assert(scrydantic::Encodable<std::string_view>);
+static_assert(!scrydantic::Decodable<std::string_view>);
 
 // decode<T>() produces a value, so its target is a cv-unqualified object type, and
 // the concept agrees with the entry point's check.
-static_assert(!reflection::Decodable<const Payload>);
-static_assert(!reflection::Decodable<volatile Payload>);
-static_assert(!reflection::Decodable<Payload&>);
-static_assert(!reflection::Decodable<const Payload&>);
-static_assert(!reflection::Decodable<Payload&&>);
+static_assert(!scrydantic::Decodable<const Payload>);
+static_assert(!scrydantic::Decodable<volatile Payload>);
+static_assert(!scrydantic::Decodable<Payload&>);
+static_assert(!scrydantic::Decodable<const Payload&>);
+static_assert(!scrydantic::Decodable<Payload&&>);
 
 namespace constrained {
 
 // A wrapper constrained on the concept, as the concepts' documentation suggests,
 // never reaches decode<T>() with a target decode<T>() rejects.
 template <typename Type>
-  requires reflection::Decodable<Type>
-scry::Result<Type> decode_checked(const scrydantic::Json& json) {
-  return reflection::decode<Type>(json);
+  requires scrydantic::Decodable<Type>
+scrydantic::Result<Type> decode_checked(const scrydantic::Json& json) {
+  return scrydantic::decode<Type>(json);
 }
 
 template <typename Type>
@@ -259,15 +257,15 @@ static_assert(!checked_decodable<Payload&>);
 
 } // namespace constrained
 
-static_assert(!reflection::SupportedValue<std::variant<Unannotated>>);
-static_assert(!reflection::SupportedValue<std::variant<Left, int>>);
-static_assert(!reflection::SupportedValue<std::variant<Left, AlsoLeft>>);
-static_assert(!reflection::SupportedValue<std::variant<TypedAlternative>>);
-static_assert(!reflection::SupportedValue<Colliding>);
-static_assert(!reflection::SupportedValue<MisplacedSkip>);
+static_assert(!scrydantic::SupportedValue<std::variant<Unannotated>>);
+static_assert(!scrydantic::SupportedValue<std::variant<Left, int>>);
+static_assert(!scrydantic::SupportedValue<std::variant<Left, AlsoLeft>>);
+static_assert(!scrydantic::SupportedValue<std::variant<TypedAlternative>>);
+static_assert(!scrydantic::SupportedValue<Colliding>);
+static_assert(!scrydantic::SupportedValue<MisplacedSkip>);
 // A tagged class outside a variant, and a type key outside one, are ordinary.
-static_assert(reflection::SupportedValue<Left>);
-static_assert(reflection::SupportedValue<TypedAlternative>);
+static_assert(scrydantic::SupportedValue<Left>);
+static_assert(scrydantic::SupportedValue<TypedAlternative>);
 
 // ---- Diagnostics -------------------------------------------------------------
 
@@ -291,81 +289,81 @@ namespace {
 
 } // namespace
 
-static_assert(mentions(reflection::detail::supported_diagnostic<Outer>(),
-                       "does not satisfy scry::reflection::SupportedValue: "));
-static_assert(mentions(reflection::detail::supported_diagnostic<Outer>(),
+static_assert(mentions(scrydantic::detail::supported_diagnostic<Outer>(),
+                       "does not satisfy scrydantic::SupportedValue: "));
+static_assert(mentions(scrydantic::detail::supported_diagnostic<Outer>(),
                        "Outer::nested.letters[]: wchar_t is a character type"));
-static_assert(mentions(reflection::detail::supported_diagnostic<HoldsBad>(),
+static_assert(mentions(scrydantic::detail::supported_diagnostic<HoldsBad>(),
                        "HoldsBad::items[]<"));
-static_assert(mentions(reflection::detail::supported_diagnostic<HoldsBad>(),
+static_assert(mentions(scrydantic::detail::supported_diagnostic<HoldsBad>(),
                        "BadAlternative>.letter: char is a character type"));
 static_assert(
-    mentions(reflection::detail::supported_diagnostic<std::variant<Unannotated>>(),
-             "without a scry::reflection::tag annotation"));
+    mentions(scrydantic::detail::supported_diagnostic<std::variant<Unannotated>>(),
+             "without a scrydantic::tag annotation"));
 static_assert(
-    mentions(reflection::detail::supported_diagnostic<std::variant<Left, int>>(),
+    mentions(scrydantic::detail::supported_diagnostic<std::variant<Left, int>>(),
              "has the alternative int, which is not a plain aggregate"));
 static_assert(
-    mentions(reflection::detail::supported_diagnostic<std::variant<Left, AlsoLeft>>(),
+    mentions(scrydantic::detail::supported_diagnostic<std::variant<Left, AlsoLeft>>(),
              "that share the tag \"left\""));
 static_assert(
-    mentions(reflection::detail::supported_diagnostic<std::variant<TypedAlternative>>(),
+    mentions(scrydantic::detail::supported_diagnostic<std::variant<TypedAlternative>>(),
              "TypedAlternative::kind: has the JSON key \"type\""));
-static_assert(mentions(reflection::detail::supported_diagnostic<Colliding>(),
+static_assert(mentions(scrydantic::detail::supported_diagnostic<Colliding>(),
                        "has members first and second that both map to the JSON key "
                        "\"key\""));
-static_assert(mentions(reflection::detail::supported_diagnostic<MisplacedSkip>(),
+static_assert(mentions(scrydantic::detail::supported_diagnostic<MisplacedSkip>(),
                        "MisplacedSkip::value: is not a std::optional"));
-static_assert(mentions(reflection::detail::supported_diagnostic<HoldsView>(),
+static_assert(mentions(scrydantic::detail::supported_diagnostic<HoldsView>(),
                        "HoldsView::text: "));
-static_assert(mentions(reflection::detail::supported_diagnostic<HoldsView>(),
+static_assert(mentions(scrydantic::detail::supported_diagnostic<HoldsView>(),
                        " is encode-only borrowed text; decoding and schemas take "
                        "std::string"));
-static_assert(mentions(reflection::detail::decodable_diagnostic<ConstView>(),
+static_assert(mentions(scrydantic::detail::decodable_diagnostic<ConstView>(),
                        "ConstView::value: is a const member"));
-static_assert(mentions(reflection::detail::supported_diagnostic<Document>(),
+static_assert(mentions(scrydantic::detail::supported_diagnostic<Document>(),
                        "scrydantic::Json is raw JSON, which has no schema"));
-static_assert(mentions(reflection::detail::tool_arguments_diagnostic<Shape>(),
+static_assert(mentions(scrydantic::detail::tool_arguments_diagnostic<Shape>(),
                        "is not a plain aggregate; tool arguments decode from one "
                        "JSON object"));
-static_assert(reflection::detail::supported_diagnostic<Drawing>().empty());
+static_assert(scrydantic::detail::supported_diagnostic<Drawing>().empty());
 
 // ---- Schemas -----------------------------------------------------------------
 
 static_assert(
-    reflection::schema_v<Shape> ==
+    scrydantic::schema_v<Shape> ==
     R"({"anyOf":[{"additionalProperties":false,"properties":{"radius":{"type":"number"},"type":{"enum":["circle"],"type":"string"}},"required":["type"],"type":"object"},{"additionalProperties":false,"properties":{"height":{"type":"number"},"type":{"enum":["rectangle"],"type":"string"},"width":{"type":"number"}},"required":["type"],"type":"object"}]})");
 
 // An optional variant joins null to the alternatives; a described variant keeps
 // its description beside anyOf.
 static_assert(
-    reflection::input_schema_v<Drawing> ==
+    scrydantic::input_schema_v<Drawing> ==
     R"({"additionalProperties":false,"properties":{"highlight":{"anyOf":[{"additionalProperties":false,"properties":{"radius":{"type":"number"},"type":{"enum":["circle"],"type":"string"}},"required":["type"],"type":"object"},{"additionalProperties":false,"properties":{"height":{"type":"number"},"type":{"enum":["rectangle"],"type":"string"},"width":{"type":"number"}},"required":["type"],"type":"object"},{"type":"null"}]},"shapes":{"description":"Shapes to draw","items":{"anyOf":[{"additionalProperties":false,"properties":{"radius":{"type":"number"},"type":{"enum":["circle"],"type":"string"}},"required":["type"],"type":"object"},{"additionalProperties":false,"properties":{"height":{"type":"number"},"type":{"enum":["rectangle"],"type":"string"},"width":{"type":"number"}},"required":["type"],"type":"object"}]},"type":"array"}},"required":["shapes"],"type":"object"})");
 
 static_assert(
-    reflection::schema_v<Edge> ==
+    scrydantic::schema_v<Edge> ==
     R"({"anyOf":[{"additionalProperties":false,"properties":{"type":{"enum":["empty"],"type":"string"}},"required":["type"],"type":"object"},{"additionalProperties":false,"properties":{"type":{"enum":["late"],"type":"string"},"zulu":{"maximum":2147483647,"minimum":-2147483648,"type":"integer"}},"required":["type"],"type":"object"}]})");
 
 static_assert(
-    reflection::schema_v<Renamed> ==
+    scrydantic::schema_v<Renamed> ==
     R"({"additionalProperties":false,"properties":{"a_first":{"description":"Sorted by its key","type":"string"},"max_tokens":{"maximum":4294967295,"minimum":0,"type":"integer"}},"required":["a_first"],"type":"object"})");
 
 // A skip_null member may be absent, so only the emit_null one stays required.
 static_assert(
-    reflection::schema_v<Sparse> ==
+    scrydantic::schema_v<Sparse> ==
     R"({"additionalProperties":false,"properties":{"absent":{"anyOf":[{"maximum":2147483647,"minimum":-2147483648,"type":"integer"},{"type":"null"}]},"explicit_null":{"anyOf":[{"maximum":2147483647,"minimum":-2147483648,"type":"integer"},{"type":"null"}]},"initialized":{"anyOf":[{"maximum":2147483647,"minimum":-2147483648,"type":"integer"},{"type":"null"}]},"plain":{"maximum":2147483647,"minimum":-2147483648,"type":"integer"}},"required":["explicit_null"],"type":"object"})");
 
 // Lenient decoding does not open the schema: it describes what a producer sends.
 static_assert(
-    reflection::schema_v<LenientInner> ==
+    scrydantic::schema_v<LenientInner> ==
     R"({"additionalProperties":false,"properties":{"kept":{"maximum":2147483647,"minimum":-2147483648,"type":"integer"}},"required":[],"type":"object"})");
 
-static_assert(reflection::schema_v<std::uint64_t> ==
+static_assert(scrydantic::schema_v<std::uint64_t> ==
               R"({"maximum":18446744073709551615,"minimum":0,"type":"integer"})");
 static_assert(
-    reflection::schema_v<std::int64_t> ==
+    scrydantic::schema_v<std::int64_t> ==
     R"({"maximum":9223372036854775807,"minimum":-9223372036854775808,"type":"integer"})");
-static_assert(reflection::schema_v<std::int16_t> ==
+static_assert(scrydantic::schema_v<std::int16_t> ==
               R"({"maximum":32767,"minimum":-32768,"type":"integer"})");
 
 // ---- Runtime -----------------------------------------------------------------
@@ -379,15 +377,15 @@ TEST_CASE("tagged variants encode the tag at its canonical position") {
       R"({"highlight":{"height":4,"type":"rectangle","width":5},)"
       R"("shapes":[{"radius":1.5,"type":"circle"},{"height":2,"type":"rectangle","width":3}]})"};
 
-  const auto direct = reflection::detail::encode_value(drawing);
+  const auto direct = scrydantic::detail::encode_value(drawing);
   REQUIRE(direct);
   CHECK(direct->text == expected);
-  const auto canonical = reflection::encode(drawing);
+  const auto canonical = scrydantic::encode(drawing);
   REQUIRE(canonical);
   CHECK(canonical->text == expected);
 
-  CHECK(reflection::encode(Edge{EmptyAlternative{}})->text == R"({"type":"empty"})");
-  CHECK(reflection::encode(Edge{LateAlternative{.zulu = 1}})->text ==
+  CHECK(scrydantic::encode(Edge{EmptyAlternative{}})->text == R"({"type":"empty"})");
+  CHECK(scrydantic::encode(Edge{LateAlternative{.zulu = 1}})->text ==
         R"({"type":"late","zulu":1})");
 }
 
@@ -403,7 +401,7 @@ TEST_CASE("tagged variants decode by tag and round trip") {
   REQUIRE(std::holds_alternative<Rectangle>(decoded->shapes[1]));
   CHECK(std::get<Rectangle>(decoded->shapes[1]).width == 3.0);
   CHECK_FALSE(decoded->highlight.has_value());
-  CHECK(reflection::encode(*decoded)->text == text);
+  CHECK(scrydantic::encode(*decoded)->text == text);
 
   const auto empty = decode_text<Edge>(R"({"type":"empty"})");
   REQUIRE(empty);
@@ -414,7 +412,6 @@ TEST_CASE("tagged variant decode failures list the declared tags") {
   const auto failure = [](const std::string_view text) {
     const auto decoded = decode_text<Drawing>(text);
     REQUIRE_FALSE(decoded);
-    CHECK(decoded.error().category == scry::ErrorCategory::invalid_argument);
     CHECK(decoded.error().message ==
           "reflected JSON at " + decoded.error().model_message);
     return decoded.error().model_message;
@@ -436,7 +433,7 @@ TEST_CASE("tagged variant decode failures list the declared tags") {
 }
 
 TEST_CASE("a tagged class outside a variant neither writes nor accepts its tag") {
-  CHECK(reflection::encode(Left{.value = 1})->text == R"({"value":1})");
+  CHECK(scrydantic::encode(Left{.value = 1})->text == R"({"value":1})");
   const auto decoded = decode_text<Left>(R"({"type":"left","value":1})");
   REQUIRE_FALSE(decoded);
   CHECK(decoded.error().model_message == R"($ contains unknown member "type")");
@@ -444,7 +441,7 @@ TEST_CASE("a tagged class outside a variant neither writes nor accepts its tag")
 
 TEST_CASE("name annotations replace keys in encoding decoding and errors") {
   const Renamed value{.limit = 5, .zed = "z"};
-  CHECK(reflection::encode(value)->text == R"({"a_first":"z","max_tokens":5})");
+  CHECK(scrydantic::encode(value)->text == R"({"a_first":"z","max_tokens":5})");
 
   const auto decoded = decode_text<Renamed>(R"({"a_first":"y","max_tokens":7})");
   REQUIRE(decoded);
@@ -472,11 +469,11 @@ TEST_CASE("name annotations replace keys in encoding decoding and errors") {
 }
 
 TEST_CASE("skip_null omits disengaged members and reads their absence as null") {
-  CHECK(reflection::encode(Sparse{.absent = std::nullopt,
+  CHECK(scrydantic::encode(Sparse{.absent = std::nullopt,
                                   .explicit_null = std::nullopt,
                                   .initialized = std::nullopt})
             ->text == R"({"explicit_null":null,"plain":0})");
-  CHECK(reflection::encode(Sparse{.absent = 1, .explicit_null = 2, .initialized = 3})
+  CHECK(scrydantic::encode(Sparse{.absent = 1, .explicit_null = 2, .initialized = 3})
             ->text == R"({"absent":1,"explicit_null":2,"initialized":3,"plain":0})");
 
   // Absence overrides the initializer, so an encoded value decodes to itself.
@@ -498,9 +495,9 @@ TEST_CASE("skip_null omits disengaged members and reads their absence as null") 
   REQUIRE_FALSE(missing);
   CHECK(missing.error().model_message == "$.explicit_null is a required member");
 
-  CHECK(reflection::encode(MemberSkip{.note = std::nullopt, .other = std::nullopt})
+  CHECK(scrydantic::encode(MemberSkip{.note = std::nullopt, .other = std::nullopt})
             ->text == R"({"other":null})");
-  CHECK(reflection::encode(MemberSkip{.note = "n", .other = std::nullopt})->text ==
+  CHECK(scrydantic::encode(MemberSkip{.note = "n", .other = std::nullopt})->text ==
         R"({"note":"n","other":null})");
   const auto member = decode_text<MemberSkip>(R"({"other":"o"})");
   REQUIRE(member);
@@ -552,21 +549,21 @@ TEST_CASE("wire-like values borrow text and splice JSON verbatim") {
       }},
   };
 
-  const auto direct = reflection::detail::encode_value(body);
+  const auto direct = scrydantic::detail::encode_value(body);
   REQUIRE(direct);
   CHECK(direct->text ==
         R"({"max_tokens":1024,"model":"model-name","stream":true,"temperature":0.7,)"
         R"("tools":[{"description":"Tab\there","input_schema":{"type":"object", )"
         R"("properties":{}},"name":"lookup"}]})");
 
-  const auto canonical = reflection::encode(body);
+  const auto canonical = scrydantic::encode(body);
   REQUIRE(canonical);
   CHECK(canonical->text ==
         R"({"max_tokens":1024,"model":"model-name","stream":true,"temperature":0.7,)"
         R"("tools":[{"description":"Tab\there","input_schema":{"properties":{},)"
         R"("type":"object"},"name":"lookup"}]})");
 
-  CHECK(reflection::encode(WireBody{.model = "m", .system = "s", .top_p = 0.5})->text ==
+  CHECK(scrydantic::encode(WireBody{.model = "m", .system = "s", .top_p = 0.5})->text ==
         R"({"model":"m","stream":true,"system":"s","temperature":0,"top_p":0.5})");
 }
 
@@ -576,9 +573,8 @@ TEST_CASE("an invalid spliced JSON payload fails encoding at its path") {
         .model = "m",
         .tools = std::vector<WireTool>{{.input_schema = {.text = text}}},
     };
-    const auto encoded = reflection::detail::encode_value(body);
+    const auto encoded = scrydantic::detail::encode_value(body);
     REQUIRE_FALSE(encoded);
-    CHECK(encoded.error().category == scry::ErrorCategory::tool);
     CHECK(encoded.error().message ==
           "reflected JSON at $.tools[0].input_schema is not valid JSON");
     CHECK(encoded.error().model_message.empty());
@@ -603,10 +599,10 @@ TEST_CASE("document-like values round trip byte for byte") {
   const auto& result = std::get<DocToolResult>(decoded->messages[2].content[0]);
   CHECK(result.result.text == R"({"summary":"sunny","temperature_c":21.5})");
 
-  const auto direct = reflection::detail::encode_value(*decoded);
+  const auto direct = scrydantic::detail::encode_value(*decoded);
   REQUIRE(direct);
   CHECK(direct->text == text);
-  const auto canonical = reflection::encode(*decoded);
+  const auto canonical = scrydantic::encode(*decoded);
   REQUIRE(canonical);
   CHECK(canonical->text == text);
 }
@@ -618,7 +614,7 @@ TEST_CASE("decoding a JSON member captures the canonical text of any value") {
 
   CHECK(decode_text<Payload>(R"({"body":null})")->body.text == "null");
   CHECK_FALSE(decode_text<Payload>("{}"));
-  CHECK(reflection::encode(ConstView{.value = 4})->text == R"({"value":4})");
+  CHECK(scrydantic::encode(ConstView{.value = 4})->text == R"({"value":4})");
   CHECK(decode_text<Payload>(R"({"body":"text"})")->body.text == R"("text")");
   CHECK(decode_text<scrydantic::Json>("[true]")->text == "[true]");
   CHECK_FALSE(decode_text<std::optional<scrydantic::Json>>("null")->has_value());
@@ -635,23 +631,21 @@ TEST_CASE("JsonView serializes the viewed node canonically") {
   CHECK(scrydantic::JsonView{}.to_json().text == "null");
 }
 
-TEST_CASE("public decoding reports invalid_argument with path-based messages") {
+TEST_CASE("public decoding reports path-based messages") {
   auto decoded = decode_text<Renamed>("{");
   REQUIRE_FALSE(decoded);
-  CHECK(decoded.error().category == scry::ErrorCategory::invalid_argument);
   CHECK(decoded.error().message == "reflected JSON text is not valid JSON");
   CHECK(decoded.error().model_message == "JSON text is not valid JSON");
 
   decoded = decode_text<Renamed>("[]");
   REQUIRE_FALSE(decoded);
-  CHECK(decoded.error().category == scry::ErrorCategory::invalid_argument);
   CHECK(decoded.error().message == "reflected JSON at $ must be an object");
   CHECK(decoded.error().model_message == "$ must be an object");
 
   const auto view =
       scrydantic::JsonView::parse(scrydantic::Json{.text = R"({"a_first":"v"})"});
   REQUIRE(view);
-  const auto from_view = reflection::decode<Renamed>(*view);
+  const auto from_view = scrydantic::decode<Renamed>(*view);
   REQUIRE(from_view);
   CHECK(from_view->zed == "v");
   CHECK(from_view->limit == 0U);
@@ -676,7 +670,7 @@ TEST_CASE("encoding reports a valueless variant instead of throwing") {
   }
   REQUIRE(block.valueless_by_exception());
 
-  const auto encoded = reflection::encode(block);
+  const auto encoded = scrydantic::encode(block);
   REQUIRE_FALSE(encoded);
   CHECK(encoded.error().message ==
         "reflected JSON at $ is a variant left valueless by an exception");

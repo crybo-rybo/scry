@@ -7,7 +7,7 @@
 #include <cstdint>
 #include <deque>
 #include <optional>
-#include <scry/annotations.hpp>
+#include <scrydantic/annotations.hpp>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -36,9 +36,9 @@ struct OpenAiToolCall {
 // An assistant message with tool calls and no text sends `"content": null`, a
 // distinct wire value from an omitted member, so `content` keeps its null while
 // the class omits the others when they are disengaged.
-struct[[= reflection::skip_null]] OpenAiMessage {
+struct[[= scrydantic::skip_null]] OpenAiMessage {
   std::string_view role;
-  [[= reflection::emit_null]] std::optional<std::string_view> content;
+  [[= scrydantic::emit_null]] std::optional<std::string_view> content;
   std::optional<std::string_view> tool_call_id;
   std::optional<std::vector<OpenAiToolCall>> tool_calls;
 };
@@ -58,7 +58,7 @@ struct OpenAiStreamOptions {
   bool include_usage;
 };
 
-struct[[= reflection::skip_null]] OpenAiBody {
+struct[[= scrydantic::skip_null]] OpenAiBody {
   std::string_view model;
   std::vector<OpenAiMessage> messages;
   std::optional<std::vector<OpenAiTool>> tools;

@@ -28,7 +28,7 @@ you call `update()`.
 // generates the JSON schema from the signature and decodes the model's arguments.
 class HostTools {
 public:
-  [[= scry::reflection::tool{"Report the state of one subsystem"}]] std::string
+  [[= scrydantic::tool{"Report the state of one subsystem"}]] std::string
       subsystem_state(std::string name) const {
     return name + " is running";
   }

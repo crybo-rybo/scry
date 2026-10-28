@@ -7,9 +7,9 @@
 #include <cstdint>
 #include <memory>
 #include <meta>
-#include <scry/annotations.hpp>
 #include <scry/error.hpp>
 #include <scry/message.hpp>
+#include <scrydantic/annotations.hpp>
 #include <scrydantic/json.hpp>
 #include <string>
 #include <string_view>
@@ -39,7 +39,7 @@ struct ConversationDocumentView {
 
 // Read before the document itself, so a document from another version reports its
 // version rather than whatever shape difference it has from this one.
-struct[[= reflection::ignore_unknown]] ConversationDocumentHeader {
+struct[[= scrydantic::ignore_unknown]] ConversationDocumentHeader {
   std::uint64_t version;
 };
 
@@ -61,7 +61,7 @@ struct[[= reflection::ignore_unknown]] ConversationDocumentHeader {
 template <typename Type>
 [[nodiscard]] Status require_members(const scrydantic::JsonView& object,
                                      const std::string& path) {
-  template for (constexpr auto field : reflection::detail::fields_v<Type>) {
+  template for (constexpr auto field : scrydantic::detail::fields_v<Type>) {
     constexpr std::string_view key = field.key_view();
     if (!object.find(key).has_value()) {
       return std::unexpected(invalid_document(detail::CodecFailure{

@@ -163,7 +163,7 @@ void pump_until_terminal(scry::Harness& harness, const Application& app) {
   }
   pump_until_terminal(harness, app);
 
-  const auto final_world = scry::reflection::encode(world->look());
+  const auto final_world = scrydantic::encode(world->look());
   std::cout << "Final world: " << (final_world ? final_world->text : "unavailable")
             << '\n';
   return app.exit_code();

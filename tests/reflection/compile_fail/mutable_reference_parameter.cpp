@@ -4,7 +4,7 @@
 namespace lamp_tools {
 // Decoded arguments are moved into the call, which a non-const lvalue reference
 // cannot bind.
-[[= scry::reflection::tool{"Rename the lamp"}]] inline bool rename(std::string& name) {
+[[= scrydantic::tool{"Rename the lamp"}]] inline bool rename(std::string& name) {
   return !name.empty();
 }
 } // namespace lamp_tools

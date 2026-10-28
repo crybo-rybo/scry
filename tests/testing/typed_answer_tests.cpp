@@ -23,7 +23,7 @@ using scry::testing::ScriptedServer;
 namespace {
 
 struct Verdict {
-  [[= scry::reflection::description{"Is the claim supported?"}]] bool supported{};
+  [[= scrydantic::description{"Is the claim supported?"}]] bool supported{};
   std::string reason{};
 };
 
@@ -180,8 +180,7 @@ TEST_CASE("send<T> completes an OpenAI-compatible answer that persists and repla
   CHECK(streamed == "Checked.");
   CHECK((*finished)->text == "Checked.");
   REQUIRE((*finished)->structured);
-  const auto verdict =
-      unwrap(scry::reflection::decode<Verdict>(*(*finished)->structured));
+  const auto verdict = unwrap(scrydantic::decode<Verdict>(*(*finished)->structured));
   CHECK(verdict.reason == "It is rock.");
   CHECK(contains(server.requests().front().body, R"("tool_choice":"required")"));
   require_answer_only_as_text(conversation);
@@ -295,7 +294,7 @@ TEST_CASE("the per-turn call limit tells a typed turn to finish on its response 
       conversation, "Is the moon made of cheese?",
       scry::ResponseFormat{
           .name = "verdict",
-          .schema = {.text = std::string{scry::reflection::input_schema_v<Verdict>}},
+          .schema = {.text = std::string{scrydantic::input_schema_v<Verdict>}},
           .validate = [&validated](const scrydantic::Json& answer) -> scry::Status {
             validated.push_back(answer.text);
             return {};

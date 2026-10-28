@@ -2,7 +2,7 @@
 
 struct Lamp {
   bool lit{};
-  [[= scry::reflection::tool{"Toggle the lamp"}]] bool toggle() { return lit = !lit; }
+  [[= scrydantic::tool{"Toggle the lamp"}]] bool toggle() { return lit = !lit; }
 };
 
 // The registry never borrows a toolbox: an lvalue would leave the caller's object

@@ -2,7 +2,7 @@
 
 #include <string_view>
 
-namespace scry::reflection::detail {
+namespace scrydantic::detail {
 
 template <typename Output>
 constexpr void append_json_literal(Output& output, const std::string_view value) {
@@ -59,4 +59,4 @@ constexpr void append_json_string(Output& output, const std::string_view value) 
   output.push_back('"');
 }
 
-} // namespace scry::reflection::detail
+} // namespace scrydantic::detail

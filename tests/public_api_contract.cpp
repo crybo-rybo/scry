@@ -120,11 +120,10 @@ struct SchemaArguments {
   std::string city;
 };
 } // namespace contract
-static_assert(
-    std::same_as<decltype(scry::reflection::schema_v<contract::SchemaArguments>),
-                 const std::string_view>);
-static_assert(scry::reflection::schema_v<contract::SchemaArguments> ==
-              scry::reflection::input_schema_v<contract::SchemaArguments>);
+static_assert(std::same_as<decltype(scrydantic::schema_v<contract::SchemaArguments>),
+                           const std::string_view>);
+static_assert(scrydantic::schema_v<contract::SchemaArguments> ==
+              scrydantic::input_schema_v<contract::SchemaArguments>);
 
 // A void-returning callback signature accepts a callable that returns something:
 // the result is discarded rather than rejected at compile time.
@@ -285,13 +284,12 @@ namespace contract {
 struct CountArguments {
   std::int32_t by{};
 };
-[[= scry::reflection::tool{"Echo a label"}]] inline std::string
-    echo(std::string label) {
+[[= scrydantic::tool{"Echo a label"}]] inline std::string echo(std::string label) {
   return label;
 }
 struct Counter {
   std::int32_t value{};
-  [[= scry::reflection::tool{"Add to the counter"}]] std::int32_t
+  [[= scrydantic::tool{"Add to the counter"}]] std::int32_t
       increment(CountArguments arguments) {
     return value += arguments.by;
   }
@@ -331,7 +329,7 @@ static_assert(requires(scry::Harness& harness, scry::Conversation& conversation)
 // a ResponseFormat or by reflection through send<Answer>() and ask<Answer>().
 namespace contract {
 struct Verdict {
-  [[= scry::reflection::description{"Is the claim supported?"}]] bool supported{};
+  [[= scrydantic::description{"Is the claim supported?"}]] bool supported{};
   std::string reason{};
 };
 struct Opaque {
@@ -359,12 +357,11 @@ static_assert(std::same_as<decltype(scry::Answered<contract::Verdict>::value),
 static_assert(std::same_as<decltype(scry::Answered<contract::Verdict>::completion),
                            scry::Completion>);
 // An answer is a tool input, so it is an object: ToolArguments is the check.
-static_assert(scry::reflection::ToolArguments<contract::Verdict>);
-static_assert(!scry::reflection::ToolArguments<contract::Opaque>);
-static_assert(!scry::reflection::ToolArguments<bool>);
-static_assert(
-    std::same_as<decltype(scry::reflection::response_format<contract::Verdict>()),
-                 scry::ResponseFormat>);
+static_assert(scrydantic::ToolArguments<contract::Verdict>);
+static_assert(!scrydantic::ToolArguments<contract::Opaque>);
+static_assert(!scrydantic::ToolArguments<bool>);
+static_assert(std::same_as<decltype(scry::response_format<contract::Verdict>()),
+                           scry::ResponseFormat>);
 static_assert(requires(scry::Harness& harness, scry::Conversation& conversation) {
   {
     harness.send_structured(conversation, std::string{}, scry::ResponseFormat{})
@@ -420,9 +417,9 @@ namespace {
 // response_format<Answer>() carries the generated schema, the default tool name,
 // and a validator that decodes strictly and publishes a schema-derived error.
 bool response_format_for_a_type_works() {
-  auto format = scry::reflection::response_format<contract::Verdict>();
+  auto format = scry::response_format<contract::Verdict>();
   if (format.name != "respond" || !format.description.empty() ||
-      format.schema.text != scry::reflection::input_schema_v<contract::Verdict> ||
+      format.schema.text != scrydantic::input_schema_v<contract::Verdict> ||
       !format.validate) {
     return false;
   }

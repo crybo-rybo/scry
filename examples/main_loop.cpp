@@ -35,7 +35,7 @@ private:
 // from these two aggregates. The annotation supplies the property description the
 // model sees.
 struct StatusArguments {
-  [[= scry::reflection::description{
+  [[= scrydantic::description{
       "Include a human-readable state label in the result"}]] bool verbose{false};
 };
 
@@ -150,7 +150,7 @@ struct StatusResult {
 // Result schemas never reach the model; exporting one lets a host publish the full
 // tool contract next to the manifest.
 [[nodiscard]] int print_result_schema() {
-  return write_stdout(scry::reflection::schema_v<StatusResult>, "result schema");
+  return write_stdout(scrydantic::schema_v<StatusResult>, "result schema");
 }
 
 void print_block(const scry::ContentBlock& block) {

@@ -3,15 +3,15 @@
 #include <cstddef>
 #include <string_view>
 
-/// Annotation vocabulary for Scry's reflected codec and reflected tools.
+/// Annotation vocabulary for Scrydantic's reflected codec and reflected tools.
 ///
 /// Every type here is a plain C++23 structural type, so this header needs neither
 /// `<meta>` nor a reflection-enabled compiler; only writing a P3394 annotation,
 /// `[[= value]]`, requires C++26. Member and function annotations are written
 /// before the declaration. Class annotations are written between the class-key and the
-/// class name, `struct [[= scry::reflection::tag{"text"}]] TextBlock { ... };`, which
+/// class name, `struct [[= scrydantic::tag{"text"}]] TextBlock { ... };`, which
 /// is the placement that appertains to the class itself.
-namespace scry::reflection {
+namespace scrydantic {
 
 template <std::size_t Size> struct description;
 
@@ -19,12 +19,12 @@ template <std::size_t Size> struct description;
 ///
 /// The view must have static storage duration, because it is bound as a reference
 /// template parameter. Usage:
-/// `[[= scry::reflection::description_of<catalog::direction>()]]`.
+/// `[[= scrydantic::description_of<catalog::direction>()]]`.
 /// @tparam View Annotation text to copy into the annotation payload.
 /// @return Annotation equal to the one the literal form would build.
 template <const std::string_view& View> [[nodiscard]] consteval auto description_of();
 
-/// Fixed-string payload for Scry's P3394 parameter-description annotation.
+/// Fixed-string payload for Scrydantic's P3394 parameter-description annotation.
 ///
 /// Applies to data members; the text becomes the member schema's `description`.
 /// @tparam Size Character-array extent including the null terminator.
@@ -77,11 +77,11 @@ template <const std::string_view& View> [[nodiscard]] consteval auto description
 /// decoding, generated schemas, and decode-failure paths. Objects are written in
 /// lexical order of these final keys, and two members of one class that end with
 /// the same key are a compile-time error. On a function annotated with
-/// scry::reflection::tool it replaces the function's identifier as the tool name
-/// the model sees. Usage: `[[= scry::reflection::name{"max_tokens"}]]`.
+/// scrydantic::tool it replaces the function's identifier as the tool name
+/// the model sees. Usage: `[[= scrydantic::name{"max_tokens"}]]`.
 /// @tparam Size Character-array extent including the null terminator.
 template <std::size_t Size> struct name {
-  static_assert(Size > 1, "scry::reflection::name must not be empty");
+  static_assert(Size > 1, "scrydantic::name must not be empty");
 
   /// Owned null-terminated key text.
   char text[Size]{};
@@ -112,10 +112,10 @@ template <std::size_t Size> name(const char (&value)[Size]) -> name<Size>;
 /// object carries its alternative's tag under the key `"type"`. An alternative
 /// may therefore not declare a member whose final key is `"type"`. Outside a
 /// variant the tag has no effect. Usage:
-/// `struct [[= scry::reflection::tag{"text"}]] TextBlock { std::string text; };`.
+/// `struct [[= scrydantic::tag{"text"}]] TextBlock { std::string text; };`.
 /// @tparam Size Character-array extent including the null terminator.
 template <std::size_t Size> struct tag {
-  static_assert(Size > 1, "scry::reflection::tag must not be empty");
+  static_assert(Size > 1, "scrydantic::tag must not be empty");
 
   /// Owned null-terminated discriminator text.
   char text[Size]{};
@@ -143,16 +143,16 @@ template <std::size_t Size> tag(const char (&value)[Size]) -> tag<Size>;
 ///
 /// Applies to namespace-scope functions, static member functions, and member
 /// functions of a toolbox class. The tool is named after the function's
-/// identifier unless a scry::reflection::name annotation on the same function
+/// identifier unless a scrydantic::name annotation on the same function
 /// overrides it, and its argument schema is generated from the parameter list.
-/// ToolRegistry::add<^^function>() registers one such function,
-/// ToolRegistry::add<^^namespace>() every one declared in a namespace, and
-/// ToolRegistry::add(toolbox) every one a class declares, bound to that object.
-/// Usage: `[[= scry::reflection::tool{"Move the NPC one tile"}]] Position
+/// scrydantic::bind<^^function>() binds one such function,
+/// scrydantic::bind<^^namespace>() every one declared in a namespace, and
+/// scrydantic::bind(toolbox) every one a class declares, bound to that object.
+/// Usage: `[[= scrydantic::tool{"Move the NPC one tile"}]] Position
 /// step(Direction direction);`.
 /// @tparam Size Character-array extent including the null terminator.
 template <std::size_t Size> struct tool {
-  static_assert(Size > 1, "scry::reflection::tool needs a description for the model");
+  static_assert(Size > 1, "scrydantic::tool needs a description for the model");
 
   /// Owned null-terminated description text.
   char text[Size]{};
@@ -205,4 +205,4 @@ struct ignore_unknown_t {};
 /// producer should send, not everything the decoder tolerates.
 inline constexpr ignore_unknown_t ignore_unknown{};
 
-} // namespace scry::reflection
+} // namespace scrydantic

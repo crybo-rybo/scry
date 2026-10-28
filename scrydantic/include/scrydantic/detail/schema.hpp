@@ -6,15 +6,15 @@
 #include <limits>
 #include <meta>
 #include <optional>
-#include <scry/detail/reflection_json_string.hpp>
-#include <scry/detail/reflection_meta.hpp>
-#include <scry/detail/reflection_model.hpp>
+#include <scrydantic/detail/json_string.hpp>
+#include <scrydantic/detail/meta.hpp>
+#include <scrydantic/detail/model.hpp>
 #include <string_view>
 #include <vector>
 
 // Schema generation is a consteval function of a type's reflection. It runs only
 // for types the SupportedValue check has admitted.
-namespace scry::reflection::detail {
+namespace scrydantic::detail {
 
 using schema_text = std::optional<std::string_view>;
 
@@ -282,14 +282,15 @@ template <typename Args> consteval std::string_view checked_input_schema() {
   }
 }
 
-} // namespace scry::reflection::detail
+} // namespace scrydantic::detail
 
-namespace scry::reflection {
+namespace scrydantic {
 
 /// Canonical provider-neutral JSON Schema generated for any supported reflected value.
 ///
-/// Handler result types are supported roots too. Scry never sends a result schema to a
-/// model; it is here so a host can export its own tool contracts. A type outside
+/// Handler result types are supported roots too. A tool binding never sends a
+/// result schema to a model; it is here so a host can export its own tool
+/// contracts. A type outside
 /// SupportedValue fails to compile with the offending member path and the reason.
 /// @tparam Value Type satisfying SupportedValue.
 template <typename Value>
@@ -300,4 +301,4 @@ inline constexpr std::string_view schema_v = detail::checked_schema<Value>();
 template <typename Args>
 inline constexpr std::string_view input_schema_v = detail::checked_input_schema<Args>();
 
-} // namespace scry::reflection
+} // namespace scrydantic

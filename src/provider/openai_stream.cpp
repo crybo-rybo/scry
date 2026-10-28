@@ -7,7 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
-#include <scry/annotations.hpp>
+#include <scrydantic/annotations.hpp>
 #include <scrydantic/json.hpp>
 #include <string>
 #include <string_view>
@@ -23,13 +23,13 @@ namespace {
 // null optional member as disengaged. What the codec cannot express - chunk
 // identity, fragment accumulation, the finish lifecycle - stays below.
 
-struct[[ = reflection::ignore_unknown, = reflection::skip_null ]]
+struct[[ = scrydantic::ignore_unknown, = scrydantic::skip_null ]]
     OpenAiFunctionFragment {
   std::optional<std::string> name;
   std::optional<std::string> arguments;
 };
 
-struct[[ = reflection::ignore_unknown, = reflection::skip_null ]] OpenAiToolFragment {
+struct[[ = scrydantic::ignore_unknown, = scrydantic::skip_null ]] OpenAiToolFragment {
   std::size_t index;
   std::optional<std::string> id;
   std::optional<std::string> type;
@@ -37,26 +37,26 @@ struct[[ = reflection::ignore_unknown, = reflection::skip_null ]] OpenAiToolFrag
 };
 
 // `function_call` is the deprecated legacy field: any value but null is refused.
-struct[[ = reflection::ignore_unknown, = reflection::skip_null ]] OpenAiDelta {
+struct[[ = scrydantic::ignore_unknown, = scrydantic::skip_null ]] OpenAiDelta {
   std::optional<std::string> role;
   std::optional<std::string> content;
   std::optional<std::vector<OpenAiToolFragment>> tool_calls;
   std::optional<scrydantic::Json> function_call;
 };
 
-struct[[ = reflection::ignore_unknown, = reflection::skip_null ]] OpenAiChoice {
+struct[[ = scrydantic::ignore_unknown, = scrydantic::skip_null ]] OpenAiChoice {
   std::uint64_t index;
   OpenAiDelta delta;
   std::optional<std::string> finish_reason;
 };
 
 // Only non-negative integers that fit 64 bits are counts; null reads as absent.
-struct[[ = reflection::ignore_unknown, = reflection::skip_null ]] OpenAiUsage {
+struct[[ = scrydantic::ignore_unknown, = scrydantic::skip_null ]] OpenAiUsage {
   std::optional<std::uint64_t> prompt_tokens;
   std::optional<std::uint64_t> completion_tokens;
 };
 
-struct[[ = reflection::ignore_unknown, = reflection::skip_null ]] OpenAiChunk {
+struct[[ = scrydantic::ignore_unknown, = scrydantic::skip_null ]] OpenAiChunk {
   std::string id;
   std::string object;
   std::vector<OpenAiChoice> choices;

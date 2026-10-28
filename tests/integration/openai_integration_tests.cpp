@@ -2,8 +2,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <optional>
-#include <scry/reflection.hpp>
 #include <scry/scry.hpp>
+#include <scrydantic/codec.hpp>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -134,9 +134,9 @@ TEST_CASE("a handler refusal reaches the model in the OpenAI tool message") {
   auto fixture = move_fixture(R"({"direction":"north"})");
   REQUIRE(fixture.harness.tools().add<MoveArguments>(
       {.name = "move", .description = "Move the player one square"},
-      [](MoveArguments) -> scry::Result<MoveResult> {
-        return std::unexpected(scry::tool_error("a wall blocks the way north",
-                                                "secret application message"));
+      [](MoveArguments) -> scrydantic::Result<MoveResult> {
+        return std::unexpected(scrydantic::tool_error("a wall blocks the way north",
+                                                      "secret application message"));
       }));
 
   const auto resend = run_move_turn(fixture);
@@ -151,7 +151,7 @@ TEST_CASE("an invalid enum argument round-trips into the OpenAI tool message") {
   auto fixture = move_fixture(R"({"direction":"up"})");
   REQUIRE(fixture.harness.tools().add<MoveArguments>(
       {.name = "move", .description = "Move the player one square"},
-      [](MoveArguments) -> scry::Result<MoveResult> {
+      [](MoveArguments) -> scrydantic::Result<MoveResult> {
         FAIL("the handler must not run when arguments do not decode");
         return MoveResult{};
       }));

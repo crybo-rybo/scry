@@ -1,7 +1,7 @@
 #pragma once
 
 #include <cstdint>
-#include <scry/annotations.hpp>
+#include <scrydantic/annotations.hpp>
 #include <scrydantic/json.hpp>
 #include <string>
 #include <variant>
@@ -18,13 +18,13 @@ enum class Role : std::uint8_t {
 };
 
 /// Plain text content.
-struct[[= scry::reflection::tag{"text"}]] TextBlock {
+struct[[= scrydantic::tag{"text"}]] TextBlock {
   /// UTF-8 text.
   std::string text{};
 };
 
 /// A model-issued tool call, which appears only in assistant messages.
-struct[[= scry::reflection::tag{"tool_call"}]] ToolCallBlock {
+struct[[= scrydantic::tag{"tool_call"}]] ToolCallBlock {
   /// Provider-assigned call identifier, unique within the turn.
   std::string id{};
   /// Tool name requested by the model.
@@ -35,7 +35,7 @@ struct[[= scry::reflection::tag{"tool_call"}]] ToolCallBlock {
 
 /// The result returned to the model for one tool call, which appears only in user
 /// messages.
-struct[[= scry::reflection::tag{"tool_result"}]] ToolResultBlock {
+struct[[= scrydantic::tag{"tool_result"}]] ToolResultBlock {
   /// Identifier of the ToolCallBlock this result answers.
   std::string tool_call_id{};
   /// Canonical JSON result sent back to the model.
@@ -46,9 +46,9 @@ struct[[= scry::reflection::tag{"tool_result"}]] ToolResultBlock {
 
 /// One piece of a message's content.
 ///
-/// This is a reflected tagged variant: scry::reflection::encode() writes a block as
+/// This is a reflected tagged variant: scrydantic::encode() writes a block as
 /// an object whose `"type"` member is its alternative's tag (`"text"`,
-/// `"tool_call"`, or `"tool_result"`), and scry::reflection::decode() selects the
+/// `"tool_call"`, or `"tool_result"`), and scrydantic::decode() selects the
 /// alternative by that member.
 using ContentBlock = std::variant<TextBlock, ToolCallBlock, ToolResultBlock>;
 
@@ -59,7 +59,7 @@ using ContentBlock = std::variant<TextBlock, ToolCallBlock, ToolResultBlock>;
 /// the next request will send.
 ///
 /// A Message is a reflected value: a host can write one with
-/// scry::reflection::encode() and read it back with scry::reflection::decode(). That
+/// scrydantic::encode() and read it back with scrydantic::decode(). That
 /// encoding is the per-message shape of the Conversation::to_json() document, with
 /// `arguments` and `result` spliced as JSON values rather than quoted. Every member
 /// has an initializer, so decode() reads an absent member as its initial value;

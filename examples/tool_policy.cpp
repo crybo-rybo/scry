@@ -16,7 +16,7 @@ enum class Direction {
 };
 
 struct WalkArguments {
-  [[= scry::reflection::description{
+  [[= scrydantic::description{
       "Compass direction to step toward"}]] Direction direction{};
 };
 
@@ -29,11 +29,11 @@ struct WalkResult {
 // framework failure: the turn continues and the model gets a chance to pick
 // another direction. Only the first string reaches the model; the second is the
 // host-side Error::message, which Scry never forwards.
-[[= scry::reflection::tool{
-    "Step one room in a direction"}]] [[nodiscard]] scry::Result<WalkResult>
+[[= scrydantic::tool{
+    "Step one room in a direction"}]] [[nodiscard]] scrydantic::Result<WalkResult>
     walk(const WalkArguments arguments) {
   if (arguments.direction != Direction::north) {
-    return std::unexpected(scry::tool_error(
+    return std::unexpected(scrydantic::tool_error(
         "a wall blocks that direction; only north is open from the entrance hall",
         "player attempted a blocked walk from the entrance hall"));
   }

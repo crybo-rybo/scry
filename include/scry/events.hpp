@@ -147,7 +147,7 @@ using AnswerValidator = UniqueFunction<Status(const scrydantic::Json&)>;
 /// The turn's request offers the model one extra tool, the response tool, whose
 /// input schema is `schema`, and requires the model to call a tool. The model
 /// answers by calling it, on its own, with the answer as the arguments.
-/// scry::reflection::response_format<Answer>() builds one from a reflected type,
+/// scry::response_format<Answer>() builds one from a reflected type,
 /// with a generated schema and a strict decoder as its validator.
 struct ResponseFormat {
   /// Name of the response tool the model calls with its answer. It must not be

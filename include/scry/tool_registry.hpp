@@ -7,12 +7,12 @@
 #include <cstddef>
 #include <memory>
 #include <meta>
-#include <scry/detail/reflection_meta.hpp>
 #include <scry/detail/reflection_registration.hpp>
-#include <scry/detail/reflection_schema.hpp>
 #include <scry/detail/reflection_tools.hpp>
 #include <scry/error.hpp>
 #include <scry/tool.hpp>
+#include <scrydantic/detail/meta.hpp>
+#include <scrydantic/detail/schema.hpp>
 #include <scrydantic/json.hpp>
 #include <string>
 #include <string_view>
@@ -41,7 +41,7 @@ concept owned_toolbox_candidate = std::is_class_v<std::remove_cvref_t<Type>> &&
 /// Tools are declared in C++ and registered by reflection: the argument schema,
 /// the strict argument decoder, and the result encoder are generated from the
 /// declaration. add() takes a typed argument aggregate and a callable, a function
-/// annotated with scry::reflection::tool, every such function of a namespace, or
+/// annotated with scrydantic::tool, every such function of a namespace, or
 /// a toolbox object whose annotated member functions become tools bound to it.
 /// add_dynamic() is the escape hatch for tools known only at runtime, such as
 /// bridged or scripted ones: a hand-written JSON schema and a handler that takes
@@ -84,7 +84,7 @@ public:
 
   /// Registers a callable whose arguments are a reflected aggregate.
   ///
-  /// The argument schema is generated as scry::reflection::input_schema_v<Args>,
+  /// The argument schema is generated as scrydantic::input_schema_v<Args>,
   /// incoming JSON is decoded strictly into `Args`, and the typed return is
   /// encoded back to JSON. A handler may take a leading const ToolCallContext& to
   /// learn which turn, round, and call it is running for; the context is borrowed
@@ -92,8 +92,8 @@ public:
   /// `void`, or scry::Status; the last two send `{}` on success.
   ///
   /// The template is unconstrained so that a rejected type fails with a diagnostic
-  /// naming the offending member and the reason; scry::reflection::ToolArguments
-  /// and scry::reflection::ToolHandlerFor are the SFINAE-friendly form of the same
+  /// naming the offending member and the reason; scrydantic::ToolArguments
+  /// and scrydantic::ToolHandlerFor are the SFINAE-friendly form of the same
   /// checks.
   /// @tparam Args Complete reflected argument aggregate satisfying ToolArguments.
   /// @tparam Handler Move-constructible callable satisfying ToolHandlerFor<Handler,
@@ -109,10 +109,10 @@ public:
   /// Registers one annotated function, or every annotated function of a namespace.
   ///
   /// `tools.add<^^forecast>()` registers a function declared with
-  /// `[[= scry::reflection::tool{"description"}]]`; `tools.add<^^npc_tools>()`
+  /// `[[= scrydantic::tool{"description"}]]`; `tools.add<^^npc_tools>()`
   /// registers every function so declared directly in that namespace, in
   /// declaration order. A tool is named after the function unless a
-  /// scry::reflection::name annotation overrides it. Its parameters, after an
+  /// scrydantic::name annotation overrides it. Its parameters, after an
   /// optional leading const ToolCallContext&, are either nothing (the tool takes
   /// `{}`), one plain aggregate (the argument object, as for add<Args>()), or any
   /// other list of named parameters of supported types, which is synthesized into
@@ -250,13 +250,13 @@ private:
 template <typename Args, typename Handler>
 Status ToolRegistry::add(ToolMetadata metadata, Handler&& handler) {
   constexpr std::string_view arguments_problem =
-      reflection::detail::tool_arguments_diagnostic<Args>();
+      scrydantic::detail::tool_arguments_diagnostic<Args>();
   static_assert(arguments_problem.empty(), arguments_problem);
   if constexpr (!arguments_problem.empty()) {
     return {};
   } else {
     constexpr std::string_view handler_problem =
-        reflection::detail::tool_handler_diagnostic<Handler, Args>();
+        scrydantic::detail::tool_handler_diagnostic<Handler, Args, ToolCallContext>();
     static_assert(handler_problem.empty(), handler_problem);
     if constexpr (!handler_problem.empty()) {
       return {};
@@ -267,7 +267,7 @@ Status ToolRegistry::add(ToolMetadata metadata, Handler&& handler) {
               .description = std::move(metadata.description),
               .input_schema =
                   scrydantic::Json{.text =
-                                       std::string{reflection::input_schema_v<Args>}},
+                                       std::string{scrydantic::input_schema_v<Args>}},
           },
           reflection::detail::make_tool_handler<Args>(std::forward<Handler>(handler)));
     }

@@ -16,24 +16,24 @@ enum class Priority {
 };
 
 // A tagged variant: each alternative names its "type" value.
-struct[[= scry::reflection::tag{"reminder"}]] Reminder {
-  [[= scry::reflection::description{"What to remind the user of"}]] std::string text;
+struct[[= scrydantic::tag{"reminder"}]] Reminder {
+  [[= scrydantic::description{"What to remind the user of"}]] std::string text;
   Priority priority{Priority::low};
 };
 
-struct[[= scry::reflection::tag{"note"}]] Note {
-  [[= scry::reflection::name{"body"}]] std::string text;
+struct[[= scrydantic::tag{"note"}]] Note {
+  [[= scrydantic::name{"body"}]] std::string text;
 };
 
 using Action = std::variant<Reminder, Note>;
 
 // skip_null leaves a disengaged optional out of the output instead of writing null.
-struct[[= scry::reflection::skip_null]] Plan {
+struct[[= scrydantic::skip_null]] Plan {
   std::vector<Action> actions;
   std::optional<std::string> summary;
 };
 
-void print(const char* label, const scry::Result<scrydantic::Json>& json) {
+void print(const char* label, const scrydantic::Result<scrydantic::Json>& json) {
   std::cout << label << ": " << (json ? json->text : json.error().message) << '\n';
 }
 
@@ -41,20 +41,20 @@ void print(const char* label, const scry::Result<scrydantic::Json>& json) {
 
 int main() {
   // The schema a host would hand a model as the expected answer shape.
-  std::cout << "schema: " << scry::reflection::schema_v<Plan> << '\n';
+  std::cout << "schema: " << scrydantic::schema_v<Plan> << '\n';
 
-  const auto answer = scry::reflection::decode<Plan>(scrydantic::Json{
+  const auto answer = scrydantic::decode<Plan>(scrydantic::Json{
       .text = R"({"actions":[{"type":"reminder","text":"stretch","priority":"high"},)"
               R"({"type":"note","body":"water the plants"}]})"});
   if (!answer) {
     std::cerr << answer.error().message << '\n';
     return 1;
   }
-  print("round trip", scry::reflection::encode(*answer));
+  print("round trip", scrydantic::encode(*answer));
 
   // A wrong answer fails with the JSON path and what the schema required there;
   // model_message is written to be sent back to the model as-is.
-  const auto wrong = scry::reflection::decode<Plan>(
+  const auto wrong = scrydantic::decode<Plan>(
       scrydantic::Json{.text = R"({"actions":[{"type":"alarm","text":"now"}]})"});
   if (wrong) {
     return 1;

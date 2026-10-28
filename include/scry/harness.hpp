@@ -6,7 +6,7 @@
 #include <scry/conversation.hpp>
 #include <scry/error.hpp>
 #include <scry/events.hpp>
-#include <scry/reflection.hpp>
+#include <scry/response_format.hpp>
 #include <scry/tool_registry.hpp>
 #include <scry/turn.hpp>
 #include <scry/turn_id.hpp>
@@ -129,13 +129,13 @@ public:
 
   /// Accepts an asynchronous user turn that must end with an `Answer`.
   ///
-  /// This is send_structured() with scry::reflection::response_format<Answer>():
+  /// This is send_structured() with scry::response_format<Answer>():
   /// the response tool's schema is generated from `Answer` and each candidate
   /// answer is decoded strictly on the host thread. `Answer` cannot be deduced, so
   /// a call without it is always the plain send(). Decode Completion::structured with
-  /// scry::reflection::decode<Answer>() to read the answer.
+  /// scrydantic::decode<Answer>() to read the answer.
   /// @tparam Answer Reflected answer aggregate satisfying
-  /// scry::reflection::ToolArguments; any other type fails to compile with the
+  /// scrydantic::ToolArguments; any other type fails to compile with the
   /// offending member and the reason.
   /// @param conversation Conversation that receives the exchange on successful
   /// completion.
@@ -203,13 +203,13 @@ public:
 
   /// Asks one question synchronously and decodes the model's typed answer.
   ///
-  /// Runs send_and_wait_structured() with scry::reflection::response_format<Answer>(),
+  /// Runs send_and_wait_structured() with scry::response_format<Answer>(),
   /// so it shares that call's rules: it pumps update() for every accepted turn and is
   /// rejected from inside a callback. The completion is returned beside the value
   /// because it carries what the answer alone does not: any prose the model gave
   /// with it, usage, attempts, and tool-round counts.
   /// @tparam Answer Reflected answer aggregate satisfying
-  /// scry::reflection::ToolArguments; any other type fails to compile with the
+  /// scrydantic::ToolArguments; any other type fails to compile with the
   /// offending member and the reason.
   /// @param conversation Conversation that receives the exchange on success.
   /// @param user_message User text sent to the configured model.
@@ -250,20 +250,20 @@ template <typename Answer>
 Result<Turn> Harness::send(Conversation& conversation, std::string user_message,
                            TurnCallbacks callbacks) {
   return send_structured(conversation, std::move(user_message),
-                         reflection::response_format<Answer>(), std::move(callbacks));
+                         response_format<Answer>(), std::move(callbacks));
 }
 
 template <typename Answer>
 Result<Answered<Answer>> Harness::ask(Conversation& conversation,
                                       std::string user_message) {
   constexpr std::string_view problem =
-      reflection::detail::tool_arguments_diagnostic<Answer>();
+      scrydantic::detail::tool_arguments_diagnostic<Answer>();
   static_assert(problem.empty(), problem);
   if constexpr (!problem.empty()) {
     return std::unexpected(Error{});
   } else {
     auto completion = send_and_wait_structured(conversation, std::move(user_message),
-                                               reflection::response_format<Answer>());
+                                               response_format<Answer>());
     if (!completion) {
       return std::unexpected(std::move(completion.error()));
     }
@@ -273,9 +273,9 @@ Result<Answered<Answer>> Harness::ask(Conversation& conversation,
           .message = "a typed turn completed without an answer",
       });
     }
-    auto value = reflection::decode<Answer>(*completion->structured);
+    auto value = scrydantic::decode<Answer>(*completion->structured);
     if (!value) {
-      return std::unexpected(std::move(value.error()));
+      return std::unexpected(detail::answer_error(std::move(value.error())));
     }
     return Answered<Answer>{
         .value = std::move(*value),

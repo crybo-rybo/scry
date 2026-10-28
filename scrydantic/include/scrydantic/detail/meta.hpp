@@ -5,10 +5,9 @@
 #include <expected>
 #include <functional>
 #include <meta>
-#include <scry/annotations.hpp>
-#include <scry/detail/reflection_model.hpp>
-#include <scry/error.hpp>
-#include <scry/tool.hpp>
+#include <scrydantic/annotations.hpp>
+#include <scrydantic/detail/model.hpp>
+#include <scrydantic/error.hpp>
 #include <scrydantic/json.hpp>
 #include <string>
 #include <string_view>
@@ -16,7 +15,7 @@
 #include <utility>
 #include <vector>
 
-namespace scry::reflection::detail {
+namespace scrydantic::detail {
 
 // The three value families. They share one checker and differ only in the leaves
 // they admit and in whether a value must be storable, since only decoding builds
@@ -232,16 +231,16 @@ private:
   static consteval std::string check_class_annotations(const std::meta::info type,
                                                        const std::string& path) {
     if (annotation_count(type, ^^tag) > 1) {
-      return problem(path, type, "has more than one scry::reflection::tag annotation");
+      return problem(path, type, "has more than one scrydantic::tag annotation");
     }
     if (has_annotation(type, ^^name) || has_annotation(type, ^^emit_null_t)) {
       return problem(path, type,
-                     "carries scry::reflection::name or emit_null, which apply to "
+                     "carries scrydantic::name or emit_null, which apply to "
                      "data members");
     }
     if (has_annotation(type, ^^tool)) {
       return problem(path, type,
-                     "carries scry::reflection::tool, which applies to functions");
+                     "carries scrydantic::tool, which applies to functions");
     }
     return {};
   }
@@ -281,10 +280,10 @@ private:
                                                         const std::string& here) {
     if (annotation_count(member, ^^description) > 1) {
       return at_path(here, "a reflected member may have at most one "
-                           "scry::reflection::description annotation");
+                           "scrydantic::description annotation");
     }
     if (annotation_count(member, ^^name) > 1) {
-      return at_path(here, "has more than one scry::reflection::name annotation");
+      return at_path(here, "has more than one scrydantic::name annotation");
     }
     const bool skip = has_annotation(member, ^^skip_null_t);
     const bool emit = has_annotation(member, ^^emit_null_t);
@@ -296,11 +295,11 @@ private:
       return at_path(here, "carries both skip_null and emit_null");
     }
     if (has_annotation(member, ^^tag) || has_annotation(member, ^^ignore_unknown_t)) {
-      return at_path(here, "carries scry::reflection::tag or ignore_unknown, which "
+      return at_path(here, "carries scrydantic::tag or ignore_unknown, which "
                            "apply to class types");
     }
     if (has_annotation(member, ^^tool)) {
-      return at_path(here, "carries scry::reflection::tool, which applies to "
+      return at_path(here, "carries scrydantic::tool, which applies to "
                            "functions");
     }
     return {};
@@ -359,7 +358,7 @@ private:
     if (!has_annotation(plain_type(alternative), ^^tag)) {
       return problem(path, variant,
                      "has the alternative " + name_of +
-                         " without a scry::reflection::tag annotation; a reflected "
+                         " without a scrydantic::tag annotation; a reflected "
                          "variant is a tagged union of aggregates");
     }
     // A nested alternative is named after the variant's path ("Doc::blocks[]<Text>");
@@ -403,7 +402,7 @@ consteval std::string_view unsatisfied(const std::string_view subject,
   if (reason.empty()) {
     return {};
   }
-  return static_string(owned_text(subject) + " does not satisfy scry::reflection::" +
+  return static_string(owned_text(subject) + " does not satisfy scrydantic::" +
                        owned_text(concept_name) + ": " + reason);
 }
 
@@ -434,7 +433,7 @@ template <typename Type> struct expected_traits {
   static constexpr bool recognized = false;
 };
 
-template <typename Value> struct expected_traits<std::expected<Value, scry::Error>> {
+template <typename Value> struct expected_traits<std::expected<Value, Error>> {
   static constexpr bool recognized = true;
   using value_type = Value;
 };
@@ -443,7 +442,7 @@ template <typename Value> struct expected_traits<std::expected<Value, scry::Erro
 // Status that may instead carry the handler's error. Either is sent as `{}`.
 consteval bool is_acknowledgment(const std::meta::info result) {
   const auto type = plain_type(result);
-  return type == (^^void) || type == plain_type(^^scry::Status);
+  return type == (^^void) || type == plain_type(^^Status);
 }
 
 // Why a tool's return type cannot be sent to the model; empty when it can. The
@@ -458,7 +457,7 @@ consteval std::string result_type_problem(const std::meta::info result) {
   const auto type = plain_type(result);
   const bool is_result =
       is_specialization_of(type, ^^std::expected) &&
-      plain_type(std::meta::template_arguments_of(type)[1]) == (^^scry::Error);
+      plain_type(std::meta::template_arguments_of(type)[1]) == (^^Error);
   const auto reason =
       value_problem(is_result ? std::meta::template_arguments_of(type)[0] : result,
                     value_family::supported);
@@ -466,7 +465,8 @@ consteval std::string result_type_problem(const std::meta::info result) {
     return {};
   }
   return display(result) +
-         ", which is not void, scry::Status, a SupportedValue, or a Result of one: " +
+         ", which is not void, scrydantic::Status, a SupportedValue, or a Result of "
+         "one: " +
          reason;
 }
 
@@ -476,39 +476,57 @@ consteval std::string handler_result_problem(const std::string& handler) {
   return reason.empty() ? std::string{} : handler + " returns " + reason;
 }
 
-template <typename Handler, typename Args>
+// A binding's call context: a handler or a tool function may take one, as its
+// leading parameter, by const reference. `void` means the binding has none.
+template <typename Context>
+concept with_context = !std::is_void_v<Context>;
+
+// Whether a handler accepts the context. A handler that does is invoked that way.
+template <typename Callable, typename Context, typename Args>
+concept takes_context_first =
+    with_context<Context> && std::invocable<Callable&, const Context&, Args>;
+
+template <typename Callable, typename Context, typename Args>
+consteval std::string not_invocable_problem(const std::string& handler) {
+  if constexpr (with_context<Context>) {
+    return handler + " is not invocable as (" + display(^^Args) + ") or as (" +
+           display(^^const Context&) + ", " + display(^^Args) +
+           "); a context parameter must come first";
+  } else {
+    return handler + " is not invocable as (" + display(^^Args) + ")";
+  }
+}
+
+template <typename Handler, typename Args, typename Context>
 consteval std::string tool_handler_problem() {
   using Callable = std::decay_t<Handler>;
-  using Context = const scry::ToolCallContext&;
   const auto handler = display(std::meta::dealias(^^Callable));
   if constexpr (!std::constructible_from<Callable, Handler> ||
                 !std::move_constructible<Callable>) {
     return handler + " cannot be stored: a handler must be move-constructible";
-  } else if constexpr (std::invocable<Callable&, Context, Args>) {
+  } else if constexpr (takes_context_first<Callable, Context, Args>) {
     // A handler that accepts the context is invoked that way, so its result type
     // is the one that has to be encodable. Checking the plain form as well would
     // accept a callable whose two arities disagree about their return.
-    return handler_result_problem<std::invoke_result_t<Callable&, Context, Args>>(
-        handler);
+    return handler_result_problem<
+        std::invoke_result_t<Callable&, const Context&, Args>>(handler);
   } else if constexpr (std::invocable<Callable&, Args>) {
     return handler_result_problem<std::invoke_result_t<Callable&, Args>>(handler);
   } else {
-    return handler + " is not invocable as (" + display(^^Args) +
-           ") or as (const scry::ToolCallContext&, " + display(^^Args) +
-           "); a context parameter must come first";
+    return not_invocable_problem<Callable, Context, Args>(handler);
   }
 }
 
-template <typename Handler, typename Args>
+template <typename Handler, typename Args, typename Context>
 consteval std::string_view tool_handler_diagnostic() {
   return unsatisfied(display(std::meta::dealias(^^std::decay_t<Handler>)),
                      "ToolHandlerFor<" + display(^^Args) + ">",
-                     tool_handler_problem<Handler, Args>());
+                     tool_handler_problem<Handler, Args, Context>());
 }
 
-} // namespace scry::reflection::detail
+} // namespace scrydantic::detail
 
-namespace scry::reflection {
+namespace scrydantic {
 
 /// Values supported by reflected schema generation and strict marshalling.
 ///
@@ -516,7 +534,7 @@ namespace scry::reflection {
 /// non-character integers, finite floats, strings, scoped enums, one optional layer,
 /// vectors except `vector<bool>`, fixed arrays, recursively supported plain
 /// aggregates, and tagged variants of such aggregates, each alternative carrying a
-/// distinct scry::reflection::tag. Every supported value has a generated schema,
+/// distinct scrydantic::tag. Every supported value has a generated schema,
 /// encodes, and decodes. Reflected entry points report the member path and the
 /// reason a type falls outside this family.
 template <typename Type>
@@ -524,10 +542,10 @@ concept SupportedValue =
     detail::value_problem(^^std::remove_cvref_t<Type>, detail::value_family::supported)
         .empty();
 
-/// Values reflection::encode() accepts: SupportedValue plus the encode-only leaves.
+/// Values scrydantic::encode() accepts: SupportedValue plus the encode-only leaves.
 ///
 /// `std::string_view` is written as a JSON string, for wire text borrowed from
-/// elsewhere. `scrydantic::Json` is checked for validity and spliced verbatim.
+/// elsewhere. `Json` is checked for validity and spliced verbatim.
 /// Aggregates here need not be default-constructible, movable, or free of `const`
 /// members, and may borrow a member through a reference, since encoding only reads
 /// them. Neither leaf has a schema.
@@ -536,12 +554,12 @@ concept Encodable =
     detail::value_problem(^^std::remove_cvref_t<Type>, detail::value_family::encodable)
         .empty();
 
-/// Values reflection::decode() produces: SupportedValue plus `scrydantic::Json`.
+/// Values scrydantic::decode() produces: SupportedValue plus `Json`.
 ///
-/// A `scrydantic::Json` member captures the canonical text of whatever JSON value sits
+/// A `Json` member captures the canonical text of whatever JSON value sits
 /// at its position, `null` included, so a document can carry an opaque payload through
-/// a typed decode. `scrydantic::Json` has no schema. Decoding produces a value, so the
-/// target itself must be a cv-unqualified object type, as reflection::decode()
+/// a typed decode. `Json` has no schema. Decoding produces a value, so the
+/// target itself must be a cv-unqualified object type, as scrydantic::decode()
 /// requires.
 template <typename Type>
 concept Decodable =
@@ -554,10 +572,14 @@ concept ToolArguments = detail::tool_arguments_problem(^^Type).empty();
 
 /// Callables accepted for a particular reflected argument aggregate.
 ///
-/// Handlers receive Args by value and may return a supported value directly or a Result
-/// of one.
-template <typename Handler, typename Args>
-concept ToolHandlerFor =
-    ToolArguments<Args> && detail::tool_handler_problem<Handler, Args>().empty();
+/// Handlers receive Args by value, optionally preceded by a `const Context&` when
+/// `Context` is not void, and may return a supported value, a Result of one,
+/// `void`, or Status.
+/// @tparam Handler Callable to check.
+/// @tparam Args Argument aggregate satisfying ToolArguments.
+/// @tparam Context Call context a handler may take first, or void for none.
+template <typename Handler, typename Args, typename Context = void>
+concept ToolHandlerFor = ToolArguments<Args> &&
+                         detail::tool_handler_problem<Handler, Args, Context>().empty();
 
-} // namespace scry::reflection
+} // namespace scrydantic

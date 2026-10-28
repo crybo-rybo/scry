@@ -7,11 +7,11 @@
 #include <limits>
 #include <meta>
 #include <optional>
-#include <scry/detail/reflection_codec.hpp>
-#include <scry/detail/reflection_json_string.hpp>
-#include <scry/detail/reflection_meta.hpp>
-#include <scry/detail/reflection_model.hpp>
-#include <scry/error.hpp>
+#include <scrydantic/detail/failure.hpp>
+#include <scrydantic/detail/json_string.hpp>
+#include <scrydantic/detail/meta.hpp>
+#include <scrydantic/detail/model.hpp>
+#include <scrydantic/error.hpp>
 #include <scrydantic/json.hpp>
 #include <string>
 #include <string_view>
@@ -22,13 +22,13 @@
 // Strict reflected decoding. Every function here is reached only through an entry
 // point that has already checked the type against a value family, so none of them
 // repeats the check.
-namespace scry::reflection::detail {
+namespace scrydantic::detail {
 
 template <typename Type>
-[[nodiscard]] codec_result<Type> read_value(const scrydantic::JsonView& view);
+[[nodiscard]] codec_result<Type> read_value(const JsonView& view);
 
 template <typename Integer>
-[[nodiscard]] codec_result<Integer> read_integer(const scrydantic::JsonView& view) {
+[[nodiscard]] codec_result<Integer> read_integer(const JsonView& view) {
   const auto narrow = [](const auto value) -> codec_result<Integer> {
     if (!std::in_range<Integer>(value)) {
       return codec_fail("is outside the integer range");
@@ -45,16 +45,16 @@ template <typename Integer>
 }
 
 template <typename Float>
-[[nodiscard]] codec_result<Float> read_float(const scrydantic::JsonView& view) {
+[[nodiscard]] codec_result<Float> read_float(const JsonView& view) {
   long double value = 0.0L;
   switch (view.kind()) {
-  case scrydantic::JsonKind::signed_integer:
+  case JsonKind::signed_integer:
     value = static_cast<long double>(*view.signed_integer());
     break;
-  case scrydantic::JsonKind::unsigned_integer:
+  case JsonKind::unsigned_integer:
     value = static_cast<long double>(*view.unsigned_integer());
     break;
-  case scrydantic::JsonKind::number:
+  case JsonKind::number:
     value = static_cast<long double>(*view.number());
     break;
   default:
@@ -75,8 +75,8 @@ template <typename Float>
 // The enumerator names are already in the generated schema's `enum` array, so
 // repeating them in the failure keeps a retrying model from having to guess.
 template <typename Enum>
-[[nodiscard]] codec_result<Enum> read_enum(const scrydantic::JsonView& view) {
-  if (view.kind() != scrydantic::JsonKind::string) {
+[[nodiscard]] codec_result<Enum> read_enum(const JsonView& view) {
+  if (view.kind() != JsonKind::string) {
     return codec_fail("must be an enumerator name");
   }
   const auto text = *view.string();
@@ -108,7 +108,7 @@ template <typename Type>
 // Tagged is true when the object is a variant alternative, whose discriminator
 // member the variant has already read.
 template <typename Type, bool Tagged>
-[[nodiscard]] codec_result<void> reject_unknown_keys(const scrydantic::JsonView& view) {
+[[nodiscard]] codec_result<void> reject_unknown_keys(const JsonView& view) {
   // key_at cannot be empty here: the view is an object and index is in range.
   for (std::size_t index = 0; index < view.size(); ++index) {
     const auto key = *view.key_at(index);
@@ -122,8 +122,8 @@ template <typename Type, bool Tagged>
 }
 
 template <typename Type, bool Tagged>
-[[nodiscard]] codec_result<Type> read_object(const scrydantic::JsonView& view) {
-  if (view.kind() != scrydantic::JsonKind::object) {
+[[nodiscard]] codec_result<Type> read_object(const JsonView& view) {
+  if (view.kind() != JsonKind::object) {
     return codec_fail("must be an object");
   }
   if constexpr (!ignores_unknown(^^Type)) {
@@ -162,9 +162,9 @@ template <typename Type, bool Tagged>
 }
 
 template <typename Variant>
-[[nodiscard]] codec_result<Variant> read_variant(const scrydantic::JsonView& view) {
+[[nodiscard]] codec_result<Variant> read_variant(const JsonView& view) {
   static constexpr std::string_view tags = tag_names(^^Variant);
-  if (view.kind() != scrydantic::JsonKind::object) {
+  if (view.kind() != JsonKind::object) {
     return codec_fail("must be an object");
   }
   const auto discriminator = view.find(tag_key);
@@ -194,8 +194,8 @@ template <typename Variant>
 }
 
 template <typename Optional>
-[[nodiscard]] codec_result<Optional> read_optional(const scrydantic::JsonView& view) {
-  if (view.kind() == scrydantic::JsonKind::null) {
+[[nodiscard]] codec_result<Optional> read_optional(const JsonView& view) {
+  if (view.kind() == JsonKind::null) {
     return Optional{std::nullopt};
   }
   return read_value<typename Optional::value_type>(view).transform(
@@ -203,8 +203,8 @@ template <typename Optional>
 }
 
 template <typename Vector>
-[[nodiscard]] codec_result<Vector> read_vector(const scrydantic::JsonView& view) {
-  if (view.kind() != scrydantic::JsonKind::array) {
+[[nodiscard]] codec_result<Vector> read_vector(const JsonView& view) {
+  if (view.kind() != JsonKind::array) {
     return codec_fail("must be an array");
   }
   Vector values{};
@@ -220,9 +220,9 @@ template <typename Vector>
 }
 
 template <typename Array>
-[[nodiscard]] codec_result<Array> read_array(const scrydantic::JsonView& view) {
+[[nodiscard]] codec_result<Array> read_array(const JsonView& view) {
   Array values{};
-  if (view.kind() != scrydantic::JsonKind::array || view.size() != values.size()) {
+  if (view.kind() != JsonKind::array || view.size() != values.size()) {
     return codec_fail("must be an array of the declared fixed size");
   }
   for (std::size_t index = 0; index < values.size(); ++index) {
@@ -237,14 +237,14 @@ template <typename Array>
 
 // Booleans, strings, and raw JSON: the leaves that need no numeric range.
 template <typename Type>
-[[nodiscard]] codec_result<Type> read_plain_leaf(const scrydantic::JsonView& view) {
+[[nodiscard]] codec_result<Type> read_plain_leaf(const JsonView& view) {
   if constexpr (std::same_as<Type, bool>) {
-    if (view.kind() != scrydantic::JsonKind::boolean) {
+    if (view.kind() != JsonKind::boolean) {
       return codec_fail("must be a boolean");
     }
     return *view.boolean();
   } else if constexpr (std::same_as<Type, std::string>) {
-    if (view.kind() != scrydantic::JsonKind::string) {
+    if (view.kind() != JsonKind::string) {
       return codec_fail("must be a string");
     }
     return std::string{*view.string()};
@@ -253,8 +253,7 @@ template <typename Type>
   }
 }
 
-template <typename Type>
-codec_result<Type> read_value(const scrydantic::JsonView& view) {
+template <typename Type> codec_result<Type> read_value(const JsonView& view) {
   constexpr auto kind = kind_of(^^Type);
   if constexpr (kind == value_kind::integer) {
     return read_integer<Type>(view);
@@ -277,11 +276,10 @@ codec_result<Type> read_value(const scrydantic::JsonView& view) {
   }
 }
 
-// Decodes a value checked against a family, reporting failures as
-// ErrorCategory::tool with a schema-derived model_message rooted at `path`.
+// Decodes a value checked against a family, reporting failures with a
+// schema-derived model_message rooted at `path`.
 template <typename Type>
-[[nodiscard]] Result<Type> decode(const scrydantic::JsonView& view,
-                                  const std::string& path = "$") {
+[[nodiscard]] Result<Type> decode(const JsonView& view, const std::string& path = "$") {
   auto decoded = read_value<Type>(view);
   if (!decoded) {
     return std::unexpected(decode_failure_error(path, decoded.error()));
@@ -290,16 +288,15 @@ template <typename Type>
 }
 
 template <ToolArguments Args>
-[[nodiscard]] Result<Args> decode_arguments(const scrydantic::Json& input) {
-  auto parsed = scrydantic::JsonView::parse(input);
+[[nodiscard]] Result<Args> decode_arguments(const Json& input) {
+  auto parsed = JsonView::parse(input);
   if (!parsed) {
     return std::unexpected(Error{
-        .category = ErrorCategory::tool,
         .message = "reflected tool arguments are not valid JSON",
         .model_message = "tool arguments are not valid JSON",
     });
   }
-  return decode<Args>(*parsed);
+  return detail::decode<Args>(*parsed);
 }
 
-} // namespace scry::reflection::detail
+} // namespace scrydantic::detail

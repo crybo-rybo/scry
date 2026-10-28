@@ -1,8 +1,8 @@
-#include <scry/reflection.hpp>
+#include <scrydantic/codec.hpp>
 
 struct Arguments {
-  [[= scry::reflection::description{"First description"}]]
-      [[= scry::reflection::description{"Duplicate description"}]] int value{};
+  [[= scrydantic::description{"First description"}]]
+      [[= scrydantic::description{"Duplicate description"}]] int value{};
 };
 
-static_assert(!scry::reflection::input_schema_v<Arguments>.empty());
+static_assert(!scrydantic::input_schema_v<Arguments>.empty());

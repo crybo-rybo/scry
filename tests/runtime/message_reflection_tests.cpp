@@ -1,14 +1,14 @@
 #include <catch2/catch_test_macros.hpp>
 #include <scry/message.hpp>
-#include <scry/reflection.hpp>
+#include <scrydantic/codec.hpp>
 #include <scrydantic/json.hpp>
 #include <string>
 #include <variant>
 #include <vector>
 
-static_assert(scry::reflection::Encodable<scry::Message>);
-static_assert(scry::reflection::Decodable<scry::Message>);
-static_assert(scry::reflection::Encodable<scry::ContentBlock>);
+static_assert(scrydantic::Encodable<scry::Message>);
+static_assert(scrydantic::Decodable<scry::Message>);
+static_assert(scrydantic::Encodable<scry::ContentBlock>);
 
 TEST_CASE("the public message model round-trips through the reflected codec") {
   const std::vector<scry::Message> messages{
@@ -33,7 +33,7 @@ TEST_CASE("the public message model round-trips through the reflected codec") {
                     }}},
   };
 
-  const auto encoded = scry::reflection::encode(messages);
+  const auto encoded = scrydantic::encode(messages);
   REQUIRE(encoded);
   CHECK(
       encoded->text ==
@@ -43,7 +43,7 @@ TEST_CASE("the public message model round-trips through the reflected codec") {
       R"({"content":[{"is_error":true,"result":{"high":21},"tool_call_id":"call-1",)"
       R"("type":"tool_result"}],"role":"user"}])");
 
-  const auto decoded = scry::reflection::decode<std::vector<scry::Message>>(*encoded);
+  const auto decoded = scrydantic::decode<std::vector<scry::Message>>(*encoded);
   REQUIRE(decoded);
   REQUIRE(decoded->size() == 3);
   CHECK((*decoded)[0].role == scry::Role::user);
@@ -58,13 +58,13 @@ TEST_CASE("the public message model round-trips through the reflected codec") {
   CHECK(result.result.text == R"({"high":21})");
   CHECK(result.is_error);
 
-  const auto reencoded = scry::reflection::encode(*decoded);
+  const auto reencoded = scrydantic::encode(*decoded);
   REQUIRE(reencoded);
   CHECK(reencoded->text == encoded->text);
 }
 
 TEST_CASE("a reflected content block is selected by its type tag") {
-  const auto block = scry::reflection::decode<scry::ContentBlock>(scrydantic::Json{
+  const auto block = scrydantic::decode<scry::ContentBlock>(scrydantic::Json{
       .text = R"({"type":"tool_result","tool_call_id":"a","result":null,)"
               R"("is_error":false})"});
   REQUIRE(block);
@@ -72,7 +72,7 @@ TEST_CASE("a reflected content block is selected by its type tag") {
   REQUIRE(result != nullptr);
   CHECK(result->result.text == "null");
 
-  const auto unknown = scry::reflection::decode<scry::ContentBlock>(
+  const auto unknown = scrydantic::decode<scry::ContentBlock>(
       scrydantic::Json{.text = R"({"type":"image","text":"x"})"});
   REQUIRE_FALSE(unknown);
   CHECK(unknown.error().model_message ==

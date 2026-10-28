@@ -1,4 +1,4 @@
-#include <scry/reflection.hpp>
+#include <scry/tool_registry.hpp>
 
 struct UnsupportedArguments {
   char value{};

@@ -2,12 +2,12 @@
 
 #include <cstddef>
 #include <expected>
-#include <scry/error.hpp>
+#include <scrydantic/error.hpp>
 #include <string>
 #include <string_view>
 #include <utility>
 
-namespace scry::reflection::detail {
+namespace scrydantic::detail {
 
 // A codec failure on its way out of the recursion. `path` is relative to the value
 // the failing call was given (".blocks[2].text") and grows at the front as the
@@ -47,10 +47,7 @@ template <typename Type> using codec_result = std::expected<Type, codec_failure>
   text.append(path);
   text.push_back(' ');
   text.append(message);
-  return Error{
-      .category = ErrorCategory::tool,
-      .message = std::move(text),
-  };
+  return Error{.message = std::move(text)};
 }
 
 // An argument-decode diagnostic. Every word of this text is derived from the
@@ -74,4 +71,4 @@ template <typename Type> using codec_result = std::expected<Type, codec_failure>
   return decode_error(std::string{root} + failure.path, failure.reason);
 }
 
-} // namespace scry::reflection::detail
+} // namespace scrydantic::detail

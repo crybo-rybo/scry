@@ -36,13 +36,12 @@ constexpr std::string_view lookup_code = "KESTREL-7319";
 // The answer the typed scenario asks for. Every member is required, so the
 // server has to honor the forced tool choice and fill the whole schema.
 struct SmokeAnswer {
-  [[= scry::reflection::description{
-      "Copy this exactly: E2E_SMOKE_OK"}]] std::string token{};
-  [[= scry::reflection::description{"The sum of 2 and 3"}]] std::int32_t sum{};
+  [[= scrydantic::description{"Copy this exactly: E2E_SMOKE_OK"}]] std::string token{};
+  [[= scrydantic::description{"The sum of 2 and 3"}]] std::int32_t sum{};
 };
 
 struct LookupArguments {
-  [[= scry::reflection::description{"The name to look up"}]] std::string name{};
+  [[= scrydantic::description{"The name to look up"}]] std::string name{};
 };
 
 struct LookupResult {
@@ -224,9 +223,10 @@ struct LookupResult {
           .description = "Return the secret code for a name. The code cannot be "
                          "known without calling this tool.",
       },
-      [](LookupArguments arguments) -> scry::Result<LookupResult> {
+      [](LookupArguments arguments) -> scrydantic::Result<LookupResult> {
         if (arguments.name != "scry") {
-          return std::unexpected(scry::tool_error("only the name scry has a code"));
+          return std::unexpected(
+              scrydantic::tool_error("only the name scry has a code"));
         }
         return LookupResult{.code = std::string{lookup_code}};
       });

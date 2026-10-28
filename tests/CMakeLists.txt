@@ -221,7 +221,7 @@ endfunction()
 scry_add_reflection_compile_fail_test(
   unsupported-arguments
   unsupported_arguments.cpp
-  "does not satisfy scry::reflection::ToolArguments: UnsupportedArguments::value: char is a character type"
+  "does not satisfy scrydantic::ToolArguments: UnsupportedArguments::value: char is a character type"
 )
 scry_add_reflection_compile_fail_test(
   wrong-context-order
@@ -231,29 +231,29 @@ scry_add_reflection_compile_fail_test(
 scry_add_reflection_compile_fail_test(
   duplicate-description
   duplicate_description.cpp
-  "Arguments::value: a reflected member may have at most one scry::reflection::description annotation"
+  "Arguments::value: a reflected member may have at most one scrydantic::description annotation"
 )
 scry_add_reflection_compile_fail_test(
   unsupported-schema-root
   unsupported_schema_root.cpp
-  "does not satisfy scry::reflection::SupportedValue: scrydantic::Json is raw JSON, which has no schema"
+  "does not satisfy scrydantic::SupportedValue: scrydantic::Json is raw JSON, which has no schema"
 )
 scry_add_reflection_compile_fail_test(
   untagged-variant
   untagged_variant.cpp
-  "Arguments::shape: std::variant<Circle, Square> has the alternative Circle without a scry::reflection::tag annotation"
+  "Arguments::shape: std::variant<Circle, Square> has the alternative Circle without a scrydantic::tag annotation"
 )
 scry_add_reflection_compile_fail_test(
   duplicate-key
   duplicate_key.cpp
-  "does not satisfy scry::reflection::Encodable: Limits has members limit and max_tokens that both map to the JSON key"
+  "does not satisfy scrydantic::Encodable: Limits has members limit and max_tokens that both map to the JSON key"
 )
 # The type after the path is the dealiased std::chrono::seconds, whose spelling
 # varies with the platform's int64_t, so the assertion stops at the path.
 scry_add_reflection_compile_fail_test(
   unsupported-nested-member
   unsupported_nested_member.cpp
-  "does not satisfy scry::reflection::ToolArguments: ForecastArgs::window.when: std::chrono::duration<"
+  "does not satisfy scrydantic::ToolArguments: ForecastArgs::window.when: std::chrono::duration<"
 )
 
 # Reflected tool declarations: each rejection names the function, member, or
@@ -261,12 +261,12 @@ scry_add_reflection_compile_fail_test(
 scry_add_reflection_compile_fail_test(
   toolbox-without-tools
   toolbox_without_tools.cpp
-  "Lamp does not satisfy scry::reflection::Toolbox: Lamp declares no function annotated with scry::reflection::tool"
+  "Lamp does not satisfy scrydantic::Toolbox: Lamp declares no function annotated with scrydantic::tool"
 )
 scry_add_reflection_compile_fail_test(
   tool-on-non-function
   tool_on_non_function.cpp
-  "scry::ToolRegistry::add<^^lamp_tools>(): lamp_tools::brightness carries scry::reflection::tool, which applies to functions"
+  "scry::ToolRegistry::add<^^lamp_tools>(): lamp_tools::brightness carries scrydantic::tool, which applies to functions"
 )
 scry_add_reflection_compile_fail_test(
   unnamed-parameter
@@ -281,7 +281,7 @@ scry_add_reflection_compile_fail_test(
 scry_add_reflection_compile_fail_test(
   unsupported-tool-result
   unsupported_tool_result.cpp
-  "Lamp::describe returns scrydantic::Json, which is not void, scry::Status, a SupportedValue, or a Result of one"
+  "Lamp::describe returns scrydantic::Json, which is not void, scrydantic::Status, a SupportedValue, or a Result of one"
 )
 scry_add_reflection_compile_fail_test(
   duplicate-tool-name
@@ -297,7 +297,7 @@ scry_add_reflection_compile_fail_test(
 scry_add_reflection_compile_fail_test(
   scalar-answer
   scalar_answer.cpp
-  "int does not satisfy scry::reflection::ToolArguments: int is not a plain aggregate"
+  "int does not satisfy scrydantic::ToolArguments: int is not a plain aggregate"
 )
 scry_add_reflection_compile_fail_test(
   explicit-object-const-toolbox

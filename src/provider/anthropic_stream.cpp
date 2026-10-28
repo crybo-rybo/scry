@@ -20,7 +20,7 @@ namespace {
 
 // Carries only the discriminator, so an event can be matched against its SSE
 // name, or ignored as unknown, before its payload is decoded.
-struct[[= reflection::ignore_unknown]] AnthropicEnvelope {
+struct[[= scrydantic::ignore_unknown]] AnthropicEnvelope {
   std::string type;
 };
 
@@ -31,8 +31,8 @@ template <typename Variant>
 [[nodiscard]] bool is_alternative_tag(const std::string_view tag) noexcept {
   bool found = false;
   template for (constexpr std::meta::info alternative :
-                reflection::detail::alternatives_v<Variant>) {
-    found = found || tag == *reflection::detail::tag_of(alternative);
+                scrydantic::detail::alternatives_v<Variant>) {
+    found = found || tag == *scrydantic::detail::tag_of(alternative);
   }
   return found;
 }

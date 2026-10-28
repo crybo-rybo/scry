@@ -146,6 +146,15 @@ target_link_libraries(scrydantic INTERFACE scrydantic::json)
 
 set(
   SCRYDANTIC_PUBLIC_HEADERS
+  include/scrydantic/annotations.hpp
+  include/scrydantic/codec.hpp
+  include/scrydantic/detail/decode.hpp
+  include/scrydantic/detail/encode.hpp
+  include/scrydantic/detail/failure.hpp
+  include/scrydantic/detail/json_string.hpp
+  include/scrydantic/detail/meta.hpp
+  include/scrydantic/detail/model.hpp
+  include/scrydantic/detail/schema.hpp
   include/scrydantic/scrydantic.hpp
 )
 target_sources(

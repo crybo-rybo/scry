@@ -6,7 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
-#include <scry/annotations.hpp>
+#include <scrydantic/annotations.hpp>
 #include <scrydantic/json.hpp>
 #include <string>
 #include <string_view>
@@ -20,14 +20,14 @@
 // indices, and the lifecycle - stays in anthropic_stream.cpp.
 namespace scry::detail {
 
-struct[[ = reflection::tag{"text"}, = reflection::ignore_unknown ]]
+struct[[ = scrydantic::tag{"text"}, = scrydantic::ignore_unknown ]]
     AnthropicTextContent {
   std::string text;
 };
 
 // `input` captures the canonical text of whatever value arrived; that it is an
 // object is checked when the block is built.
-struct[[ = reflection::tag{"tool_use"}, = reflection::ignore_unknown ]]
+struct[[ = scrydantic::tag{"tool_use"}, = scrydantic::ignore_unknown ]]
     AnthropicToolUseContent {
   std::string id;
   std::string name;
@@ -35,12 +35,12 @@ struct[[ = reflection::tag{"tool_use"}, = reflection::ignore_unknown ]]
 };
 
 // Scry reads thinking blocks only to skip them; see anthropic_content_block.
-struct[[ = reflection::tag{"thinking"}, = reflection::ignore_unknown ]]
+struct[[ = scrydantic::tag{"thinking"}, = scrydantic::ignore_unknown ]]
     AnthropicThinkingContent {
   std::string thinking;
 };
 
-struct[[ = reflection::tag{"redacted_thinking"}, = reflection::ignore_unknown ]]
+struct[[ = scrydantic::tag{"redacted_thinking"}, = scrydantic::ignore_unknown ]]
     AnthropicRedactedThinkingContent {
   std::string data;
 };
@@ -50,14 +50,14 @@ using AnthropicContent =
                  AnthropicThinkingContent, AnthropicRedactedThinkingContent>;
 
 // Only non-negative integers that fit 64 bits are counts; null reads as absent.
-struct[[ = reflection::ignore_unknown, = reflection::skip_null ]] AnthropicUsage {
+struct[[ = scrydantic::ignore_unknown, = scrydantic::skip_null ]] AnthropicUsage {
   std::optional<std::uint64_t> input_tokens;
   std::optional<std::uint64_t> output_tokens;
 };
 
 // message_start's message. An absent `usage` is the empty default, while a null
 // one is rejected, as it must be an object when present.
-struct[[ = reflection::ignore_unknown, = reflection::skip_null ]]
+struct[[ = scrydantic::ignore_unknown, = scrydantic::skip_null ]]
     AnthropicResponseMessage {
   std::string type;
   std::vector<AnthropicContent> content;
@@ -65,27 +65,27 @@ struct[[ = reflection::ignore_unknown, = reflection::skip_null ]]
   AnthropicUsage usage{};
 };
 
-struct[[ = reflection::ignore_unknown, = reflection::skip_null ]]
+struct[[ = scrydantic::ignore_unknown, = scrydantic::skip_null ]]
     AnthropicMessageDeltaBody {
   std::optional<std::string> stop_reason;
 };
 
-struct[[ = reflection::tag{"text_delta"}, = reflection::ignore_unknown ]]
+struct[[ = scrydantic::tag{"text_delta"}, = scrydantic::ignore_unknown ]]
     AnthropicTextDelta {
   std::string text;
 };
 
-struct[[ = reflection::tag{"input_json_delta"}, = reflection::ignore_unknown ]]
+struct[[ = scrydantic::tag{"input_json_delta"}, = scrydantic::ignore_unknown ]]
     AnthropicInputJsonDelta {
   std::string partial_json;
 };
 
-struct[[ = reflection::tag{"thinking_delta"}, = reflection::ignore_unknown ]]
+struct[[ = scrydantic::tag{"thinking_delta"}, = scrydantic::ignore_unknown ]]
     AnthropicThinkingDelta {
   std::string thinking;
 };
 
-struct[[ = reflection::tag{"signature_delta"}, = reflection::ignore_unknown ]]
+struct[[ = scrydantic::tag{"signature_delta"}, = scrydantic::ignore_unknown ]]
     AnthropicSignatureDelta {
   std::string signature;
 };
@@ -95,42 +95,42 @@ using AnthropicDelta = std::variant<AnthropicTextDelta, AnthropicInputJsonDelta,
 
 // The stream's events, selected by their `type`. `request_id` is read apart from
 // these, best-effort, because a malformed one must not fail its event.
-struct[[ = reflection::tag{"message_start"}, = reflection::ignore_unknown ]]
+struct[[ = scrydantic::tag{"message_start"}, = scrydantic::ignore_unknown ]]
     AnthropicMessageStart {
   AnthropicResponseMessage message;
 };
 
-struct[[ = reflection::tag{"content_block_start"}, = reflection::ignore_unknown ]]
+struct[[ = scrydantic::tag{"content_block_start"}, = scrydantic::ignore_unknown ]]
     AnthropicContentBlockStart {
   std::size_t index;
   AnthropicContent content_block;
 };
 
-struct[[ = reflection::tag{"content_block_delta"}, = reflection::ignore_unknown ]]
+struct[[ = scrydantic::tag{"content_block_delta"}, = scrydantic::ignore_unknown ]]
     AnthropicContentBlockDelta {
   std::size_t index;
   AnthropicDelta delta;
 };
 
-struct[[ = reflection::tag{"content_block_stop"}, = reflection::ignore_unknown ]]
+struct[[ = scrydantic::tag{"content_block_stop"}, = scrydantic::ignore_unknown ]]
     AnthropicContentBlockStop {
   std::size_t index;
 };
 
-struct[[ = reflection::tag{"message_delta"}, = reflection::ignore_unknown ]]
+struct[[ = scrydantic::tag{"message_delta"}, = scrydantic::ignore_unknown ]]
     AnthropicMessageDelta {
   AnthropicMessageDeltaBody delta;
   AnthropicUsage usage{};
 };
 
-struct[[ = reflection::tag{"message_stop"}, = reflection::ignore_unknown ]]
+struct[[ = scrydantic::tag{"message_stop"}, = scrydantic::ignore_unknown ]]
     AnthropicMessageStop {};
 
 // The error body is read best-effort, apart from this event; see stream_error.
-struct[[ = reflection::tag{"error"}, = reflection::ignore_unknown ]]
+struct[[ = scrydantic::tag{"error"}, = scrydantic::ignore_unknown ]]
     AnthropicErrorEvent {};
 
-struct[[ = reflection::tag{"ping"}, = reflection::ignore_unknown ]] AnthropicPing {};
+struct[[ = scrydantic::tag{"ping"}, = scrydantic::ignore_unknown ]] AnthropicPing {};
 
 using AnthropicEvent =
     std::variant<AnthropicMessageStart, AnthropicContentBlockStart,
