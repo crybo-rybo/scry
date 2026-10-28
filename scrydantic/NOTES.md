@@ -270,3 +270,43 @@ Test changes:
 - `scry::reflection::Toolbox<T>` became `scrydantic::Toolbox<T,
   scry::ToolCallContext>` in `tool_registration_tests.cpp` and
   `public_api_contract.cpp`.
+
+### Phase 5: standalone proof
+
+- `scrydantic/tests` now builds, with Scrydantic and Catch2 only:
+  - `scrydantic_tests`: the codec tests moved from `tests/reflection/
+    codec_tests.cpp` (they included only Scrydantic headers already), and new
+    binding tests (`tools/tool_binding_tests.cpp`): namespace, single function,
+    shared toolbox, typed handlers, a host-defined context, `void` context,
+    failures, and compile-time `describe()`.
+  - `scrydantic.multi-tu-a_then_b` / `-b_then_a`: a copy of Scry's multi-TU test
+    on `scrydantic::bind` directly, so the call-site keying property is proven
+    without Scry. It also invokes each unit's `echo` handler with that unit's
+    parameter name.
+  - Compile-fail tests: the four of Scry's that needed no Scry header
+    (`duplicate-description`, `unsupported-schema-root`, `untagged-variant`,
+    `duplicate-key`) moved, with their substrings unchanged, and two new ones
+    for the generic binding: `bind-misplaced-tool` (the `scrydantic::bind<^^...>()`
+    prefix) and `misplaced-context` (a context type after the first parameter,
+    named from the reflection of a host-defined `Session`).
+    `scrydantic/cmake/ExpectCompileFailure.cmake` is a copy of Scry's without
+    the dependency include directory.
+- `scrydantic/examples/standalone_tools.cpp` (ctest
+  `scrydantic.example.standalone-tools`) binds a namespace and a toolbox,
+  prints an MCP-style `tools/list` result (`name`, `description`,
+  `inputSchema`), decodes two `tools/call` requests, dispatches them, and exits
+  0 only when the listing and both results are the expected bytes. The MCP shapes
+  are themselves reflected structs (`scrydantic::name{"inputSchema"}`,
+  `scrydantic::Json` for the opaque arguments, a tagged variant for content).
+- Link check: `ldd` of the example and of `scrydantic_tests` shows only
+  libstdc++, libm, libgcc_s, and libc; the example's link line is its object and
+  `libscrydantic_json.a`.
+- `cmake -S scrydantic` on its own configures, builds, and passes its 60 tests
+  (Catch2 fetched as under Scry), then installs `include/scrydantic/**`,
+  `lib/libscrydantic_json.a`, and `lib/cmake/scrydantic/`. A scratch consumer
+  with only `find_package(scrydantic 0.1 REQUIRED)` and
+  `scrydantic::scrydantic` builds and runs; a second consumer with only
+  `find_package(scry 0.7 REQUIRED COMPONENTS testing)` builds and registers a
+  reflected namespace. Scry's install carries the Scrydantic package beside its
+  own, and `scryConfig.cmake` does `find_dependency(scrydantic 0.1.0)`.
+- `PRESET=asan ./scripts/test.sh` at the end of this phase: 521/521 pass.

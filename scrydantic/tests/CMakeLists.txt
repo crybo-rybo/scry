@@ -117,3 +117,93 @@ add_test(
   COMMAND scrydantic_json_fuzz_replay "${CMAKE_CURRENT_SOURCE_DIR}/fuzz/corpus/json"
 )
 set_tests_properties(scrydantic.json-fuzz-replay PROPERTIES TIMEOUT 45)
+
+# The reflected codec, schemas, and tool binding, linked against Scrydantic and
+# Catch2 alone.
+add_executable(
+  scrydantic_tests
+  codec/codec_tests.cpp
+  tools/tool_binding_tests.cpp
+)
+target_link_libraries(
+  scrydantic_tests
+  PRIVATE Catch2::Catch2WithMain scrydantic::scrydantic scrydantic_project_options
+)
+catch_discover_tests(scrydantic_tests TEST_PREFIX "scrydantic.")
+
+# A binding must generate code from the declarations its own translation unit
+# sees (a namespace's tools, a function's parameter names and annotations),
+# however the linker orders the units, so the same program is linked in both
+# orders.
+foreach(SCRYDANTIC_LINK_ORDER IN ITEMS a_then_b b_then_a)
+  if(SCRYDANTIC_LINK_ORDER STREQUAL "a_then_b")
+    set(SCRYDANTIC_MULTI_TU_UNITS tools_a.cpp tools_b.cpp)
+  else()
+    set(SCRYDANTIC_MULTI_TU_UNITS tools_b.cpp tools_a.cpp)
+  endif()
+  list(TRANSFORM SCRYDANTIC_MULTI_TU_UNITS PREPEND "multi_tu/")
+  add_executable(
+    scrydantic_multi_tu_${SCRYDANTIC_LINK_ORDER}
+    multi_tu/main.cpp
+    ${SCRYDANTIC_MULTI_TU_UNITS}
+  )
+  target_link_libraries(
+    scrydantic_multi_tu_${SCRYDANTIC_LINK_ORDER}
+    PRIVATE scrydantic::scrydantic scrydantic_project_options
+  )
+  add_test(
+    NAME "scrydantic.multi-tu-${SCRYDANTIC_LINK_ORDER}"
+    COMMAND scrydantic_multi_tu_${SCRYDANTIC_LINK_ORDER}
+  )
+endforeach()
+
+# Each rejection names the type, member, function, or namespace at fault and the
+# reason, with only Scrydantic's headers on the include path.
+function(
+  scrydantic_add_compile_fail_test
+  TEST_NAME
+  SOURCE_NAME
+  EXPECTED_SUBSTRING
+)
+  add_test(
+    NAME "scrydantic.compile-fail.${TEST_NAME}"
+    COMMAND
+      "${CMAKE_COMMAND}"
+      "-DCXX_COMPILER=${CMAKE_CXX_COMPILER}"
+      "-DSOURCE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/compile_fail/${SOURCE_NAME}"
+      "-DPROJECT_INCLUDE_DIR=${PROJECT_SOURCE_DIR}/include"
+      "-DEXPECTED_SUBSTRING=${EXPECTED_SUBSTRING}"
+      -P "${PROJECT_SOURCE_DIR}/cmake/ExpectCompileFailure.cmake"
+  )
+endfunction()
+
+scrydantic_add_compile_fail_test(
+  duplicate-description
+  duplicate_description.cpp
+  "Arguments::value: a reflected member may have at most one scrydantic::description annotation"
+)
+scrydantic_add_compile_fail_test(
+  unsupported-schema-root
+  unsupported_schema_root.cpp
+  "does not satisfy scrydantic::SupportedValue: scrydantic::Json is raw JSON, which has no schema"
+)
+scrydantic_add_compile_fail_test(
+  untagged-variant
+  untagged_variant.cpp
+  "Arguments::shape: std::variant<Circle, Square> has the alternative Circle without a scrydantic::tag annotation"
+)
+scrydantic_add_compile_fail_test(
+  duplicate-key
+  duplicate_key.cpp
+  "does not satisfy scrydantic::Encodable: Limits has members limit and max_tokens that both map to the JSON key"
+)
+scrydantic_add_compile_fail_test(
+  bind-misplaced-tool
+  bind_misplaced_tool.cpp
+  "scrydantic::bind<^^lamp_tools>(): lamp_tools::brightness carries scrydantic::tool, which applies to functions"
+)
+scrydantic_add_compile_fail_test(
+  misplaced-context
+  misplaced_context.cpp
+  "greeting_tools::greet has parameter `session` of type Session; the context is only ever the leading parameter, as const Session&"
+)

@@ -178,6 +178,10 @@ if(SCRYDANTIC_BUILD_TESTS)
   add_subdirectory(tests)
 endif()
 
+if(SCRYDANTIC_BUILD_EXAMPLES)
+  add_subdirectory(examples)
+endif()
+
 configure_package_config_file(
   cmake/scrydanticConfig.cmake.in
   "${PROJECT_BINARY_DIR}/scrydanticConfig.cmake"

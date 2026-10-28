@@ -228,26 +228,6 @@ scry_add_reflection_compile_fail_test(
   wrong_context_order.cpp
   "is not invocable as (Arguments) or as (const scry::ToolCallContext&, Arguments)"
 )
-scry_add_reflection_compile_fail_test(
-  duplicate-description
-  duplicate_description.cpp
-  "Arguments::value: a reflected member may have at most one scrydantic::description annotation"
-)
-scry_add_reflection_compile_fail_test(
-  unsupported-schema-root
-  unsupported_schema_root.cpp
-  "does not satisfy scrydantic::SupportedValue: scrydantic::Json is raw JSON, which has no schema"
-)
-scry_add_reflection_compile_fail_test(
-  untagged-variant
-  untagged_variant.cpp
-  "Arguments::shape: std::variant<Circle, Square> has the alternative Circle without a scrydantic::tag annotation"
-)
-scry_add_reflection_compile_fail_test(
-  duplicate-key
-  duplicate_key.cpp
-  "does not satisfy scrydantic::Encodable: Limits has members limit and max_tokens that both map to the JSON key"
-)
 # The type after the path is the dealiased std::chrono::seconds, whose spelling
 # varies with the platform's int64_t, so the assertion stops at the path.
 scry_add_reflection_compile_fail_test(
