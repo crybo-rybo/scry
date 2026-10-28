@@ -6,7 +6,6 @@
 #include <scry/error.hpp>
 #include <scry/events.hpp>
 #include <scry/harness.hpp>
-#include <scry/json.hpp>
 #include <scry/message.hpp>
 #include <scry/reflection.hpp>
 #include <scry/tool.hpp>
@@ -15,3 +14,4 @@
 #include <scry/turn_id.hpp>
 #include <scry/unique_function.hpp>
 #include <scry/version.hpp>
+#include <scrydantic/json.hpp>

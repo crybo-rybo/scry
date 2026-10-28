@@ -1,6 +1,6 @@
-#include "kernel/kernel.hpp"
+#include "json/core.hpp"
 
-#include "kernel/json/number.hpp"
+#include "json/number.hpp"
 
 #include <algorithm>
 #include <array>
@@ -14,7 +14,7 @@
 #include <string_view>
 #include <system_error>
 
-namespace scry::detail::json {
+namespace scrydantic::detail::json {
 namespace {
 
 // ---------------------------------------------------------------------------
@@ -168,4 +168,4 @@ void append_double(std::string& output, const double value) {
   spelling.append_to(output);
 }
 
-} // namespace scry::detail::json
+} // namespace scrydantic::detail::json

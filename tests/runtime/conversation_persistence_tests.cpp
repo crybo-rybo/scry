@@ -6,8 +6,8 @@
 #include <fstream>
 #include <scry/conversation.hpp>
 #include <scry/error.hpp>
-#include <scry/json.hpp>
 #include <scry/message.hpp>
+#include <scrydantic/json.hpp>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -27,7 +27,7 @@ namespace {
 
 void require_invalid_document(const std::string_view input) {
   auto conversation =
-      scry::Conversation::from_json(scry::Json{.text = std::string{input}});
+      scry::Conversation::from_json(scrydantic::Json{.text = std::string{input}});
   REQUIRE_FALSE(conversation);
   CHECK(conversation.error().category == scry::ErrorCategory::invalid_config);
 }
@@ -250,7 +250,8 @@ TEST_CASE("Conversation::from_json reports which part of the document it rejecte
   };
   for (const auto& [input, message] : cases) {
     CAPTURE(input);
-    const auto conversation = scry::Conversation::from_json(scry::Json{.text = input});
+    const auto conversation =
+        scry::Conversation::from_json(scrydantic::Json{.text = input});
     REQUIRE_FALSE(conversation);
     CHECK(conversation.error().category == scry::ErrorCategory::invalid_config);
     CHECK(conversation.error().message == message);
@@ -284,7 +285,8 @@ TEST_CASE("moved-from Conversation observers report an empty history") {
 }
 
 TEST_CASE("private JSON codec canonicalizes values and validates object roots") {
-  const scry::Json input{.text = R"( { "z": null, "a": [3, {"b": 2, "a": 1}] } )"};
+  const scrydantic::Json input{.text =
+                                   R"( { "z": null, "a": [3, {"b": 2, "a": 1}] } )"};
   auto canonical = scry::detail::canonicalize_json(
       input, scry::ErrorCategory::invalid_config, "invalid JSON");
   REQUIRE(canonical);
@@ -305,9 +307,9 @@ TEST_CASE("private JSON codec canonicalizes values and validates object roots") 
 TEST_CASE("private JSON codec safely quotes model-visible error strings") {
   const auto encoded = scry::detail::make_json_error_object("bad \"quote\"\nline\t\\");
   CHECK(encoded.text == R"({"error":"bad \"quote\"\nline\t\\"})");
-  auto parsed = scry::JsonView::parse(encoded);
+  auto parsed = scrydantic::JsonView::parse(encoded);
   REQUIRE(parsed);
-  REQUIRE(parsed->kind() == scry::JsonKind::object);
+  REQUIRE(parsed->kind() == scrydantic::JsonKind::object);
   REQUIRE(parsed->find("error"));
   CHECK(parsed->find("error")->string() == "bad \"quote\"\nline\t\\");
 }
@@ -317,7 +319,7 @@ TEST_CASE("Conversation::from_json rejects a document truncated after a token") 
   // that stops inside a container must never read as a whole document.
   const auto complete =
       document(R"([{"role":"user","content":[{"type":"text","text":"hi"}]}])");
-  REQUIRE(scry::Conversation::from_json(scry::Json{.text = complete}));
+  REQUIRE(scry::Conversation::from_json(scrydantic::Json{.text = complete}));
 
   require_invalid_document(complete.substr(0, complete.size() - 1));
   require_invalid_document(R"({"messages":[],"system_prompt":"","version":1)");
@@ -358,12 +360,12 @@ TEST_CASE("private JSON codec escapes control characters without a short escape"
   // any other way would turn a tool argument or an ANSI-colored user string into
   // invalid JSON on the way out. Every write path here must emit the escape, and
   // the reflected codec, which writes request bodies, must spell it the same way.
-  const scry::Json input{.text = R"({"a":"\u0001x\u001b"})"};
+  const scrydantic::Json input{.text = R"({"a":"\u0001x\u001b"})"};
   auto canonical = scry::detail::canonicalize_json(
       input, scry::ErrorCategory::invalid_argument, "invalid JSON");
   REQUIRE(canonical);
   CHECK(canonical->text == R"({"a":"\u0001x\u001B"})");
-  auto reread = scry::JsonView::parse(*canonical);
+  auto reread = scrydantic::JsonView::parse(*canonical);
   REQUIRE(reread);
   CHECK(reread->find("a")->string() == "\x01x\x1b");
 
@@ -373,7 +375,7 @@ TEST_CASE("private JSON codec escapes control characters without a short escape"
 
   const auto error_object = scry::detail::make_json_error_object("\x01");
   CHECK(error_object.text == R"({"error":"\u0001"})");
-  auto error_view = scry::JsonView::parse(error_object);
+  auto error_view = scrydantic::JsonView::parse(error_object);
   REQUIRE(error_view);
   CHECK(error_view->find("error")->string() == "\x01");
 }
@@ -384,7 +386,7 @@ TEST_CASE("restored tool-call argument keys holding control characters re-encode
   // rather than raw. A document the parser accepts must re-encode, and the
   // encoding must be a fixed point.
   const auto round_trips = [](const std::string& text) {
-    auto restored = scry::Conversation::from_json(scry::Json{.text = text});
+    auto restored = scry::Conversation::from_json(scrydantic::Json{.text = text});
     REQUIRE(restored);
     auto encoded = restored->to_json();
     REQUIRE(encoded);

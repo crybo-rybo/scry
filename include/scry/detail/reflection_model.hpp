@@ -7,7 +7,7 @@
 #include <optional>
 #include <scry/annotations.hpp>
 #include <scry/detail/reflection_json_string.hpp>
-#include <scry/json.hpp>
+#include <scrydantic/json.hpp>
 #include <string>
 #include <string_view>
 #include <variant>
@@ -115,7 +115,7 @@ consteval value_kind kind_of(const std::meta::info reflected) {
   if (type == plain_type(^^std::string_view)) {
     return value_kind::string_view;
   }
-  if (type == (^^scry::Json)) {
+  if (type == (^^scrydantic::Json)) {
     return value_kind::json;
   }
   if (std::meta::is_enum_type(type)) {

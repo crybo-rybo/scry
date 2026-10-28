@@ -5,9 +5,9 @@
 #include <memory>
 #include <scry/config.hpp>
 #include <scry/events.hpp>
-#include <scry/json.hpp>
 #include <scry/message.hpp>
 #include <scry/tool.hpp>
+#include <scrydantic/json.hpp>
 #include <string>
 #include <variant>
 #include <vector>

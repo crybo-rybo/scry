@@ -29,8 +29,8 @@ struct Verdict {
       .name = "score",
       .schema = {.text = R"({"type":"object","required":["score"],)"
                          R"("properties":{"score":{"type":"integer"}}})"},
-      .validate = [](const scry::Json& answer) -> scry::Status {
-        auto parsed = scry::JsonView::parse(answer);
+      .validate = [](const scrydantic::Json& answer) -> scry::Status {
+        auto parsed = scrydantic::JsonView::parse(answer);
         if (!parsed || !parsed->find("score")) {
           return std::unexpected(scry::tool_error("score is required"));
         }

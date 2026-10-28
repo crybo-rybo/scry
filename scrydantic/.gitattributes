@@ -1,0 +1,6 @@
+# The seed corpora are byte-exact fixtures, not text to normalize: the JSON
+# seeds are adversarial bytes (stray whitespace, CR, NUL, and invalid UTF-8),
+# and the copied response-policy seeds are CRLF HTTP.
+tests/fuzz/corpus/** -text -whitespace
+# The JSON golden fixtures are one generated archive.
+tests/fixtures/json/*.tar.xz binary

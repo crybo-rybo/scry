@@ -3,7 +3,6 @@
 #include "kernel/transport/transport_policy.hpp"
 
 #include "kernel/error.hpp"
-#include "kernel/json/document.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -11,6 +10,7 @@
 #include <chrono>
 #include <cstdint>
 #include <optional>
+#include <scrydantic/json.hpp>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -134,14 +134,15 @@ struct HeaderField {
 
 // Returns the provider's own error identifier: the string at error.type, or
 // error.code when type is absent or not a string.
-[[nodiscard]] std::string_view error_token(const json::Value& document) noexcept {
-  const auto* error = document.find("error");
-  if (error == nullptr) {
+[[nodiscard]] std::string_view
+error_token(const scrydantic::JsonView& document) noexcept {
+  const auto error = document.find("error");
+  if (!error) {
     return {};
   }
   for (const auto name : {"type", "code"}) {
-    const auto* field = error->find(name);
-    if (const auto token = field == nullptr ? std::nullopt : field->string()) {
+    const auto field = error->find(name);
+    if (const auto token = field ? field->string() : std::nullopt) {
       return *token;
     }
   }
@@ -275,7 +276,8 @@ std::string http_error_detail(const std::string_view body,
   if (provider_namespace.empty() || body.empty()) {
     return {};
   }
-  const auto document = json::parse(body);
+  const auto document =
+      scrydantic::JsonView::parse(scrydantic::Json{.text = std::string{body}});
   if (!document) {
     return {};
   }

@@ -9,8 +9,8 @@
 #include <meta>
 #include <scry/annotations.hpp>
 #include <scry/error.hpp>
-#include <scry/json.hpp>
 #include <scry/message.hpp>
+#include <scrydantic/json.hpp>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -59,7 +59,8 @@ struct[[= reflection::ignore_unknown]] ConversationDocumentHeader {
 // members the document left out. `path` is relative to the document root, as a
 // codec failure's is.
 template <typename Type>
-[[nodiscard]] Status require_members(const JsonView& object, const std::string& path) {
+[[nodiscard]] Status require_members(const scrydantic::JsonView& object,
+                                     const std::string& path) {
   template for (constexpr auto field : reflection::detail::fields_v<Type>) {
     constexpr std::string_view key = field.key_view();
     if (!object.find(key).has_value()) {
@@ -72,7 +73,7 @@ template <typename Type>
   return {};
 }
 
-[[nodiscard]] Status require_complete_message(const JsonView& value,
+[[nodiscard]] Status require_complete_message(const scrydantic::JsonView& value,
                                               const Message& message,
                                               const std::string& path) {
   if (auto status = require_members<Message>(value, path); !status) {
@@ -93,7 +94,7 @@ template <typename Type>
   return {};
 }
 
-[[nodiscard]] Status require_complete(const JsonView& root,
+[[nodiscard]] Status require_complete(const scrydantic::JsonView& root,
                                       const std::vector<Message>& messages) {
   const auto values = *root.find("messages");
   for (std::size_t index = 0; index < messages.size(); ++index) {
@@ -174,7 +175,7 @@ template <typename Type>
 
 } // namespace
 
-Result<Json> Conversation::to_json() const {
+Result<scrydantic::Json> Conversation::to_json() const {
   if (impl_ == nullptr) {
     return std::unexpected(
         detail::make_error(ErrorCategory::invalid_state, "Conversation is inactive"));
@@ -192,13 +193,13 @@ Result<Json> Conversation::to_json() const {
   }
   // The splice keeps stored arguments and results byte for byte; this pass is what
   // makes the document canonical.
-  return detail::canonicalize_json(Json{.text = std::move(*encoded)},
+  return detail::canonicalize_json(scrydantic::Json{.text = std::move(*encoded)},
                                    ErrorCategory::invalid_config,
                                    "Conversation document could not be encoded");
 }
 
-Result<Conversation> Conversation::from_json(const Json& json) {
-  auto root = JsonView::parse(json);
+Result<Conversation> Conversation::from_json(const scrydantic::Json& json) {
+  auto root = scrydantic::JsonView::parse(json);
   if (!root) {
     return std::unexpected(invalid_document("Conversation document is not valid JSON"));
   }

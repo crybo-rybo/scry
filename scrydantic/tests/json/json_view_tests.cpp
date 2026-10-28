@@ -1,19 +1,19 @@
 #include <catch2/catch_test_macros.hpp>
 #include <cstdint>
-#include <scry/error.hpp>
-#include <scry/json.hpp>
+#include <scrydantic/error.hpp>
+#include <scrydantic/json.hpp>
 #include <string>
 #include <string_view>
 
 namespace {
 
-using scry::JsonKind;
-using scry::JsonView;
+using scrydantic::JsonKind;
+using scrydantic::JsonView;
 
 } // namespace
 
 TEST_CASE("the public JSON view exposes canonical scalar kinds") {
-  auto document = JsonView::parse(scry::Json{
+  auto document = JsonView::parse(scrydantic::Json{
       .text = R"({"bool":true,"float":1.5,"signed":-4,"text":"hi","unsigned":5})"});
 
   REQUIRE(document);
@@ -59,7 +59,7 @@ TEST_CASE("the public JSON view exposes canonical scalar kinds") {
 
 TEST_CASE("the public JSON view reads every whole number as a double") {
   const auto document =
-      JsonView::parse(scry::Json{.text = R"({"signed":-4,"unsigned":5})"});
+      JsonView::parse(scrydantic::Json{.text = R"({"signed":-4,"unsigned":5})"});
 
   REQUIRE(document);
   const auto signed_integer = document->find("signed");
@@ -72,7 +72,7 @@ TEST_CASE("the public JSON view reads every whole number as a double") {
 }
 
 TEST_CASE("the public JSON view visits object keys in lexicographic order") {
-  const auto document = JsonView::parse(scry::Json{.text = R"({"b":1,"a":2})"});
+  const auto document = JsonView::parse(scrydantic::Json{.text = R"({"b":1,"a":2})"});
 
   REQUIRE(document);
   REQUIRE(document->size() == 2);
@@ -83,7 +83,7 @@ TEST_CASE("the public JSON view visits object keys in lexicographic order") {
 
 TEST_CASE("the public JSON view finds members of a nested object") {
   const auto document = JsonView::parse(
-      scry::Json{.text = R"({"outer":{"inner":{"leaf":"found"}},"other":1})"});
+      scrydantic::Json{.text = R"({"outer":{"inner":{"leaf":"found"}},"other":1})"});
 
   REQUIRE(document);
   const auto outer = document->find("outer");
@@ -98,7 +98,7 @@ TEST_CASE("the public JSON view finds members of a nested object") {
 }
 
 TEST_CASE("the public JSON view rejects an out-of-range array index") {
-  const auto document = JsonView::parse(scry::Json{.text = R"([10,20])"});
+  const auto document = JsonView::parse(scrydantic::Json{.text = R"([10,20])"});
 
   REQUIRE(document);
   REQUIRE(document->kind() == JsonKind::array);
@@ -112,7 +112,7 @@ TEST_CASE("the public JSON view rejects an out-of-range array index") {
 
 TEST_CASE("the public JSON view retains nested document lifetime") {
   auto document =
-      JsonView::parse(scry::Json{.text = R"({"items":[null,{"name":"kept"}]})"});
+      JsonView::parse(scrydantic::Json{.text = R"({"items":[null,{"name":"kept"}]})"});
 
   REQUIRE(document);
   auto items = document->find("items");
@@ -120,7 +120,7 @@ TEST_CASE("the public JSON view retains nested document lifetime") {
   REQUIRE(items->kind() == JsonKind::array);
   REQUIRE(items->size() == 2);
 
-  document = std::unexpected(scry::Error{});
+  document = std::unexpected(scrydantic::Error{});
 
   const auto null_value = items->at(0);
   REQUIRE(null_value);
@@ -152,21 +152,22 @@ TEST_CASE("an empty public JSON view is safely inspectable") {
 }
 
 TEST_CASE("the public JSON view rejects malformed input") {
-  const auto document = JsonView::parse(scry::Json{.text = "{"});
+  const auto document = JsonView::parse(scrydantic::Json{.text = "{"});
 
   REQUIRE_FALSE(document);
-  CHECK(document.error().category == scry::ErrorCategory::invalid_argument);
   CHECK(document.error().message == "JSON text is not valid");
+  CHECK(document.error().model_message.empty());
 }
 
 TEST_CASE("escape_json_string quotes and escapes control characters") {
-  CHECK(scry::escape_json_string(std::string_view{"quote\" slash\\\b\f\n\r\t\x01"}) ==
+  CHECK(scrydantic::escape_json_string(
+            std::string_view{"quote\" slash\\\b\f\n\r\t\x01"}) ==
         R"("quote\" slash\\\b\f\n\r\t\u0001")");
-  CHECK(scry::escape_json_string("") == R"("")");
+  CHECK(scrydantic::escape_json_string("") == R"("")");
 }
 
 TEST_CASE("escape_json_string passes non-ASCII UTF-8 bytes through unescaped") {
   const std::string value = "caf\xc3\xa9 \xe2\x9c\x93";
 
-  CHECK(scry::escape_json_string(value) == "\"" + value + "\"");
+  CHECK(scrydantic::escape_json_string(value) == "\"" + value + "\"");
 }

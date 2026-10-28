@@ -1,18 +1,17 @@
-#include "kernel/kernel.hpp"
+#include "json/core.hpp"
 
-#include "kernel/error.hpp"
-#include "kernel/json/document.hpp"
+#include "json/document.hpp"
 
 #include <memory>
-#include <scry/json.hpp>
+#include <scrydantic/json.hpp>
 #include <string>
 #include <utility>
 
-namespace scry {
+namespace scrydantic {
 namespace {
 
 // JsonView stores its node type-erased, as a shared_ptr<const void> aliasing the
-// parsed document, so the public header stays free of the kernel's types; every
+// parsed document, so the public header stays free of the document's types; every
 // accessor recovers the real node through here.
 [[nodiscard]] const detail::json::Value* node(const void* value) noexcept {
   return static_cast<const detail::json::Value*>(value);
@@ -26,8 +25,7 @@ JsonView::JsonView(std::shared_ptr<const void> value) noexcept
 Result<JsonView> JsonView::parse(const Json& json) {
   auto document = detail::json::parse(json.text);
   if (!document) {
-    return std::unexpected(
-        detail::make_error(ErrorCategory::invalid_argument, "JSON text is not valid"));
+    return std::unexpected(Error{.message = "JSON text is not valid"});
   }
   return JsonView{std::shared_ptr<const void>{
       std::make_shared<const detail::json::Value>(std::move(*document))}};
@@ -108,4 +106,4 @@ std::string escape_json_string(const std::string_view value) {
   return detail::json::quote(value);
 }
 
-} // namespace scry
+} // namespace scrydantic

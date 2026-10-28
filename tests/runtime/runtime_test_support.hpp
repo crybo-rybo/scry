@@ -12,8 +12,8 @@
 #include <optional>
 #include <scry/error.hpp>
 #include <scry/events.hpp>
-#include <scry/json.hpp>
 #include <scry/tool_registry.hpp>
+#include <scrydantic/json.hpp>
 #include <string>
 #include <utility>
 #include <variant>

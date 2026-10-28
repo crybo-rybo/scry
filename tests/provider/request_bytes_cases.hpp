@@ -25,44 +25,42 @@ struct RequestBytesCase {
   using namespace scry::detail;
   return ModelRequest{
       .system_prompt = "Be concise",
-      .history =
-          std::make_shared<const std::vector<Message>>(
-              std::vector<Message>{
-                  Message{.role = Role::user,
-                          .content = {TextBlock{.text = "Weather?"}}},
-                  Message{.role = Role::assistant,
-                          .content =
-                              {
-                                  TextBlock{.text = "Checking "},
-                                  TextBlock{.text = "twice."},
-                                  ToolCallBlock{
-                                      .id = "call-a",
-                                      .name = "weather",
-                                      .arguments =
-                                          Json{.text = R"({"city":"Paris","n":[1,2]})"},
-                                  },
-                                  ToolCallBlock{
-                                      .id = "call-b",
-                                      .name = "almanac",
-                                      .arguments =
-                                          Json{.text = R"({"zebra":1,"alpha":true})"},
-                                  },
-                              }},
-                  Message{.role = Role::user,
-                          .content =
-                              {
-                                  ToolResultBlock{
-                                      .tool_call_id = "call-a",
-                                      .result =
-                                          Json{.text = R"({"high":21,"s":"a\"b"})"},
-                                  },
-                                  ToolResultBlock{
-                                      .tool_call_id = "call-b",
-                                      .result = Json{.text = R"("unavailable")"},
-                                      .is_error = true,
-                                  },
-                              }},
-              }),
+      .history = std::make_shared<const std::vector<Message>>(std::vector<Message>{
+          Message{.role = Role::user, .content = {TextBlock{.text = "Weather?"}}},
+          Message{
+              .role = Role::assistant,
+              .content =
+                  {
+                      TextBlock{.text = "Checking "},
+                      TextBlock{.text = "twice."},
+                      ToolCallBlock{
+                          .id = "call-a",
+                          .name = "weather",
+                          .arguments =
+                              scrydantic::Json{.text = R"({"city":"Paris","n":[1,2]})"},
+                      },
+                      ToolCallBlock{
+                          .id = "call-b",
+                          .name = "almanac",
+                          .arguments =
+                              scrydantic::Json{.text = R"({"zebra":1,"alpha":true})"},
+                      },
+                  }},
+          Message{.role = Role::user,
+                  .content =
+                      {
+                          ToolResultBlock{
+                              .tool_call_id = "call-a",
+                              .result =
+                                  scrydantic::Json{.text = R"({"high":21,"s":"a\"b"})"},
+                          },
+                          ToolResultBlock{
+                              .tool_call_id = "call-b",
+                              .result = scrydantic::Json{.text = R"("unavailable")"},
+                              .is_error = true,
+                          },
+                      }},
+      }),
       .messages =
           {
               Message{.role = Role::user, .content = {TextBlock{.text = "Tomorrow?"}}},
@@ -72,14 +70,14 @@ struct RequestBytesCase {
                               ToolCallBlock{
                                   .id = "call-c",
                                   .name = "weather",
-                                  .arguments = Json{.text = "{}"},
+                                  .arguments = scrydantic::Json{.text = "{}"},
                               }}},
               Message{.role = Role::user,
                       .content =
                           {
                               ToolResultBlock{
                                   .tool_call_id = "call-c",
-                                  .result = Json{.text = "null"},
+                                  .result = scrydantic::Json{.text = "null"},
                               }}},
           },
       .tools = std::make_shared<const std::vector<ToolDefinition>>(
@@ -88,12 +86,13 @@ struct RequestBytesCase {
                   .name = "weather",
                   .description = "Get \"weather\"",
                   .input_schema =
-                      Json{.text = R"({"type":"object","required":["city"]})"},
+                      scrydantic::Json{.text =
+                                           R"({"type":"object","required":["city"]})"},
               },
               ToolDefinition{
                   .name = "almanac",
                   .description = "",
-                  .input_schema = Json{.text = R"({"type":"object"})"},
+                  .input_schema = scrydantic::Json{.text = R"({"type":"object"})"},
               },
           }),
       .sampling = SamplingConfig{.temperature = 0.7, .top_p = 0.9, .max_tokens = 64},
@@ -113,9 +112,10 @@ struct RequestBytesCase {
       .name = "respond",
       .description = "Give the \"final\" answer",
       .input_schema =
-          Json{.text = R"({"additionalProperties":false,"properties":{"supported":)"
-                       R"({"type":"boolean"}},"required":["supported"],)"
-                       R"("type":"object"})"},
+          scrydantic::Json{
+              .text = R"({"additionalProperties":false,"properties":{"supported":)"
+                      R"({"type":"boolean"}},"required":["supported"],)"
+                      R"("type":"object"})"},
   });
 }
 

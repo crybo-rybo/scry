@@ -7,7 +7,7 @@
 #include <cstdint>
 #include <optional>
 #include <scry/annotations.hpp>
-#include <scry/json.hpp>
+#include <scrydantic/json.hpp>
 #include <string>
 #include <string_view>
 #include <variant>
@@ -31,7 +31,7 @@ struct[[ = reflection::tag{"tool_use"}, = reflection::ignore_unknown ]]
     AnthropicToolUseContent {
   std::string id;
   std::string name;
-  Json input;
+  scrydantic::Json input;
 };
 
 // Scry reads thinking blocks only to skip them; see anthropic_content_block.

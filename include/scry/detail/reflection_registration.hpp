@@ -12,9 +12,9 @@
 #include <scry/detail/reflection_schema.hpp>
 #include <scry/detail/reflection_tools.hpp>
 #include <scry/error.hpp>
-#include <scry/json.hpp>
 #include <scry/tool.hpp>
 #include <scry/unique_function.hpp>
+#include <scrydantic/json.hpp>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -29,7 +29,7 @@ namespace scry::reflection::detail {
 template <typename Return>
   requires(handler_result_problem<std::remove_cvref_t<Return>>({}).empty() &&
            !is_acknowledgment(^^Return))
-[[nodiscard]] Result<Json> encode_handler_result(Return&& result) {
+[[nodiscard]] Result<scrydantic::Json> encode_handler_result(Return&& result) {
   using ResultType = std::remove_cvref_t<Return>;
   if constexpr (expected_traits<ResultType>::recognized) {
     // A Result<const T> is supported like a const T return; encode the T.
@@ -44,12 +44,14 @@ template <typename Return>
 }
 
 // What the model receives from a tool that returns void or a successful Status.
-[[nodiscard]] inline Json acknowledgment() { return Json{.text = "{}"}; }
+[[nodiscard]] inline scrydantic::Json acknowledgment() {
+  return scrydantic::Json{.text = "{}"};
+}
 
 // Runs a tool body and turns whatever it returns into the tool result. The body
 // is invoked exactly once, and its return value is encoded where it lands, with
 // no extra copy or move.
-template <typename Body> [[nodiscard]] Result<Json> run_tool(Body&& body) {
+template <typename Body> [[nodiscard]] Result<scrydantic::Json> run_tool(Body&& body) {
   using Return = decltype(std::forward<Body>(body)());
   if constexpr (std::is_void_v<Return>) {
     std::forward<Body>(body)();
@@ -71,7 +73,8 @@ template <ToolArguments Args, typename Handler>
   using Callable = std::decay_t<Handler>;
   return ContextualToolHandler{
       [callable = Callable{std::forward<Handler>(handler)}](
-          const ToolCallContext& context, Json input) mutable -> Result<Json> {
+          const ToolCallContext& context,
+          scrydantic::Json input) mutable -> Result<scrydantic::Json> {
         auto arguments = decode_arguments<Args>(input);
         if (!arguments) {
           return std::unexpected(std::move(arguments.error()));
@@ -149,9 +152,9 @@ template <typename Tool, typename Object>
 [[nodiscard]] ContextualToolHandler
 make_function_handler(std::shared_ptr<Object> object) {
   using Args = tool_arguments_t<Tool>;
-  return ContextualToolHandler{[object =
-                                    std::move(object)](const ToolCallContext& context,
-                                                       Json input) -> Result<Json> {
+  return ContextualToolHandler{[object = std::move(object)](
+                                   const ToolCallContext& context,
+                                   scrydantic::Json input) -> Result<scrydantic::Json> {
     auto arguments = decode_arguments<Args>(input);
     if (!arguments) {
       return std::unexpected(std::move(arguments.error()));
@@ -171,7 +174,7 @@ make_function_entry(std::shared_ptr<Object> object) {
   scry::detail::ToolEntry entry{};
   entry.definition.name = std::string{Tool::name};
   entry.definition.description = std::string{Tool::description};
-  entry.definition.input_schema = Json{.text = std::string{schema}};
+  entry.definition.input_schema = scrydantic::Json{.text = std::string{schema}};
   entry.handler = make_function_handler<Tool>(std::move(object));
   return entry;
 }

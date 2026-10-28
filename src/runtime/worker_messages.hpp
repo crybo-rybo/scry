@@ -8,8 +8,8 @@
 #include <memory>
 #include <optional>
 #include <scry/error.hpp>
-#include <scry/json.hpp>
 #include <scry/turn_id.hpp>
+#include <scrydantic/json.hpp>
 #include <string>
 #include <variant>
 
@@ -59,7 +59,7 @@ using ToolCallEvent = PublishToolCall;
 // it into `structured` and leaves it out of `text`, uncharged for the same reason.
 struct CompletionEvent : CommitCompletion {
   std::string text{};
-  std::optional<Json> structured{};
+  std::optional<scrydantic::Json> structured{};
 };
 
 struct ErrorEvent {

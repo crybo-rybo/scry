@@ -24,7 +24,7 @@ struct[[= reflection::tag{"text"}]] AnthropicText {
 struct[[= reflection::tag{"tool_use"}]] AnthropicToolUse {
   std::string_view id;
   std::string_view name;
-  const Json& input;
+  const scrydantic::Json& input;
 };
 
 // `content` is a JSON string holding the result document, not the document
@@ -46,7 +46,7 @@ struct AnthropicMessage {
 struct AnthropicTool {
   std::string_view name;
   std::string_view description;
-  const Json& input_schema;
+  const scrydantic::Json& input_schema;
 };
 
 // `{"type":"any"}` requires the model to call one of the offered tools; a typed
@@ -62,8 +62,8 @@ struct[[= reflection::skip_null]] AnthropicBody {
   std::vector<AnthropicMessage> messages;
   std::optional<std::vector<AnthropicTool>> tools;
   std::optional<AnthropicToolChoice> tool_choice;
-  Json temperature;
-  std::optional<Json> top_p;
+  scrydantic::Json temperature;
+  std::optional<scrydantic::Json> top_p;
   bool stream;
 };
 

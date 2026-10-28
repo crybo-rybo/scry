@@ -26,23 +26,24 @@ namespace {
   return scry::ToolDefinition{
       .name = std::move(name),
       .description = "Get a forecast",
-      .input_schema = scry::Json{.text = std::move(schema)},
+      .input_schema = scrydantic::Json{.text = std::move(schema)},
   };
 }
 
 [[nodiscard]] scry::ToolHandler
 handler(const std::shared_ptr<int>& calls = std::make_shared<int>(0)) {
-  return scry::ToolHandler{[calls](scry::Json input) -> scry::Result<scry::Json> {
-    ++*calls;
-    return input;
-  }};
+  return scry::ToolHandler{
+      [calls](scrydantic::Json input) -> scry::Result<scrydantic::Json> {
+        ++*calls;
+        return input;
+      }};
 }
 
 [[nodiscard]] scry::ContextualToolHandler
 contextual_handler(const std::shared_ptr<int>& calls = std::make_shared<int>(0)) {
   return scry::ContextualToolHandler{
       [calls](const scry::ToolCallContext&,
-              scry::Json input) -> scry::Result<scry::Json> {
+              scrydantic::Json input) -> scry::Result<scrydantic::Json> {
         ++*calls;
         return input;
       }};
@@ -50,10 +51,10 @@ contextual_handler(const std::shared_ptr<int>& calls = std::make_shared<int>(0))
 
 // Registrations hold one handler shape, so every direct invocation in this suite
 // names the call it stands in for.
-[[nodiscard]] scry::Result<scry::Json> invoke(const scry::detail::RegisteredTool& tool,
-                                              std::string arguments) {
+[[nodiscard]] scry::Result<scrydantic::Json>
+invoke(const scry::detail::RegisteredTool& tool, std::string arguments) {
   return tool.handler(scry::ToolCallContext{.tool_name = tool.definition.name},
-                      scry::Json{.text = std::move(arguments)});
+                      scrydantic::Json{.text = std::move(arguments)});
 }
 
 // The registrations a Harness would freeze for its next turn.
@@ -88,7 +89,7 @@ TEST_CASE("tool manifests export the current registry without invoking handlers"
                                        handler(calls)));
   const auto later = harness->tools().to_json();
   REQUIRE(later);
-  const auto parsed = scry::JsonView::parse(*later);
+  const auto parsed = scrydantic::JsonView::parse(*later);
   REQUIRE(parsed);
   const auto tools = parsed->find("tools");
   REQUIRE(tools);
@@ -116,7 +117,7 @@ TEST_CASE("tool manifests preserve escaped metadata and nested schema values") {
       handler()));
   const auto manifest = harness->tools().to_json();
   REQUIRE(manifest);
-  const auto parsed = scry::JsonView::parse(*manifest);
+  const auto parsed = scrydantic::JsonView::parse(*manifest);
   REQUIRE(parsed);
   const auto tools = parsed->find("tools");
   REQUIRE(tools);
@@ -127,7 +128,7 @@ TEST_CASE("tool manifests preserve escaped metadata and nested schema values") {
   CHECK(tool->find("description")->string() == description);
   const auto schema = tool->find("input_schema");
   REQUIRE(schema);
-  CHECK(schema->kind() == scry::JsonKind::object);
+  CHECK(schema->kind() == scrydantic::JsonKind::object);
   CHECK(schema->find("additionalProperties")->boolean() == false);
   const auto properties = schema->find("properties");
   REQUIRE(properties);
@@ -342,20 +343,20 @@ TEST_CASE("both handler shapes register and export the same contract") {
 
 TEST_CASE("the plain overload's adapter delivers arguments unchanged") {
   scry::ToolRegistry registry;
-  scry::Json plain_seen{};
-  scry::Json contextual_seen{};
-  REQUIRE(registry.add_dynamic(definition("plain"),
-                               scry::ToolHandler{[&plain_seen](scry::Json arguments) {
-                                 plain_seen = arguments;
-                                 return scry::Result<scry::Json>{std::move(arguments)};
-                               }}));
+  scrydantic::Json plain_seen{};
+  scrydantic::Json contextual_seen{};
+  REQUIRE(registry.add_dynamic(
+      definition("plain"), scry::ToolHandler{[&plain_seen](scrydantic::Json arguments) {
+        plain_seen = arguments;
+        return scry::Result<scrydantic::Json>{std::move(arguments)};
+      }}));
   REQUIRE(
       registry.add_dynamic(definition("contextual"),
                            scry::ContextualToolHandler{
                                [&contextual_seen](const scry::ToolCallContext& context,
-                                                  scry::Json arguments) {
+                                                  scrydantic::Json arguments) {
                                  contextual_seen = arguments;
-                                 return scry::Result<scry::Json>{scry::Json{
+                                 return scry::Result<scrydantic::Json>{scrydantic::Json{
                                      .text = std::string{R"({"tool":")"} +
                                              std::string{context.tool_name} + R"("})"}};
                                }}));

@@ -6,11 +6,11 @@
 #include <limits>
 #include <optional>
 #include <scry/error.hpp>
-#include <scry/json.hpp>
 #include <scry/message.hpp>
 #include <scry/tool.hpp>
 #include <scry/turn_id.hpp>
 #include <scry/unique_function.hpp>
+#include <scrydantic/json.hpp>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -59,9 +59,9 @@ struct ToolCall {
   /// Registered tool name.
   std::string name{};
   /// Canonical JSON object passed to the tool handler.
-  Json arguments{};
+  scrydantic::Json arguments{};
   /// Canonical JSON result returned to the model for this call.
-  Json result{};
+  scrydantic::Json result{};
   /// True when the result is a tool error: the handler returned an error, threw,
   /// returned invalid JSON, the model requested an unknown tool, or the call was
   /// refused before its handler ran.
@@ -113,7 +113,7 @@ struct Completion {
   /// JSON object the model passed to the response tool. Empty for a turn sent
   /// without one. When engaged, finish_reason is completed and `text` holds only
   /// the prose the final response carried beside the answer, which may be empty.
-  std::optional<Json> structured{};
+  std::optional<scrydantic::Json> structured{};
   /// Calls the model made to the response tool across the turn, the accepted one
   /// included. Rejected attempts, whether their answer failed validation or the
   /// call was not made on its own, are part of the committed tool rounds. Response
@@ -140,7 +140,7 @@ template <typename Answer> struct Answered {
 /// continues, so the model can correct itself. An error without a model_message,
 /// or a validator that throws, gives the model the fixed text a failing tool
 /// handler gives it.
-using AnswerValidator = UniqueFunction<Status(const Json&)>;
+using AnswerValidator = UniqueFunction<Status(const scrydantic::Json&)>;
 
 /// Asks a turn to end with a structured answer instead of free text.
 ///
@@ -159,7 +159,7 @@ struct ResponseFormat {
   std::string description{};
   /// JSON Schema object describing the answer, sent as the response tool's input
   /// schema.
-  Json schema{};
+  scrydantic::Json schema{};
   /// Optional check of each candidate answer on the host thread. Empty accepts
   /// any JSON object, since Scry does not implement general JSON Schema
   /// validation.
@@ -204,7 +204,7 @@ struct ToolRequest {
   /// Identity of the call, the same values its handler and observation carry.
   ToolCallContext context{};
   /// Canonical JSON object the handler would receive.
-  const Json& arguments;
+  const scrydantic::Json& arguments;
 };
 
 /// Refusal of a tool call, returned from on_tool_request.

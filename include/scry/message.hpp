@@ -2,7 +2,7 @@
 
 #include <cstdint>
 #include <scry/annotations.hpp>
-#include <scry/json.hpp>
+#include <scrydantic/json.hpp>
 #include <string>
 #include <variant>
 #include <vector>
@@ -30,7 +30,7 @@ struct[[= scry::reflection::tag{"tool_call"}]] ToolCallBlock {
   /// Tool name requested by the model.
   std::string name{};
   /// Canonical JSON object passed to the tool handler.
-  Json arguments{};
+  scrydantic::Json arguments{};
 };
 
 /// The result returned to the model for one tool call, which appears only in user
@@ -39,7 +39,7 @@ struct[[= scry::reflection::tag{"tool_result"}]] ToolResultBlock {
   /// Identifier of the ToolCallBlock this result answers.
   std::string tool_call_id{};
   /// Canonical JSON result sent back to the model.
-  Json result{};
+  scrydantic::Json result{};
   /// Whether the result reports a tool failure rather than a value.
   bool is_error{false};
 };

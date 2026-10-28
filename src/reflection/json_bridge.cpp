@@ -4,7 +4,7 @@
 
 namespace scry::reflection::detail {
 
-Result<Json> canonicalize_encoded_json(const Json& json) {
+Result<scrydantic::Json> canonicalize_encoded_json(const scrydantic::Json& json) {
   return scry::detail::canonicalize_json(
       json, ErrorCategory::tool, "reflected value could not be encoded as JSON");
 }

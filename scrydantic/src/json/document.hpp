@@ -3,14 +3,14 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
-#include <scry/json.hpp>
+#include <scrydantic/json.hpp>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
 
-// Scry's own strict JSON layer: an immutable document tree, a single-pass
+// Scrydantic's own strict JSON layer: an immutable document tree, a single-pass
 // parser, an allocation-free validator that accepts exactly what the parser
 // accepts, and the canonical writer.
 //
@@ -43,9 +43,9 @@
 // order, strings with only the escapes JSON requires (\" \\ \b \f \n \r \t,
 // and \u00XX with uppercase hex for any other control character; '/' and
 // everything from 0x7F up are written as they are), and numbers as described
-// by append_double in kernel/json/number.hpp.
+// by append_double in json/number.hpp.
 
-namespace scry::detail::json {
+namespace scrydantic::detail::json {
 
 // The deepest nesting the parser accepts.
 inline constexpr std::size_t max_depth = 256;
@@ -124,4 +124,4 @@ void append_quoted(std::string& output, std::string_view text);
 
 [[nodiscard]] std::string quote(std::string_view text);
 
-} // namespace scry::detail::json
+} // namespace scrydantic::detail::json

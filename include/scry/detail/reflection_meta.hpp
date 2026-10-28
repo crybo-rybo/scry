@@ -8,8 +8,8 @@
 #include <scry/annotations.hpp>
 #include <scry/detail/reflection_model.hpp>
 #include <scry/error.hpp>
-#include <scry/json.hpp>
 #include <scry/tool.hpp>
+#include <scrydantic/json.hpp>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -527,20 +527,20 @@ concept SupportedValue =
 /// Values reflection::encode() accepts: SupportedValue plus the encode-only leaves.
 ///
 /// `std::string_view` is written as a JSON string, for wire text borrowed from
-/// elsewhere. `scry::Json` is checked for validity and spliced verbatim. Aggregates
-/// here need not be default-constructible, movable, or free of `const` members, and
-/// may borrow a member through a reference, since encoding only reads them. Neither
-/// leaf has a schema.
+/// elsewhere. `scrydantic::Json` is checked for validity and spliced verbatim.
+/// Aggregates here need not be default-constructible, movable, or free of `const`
+/// members, and may borrow a member through a reference, since encoding only reads
+/// them. Neither leaf has a schema.
 template <typename Type>
 concept Encodable =
     detail::value_problem(^^std::remove_cvref_t<Type>, detail::value_family::encodable)
         .empty();
 
-/// Values reflection::decode() produces: SupportedValue plus `scry::Json`.
+/// Values reflection::decode() produces: SupportedValue plus `scrydantic::Json`.
 ///
-/// A `scry::Json` member captures the canonical text of whatever JSON value sits at
-/// its position, `null` included, so a document can carry an opaque payload through
-/// a typed decode. `scry::Json` has no schema. Decoding produces a value, so the
+/// A `scrydantic::Json` member captures the canonical text of whatever JSON value sits
+/// at its position, `null` included, so a document can carry an opaque payload through
+/// a typed decode. `scrydantic::Json` has no schema. Decoding produces a value, so the
 /// target itself must be a cv-unqualified object type, as reflection::decode()
 /// requires.
 template <typename Type>

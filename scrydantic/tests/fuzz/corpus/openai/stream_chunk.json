@@ -1,0 +1,1 @@
+{"id":"chatcmpl-seed","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"hello"},"finish_reason":null}]}

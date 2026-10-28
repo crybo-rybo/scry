@@ -44,7 +44,7 @@ inline constexpr TurnId turn_id{42};
   typed.response_tool = std::make_shared<const ToolDefinition>(ToolDefinition{
       .name = std::move(answer_tool),
       .description = "answer",
-      .input_schema = Json{.text = R"({"type":"object"})"},
+      .input_schema = scrydantic::Json{.text = R"({"type":"object"})"},
   });
   return typed;
 }
@@ -82,7 +82,7 @@ inline constexpr TurnId turn_id{42};
   return {
       .id = std::move(id),
       .name = std::move(name),
-      .arguments = Json{.text = std::move(arguments)},
+      .arguments = scrydantic::Json{.text = std::move(arguments)},
   };
 }
 
@@ -114,7 +114,7 @@ result(std::string id, std::string json, const MachineTimePoint observed_at = at
       .result =
           {
               .tool_call_id = std::move(id),
-              .result = Json{.text = std::move(json)},
+              .result = scrydantic::Json{.text = std::move(json)},
               .is_error = is_error,
           },
       .observed_at = observed_at,

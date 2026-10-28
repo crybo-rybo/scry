@@ -1,8 +1,8 @@
-// The documented decisions of Scry's JSON layer (kernel/json/document.hpp), one
+// The documented decisions of Scrydantic's JSON core (src/json/document.hpp), one
 // case each. The golden fixtures cover the same ground by the thousand; these
 // name the rules.
 
-#include "kernel/json/document.hpp"
+#include "json/document.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 #include <cmath>
@@ -10,15 +10,15 @@
 #include <cstdint>
 #include <limits>
 #include <optional>
-#include <scry/json.hpp>
+#include <scrydantic/json.hpp>
 #include <string>
 #include <string_view>
 #include <utility>
 
 namespace {
 
-namespace json = scry::detail::json;
-using scry::JsonKind;
+namespace json = scrydantic::detail::json;
+using scrydantic::JsonKind;
 
 [[nodiscard]] json::Value parse_ok(const std::string_view text) {
   auto parsed = json::parse(text);

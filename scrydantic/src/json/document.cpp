@@ -1,8 +1,8 @@
-#include "kernel/kernel.hpp"
+#include "json/core.hpp"
 
-#include "kernel/json/document.hpp"
+#include "json/document.hpp"
 
-#include "kernel/json/number.hpp"
+#include "json/number.hpp"
 
 #include <algorithm>
 #include <array>
@@ -19,7 +19,7 @@
 #include <utility>
 #include <variant>
 
-namespace scry::detail::json {
+namespace scrydantic::detail::json {
 
 // The parser's only way to give a Value content.
 class Builder {
@@ -794,4 +794,4 @@ std::string quote(const std::string_view text) {
   return output;
 }
 
-} // namespace scry::detail::json
+} // namespace scrydantic::detail::json

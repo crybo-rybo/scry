@@ -29,10 +29,10 @@ static_assert(std::is_enum_v<scry::ReasoningMode>);
 static_assert(std::is_aggregate_v<scry::Error>);
 static_assert(std::same_as<decltype(scry::Error::model_message), std::string>);
 static_assert(std::same_as<decltype(scry::tool_error(std::string{})), scry::Error>);
-static_assert(std::is_aggregate_v<scry::Json>);
-static_assert(std::is_enum_v<scry::JsonKind>);
-static_assert(std::is_default_constructible_v<scry::JsonView>);
-static_assert(std::is_copy_constructible_v<scry::JsonView>);
+static_assert(std::is_aggregate_v<scrydantic::Json>);
+static_assert(std::is_enum_v<scrydantic::JsonKind>);
+static_assert(std::is_default_constructible_v<scrydantic::JsonView>);
+static_assert(std::is_copy_constructible_v<scrydantic::JsonView>);
 static_assert(std::is_enum_v<scry::Role>);
 static_assert(std::is_aggregate_v<scry::Message>);
 static_assert(std::is_aggregate_v<scry::TextBlock>);
@@ -59,8 +59,8 @@ static_assert(std::is_aggregate_v<scry::TurnId>);
 static_assert(std::same_as<decltype(scry::Usage::input_tokens), std::uint64_t>);
 static_assert(std::same_as<decltype(scry::Usage::output_tokens), std::uint64_t>);
 static_assert(std::same_as<decltype(scry::ToolCall::turn_id), scry::TurnId>);
-static_assert(std::same_as<decltype(scry::ToolCall::arguments), scry::Json>);
-static_assert(std::same_as<decltype(scry::ToolCall::result), scry::Json>);
+static_assert(std::same_as<decltype(scry::ToolCall::arguments), scrydantic::Json>);
+static_assert(std::same_as<decltype(scry::ToolCall::result), scrydantic::Json>);
 static_assert(std::same_as<decltype(scry::ToolCall::is_error), bool>);
 static_assert(std::same_as<decltype(scry::ToolCall::round), std::uint32_t>);
 static_assert(std::same_as<decltype(scry::ToolCall::index), std::uint32_t>);
@@ -203,7 +203,7 @@ static_assert(requires(scry::Harness& harness) {
 static_assert(requires(const scry::ToolRegistry& registry) {
   { registry.contains(std::string_view{}) } -> std::same_as<bool>;
   { registry.names() } -> std::same_as<std::vector<std::string>>;
-  { registry.to_json() } -> std::same_as<scry::Result<scry::Json>>;
+  { registry.to_json() } -> std::same_as<scry::Result<scrydantic::Json>>;
 });
 
 // A tool handler's call identity: a borrowed value the handler reads and does not
@@ -220,7 +220,8 @@ static_assert(std::same_as<decltype(scry::ToolCallContext::index), std::uint32_t
 // reference and is not default-constructible.
 static_assert(
     std::same_as<decltype(scry::ToolRequest::context), scry::ToolCallContext>);
-static_assert(std::same_as<decltype(scry::ToolRequest::arguments), const scry::Json&>);
+static_assert(
+    std::same_as<decltype(scry::ToolRequest::arguments), const scrydantic::Json&>);
 static_assert(!std::is_default_constructible_v<scry::ToolRequest>);
 static_assert(std::is_copy_constructible_v<scry::ToolRequest>);
 static_assert(std::same_as<decltype(scry::ToolRejection::model_message), std::string>);
@@ -249,10 +250,14 @@ static_assert(!std::is_copy_constructible_v<scry::ContextualToolHandler>);
 // each lambda shape has to reach exactly one of them. A converting constructor that
 // did not constrain on invocability would make both of these ambiguous.
 using PlainToolLambda =
-    decltype([](scry::Json input) -> scry::Result<scry::Json> { return input; });
+    decltype([](scrydantic::Json input) -> scry::Result<scrydantic::Json> {
+      return input;
+    });
 using ContextualToolLambda =
     decltype([](const scry::ToolCallContext&,
-                scry::Json input) -> scry::Result<scry::Json> { return input; });
+                scrydantic::Json input) -> scry::Result<scrydantic::Json> {
+      return input;
+    });
 static_assert(std::is_constructible_v<scry::ToolHandler, PlainToolLambda>);
 static_assert(!std::is_constructible_v<scry::ToolHandler, ContextualToolLambda>);
 static_assert(
@@ -330,11 +335,11 @@ struct Verdict {
   std::string reason{};
 };
 struct Opaque {
-  scry::Json payload{};
+  scrydantic::Json payload{};
 };
 } // namespace contract
-static_assert(
-    std::same_as<decltype(scry::Completion::structured), std::optional<scry::Json>>);
+static_assert(std::same_as<decltype(scry::Completion::structured),
+                           std::optional<scrydantic::Json>>);
 static_assert(
     std::same_as<decltype(scry::Completion::answer_attempt_count), std::uint32_t>);
 static_assert(std::is_aggregate_v<scry::ResponseFormat>);
@@ -342,11 +347,12 @@ static_assert(std::is_move_constructible_v<scry::ResponseFormat>);
 static_assert(!std::is_copy_constructible_v<scry::ResponseFormat>);
 static_assert(std::same_as<decltype(scry::ResponseFormat::name), std::string>);
 static_assert(std::same_as<decltype(scry::ResponseFormat::description), std::string>);
-static_assert(std::same_as<decltype(scry::ResponseFormat::schema), scry::Json>);
+static_assert(std::same_as<decltype(scry::ResponseFormat::schema), scrydantic::Json>);
 static_assert(
     std::same_as<decltype(scry::ResponseFormat::validate), scry::AnswerValidator>);
-static_assert(std::same_as<scry::AnswerValidator,
-                           scry::UniqueFunction<scry::Status(const scry::Json&)>>);
+static_assert(
+    std::same_as<scry::AnswerValidator,
+                 scry::UniqueFunction<scry::Status(const scrydantic::Json&)>>);
 static_assert(std::is_aggregate_v<scry::Answered<contract::Verdict>>);
 static_assert(std::same_as<decltype(scry::Answered<contract::Verdict>::value),
                            contract::Verdict>);
@@ -420,9 +426,10 @@ bool response_format_for_a_type_works() {
       !format.validate) {
     return false;
   }
-  const auto accepted =
-      format.validate(scry::Json{.text = R"({"reason":"rock","supported":false})"});
-  const auto rejected = format.validate(scry::Json{.text = R"({"supported":"no"})"});
+  const auto accepted = format.validate(
+      scrydantic::Json{.text = R"({"reason":"rock","supported":false})"});
+  const auto rejected =
+      format.validate(scrydantic::Json{.text = R"({"supported":"no"})"});
   return accepted.has_value() && !rejected.has_value() &&
          rejected.error().category == scry::ErrorCategory::invalid_argument &&
          rejected.error().model_message.starts_with("$.");
@@ -487,8 +494,9 @@ struct Probe {
 };
 
 bool json_view_reads_a_parsed_document() {
-  const auto document = scry::JsonView::parse(scry::Json{.text = R"({"ok":true})"});
-  if (!document || document->kind() != scry::JsonKind::object ||
+  const auto document =
+      scrydantic::JsonView::parse(scrydantic::Json{.text = R"({"ok":true})"});
+  if (!document || document->kind() != scrydantic::JsonKind::object ||
       document->size() != 1) {
     return false;
   }
@@ -499,10 +507,10 @@ bool json_view_reads_a_parsed_document() {
   if (!member || member->boolean() != true) {
     return false;
   }
-  if (scry::escape_json_string("a\"b\n") != "\"a\\\"b\\n\"") {
+  if (scrydantic::escape_json_string("a\"b\n") != "\"a\\\"b\\n\"") {
     return false;
   }
-  return !scry::JsonView::parse(scry::Json{.text = "{"}).has_value();
+  return !scrydantic::JsonView::parse(scrydantic::Json{.text = "{"}).has_value();
 }
 
 bool null_pointer_callables_are_empty() {

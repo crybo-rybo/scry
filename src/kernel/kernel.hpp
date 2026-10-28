@@ -1,8 +1,9 @@
 #pragma once
 
 // The kernel is the part of Scry that parses untrusted bytes or does retry and
-// transport arithmetic: the JSON codec, the SSE parser, retry delays, and the
-// transport seam with its libcurl implementation. Its sources are compiled as
+// transport arithmetic: the JSON codec's Scry-facing layer over Scrydantic's
+// JSON core, the SSE parser, retry delays, and the transport seam with its
+// libcurl implementation. Its sources are compiled as
 // C++23 without reflection in every build, so clang-tidy can analyze them
 // while the rest of src/ is free to use C++26 reflection.
 //
@@ -15,9 +16,10 @@
 // for the kernel sources anyway.
 //
 // Kernel code may include only the standard library, libcurl, other kernel
-// headers, and the public headers <scry/config.hpp>, <scry/error.hpp>,
-// <scry/json.hpp>, <scry/turn_id.hpp>, and <scry/unique_function.hpp>.
-// scripts/lint.sh checks that list.
+// headers, the public headers <scry/config.hpp>, <scry/error.hpp>,
+// <scry/turn_id.hpp>, and <scry/unique_function.hpp>, and Scrydantic's C++23
+// JSON core headers <scrydantic/error.hpp>, <scrydantic/json.hpp>, and
+// <scrydantic/detail/json_text.hpp>. scripts/lint.sh checks that list.
 
 #if defined(__cpp_impl_reflection)
 #error "src/kernel/ is C++23 without reflection; compile it without -freflection"

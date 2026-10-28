@@ -24,7 +24,8 @@ namespace {
   return text;
 }
 
-[[nodiscard]] std::optional<Json> completion_answer(const CompletionEvent& event) {
+[[nodiscard]] std::optional<scrydantic::Json>
+completion_answer(const CompletionEvent& event) {
   if (!event.answered || event.transcript.empty()) {
     return std::nullopt;
   }
@@ -34,7 +35,7 @@ namespace {
   if (answer == nullptr) {
     return std::nullopt;
   }
-  return Json{.text = answer->text};
+  return scrydantic::Json{.text = answer->text};
 }
 
 // Appends the turn's whole transcript - its user message, every tool round, and

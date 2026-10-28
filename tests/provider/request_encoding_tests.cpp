@@ -37,44 +37,43 @@ constexpr auto almanac_schema = std::string_view{
 [[nodiscard]] ModelRequest tool_history_request() {
   return ModelRequest{
       .system_prompt = "Be concise",
-      .history =
-          std::make_shared<const std::vector<Message>>(
-              std::vector<Message>{
-                  Message{.role = Role::user,
-                          .content = {TextBlock{.text = "Weather in Paris?"}}},
-                  Message{.role = Role::assistant,
-                          .content =
-                              {
-                                  TextBlock{.text = "Checking."},
-                                  ToolCallBlock{
-                                      .id = "call-a",
-                                      .name = "weather",
-                                      .arguments =
-                                          Json{.text = std::string{weather_arguments}},
-                                  },
-                                  ToolCallBlock{
-                                      .id = "call-b",
-                                      .name = "almanac",
-                                      .arguments =
-                                          Json{.text = std::string{almanac_arguments}},
-                                  },
-                              }},
-                  Message{.role = Role::user,
-                          .content =
-                              {
-                                  ToolResultBlock{
-                                      .tool_call_id = "call-a",
-                                      .result =
-                                          Json{.text = std::string{weather_result}},
-                                  },
-                                  ToolResultBlock{
-                                      .tool_call_id = "call-b",
-                                      .result =
-                                          Json{.text = std::string{almanac_result}},
-                                      .is_error = true,
-                                  },
-                              }},
-              }),
+      .history = std::make_shared<const std::vector<Message>>(std::vector<Message>{
+          Message{.role = Role::user,
+                  .content = {TextBlock{.text = "Weather in Paris?"}}},
+          Message{
+              .role = Role::assistant,
+              .content =
+                  {
+                      TextBlock{.text = "Checking."},
+                      ToolCallBlock{
+                          .id = "call-a",
+                          .name = "weather",
+                          .arguments =
+                              scrydantic::Json{.text = std::string{weather_arguments}},
+                      },
+                      ToolCallBlock{
+                          .id = "call-b",
+                          .name = "almanac",
+                          .arguments =
+                              scrydantic::Json{.text = std::string{almanac_arguments}},
+                      },
+                  }},
+          Message{.role = Role::user,
+                  .content =
+                      {
+                          ToolResultBlock{
+                              .tool_call_id = "call-a",
+                              .result =
+                                  scrydantic::Json{.text = std::string{weather_result}},
+                          },
+                          ToolResultBlock{
+                              .tool_call_id = "call-b",
+                              .result =
+                                  scrydantic::Json{.text = std::string{almanac_result}},
+                              .is_error = true,
+                          },
+                      }},
+      }),
       .messages =
           {
               Message{.role = Role::user,
@@ -85,12 +84,12 @@ constexpr auto almanac_schema = std::string_view{
               ToolDefinition{
                   .name = "weather",
                   .description = "Get weather",
-                  .input_schema = Json{.text = std::string{weather_schema}},
+                  .input_schema = scrydantic::Json{.text = std::string{weather_schema}},
               },
               ToolDefinition{
                   .name = "almanac",
                   .description = "Get almanac",
-                  .input_schema = Json{.text = std::string{almanac_schema}},
+                  .input_schema = scrydantic::Json{.text = std::string{almanac_schema}},
               },
           }),
       .sampling =
@@ -120,7 +119,8 @@ constexpr auto unsorted_schema =
                                   .id = "call-a",
                                   .name = "lookup",
                                   .arguments =
-                                      Json{.text = std::string{unsorted_arguments}},
+                                      scrydantic::Json{
+                                          .text = std::string{unsorted_arguments}},
                               },
                           }},
           },
@@ -129,7 +129,8 @@ constexpr auto unsorted_schema =
               ToolDefinition{
                   .name = "lookup",
                   .description = "Look a value up",
-                  .input_schema = Json{.text = std::string{unsorted_schema}},
+                  .input_schema =
+                      scrydantic::Json{.text = std::string{unsorted_schema}},
               },
           }),
       .sampling = SamplingConfig{.max_tokens = 64},
@@ -175,7 +176,7 @@ TEST_CASE("OpenAI request over a tool history matches the encoder golden") {
 TEST_CASE("Anthropic request splices stored JSON text byte for byte") {
   const auto body = encoded_body(anthropic_config(), unsorted_payload_request());
   // Still one JSON document, and still carrying the caller's own spelling.
-  REQUIRE(JsonView::parse(Json{.text = body}));
+  REQUIRE(scrydantic::JsonView::parse(scrydantic::Json{.text = body}));
   CHECK(body.find(std::string{R"("input":)"} + std::string{unsorted_arguments}) !=
         std::string::npos);
   CHECK(body.find(std::string{R"("input_schema":)"} + std::string{unsorted_schema}) !=
@@ -184,7 +185,7 @@ TEST_CASE("Anthropic request splices stored JSON text byte for byte") {
 
 TEST_CASE("OpenAI request splices stored JSON text byte for byte") {
   const auto body = encoded_body(openai_config(), unsorted_payload_request());
-  REQUIRE(JsonView::parse(Json{.text = body}));
+  REQUIRE(scrydantic::JsonView::parse(scrydantic::Json{.text = body}));
   CHECK(body.find(std::string{R"("parameters":)"} + std::string{unsorted_schema}) !=
         std::string::npos);
   // `arguments` is a JSON string, so the same bytes appear quoted and escaped.
@@ -219,18 +220,19 @@ enum class Embedded { schema, arguments, result };
       std::vector<ToolDefinition>{ToolDefinition{
           .name = "lookup",
           .description = "Look a value up",
-          .input_schema = Json{.text = std::move(schema)},
+          .input_schema = scrydantic::Json{.text = std::move(schema)},
       }});
   request.messages = {
       Message{.role = Role::user, .content = {TextBlock{.text = "go"}}},
-      Message{
-          .role = Role::assistant,
-          .content = {ToolCallBlock{.id = "call-a",
-                                    .name = "lookup",
-                                    .arguments = Json{.text = std::move(arguments)}}}},
+      Message{.role = Role::assistant,
+              .content = {ToolCallBlock{
+                  .id = "call-a",
+                  .name = "lookup",
+                  .arguments = scrydantic::Json{.text = std::move(arguments)}}}},
       Message{.role = Role::user,
-              .content = {ToolResultBlock{.tool_call_id = "call-a",
-                                          .result = Json{.text = std::move(result)}}}},
+              .content = {ToolResultBlock{
+                  .tool_call_id = "call-a",
+                  .result = scrydantic::Json{.text = std::move(result)}}}},
   };
   return request;
 }
@@ -245,7 +247,7 @@ enum class Embedded { schema, arguments, result };
     return false;
   }
   // Whatever was spliced, the body itself must still be one JSON document.
-  CHECK(JsonView::parse(Json{.text = encoded->body}));
+  CHECK(scrydantic::JsonView::parse(scrydantic::Json{.text = encoded->body}));
   return true;
 }
 

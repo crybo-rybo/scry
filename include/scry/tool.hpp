@@ -2,9 +2,9 @@
 
 #include <cstdint>
 #include <scry/error.hpp>
-#include <scry/json.hpp>
 #include <scry/turn_id.hpp>
 #include <scry/unique_function.hpp>
+#include <scrydantic/json.hpp>
 #include <string>
 #include <string_view>
 
@@ -18,7 +18,7 @@ struct ToolDefinition {
   /// Human-readable description exposed to the model.
   std::string description{};
   /// JSON Schema object describing the tool's arguments.
-  Json input_schema{};
+  scrydantic::Json input_schema{};
 };
 
 /// Provider-visible name and description of a tool registered with
@@ -58,14 +58,14 @@ struct ToolCallContext {
 /// wrong so it can correct the call. A successful return must contain valid JSON.
 /// Reflected tools, registered through ToolRegistry::add(), instead get a generated
 /// decoder that enforces the schema it generates.
-using ToolHandler = UniqueFunction<Result<Json>(Json)>;
+using ToolHandler = UniqueFunction<Result<scrydantic::Json>(scrydantic::Json)>;
 
 /// Move-only type-erased dynamic tool handler that also receives its call identity.
 ///
 /// Identical to ToolHandler apart from the leading ToolCallContext, whose string
 /// views are borrowed for the invocation only.
 using ContextualToolHandler =
-    UniqueFunction<Result<Json>(const ToolCallContext&, Json)>;
+    UniqueFunction<Result<scrydantic::Json>(const ToolCallContext&, scrydantic::Json)>;
 
 namespace detail {
 

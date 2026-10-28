@@ -1,3 +1,5 @@
+# Scrydantic's tests declare Catch2 first when they are built; this is the same
+# revision, so the declaration that wins does not matter.
 FetchContent_Declare(
   Catch2
   GIT_REPOSITORY https://github.com/catchorg/Catch2.git
@@ -72,8 +74,7 @@ add_executable(
   runtime/codec_internals_tests.cpp
   runtime/config_tests.cpp
   runtime/conversation_persistence_tests.cpp
-  runtime/json_codec_validation_tests.cpp
-  runtime/json_view_tests.cpp
+  runtime/json_codec_wrapper_tests.cpp
   runtime/message_reflection_tests.cpp
   runtime/pump_regression_tests.cpp
   runtime/queue_tests.cpp
@@ -105,7 +106,6 @@ if(SCRY_BUILD_TESTING_SUPPORT)
   add_subdirectory(transport)
   add_subdirectory(integration)
 endif()
-add_subdirectory(kernel)
 add_subdirectory(machine)
 add_subdirectory(e2e)
 add_subdirectory(protocol)
@@ -136,9 +136,6 @@ scry_add_fuzz_replay(
 scry_add_fuzz_replay(
   scry_response_policy_fuzz_replay response_policy "transport."
   transport/response_policy_fuzz.cpp scry_kernel
-)
-scry_add_fuzz_replay(
-  scry_json_fuzz_replay json "kernel." fuzz/json_fuzz.cpp scry_kernel
 )
 scry_add_fuzz_replay(
   scry_anthropic_fuzz_replay anthropic "provider." provider/anthropic_fuzz.cpp
@@ -215,6 +212,7 @@ function(
       "-DCXX_COMPILER=${CMAKE_CXX_COMPILER}"
       "-DSOURCE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/reflection/compile_fail/${SOURCE_NAME}"
       "-DPROJECT_INCLUDE_DIR=${PROJECT_SOURCE_DIR}/include"
+      "-DDEPENDENCY_INCLUDE_DIR=${PROJECT_SOURCE_DIR}/scrydantic/include"
       "-DEXPECTED_SUBSTRING=${EXPECTED_SUBSTRING}"
       -P "${PROJECT_SOURCE_DIR}/cmake/ExpectCompileFailure.cmake"
   )
@@ -238,7 +236,7 @@ scry_add_reflection_compile_fail_test(
 scry_add_reflection_compile_fail_test(
   unsupported-schema-root
   unsupported_schema_root.cpp
-  "does not satisfy scry::reflection::SupportedValue: scry::Json is raw JSON, which has no schema"
+  "does not satisfy scry::reflection::SupportedValue: scrydantic::Json is raw JSON, which has no schema"
 )
 scry_add_reflection_compile_fail_test(
   untagged-variant
@@ -283,7 +281,7 @@ scry_add_reflection_compile_fail_test(
 scry_add_reflection_compile_fail_test(
   unsupported-tool-result
   unsupported_tool_result.cpp
-  "Lamp::describe returns scry::Json, which is not void, scry::Status, a SupportedValue, or a Result of one"
+  "Lamp::describe returns scrydantic::Json, which is not void, scry::Status, a SupportedValue, or a Result of one"
 )
 scry_add_reflection_compile_fail_test(
   duplicate-tool-name

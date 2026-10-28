@@ -49,11 +49,11 @@ struct StatusResult {
 // rejection goes through scry::tool_error() so the model reads what was wrong and
 // can correct the call. A plain scry::Error would reach it only as Scry's fixed
 // "tool handler returned an error", which gives it nothing to fix.
-[[nodiscard]] scry::Status validate_echo_arguments(const scry::JsonView& root) {
+[[nodiscard]] scry::Status validate_echo_arguments(const scrydantic::JsonView& root) {
   const auto reject = [](std::string message) {
     return std::unexpected(scry::tool_error(std::move(message)));
   };
-  if (root.kind() != scry::JsonKind::object) {
+  if (root.kind() != scrydantic::JsonKind::object) {
     return reject("echo expects a JSON object");
   }
   for (std::size_t index = 0; index < root.size(); ++index) {
@@ -69,24 +69,25 @@ struct StatusResult {
 // from a script, say): the schema is hand-written, and the handler owns
 // validation at the JSON boundary.
 [[nodiscard]] scry::ToolHandler echo_handler() {
-  return [](const scry::Json& arguments) -> scry::Result<scry::Json> {
+  return [](const scrydantic::Json& arguments) -> scry::Result<scrydantic::Json> {
     // Every handler runs synchronously inside harness.update(), on this thread.
     // Keep it bounded; there is no background handler mode.
     //
     // A parse failure yields the empty view, which reports JsonKind::null and so
     // fails the object check with the same message a non-object root gets.
-    const auto root = scry::JsonView::parse(arguments).value_or(scry::JsonView{});
+    const auto root =
+        scrydantic::JsonView::parse(arguments).value_or(scrydantic::JsonView{});
     if (auto valid = validate_echo_arguments(root); !valid) {
       return std::unexpected(std::move(valid.error()));
     }
     const auto text = root.find("text");
-    if (!text || text->kind() != scry::JsonKind::string) {
+    if (!text || text->kind() != scrydantic::JsonKind::string) {
       return std::unexpected(scry::tool_error("echo requires a string text property"));
     }
     std::string result = R"({"echo":)";
-    result += scry::escape_json_string(text->string().value_or(""));
+    result += scrydantic::escape_json_string(text->string().value_or(""));
     result += "}";
-    return scry::Json{.text = std::move(result)};
+    return scrydantic::Json{.text = std::move(result)};
   };
 }
 

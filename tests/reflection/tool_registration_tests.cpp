@@ -201,7 +201,7 @@ namespace {
 
 // Invokes a registered tool the way dispatch does, naming the call it stands in
 // for. The snapshot is released on return, so it never extends a toolbox's life.
-[[nodiscard]] scry::Result<scry::Json>
+[[nodiscard]] scry::Result<scrydantic::Json>
 call(scry::ToolRegistry& registry, const std::string_view name, std::string arguments) {
   const auto snapshot = scry::detail::ToolRegistryAccess::snapshot(registry).entries;
   const auto* tool = scry::detail::find_tool(*snapshot, name);
@@ -212,7 +212,7 @@ call(scry::ToolRegistry& registry, const std::string_view name, std::string argu
           .tool_name = tool->definition.name,
           .round = 2,
       },
-      scry::Json{.text = std::move(arguments)});
+      scrydantic::Json{.text = std::move(arguments)});
 }
 
 [[nodiscard]] std::string schema_of(scry::ToolRegistry& registry,

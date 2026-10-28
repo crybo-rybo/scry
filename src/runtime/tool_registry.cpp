@@ -19,7 +19,8 @@ ContextualToolHandler to_contextual_handler(ToolHandler handler) {
     return {};
   }
   return ContextualToolHandler{
-      [inner = std::move(handler)](const ToolCallContext&, Json input) mutable {
+      [inner = std::move(handler)](const ToolCallContext&,
+                                   scrydantic::Json input) mutable {
         return inner(std::move(input));
       }};
 }
@@ -42,7 +43,7 @@ constexpr std::uint64_t tool_manifest_version = 1;
 struct ToolManifestEntry {
   std::string_view name;
   std::string_view description;
-  const Json& input_schema;
+  const scrydantic::Json& input_schema;
 };
 
 struct ToolManifest {
@@ -181,7 +182,7 @@ std::vector<std::string> ToolRegistry::names() const {
   return registered;
 }
 
-Result<Json> ToolRegistry::to_json() const {
+Result<scrydantic::Json> ToolRegistry::to_json() const {
   if (impl_ == nullptr) {
     return std::unexpected(inactive_registry());
   }
@@ -205,7 +206,7 @@ Result<Json> ToolRegistry::to_json() const {
         detail::make_error(ErrorCategory::invalid_state,
                            "Tool manifest at " + detail::describe(encoded.error())));
   }
-  return detail::canonicalize_json(Json{.text = std::move(*encoded)},
+  return detail::canonicalize_json(scrydantic::Json{.text = std::move(*encoded)},
                                    ErrorCategory::invalid_state,
                                    "Tool manifest could not be encoded");
 }

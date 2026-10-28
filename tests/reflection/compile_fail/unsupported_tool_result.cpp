@@ -4,7 +4,7 @@
 // Raw JSON has no schema, so a reflected tool cannot return it; the diagnostic
 // names the member function inside the toolbox.
 struct Lamp {
-  [[= scry::reflection::tool{"Describe the lamp"}]] scry::Json describe() const {
+  [[= scry::reflection::tool{"Describe the lamp"}]] scrydantic::Json describe() const {
     return {.text = "{}"};
   }
 };

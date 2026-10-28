@@ -33,7 +33,7 @@ struct[[= scry::reflection::skip_null]] Plan {
   std::optional<std::string> summary;
 };
 
-void print(const char* label, const scry::Result<scry::Json>& json) {
+void print(const char* label, const scry::Result<scrydantic::Json>& json) {
   std::cout << label << ": " << (json ? json->text : json.error().message) << '\n';
 }
 
@@ -43,7 +43,7 @@ int main() {
   // The schema a host would hand a model as the expected answer shape.
   std::cout << "schema: " << scry::reflection::schema_v<Plan> << '\n';
 
-  const auto answer = scry::reflection::decode<Plan>(scry::Json{
+  const auto answer = scry::reflection::decode<Plan>(scrydantic::Json{
       .text = R"({"actions":[{"type":"reminder","text":"stretch","priority":"high"},)"
               R"({"type":"note","body":"water the plants"}]})"});
   if (!answer) {
@@ -55,7 +55,7 @@ int main() {
   // A wrong answer fails with the JSON path and what the schema required there;
   // model_message is written to be sent back to the model as-is.
   const auto wrong = scry::reflection::decode<Plan>(
-      scry::Json{.text = R"({"actions":[{"type":"alarm","text":"now"}]})"});
+      scrydantic::Json{.text = R"({"actions":[{"type":"alarm","text":"now"}]})"});
   if (wrong) {
     return 1;
   }

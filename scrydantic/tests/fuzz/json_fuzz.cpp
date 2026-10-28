@@ -1,4 +1,4 @@
-// Property fuzz target for Scry's JSON layer (kernel/json/document.hpp). For every
+// Property fuzz target for Scrydantic's JSON core (src/json/document.hpp). For every
 // input it asserts that
 //   - validate() accepts exactly what parse() accepts;
 //   - an accepted document's canonical text parses, validates, and describes the
@@ -10,7 +10,7 @@
 //   - quoting the raw input yields a JSON string that, when it parses at all,
 //     holds exactly the input, and always parses when the input is ASCII.
 
-#include "kernel/json/document.hpp"
+#include "json/document.hpp"
 
 #include <bit>
 #include <cmath>
@@ -18,13 +18,13 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <scry/json.hpp>
+#include <scrydantic/json.hpp>
 #include <string>
 #include <string_view>
 
 namespace {
 
-namespace json = scry::detail::json;
+namespace json = scrydantic::detail::json;
 
 [[noreturn]] void fail(const std::string_view what, const std::string_view input) {
   std::fprintf(stderr,
@@ -42,9 +42,10 @@ namespace json = scry::detail::json;
   std::abort();
 }
 
-[[nodiscard]] bool is_numeric(const scry::JsonKind kind) {
-  return kind == scry::JsonKind::signed_integer ||
-         kind == scry::JsonKind::unsigned_integer || kind == scry::JsonKind::number;
+[[nodiscard]] bool is_numeric(const scrydantic::JsonKind kind) {
+  return kind == scrydantic::JsonKind::signed_integer ||
+         kind == scrydantic::JsonKind::unsigned_integer ||
+         kind == scrydantic::JsonKind::number;
 }
 
 // A double and an integer are the same number only when the double is whole and
@@ -65,14 +66,15 @@ namespace json = scry::detail::json;
 }
 
 [[nodiscard]] bool same_number(const json::Value& left, const json::Value& right) {
-  if (left.kind() == scry::JsonKind::number && right.kind() == scry::JsonKind::number) {
+  if (left.kind() == scrydantic::JsonKind::number &&
+      right.kind() == scrydantic::JsonKind::number) {
     return std::bit_cast<std::uint64_t>(*left.number()) ==
            std::bit_cast<std::uint64_t>(*right.number());
   }
-  if (left.kind() == scry::JsonKind::number) {
+  if (left.kind() == scrydantic::JsonKind::number) {
     return double_equals_integer(*left.number(), right);
   }
-  if (right.kind() == scry::JsonKind::number) {
+  if (right.kind() == scrydantic::JsonKind::number) {
     return double_equals_integer(*right.number(), left);
   }
   return left.kind() == right.kind() &&

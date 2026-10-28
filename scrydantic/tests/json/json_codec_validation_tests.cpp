@@ -1,50 +1,46 @@
-// What the JSON codec accepts, seen from the rest of src/: the text-level entry
-// points in kernel/json/codec.hpp and the public JsonView are thin layers over the
-// kernel's JSON layer (kernel/json/document.hpp), which tests/kernel/ holds to the
-// golden fixtures. So every entry point must give the kernel's verdict and write
-// the kernel's canonical text, checked here on a table of adversarial documents
-// named by shape and a handful of representative ones.
+// What the JSON core accepts, seen from outside it: the text-level entry points
+// in <scrydantic/detail/json_text.hpp> and the public JsonView are thin layers
+// over the core's document (src/json/document.hpp), which json_fixture_tests.cpp
+// holds to the golden fixtures. So every entry point must give the document's
+// verdict and write the document's canonical text, checked here on a table of
+// adversarial documents named by shape and a handful of representative ones.
 
-#include "kernel/json/codec.hpp"
-#include "kernel/json/document.hpp"
+#include "json/document.hpp"
 
 #include <array>
 #include <catch2/catch_test_macros.hpp>
-#include <scry/error.hpp>
-#include <scry/json.hpp>
+#include <scrydantic/detail/json_text.hpp>
+#include <scrydantic/error.hpp>
+#include <scrydantic/json.hpp>
 #include <string>
 #include <string_view>
 
 namespace {
 
-using scry::JsonView;
-namespace json = scry::detail::json;
+using scrydantic::JsonView;
+namespace json = scrydantic::detail::json;
+namespace text_codec = scrydantic::detail;
 
-constexpr auto category = scry::ErrorCategory::invalid_argument;
-constexpr std::string_view failure = "JSON text is not valid";
-
-// Every entry point's verdict on `input`, each checked against the kernel's.
+// Every entry point's verdict on `input`, each checked against the document's.
 [[nodiscard]] bool codec_accepts(const std::string_view input) {
-  const auto kernel = json::parse(input);
-  const scry::Json text{.text = std::string{input}};
-  const auto canonical = scry::detail::canonicalize_json(text, category, failure);
+  const auto document = json::parse(input);
+  const scrydantic::Json text{.text = std::string{input}};
+  const auto canonical = text_codec::canonicalize_json(text);
   const auto viewed = JsonView::parse(text);
-  REQUIRE(scry::detail::validate_json(input, category, failure).has_value() ==
-          kernel.has_value());
-  REQUIRE(canonical.has_value() == kernel.has_value());
-  REQUIRE(viewed.has_value() == kernel.has_value());
+  REQUIRE(text_codec::validate_json(input) == document.has_value());
+  REQUIRE(canonical.has_value() == document.has_value());
+  REQUIRE(viewed.has_value() == document.has_value());
   // The object variants accept exactly the documents whose root is an object.
-  const bool object = kernel && kernel->kind() == scry::JsonKind::object;
-  CHECK(scry::detail::validate_json_object(input, category, failure).has_value() ==
-        object);
-  CHECK(scry::detail::canonicalize_json_object(text, category, failure).has_value() ==
-        object);
-  if (!kernel) {
-    CHECK(viewed.error().category == scry::ErrorCategory::invalid_argument);
+  const bool object = document && document->kind() == scrydantic::JsonKind::object;
+  CHECK(text_codec::validate_json_object(input) == object);
+  CHECK(text_codec::canonicalize_json_object(text).has_value() == object);
+  if (!document) {
+    // The whole error: the view's failure carries nothing for a model.
     CHECK(viewed.error().message == "JSON text is not valid");
+    CHECK(viewed.error().model_message.empty());
     return false;
   }
-  const auto written = json::write(*kernel);
+  const auto written = json::write(*document);
   CHECK(canonical->text == written);
   CHECK(viewed->to_json().text == written);
   return true;
@@ -129,20 +125,19 @@ TEST_CASE("the JSON codec bounds malformed non-null-terminated input") {
   // the view's end rather than look for a NUL.
   constexpr std::array input{'{'};
   const auto text = std::string_view{input.data(), input.size()};
-  CHECK_FALSE(scry::detail::validate_json(text, scry::ErrorCategory::protocol,
-                                          "invalid test JSON"));
+  CHECK_FALSE(text_codec::validate_json(text));
   CHECK_FALSE(codec_accepts(text));
 }
 
 TEST_CASE("the JSON codec still collapses duplicate object keys") {
   // docs/architecture.md: "Canonical parsing collapses duplicate object keys before
   // dispatch." The last occurrence wins, at every nesting level.
-  auto document = JsonView::parse(scry::Json{.text = R"({"a":1,"a":2})"});
+  auto document = JsonView::parse(scrydantic::Json{.text = R"({"a":1,"a":2})"});
   REQUIRE(document);
   REQUIRE(document->size() == 1);
   CHECK(document->find("a")->unsigned_integer() == 2U);
 
-  auto nested = JsonView::parse(scry::Json{.text = R"({"o":{"k":1,"k":2}})"});
+  auto nested = JsonView::parse(scrydantic::Json{.text = R"({"o":{"k":1,"k":2}})"});
   REQUIRE(nested);
   REQUIRE(nested->find("o")->size() == 1);
   CHECK(nested->find("o")->find("k")->unsigned_integer() == 2U);
@@ -150,7 +145,7 @@ TEST_CASE("the JSON codec still collapses duplicate object keys") {
 
 TEST_CASE("the JSON codec and JsonView write the kernel's canonical text") {
   // One input per canonical-form rule; codec_accepts compares every entry point's
-  // output with the kernel writer's.
+  // output with the document writer's.
   for (const std::string_view input : {
            R"( { "b" : 1 , "a" : [ 2 , { "d" : 3 , "c" : 4 } ] , "a" : null } )",
            "[1.0,-0,1e2,0.00001,1.5e16,18446744073709551615,-9223372036854775808]",

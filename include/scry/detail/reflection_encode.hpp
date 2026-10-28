@@ -11,7 +11,7 @@
 #include <scry/detail/reflection_json_string.hpp>
 #include <scry/detail/reflection_model.hpp>
 #include <scry/error.hpp>
-#include <scry/json.hpp>
+#include <scrydantic/json.hpp>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -20,8 +20,8 @@
 
 // Reflected encoding. The writer emits objects in canonical key order directly, so
 // its output differs from Scry's canonical form only in number spelling and in the
-// bytes of spliced scry::Json payloads. Every function here is reached only through
-// an entry point that has already checked the type against a value family.
+// bytes of spliced scrydantic::Json payloads. Every function here is reached only
+// through an entry point that has already checked the type against a value family.
 namespace scry::reflection::detail {
 
 template <typename Type>
@@ -61,10 +61,10 @@ template <typename Enum>
   return {};
 }
 
-// A scry::Json value is checked and then written byte for byte; the caller owns
+// A scrydantic::Json value is checked and then written byte for byte; the caller owns
 // its spelling.
-[[nodiscard]] inline codec_result<void> write_json_value(std::string& output,
-                                                         const Json& value) {
+[[nodiscard]] inline codec_result<void>
+write_json_value(std::string& output, const scrydantic::Json& value) {
   if (!is_valid_json_text(value.text)) {
     return codec_fail("is not valid JSON");
   }
@@ -183,12 +183,13 @@ codec_result<void> write_value(std::string& output, const Type& value) {
 
 // Encodes a value checked against a family without canonicalizing the result.
 // Failures are host-only ErrorCategory::tool diagnostics rooted at `$`.
-template <typename Type> [[nodiscard]] Result<Json> encode_value(const Type& value) {
+template <typename Type>
+[[nodiscard]] Result<scrydantic::Json> encode_value(const Type& value) {
   std::string output{};
   if (auto status = write_value(output, value); !status) {
     return std::unexpected(encode_failure_error(status.error()));
   }
-  return Json{.text = std::move(output)};
+  return scrydantic::Json{.text = std::move(output)};
 }
 
 } // namespace scry::reflection::detail

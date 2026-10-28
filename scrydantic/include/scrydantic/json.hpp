@@ -4,18 +4,18 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
-#include <scry/error.hpp>
+#include <scrydantic/error.hpp>
 #include <string>
 #include <string_view>
 
-namespace scry {
+namespace scrydantic {
 
-/// Scry-owned serialized JSON boundary value.
+/// Serialized JSON boundary value.
 ///
 /// Constructing this value does not parse or validate its text. Each consuming
-/// operation validates the JSON and reports errors through its documented category.
-/// No third-party JSON type crosses Scry's public boundary. Use JsonView to read one,
-/// and escape_json_string() to quote strings for hand-built JSON.
+/// operation validates the JSON and reports its own documented error. No
+/// third-party JSON type crosses Scrydantic's public boundary. Use JsonView to read
+/// one, and escape_json_string() to quote strings for hand-built JSON.
 struct Json {
   /// UTF-8 JSON text.
   std::string text{};
@@ -45,8 +45,8 @@ enum class JsonKind : std::uint8_t {
 ///
 /// Parsing produces one immutable document; every view into it shares ownership, so
 /// a child view stays valid after the parent is destroyed. Object keys are visited in
-/// lexicographic order, matching Scry's canonical form. A default-constructed view
-/// reports JsonKind::null and every accessor returns empty.
+/// lexicographic order, matching Scrydantic's canonical form. A default-constructed
+/// view reports JsonKind::null and every accessor returns empty.
 class JsonView final {
 public:
   /// Creates an empty view that reports JsonKind::null.
@@ -54,8 +54,8 @@ public:
 
   /// Parses JSON text.
   /// @param json JSON text to parse.
-  /// @return The root view, or ErrorCategory::invalid_argument when the text is not
-  /// valid JSON.
+  /// @return The root view, or an Error whose message is `JSON text is not valid`
+  /// and whose model_message is empty when the text is not valid JSON.
   [[nodiscard]] static Result<JsonView> parse(const Json& json);
 
   /// Reports the kind of the viewed value.
@@ -108,7 +108,7 @@ public:
 
   /// Serializes the viewed value as canonical JSON text.
   ///
-  /// The text is Scry's canonical form of the value alone, with object keys in
+  /// The text is Scrydantic's canonical form of the value alone, with object keys in
   /// lexicographic order; it does not reproduce the original spelling. A
   /// default-constructed view serializes as `null`.
   /// @return The value's canonical JSON text.
@@ -127,4 +127,4 @@ private:
 /// @return The value as a quoted JSON string with every required escape applied.
 [[nodiscard]] std::string escape_json_string(std::string_view value);
 
-} // namespace scry
+} // namespace scrydantic

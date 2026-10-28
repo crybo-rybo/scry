@@ -82,19 +82,67 @@ if(SCRYDANTIC_SANITIZER_FLAGS)
   )
 endif()
 
+# The JSON core: the strict parser, the canonical writer, and JsonView. It is
+# compiled as C++23 without -freflection, so plain clang-tidy can analyze it
+# (scripts/lint.sh in Scry) and a C++23 consumer, such as Scry's kernel, can link
+# it. src/json/core.hpp states its include boundary.
+add_library(
+  scrydantic_json
+  STATIC
+    src/json/document.cpp
+    src/json/number.cpp
+    src/json/text.cpp
+    src/json/view.cpp
+)
+add_library(scrydantic::json ALIAS scrydantic_json)
+target_compile_features(scrydantic_json PUBLIC cxx_std_23)
+# In C++23 mode GCC rejects a reflection operator outright but accepts a P3394
+# annotation with only a -Wc++26-extensions warning, so that warning is an error
+# for the core even when SCRYDANTIC_WARNINGS_AS_ERRORS is off.
+target_compile_options(scrydantic_json PRIVATE -Werror=c++26-extensions)
+set_target_properties(
+  scrydantic_json
+  PROPERTIES
+    EXPORT_NAME json
+    CXX_EXTENSIONS OFF
+    POSITION_INDEPENDENT_CODE ON
+)
+target_include_directories(
+  scrydantic_json
+  PUBLIC
+    "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>"
+    "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
+  PRIVATE
+    "${PROJECT_SOURCE_DIR}/src"
+)
+target_link_libraries(
+  scrydantic_json
+  PRIVATE "$<BUILD_INTERFACE:scrydantic_project_options>"
+)
+set(
+  SCRYDANTIC_JSON_PUBLIC_HEADERS
+  include/scrydantic/detail/json_text.hpp
+  include/scrydantic/error.hpp
+  include/scrydantic/json.hpp
+)
+target_sources(
+  scrydantic_json
+  PUBLIC
+    FILE_SET scrydantic_json_headers
+    TYPE HEADERS
+    BASE_DIRS "${PROJECT_SOURCE_DIR}/include"
+    FILES ${SCRYDANTIC_JSON_PUBLIC_HEADERS}
+)
+
 # The reflected codec, schema generator, and tool binding: header-only C++26
-# with reflection, so its consumers compile as C++26 with -freflection too.
+# with reflection on top of the JSON core, so its consumers compile as C++26 with
+# -freflection too.
 add_library(scrydantic INTERFACE)
 add_library(scrydantic::scrydantic ALIAS scrydantic)
 set_target_properties(scrydantic PROPERTIES EXPORT_NAME scrydantic)
 target_compile_features(scrydantic INTERFACE cxx_std_26)
 target_compile_options(scrydantic INTERFACE -freflection)
-target_include_directories(
-  scrydantic
-  INTERFACE
-    "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>"
-    "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
-)
+target_link_libraries(scrydantic INTERFACE scrydantic::json)
 
 set(
   SCRYDANTIC_PUBLIC_HEADERS
@@ -130,6 +178,12 @@ write_basic_package_version_file(
   COMPATIBILITY SameMinorVersion
 )
 
+install(
+  TARGETS scrydantic_json
+  EXPORT scrydanticTargets
+  FILE_SET scrydantic_json_headers
+    DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
+)
 install(
   TARGETS scrydantic
   EXPORT scrydanticTargets

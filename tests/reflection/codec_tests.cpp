@@ -91,7 +91,7 @@ using StreamEvent = std::variant<LenientDelta, StrictStop>;
 
 struct WireTool {
   std::string_view description{};
-  scry::Json input_schema{};
+  scrydantic::Json input_schema{};
   std::string_view name{};
 };
 
@@ -115,14 +115,14 @@ struct[[= reflection::tag{"text"}]] DocText {
 };
 
 struct[[= reflection::tag{"tool_call"}]] DocToolCall {
-  scry::Json arguments;
+  scrydantic::Json arguments;
   std::string id;
   std::string name;
 };
 
 struct[[= reflection::tag{"tool_result"}]] DocToolResult {
   bool is_error{};
-  scry::Json result;
+  scrydantic::Json result;
   std::string tool_call_id;
 };
 
@@ -146,7 +146,7 @@ struct ConstView {
 };
 
 struct Payload {
-  scry::Json body;
+  scrydantic::Json body;
 };
 
 // Rejected shapes, checked through the diagnostics the entry points print.
@@ -197,7 +197,7 @@ struct HoldsBad {
 
 template <typename Type>
 [[nodiscard]] scry::Result<Type> decode_text(const std::string_view text) {
-  return reflection::decode<Type>(scry::Json{.text = std::string{text}});
+  return reflection::decode<Type>(scrydantic::Json{.text = std::string{text}});
 }
 
 } // namespace
@@ -225,9 +225,9 @@ static_assert(!reflection::ToolArguments<Document>);
 static_assert(reflection::Encodable<ConstView>);
 static_assert(!reflection::Decodable<ConstView>);
 static_assert(reflection::Decodable<Payload>);
-static_assert(reflection::Encodable<scry::Json>);
-static_assert(reflection::Decodable<std::optional<scry::Json>>);
-static_assert(!reflection::SupportedValue<scry::Json>);
+static_assert(reflection::Encodable<scrydantic::Json>);
+static_assert(reflection::Decodable<std::optional<scrydantic::Json>>);
+static_assert(!reflection::SupportedValue<scrydantic::Json>);
 static_assert(reflection::Encodable<std::string_view>);
 static_assert(!reflection::Decodable<std::string_view>);
 
@@ -245,13 +245,13 @@ namespace constrained {
 // never reaches decode<T>() with a target decode<T>() rejects.
 template <typename Type>
   requires reflection::Decodable<Type>
-scry::Result<Type> decode_checked(const scry::Json& json) {
+scry::Result<Type> decode_checked(const scrydantic::Json& json) {
   return reflection::decode<Type>(json);
 }
 
 template <typename Type>
 concept checked_decodable =
-    requires(const scry::Json& json) { decode_checked<Type>(json); };
+    requires(const scrydantic::Json& json) { decode_checked<Type>(json); };
 
 static_assert(checked_decodable<Payload>);
 static_assert(!checked_decodable<const Payload>);
@@ -324,7 +324,7 @@ static_assert(mentions(reflection::detail::supported_diagnostic<HoldsView>(),
 static_assert(mentions(reflection::detail::decodable_diagnostic<ConstView>(),
                        "ConstView::value: is a const member"));
 static_assert(mentions(reflection::detail::supported_diagnostic<Document>(),
-                       "scry::Json is raw JSON, which has no schema"));
+                       "scrydantic::Json is raw JSON, which has no schema"));
 static_assert(mentions(reflection::detail::tool_arguments_diagnostic<Shape>(),
                        "is not a plain aggregate; tool arguments decode from one "
                        "JSON object"));
@@ -620,19 +620,19 @@ TEST_CASE("decoding a JSON member captures the canonical text of any value") {
   CHECK_FALSE(decode_text<Payload>("{}"));
   CHECK(reflection::encode(ConstView{.value = 4})->text == R"({"value":4})");
   CHECK(decode_text<Payload>(R"({"body":"text"})")->body.text == R"("text")");
-  CHECK(decode_text<scry::Json>("[true]")->text == "[true]");
-  CHECK_FALSE(decode_text<std::optional<scry::Json>>("null")->has_value());
-  CHECK(decode_text<std::optional<scry::Json>>("{}")->value().text == "{}");
+  CHECK(decode_text<scrydantic::Json>("[true]")->text == "[true]");
+  CHECK_FALSE(decode_text<std::optional<scrydantic::Json>>("null")->has_value());
+  CHECK(decode_text<std::optional<scrydantic::Json>>("{}")->value().text == "{}");
 }
 
 TEST_CASE("JsonView serializes the viewed node canonically") {
-  const auto parsed = scry::JsonView::parse(
-      scry::Json{.text = R"({"z":[1, 2],"a":{"d":null,"c":"x"}})"});
+  const auto parsed = scrydantic::JsonView::parse(
+      scrydantic::Json{.text = R"({"z":[1, 2],"a":{"d":null,"c":"x"}})"});
   REQUIRE(parsed);
   CHECK(parsed->to_json().text == R"({"a":{"c":"x","d":null},"z":[1,2]})");
   CHECK(parsed->find("a")->to_json().text == R"({"c":"x","d":null})");
   CHECK(parsed->find("z")->at(1)->to_json().text == "2");
-  CHECK(scry::JsonView{}.to_json().text == "null");
+  CHECK(scrydantic::JsonView{}.to_json().text == "null");
 }
 
 TEST_CASE("public decoding reports invalid_argument with path-based messages") {
@@ -648,7 +648,8 @@ TEST_CASE("public decoding reports invalid_argument with path-based messages") {
   CHECK(decoded.error().message == "reflected JSON at $ must be an object");
   CHECK(decoded.error().model_message == "$ must be an object");
 
-  const auto view = scry::JsonView::parse(scry::Json{.text = R"({"a_first":"v"})"});
+  const auto view =
+      scrydantic::JsonView::parse(scrydantic::Json{.text = R"({"a_first":"v"})"});
   REQUIRE(view);
   const auto from_view = reflection::decode<Renamed>(*view);
   REQUIRE(from_view);

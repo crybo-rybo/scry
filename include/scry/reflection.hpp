@@ -12,8 +12,8 @@
 #include <scry/detail/reflection_schema.hpp>
 #include <scry/error.hpp>
 #include <scry/events.hpp>
-#include <scry/json.hpp>
 #include <scry/tool_registry.hpp>
+#include <scrydantic/json.hpp>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -32,8 +32,9 @@ namespace scry::reflection {
 /// @tparam Type Value from the Encodable family.
 /// @param value Value to encode without modifying it.
 /// @return Canonical JSON, or an ErrorCategory::tool codec error naming the path of a
-/// non-finite number, an undeclared enumerator value, or an invalid scry::Json.
-template <typename Type> [[nodiscard]] Result<Json> encode(const Type& value) {
+/// non-finite number, an undeclared enumerator value, or an invalid scrydantic::Json.
+template <typename Type>
+[[nodiscard]] Result<scrydantic::Json> encode(const Type& value) {
   constexpr std::string_view problem = detail::encodable_diagnostic<Type>();
   static_assert(problem.empty(), problem);
   if constexpr (!problem.empty()) {
@@ -53,7 +54,8 @@ template <typename Type> [[nodiscard]] Result<Json> encode(const Type& value) {
 /// @tparam Type Cv-unqualified value type from the Decodable family.
 /// @param view Parsed JSON value to decode.
 /// @return The decoded value, or the first decode failure.
-template <typename Type> [[nodiscard]] Result<Type> decode(const JsonView& view) {
+template <typename Type>
+[[nodiscard]] Result<Type> decode(const scrydantic::JsonView& view) {
   constexpr std::string_view problem = detail::decodable_diagnostic<Type>();
   static_assert(problem.empty(), problem);
   if constexpr (!problem.empty()) {
@@ -75,8 +77,9 @@ template <typename Type> [[nodiscard]] Result<Type> decode(const JsonView& view)
 /// @tparam Type Cv-unqualified value type from the Decodable family.
 /// @param json JSON text to parse and decode.
 /// @return The decoded value, or the parse or decode failure.
-template <typename Type> [[nodiscard]] Result<Type> decode(const Json& json) {
-  auto parsed = JsonView::parse(json);
+template <typename Type>
+[[nodiscard]] Result<Type> decode(const scrydantic::Json& json) {
+  auto parsed = scrydantic::JsonView::parse(json);
   if (!parsed) {
     return std::unexpected(Error{
         .category = ErrorCategory::invalid_argument,
@@ -112,8 +115,8 @@ template <typename Answer> [[nodiscard]] ResponseFormat response_format() {
     return {};
   } else {
     return ResponseFormat{
-        .schema = Json{.text = std::string{input_schema_v<Answer>}},
-        .validate = [](const Json& answer) -> Status {
+        .schema = scrydantic::Json{.text = std::string{input_schema_v<Answer>}},
+        .validate = [](const scrydantic::Json& answer) -> Status {
           auto decoded = reflection::decode<Answer>(answer);
           if (!decoded) {
             return std::unexpected(std::move(decoded.error()));

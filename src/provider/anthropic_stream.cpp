@@ -8,7 +8,7 @@
 #include <initializer_list>
 #include <meta>
 #include <optional>
-#include <scry/json.hpp>
+#include <scrydantic/json.hpp>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -44,7 +44,7 @@ template <typename Variant>
 
 // Everything one event's handler reads or changes.
 struct EventContext {
-  const JsonView& root;
+  const scrydantic::JsonView& root;
   ProviderDecodeState& state;
   AnthropicProviderDecodeState& decode;
   std::vector<ProviderEvent>& out;
@@ -52,7 +52,7 @@ struct EventContext {
 
 // A best-effort read: an identifier that is absent or not a string is empty.
 [[nodiscard]] std::string
-request_identifier(const JsonView& root,
+request_identifier(const scrydantic::JsonView& root,
                    const std::initializer_list<std::string_view> path) {
   return std::string{string_at(root, path).value_or("")};
 }

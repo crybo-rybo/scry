@@ -32,10 +32,9 @@ separately. These headers never go into a request body.
 The disposable self-signed key and certificate under `tls/` follow the same
 "deliberate test fixture" convention. Refer to [`tls/README.md`](tls/README.md).
 
-`json/` holds a different type of golden file. It records the acceptance
-boundary and the canonical bytes of the JSON layer of the kernel. The
-third-party codec that this layer replaced generated these files. See
-[`json/README.md`](json/README.md).
+The golden files of the JSON layer, which record its acceptance boundary and
+its canonical bytes, moved with the layer into Scrydantic. See
+[`scrydantic/tests/fixtures/json/README.md`](../../scrydantic/tests/fixtures/json/README.md).
 
 There is no golden file for OpenAI streaming. `openai_stream_tests.cpp` builds
 each chunk from a template, so it can change one field at a time. The

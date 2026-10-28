@@ -110,7 +110,7 @@ struct ReferenceHandler {
 };
 
 struct RawJsonHandler {
-  scry::Json operator()(PresenceArguments) const { return {}; }
+  scrydantic::Json operator()(PresenceArguments) const { return {}; }
 };
 
 struct VoidHandler {
@@ -161,9 +161,10 @@ struct StatusHandler {
 
 template <scry::reflection::SupportedValue Type>
 [[nodiscard]] scry::Result<Type> decode_value(const std::string_view text) {
-  auto parsed = scry::JsonView::parse(scry::Json{.text = std::string{text}});
+  auto parsed =
+      scrydantic::JsonView::parse(scrydantic::Json{.text = std::string{text}});
   if (!parsed) {
-    return std::unexpected(std::move(parsed.error()));
+    return std::unexpected(scry::Error{.message = std::move(parsed.error().message)});
   }
   return scry::reflection::detail::decode<Type>(*parsed);
 }
@@ -248,7 +249,7 @@ static_assert(
 
 TEST_CASE("reflected decoding preserves defaults and required nullability") {
   auto decoded = scry::reflection::detail::decode_arguments<PresenceArguments>(
-      scry::Json{.text = R"({"nullable":null,"required":"Detroit"})"});
+      scrydantic::Json{.text = R"({"nullable":null,"required":"Detroit"})"});
 
   REQUIRE(decoded);
   CHECK(decoded->defaulted == "fallback");
@@ -260,7 +261,7 @@ TEST_CASE("reflected decoding preserves defaults and required nullability") {
 TEST_CASE("reflected decode failures carry a schema-derived model message") {
   const auto model_message = [](const std::string_view text) {
     auto decoded = scry::reflection::detail::decode_arguments<AllTypesArguments>(
-        scry::Json{.text = std::string{text}});
+        scrydantic::Json{.text = std::string{text}});
     REQUIRE_FALSE(decoded);
     // The model copy is the host copy without the library-facing prefix.
     CHECK(decoded.error().message ==
@@ -291,14 +292,14 @@ TEST_CASE("reflected decode failures carry a schema-derived model message") {
         "$.unit is not a declared enumerator; must be one of: celsius, fahrenheit");
 
   auto required = scry::reflection::detail::decode_arguments<PresenceArguments>(
-      scry::Json{.text = R"({"required":"Detroit"})"});
+      scrydantic::Json{.text = R"({"required":"Detroit"})"});
   REQUIRE_FALSE(required);
   CHECK(required.error().message ==
         "reflected JSON at $.nullable is a required member");
   CHECK(required.error().model_message == "$.nullable is a required member");
 
   auto malformed = scry::reflection::detail::decode_arguments<PresenceArguments>(
-      scry::Json{.text = "{"});
+      scrydantic::Json{.text = "{"});
   REQUIRE_FALSE(malformed);
   CHECK(malformed.error().category == scry::ErrorCategory::tool);
   CHECK(malformed.error().message == "reflected tool arguments are not valid JSON");
@@ -307,7 +308,7 @@ TEST_CASE("reflected decode failures carry a schema-derived model message") {
 
 TEST_CASE("reflected codec round trips every supported composite family") {
   auto decoded = scry::reflection::detail::decode_arguments<
-      AllTypesArguments>(scry::Json{
+      AllTypesArguments>(scrydantic::Json{
       .text =
           R"({"fixed":[1,2],"flag":true,"nested":{"label":"indoors"},"ratio":0.1,"unit":"fahrenheit","values":[3,4]})"});
 
@@ -328,15 +329,16 @@ TEST_CASE("reflected codec round trips every supported composite family") {
 
 TEST_CASE("reflected numeric decoding accepts exact boundaries and signs") {
   auto decoded =
-      scry::reflection::detail::decode_arguments<NumericArguments>(scry::Json{
+      scry::reflection::detail::decode_arguments<NumericArguments>(scrydantic::Json{
           .text = R"({"floating":7,"signed_value":-32768,"unsigned_value":65535})"});
   REQUIRE(decoded);
   CHECK(decoded->floating == 7.0F);
   CHECK(decoded->signed_value == std::int16_t{-32768});
   CHECK(decoded->unsigned_value == std::uint16_t{65535});
 
-  decoded = scry::reflection::detail::decode_arguments<NumericArguments>(
-      scry::Json{.text = R"({"floating":1e39,"signed_value":0,"unsigned_value":1})"});
+  decoded =
+      scry::reflection::detail::decode_arguments<NumericArguments>(scrydantic::Json{
+          .text = R"({"floating":1e39,"signed_value":0,"unsigned_value":1})"});
   REQUIRE_FALSE(decoded);
   CHECK(decoded.error().message ==
         "reflected JSON at $.floating must be a finite in-range number");
@@ -550,10 +552,11 @@ TEST_CASE("reflected erased handlers encode copy-only results without extra copi
   const auto run_handler = [](auto body) {
     auto handler =
         scry::reflection::detail::make_tool_handler<PresenceArguments>(std::move(body));
-    return handler({}, scry::Json{.text = R"({"nullable":null,"required":"ok"})"});
+    return handler({},
+                   scrydantic::Json{.text = R"({"nullable":null,"required":"ok"})"});
   };
 
-  scry::Result<scry::Json> result{};
+  scry::Result<scrydantic::Json> result{};
   SECTION("bare result") {
     result = run_handler(
         [](PresenceArguments) { return CopyOnlyResult{.values = {1, 2, 3}}; });
@@ -577,7 +580,7 @@ TEST_CASE("reflected erased handlers encode a Result of a const-qualified value"
       ConstExpectedHandler{});
 
   const auto result =
-      handler({}, scry::Json{.text = R"({"nullable":null,"required":"ok"})"});
+      handler({}, scrydantic::Json{.text = R"({"nullable":null,"required":"ok"})"});
 
   REQUIRE(result);
   CHECK(result->text == "7");
@@ -616,7 +619,8 @@ TEST_CASE("encoding a named reflected error preserves the caller's error") {
 }
 
 TEST_CASE("reflected handlers returning void or Status acknowledge with an object") {
-  const auto arguments = scry::Json{.text = R"({"nullable":null,"required":"ok"})"};
+  const auto arguments =
+      scrydantic::Json{.text = R"({"nullable":null,"required":"ok"})"};
   int calls = 0;
   auto acknowledging = scry::reflection::detail::make_tool_handler<PresenceArguments>(
       [&calls](PresenceArguments) { ++calls; });
@@ -631,7 +635,8 @@ TEST_CASE("reflected handlers returning void or Status acknowledge with an objec
   REQUIRE(result);
   CHECK(result->text == "{}");
 
-  result = status({}, scry::Json{.text = R"({"nullable":null,"required":"reject"})"});
+  result =
+      status({}, scrydantic::Json{.text = R"({"nullable":null,"required":"reject"})"});
   REQUIRE_FALSE(result);
   CHECK(result.error().model_message == "rejected by the handler");
 }
@@ -649,15 +654,17 @@ TEST_CASE("reflected erased handlers retain move-only captures and typed errors"
         return NestedResult{.label = *owned + ":" + arguments.required};
       });
 
-  auto result = handler({}, scry::Json{.text = R"({"nullable":null,"required":"ok"})"});
+  auto result =
+      handler({}, scrydantic::Json{.text = R"({"nullable":null,"required":"ok"})"});
   REQUIRE(result);
   CHECK(result->text == R"({"label":"handled:ok"})");
 
-  result = handler({}, scry::Json{.text = R"({"nullable":null,"required":"reject"})"});
+  result =
+      handler({}, scrydantic::Json{.text = R"({"nullable":null,"required":"reject"})"});
   REQUIRE_FALSE(result);
   CHECK(result.error().message == "application rejected arguments");
 
-  result = handler({}, scry::Json{.text = R"({"required":"missing nullable"})"});
+  result = handler({}, scrydantic::Json{.text = R"({"required":"missing nullable"})"});
   REQUIRE_FALSE(result);
   CHECK(result.error().category == scry::ErrorCategory::tool);
 }
@@ -705,7 +712,7 @@ TEST_CASE("tool manifests include reflected and explicit contracts together") {
       {.name = "explicit",
        .description = "Explicit arguments",
        .input_schema = {.text = R"({"type":"object"})"}},
-      [](scry::Json input) -> scry::Result<scry::Json> { return input; }));
+      [](scrydantic::Json input) -> scry::Result<scrydantic::Json> { return input; }));
 
   const auto manifest = harness->tools().to_json();
   REQUIRE(manifest);
@@ -745,7 +752,8 @@ TEST_CASE("reflected handlers may take the call context as a leading parameter")
   const auto snapshot =
       scry::detail::ToolRegistryAccess::snapshot(harness.tools()).entries;
   REQUIRE(snapshot);
-  const auto arguments = scry::Json{.text = R"({"nullable":null,"required":"value"})"};
+  const auto arguments =
+      scrydantic::Json{.text = R"({"nullable":null,"required":"value"})"};
 
   const auto contextual = scry::detail::dispatch_tool(
       *snapshot,

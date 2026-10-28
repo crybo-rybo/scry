@@ -3,8 +3,8 @@
 #include <cstddef>
 #include <memory>
 #include <scry/error.hpp>
-#include <scry/json.hpp>
 #include <scry/message.hpp>
+#include <scrydantic/json.hpp>
 #include <string>
 #include <vector>
 
@@ -39,7 +39,7 @@ public:
   /// @param json Versioned Scry conversation document.
   /// @return The restored conversation, or ErrorCategory::invalid_config if the
   /// document is malformed, unsupported, or exceeds structural constraints.
-  [[nodiscard]] static Result<Conversation> from_json(const Json& json);
+  [[nodiscard]] static Result<Conversation> from_json(const scrydantic::Json& json);
 
   /// Destroys this handle and its committed history when no live turn retains the
   /// state.
@@ -92,7 +92,7 @@ public:
   /// Busy state and an active turn's uncommitted exchange are deliberately excluded.
   /// @return The serialized document, or an error if the current state cannot be
   /// encoded.
-  [[nodiscard]] Result<Json> to_json() const;
+  [[nodiscard]] Result<scrydantic::Json> to_json() const;
 
 private:
   class Impl;

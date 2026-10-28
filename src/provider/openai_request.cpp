@@ -46,7 +46,7 @@ struct[[= reflection::skip_null]] OpenAiMessage {
 struct OpenAiToolFunction {
   std::string_view name;
   std::string_view description;
-  const Json& parameters;
+  const scrydantic::Json& parameters;
 };
 
 struct OpenAiTool {
@@ -65,8 +65,8 @@ struct[[= reflection::skip_null]] OpenAiBody {
   // "required" makes the model call one of the offered tools; a typed turn sends
   // it so the model answers through its response tool.
   std::optional<std::string_view> tool_choice;
-  Json temperature;
-  std::optional<Json> top_p;
+  scrydantic::Json temperature;
+  std::optional<scrydantic::Json> top_p;
   std::optional<std::uint32_t> max_tokens;
   std::optional<std::uint32_t> seed;
   std::optional<std::string_view> reasoning_effort;

@@ -4,7 +4,7 @@
 #include <string>
 #include <string_view>
 
-namespace scry::detail::json {
+namespace scrydantic::detail::json {
 
 // Converts a JSON number token, [first, last), that the scanner has already checked
 // against the RFC 8259 grammar to the nearest double, ties to even. Returns empty when
@@ -21,4 +21,4 @@ namespace scry::detail::json {
 // exponent zeros (1E-5, 1E16, 1.5E300). Zero is "0" and negative zero "-0".
 void append_double(std::string& output, double value);
 
-} // namespace scry::detail::json
+} // namespace scrydantic::detail::json

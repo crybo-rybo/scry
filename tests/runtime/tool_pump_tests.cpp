@@ -14,9 +14,10 @@ TEST_CASE("pump executes tool handlers on the update caller thread") {
   PumpFixture fixture;
   std::thread::id handler_thread{};
   const scry::detail::ToolSnapshot tools{registered_tool(
-      "forecast", [&handler_thread](scry::Json) -> scry::Result<scry::Json> {
+      "forecast",
+      [&handler_thread](scrydantic::Json) -> scry::Result<scrydantic::Json> {
         handler_thread = std::this_thread::get_id();
-        return scry::Json{.text = "null"};
+        return scrydantic::Json{.text = "null"};
       })};
   const auto route = fixture.add(301, {.tools = frozen_tools(tools)});
   REQUIRE(fixture.events->push(tool_event(route->id()), 1024));
@@ -31,13 +32,13 @@ TEST_CASE("pump executes tool handlers on the update caller thread") {
 
 TEST_CASE("pump queues a tool result before notifying the ToolCall observer") {
   PumpFixture fixture;
-  const scry::detail::ToolSnapshot tools{
-      registered_tool("forecast", [](scry::Json) -> scry::Result<scry::Json> {
-        return scry::Json{.text = R"({"ok":true})"};
+  const scry::detail::ToolSnapshot tools{registered_tool(
+      "forecast", [](scrydantic::Json) -> scry::Result<scrydantic::Json> {
+        return scrydantic::Json{.text = R"({"ok":true})"};
       })};
   std::size_t queued_when_observed = 0;
   std::string observed_id;
-  scry::Json observed_result{};
+  scrydantic::Json observed_result{};
   bool observed_is_error = true;
   const auto route = fixture.add(302, {
                                           .tools = frozen_tools(tools),
@@ -72,15 +73,15 @@ TEST_CASE("the observed ToolCall carries every field of the call it answers") {
   std::string handler_call_id;
   std::string handler_tool_name;
   std::string handler_arguments;
-  const scry::detail::ToolSnapshot tools{
-      registered_tool("forecast",
-                      [&](const scry::ToolCallContext& context,
-                          scry::Json arguments) -> scry::Result<scry::Json> {
-                        handler_call_id = context.call_id;
-                        handler_tool_name = context.tool_name;
-                        handler_arguments = arguments.text;
-                        return scry::Json{.text = R"({"ok":true})"};
-                      })};
+  const scry::detail::ToolSnapshot tools{registered_tool(
+      "forecast",
+      [&](const scry::ToolCallContext& context,
+          scrydantic::Json arguments) -> scry::Result<scrydantic::Json> {
+        handler_call_id = context.call_id;
+        handler_tool_name = context.tool_name;
+        handler_arguments = arguments.text;
+        return scrydantic::Json{.text = R"({"ok":true})"};
+      })};
   std::string admitted_call_id;
   std::string admitted_arguments;
   std::optional<scry::ToolCall> observed;
@@ -130,7 +131,7 @@ TEST_CASE("the observed ToolCall carries every field of the call it answers") {
 TEST_CASE("an unknown tool reaches the observer as an error result") {
   PumpFixture fixture;
   const scry::detail::ToolSnapshot tools{};
-  scry::Json observed_result{};
+  scrydantic::Json observed_result{};
   bool observed_is_error = false;
   std::size_t observer_calls = 0;
   const auto route = fixture.add(303, {
@@ -168,15 +169,15 @@ TEST_CASE("cancellation during a handler suppresses its result and later calls")
   bool cancellation_requested = false;
   scry::detail::ToolSnapshot tools{
       registered_tool("first",
-                      [&](scry::Json) -> scry::Result<scry::Json> {
+                      [&](scrydantic::Json) -> scry::Result<scrydantic::Json> {
                         ++first_calls;
                         cancellation_requested = route->cancel();
-                        return scry::Json{.text = R"({"first":true})"};
+                        return scrydantic::Json{.text = R"({"first":true})"};
                       }),
       registered_tool("second",
-                      [&](scry::Json) -> scry::Result<scry::Json> {
+                      [&](scrydantic::Json) -> scry::Result<scrydantic::Json> {
                         ++second_calls;
-                        return scry::Json{.text = R"({"second":true})"};
+                        return scrydantic::Json{.text = R"({"second":true})"};
                       }),
   };
   route = fixture.add(
@@ -209,16 +210,18 @@ TEST_CASE("fatal tool result failure suppresses every later handler") {
   std::size_t first_calls = 0;
   std::size_t second_calls = 0;
   const scry::detail::ToolSnapshot tools{
-      registered_tool("first",
-                      [&first_calls](scry::Json) -> scry::Result<scry::Json> {
-                        ++first_calls;
-                        return scry::Json{.text = R"({"oversized":true})"};
-                      }),
-      registered_tool("second",
-                      [&second_calls](scry::Json) -> scry::Result<scry::Json> {
-                        ++second_calls;
-                        return scry::Json{.text = "{}"};
-                      }),
+      registered_tool(
+          "first",
+          [&first_calls](scrydantic::Json) -> scry::Result<scrydantic::Json> {
+            ++first_calls;
+            return scrydantic::Json{.text = R"({"oversized":true})"};
+          }),
+      registered_tool(
+          "second",
+          [&second_calls](scrydantic::Json) -> scry::Result<scrydantic::Json> {
+            ++second_calls;
+            return scrydantic::Json{.text = "{}"};
+          }),
   };
   const auto route =
       fixture.add(306, {.tools = frozen_tools(tools), .max_tool_result_bytes = 2});
@@ -240,9 +243,9 @@ TEST_CASE("cumulative result failure suppresses remaining calls in the batch") {
   PumpFixture fixture;
   std::array<std::size_t, 3> calls{};
   const auto handler = [&calls](const std::size_t index) {
-    return [&calls, index](scry::Json) -> scry::Result<scry::Json> {
+    return [&calls, index](scrydantic::Json) -> scry::Result<scrydantic::Json> {
       ++calls[index];
-      return scry::Json{.text = "{}"};
+      return scrydantic::Json{.text = "{}"};
     };
   };
   const scry::detail::ToolSnapshot tools{
@@ -272,9 +275,9 @@ TEST_CASE("detached routes continue dispatching tool calls") {
   PumpFixture fixture;
   std::size_t handler_calls = 0;
   const scry::detail::ToolSnapshot tools{registered_tool(
-      "forecast", [&handler_calls](scry::Json) -> scry::Result<scry::Json> {
+      "forecast", [&handler_calls](scrydantic::Json) -> scry::Result<scrydantic::Json> {
         ++handler_calls;
-        return scry::Json{.text = R"({"ok":true})"};
+        return scrydantic::Json{.text = R"({"ok":true})"};
       })};
   const auto route = fixture.add(304, {.tools = frozen_tools(tools)});
   route->detach();
@@ -292,9 +295,9 @@ TEST_CASE("a terminal route suppresses a previously buffered tool call") {
   std::size_t observer_calls = 0;
   bool completed = false;
   const scry::detail::ToolSnapshot tools{registered_tool(
-      "forecast", [&handler_calls](scry::Json) -> scry::Result<scry::Json> {
+      "forecast", [&handler_calls](scrydantic::Json) -> scry::Result<scrydantic::Json> {
         ++handler_calls;
-        return scry::Json{.text = R"({"ok":true})"};
+        return scrydantic::Json{.text = R"({"ok":true})"};
       })};
   const auto route = fixture.add(
       305, {
@@ -333,10 +336,10 @@ TEST_CASE("an admission hook refuses one call and lets the next through") {
   std::string second_request_arguments;
   std::vector<bool> observed_errors;
   std::vector<std::string> observed_results;
-  const scry::detail::ToolSnapshot tools{
-      registered_tool("forecast", [&](scry::Json) -> scry::Result<scry::Json> {
+  const scry::detail::ToolSnapshot tools{registered_tool(
+      "forecast", [&](scrydantic::Json) -> scry::Result<scrydantic::Json> {
         ++handler_calls;
-        return scry::Json{.text = R"({"ok":true})"};
+        return scrydantic::Json{.text = R"({"ok":true})"};
       })};
   const auto route = fixture.add(
       310, {
@@ -389,9 +392,9 @@ TEST_CASE("the per-turn call limit refuses calls past it without failing the tur
   std::size_t admissions = 0;
   std::vector<std::string> observed_results;
   const scry::detail::ToolSnapshot tools{registered_tool(
-      "forecast", [&handler_calls](scry::Json) -> scry::Result<scry::Json> {
+      "forecast", [&handler_calls](scrydantic::Json) -> scry::Result<scrydantic::Json> {
         ++handler_calls;
-        return scry::Json{.text = R"({"ok":true})"};
+        return scrydantic::Json{.text = R"({"ok":true})"};
       })};
   const auto route = fixture.add(
       311, {
@@ -429,9 +432,9 @@ TEST_CASE("an unknown tool spends the call limit without consulting the hook") {
   PumpFixture fixture;
   std::size_t admissions = 0;
   std::vector<std::string> observed_results;
-  const scry::detail::ToolSnapshot tools{
-      registered_tool("forecast", [](scry::Json) -> scry::Result<scry::Json> {
-        return scry::Json{.text = R"({"ok":true})"};
+  const scry::detail::ToolSnapshot tools{registered_tool(
+      "forecast", [](scrydantic::Json) -> scry::Result<scrydantic::Json> {
+        return scrydantic::Json{.text = R"({"ok":true})"};
       })};
   const auto route = fixture.add(
       312, {
@@ -468,9 +471,9 @@ TEST_CASE("a throwing admission hook refuses the call and the turn continues") {
   std::size_t handler_calls = 0;
   std::vector<std::string> observed_results;
   const scry::detail::ToolSnapshot tools{registered_tool(
-      "forecast", [&handler_calls](scry::Json) -> scry::Result<scry::Json> {
+      "forecast", [&handler_calls](scrydantic::Json) -> scry::Result<scrydantic::Json> {
         ++handler_calls;
-        return scry::Json{.text = R"({"ok":true})"};
+        return scrydantic::Json{.text = R"({"ok":true})"};
       })};
   const auto route =
       fixture.add(313, {
@@ -505,9 +508,9 @@ TEST_CASE("an admission hook that disconnects suppresses its own observation") {
   std::shared_ptr<scry::detail::TurnRoute> route;
   std::size_t observer_calls = 0;
   bool disconnected = false;
-  const scry::detail::ToolSnapshot tools{
-      registered_tool("forecast", [](scry::Json) -> scry::Result<scry::Json> {
-        return scry::Json{.text = R"({"ok":true})"};
+  const scry::detail::ToolSnapshot tools{registered_tool(
+      "forecast", [](scrydantic::Json) -> scry::Result<scrydantic::Json> {
+        return scrydantic::Json{.text = R"({"ok":true})"};
       })};
   route = fixture.add(
       314,
@@ -545,9 +548,9 @@ TEST_CASE("an admission hook that cancels stops the call it admitted") {
   std::size_t observer_calls = 0;
   bool cancellation_requested = false;
   const scry::detail::ToolSnapshot tools{registered_tool(
-      "forecast", [&handler_calls](scry::Json) -> scry::Result<scry::Json> {
+      "forecast", [&handler_calls](scrydantic::Json) -> scry::Result<scrydantic::Json> {
         ++handler_calls;
-        return scry::Json{.text = R"({"ok":true})"};
+        return scrydantic::Json{.text = R"({"ok":true})"};
       })};
   route = fixture.add(
       315,

@@ -8,7 +8,7 @@
 #include <cstdint>
 #include <optional>
 #include <scry/annotations.hpp>
-#include <scry/json.hpp>
+#include <scrydantic/json.hpp>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -41,7 +41,7 @@ struct[[ = reflection::ignore_unknown, = reflection::skip_null ]] OpenAiDelta {
   std::optional<std::string> role;
   std::optional<std::string> content;
   std::optional<std::vector<OpenAiToolFragment>> tool_calls;
-  std::optional<Json> function_call;
+  std::optional<scrydantic::Json> function_call;
 };
 
 struct[[ = reflection::ignore_unknown, = reflection::skip_null ]] OpenAiChoice {
@@ -108,7 +108,7 @@ openai_error_category(const std::string_view token) noexcept {
 
 // A payload carrying an `error` member, of any value, is an error however the
 // event was named.
-[[nodiscard]] bool is_error_root(const JsonView& root) {
+[[nodiscard]] bool is_error_root(const scrydantic::JsonView& root) {
   return root.find("error").has_value();
 }
 
@@ -116,7 +116,7 @@ openai_error_category(const std::string_view token) noexcept {
 // specific category wins, type first; otherwise the first of the two that is
 // present labels a protocol error, and a numeric "code" is the last resort. The
 // provider's message and the raw body are never surfaced.
-[[nodiscard]] Error stream_error(const JsonView& root) {
+[[nodiscard]] Error stream_error(const scrydantic::JsonView& root) {
   constexpr auto message =
       std::string_view{"OpenAI-compatible stream returned an error"};
   const auto type = error_token(root, "type");
@@ -130,10 +130,10 @@ openai_error_category(const std::string_view token) noexcept {
     }
   }
   std::string token = type ? *type : code.value_or("unknown_error");
-  const auto numeric =
-      member_at(root, {"error", "code"}).and_then([](const JsonView& value) {
-        return value.unsigned_integer();
-      });
+  const auto numeric = member_at(root, {"error", "code"})
+                           .and_then([](const scrydantic::JsonView& value) {
+                             return value.unsigned_integer();
+                           });
   if (!type && !code && numeric) {
     token = std::to_string(*numeric);
   }
@@ -268,7 +268,7 @@ apply_tool_fragments(const std::optional<std::vector<OpenAiToolFragment>>& fragm
     state.response.content.push_back(ToolCallBlock{
         .id = std::move(tool.id),
         .name = std::move(tool.name),
-        .arguments = Json{.text = std::move(tool.arguments)},
+        .arguments = scrydantic::Json{.text = std::move(tool.arguments)},
     });
     ++expected_index;
   }

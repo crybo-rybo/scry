@@ -4,7 +4,7 @@
 #include <scry/detail/reflection_decode.hpp>
 #include <scry/detail/reflection_encode.hpp>
 #include <scry/detail/reflection_meta.hpp>
-#include <scry/json.hpp>
+#include <scrydantic/json.hpp>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -30,7 +30,7 @@ template <typename Type> using CodecResult = reflection::detail::codec_result<Ty
 
 // Decodes by the rules reflection::decode() applies.
 template <typename Type>
-[[nodiscard]] CodecResult<Type> decode_value(const JsonView& view) {
+[[nodiscard]] CodecResult<Type> decode_value(const scrydantic::JsonView& view) {
   constexpr std::string_view problem = reflection::detail::decodable_diagnostic<Type>();
   static_assert(problem.empty(), problem);
   return reflection::detail::read_value<Type>(view);
@@ -38,7 +38,7 @@ template <typename Type>
 
 // Encodes without the canonicalizing pass reflection::encode() ends with. Keys are
 // in canonical order and strings carry the canonical escapes, so the text is
-// canonical apart from number spelling and the bytes of spliced scry::Json
+// canonical apart from number spelling and the bytes of spliced scrydantic::Json
 // payloads, each of which the codec has validated.
 template <typename Type>
 [[nodiscard]] CodecResult<std::string> encode_text(const Type& value) {

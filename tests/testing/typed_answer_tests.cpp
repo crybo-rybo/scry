@@ -4,6 +4,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <chrono>
 #include <cstddef>
+#include <expected>
 #include <optional>
 #include <scry/scry.hpp>
 #include <scry/testing/scripted_server.hpp>
@@ -61,7 +62,9 @@ constexpr std::string_view canonical_answer =
   return {.id = id, .name = "respond", .arguments = arguments};
 }
 
-template <typename Value> [[nodiscard]] Value unwrap(scry::Result<Value> result) {
+// Scry's own results and Scrydantic's alike.
+template <typename Value, typename Error>
+[[nodiscard]] Value unwrap(std::expected<Value, Error> result) {
   REQUIRE(result);
   return std::move(*result);
 }
@@ -73,7 +76,7 @@ template <typename Value> [[nodiscard]] Value unwrap(scry::Result<Value> result)
 // Both dialects encode the committed answer as an assistant text block; a JSON
 // string escapes its quotes.
 [[nodiscard]] std::string escaped(const std::string_view json) {
-  auto quoted = scry::escape_json_string(json);
+  auto quoted = scrydantic::escape_json_string(json);
   return quoted.substr(1, quoted.size() - 2);
 }
 
@@ -248,7 +251,8 @@ TEST_CASE("an Anthropic follow-up after a rejected answer alternates roles") {
 
   static_cast<void>(unwrap(harness.send_and_wait(conversation, "Thanks.")));
   const auto follow_up = server.requests().back().body;
-  const auto body = unwrap(scry::JsonView::parse(scry::Json{.text = follow_up}));
+  const auto body =
+      unwrap(scrydantic::JsonView::parse(scrydantic::Json{.text = follow_up}));
   const auto messages = body.find("messages");
   REQUIRE(messages);
   std::vector<std::string> roles;
@@ -292,7 +296,7 @@ TEST_CASE("the per-turn call limit tells a typed turn to finish on its response 
       scry::ResponseFormat{
           .name = "verdict",
           .schema = {.text = std::string{scry::reflection::input_schema_v<Verdict>}},
-          .validate = [&validated](const scry::Json& answer) -> scry::Status {
+          .validate = [&validated](const scrydantic::Json& answer) -> scry::Status {
             validated.push_back(answer.text);
             return {};
           },

@@ -178,10 +178,10 @@ TEST_CASE("OpenAI-compatible config drives a fragmented transactional tool round
   std::string arguments;
   std::thread::id handler_thread;
   REQUIRE(harness.tools().add_dynamic(
-      lookup_tool(), [&](scry::Json value) -> scry::Result<scry::Json> {
+      lookup_tool(), [&](scrydantic::Json value) -> scry::Result<scrydantic::Json> {
         arguments = std::move(value.text);
         handler_thread = std::this_thread::get_id();
-        return scry::Json{.text = R"({"forecast":"sunny"})"};
+        return scrydantic::Json{.text = R"({"forecast":"sunny"})"};
       }));
   auto conversation = scry::Conversation::create(
       {.system_prompt = "Use the lookup tool before answering."});

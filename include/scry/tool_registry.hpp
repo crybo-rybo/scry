@@ -12,8 +12,8 @@
 #include <scry/detail/reflection_schema.hpp>
 #include <scry/detail/reflection_tools.hpp>
 #include <scry/error.hpp>
-#include <scry/json.hpp>
 #include <scry/tool.hpp>
+#include <scrydantic/json.hpp>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -233,7 +233,7 @@ public:
   /// in-flight turn's frozen tool set. Object keys are emitted in lexical order.
   /// @return Canonical JSON, or ErrorCategory::invalid_state if the registry is
   /// inactive or its manifest cannot be encoded.
-  [[nodiscard]] Result<Json> to_json() const;
+  [[nodiscard]] Result<scrydantic::Json> to_json() const;
 
 private:
   class Impl;
@@ -266,7 +266,8 @@ Status ToolRegistry::add(ToolMetadata metadata, Handler&& handler) {
               .name = std::move(metadata.name),
               .description = std::move(metadata.description),
               .input_schema =
-                  Json{.text = std::string{reflection::input_schema_v<Args>}},
+                  scrydantic::Json{.text =
+                                       std::string{reflection::input_schema_v<Args>}},
           },
           reflection::detail::make_tool_handler<Args>(std::forward<Handler>(handler)));
     }

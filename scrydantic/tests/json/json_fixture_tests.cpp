@@ -1,9 +1,9 @@
-// Golden fixtures for Scry's JSON layer (kernel/json/document.hpp), unpacked by
+// Golden fixtures for Scrydantic's JSON core (src/json/document.hpp), unpacked by
 // the build from tests/fixtures/json/goldens.tar.xz, whose README gives their
 // provenance and format. They keep the parser's acceptance boundary and the
 // canonical writer's bytes fixed.
 
-#include "kernel/json/document.hpp"
+#include "json/document.hpp"
 
 #include <algorithm>
 #include <catch2/catch_test_macros.hpp>
@@ -21,7 +21,7 @@
 
 namespace {
 
-namespace json = scry::detail::json;
+namespace json = scrydantic::detail::json;
 namespace fs = std::filesystem;
 
 struct Fixture {
@@ -147,7 +147,7 @@ using Ranges = std::vector<std::pair<std::size_t, std::size_t>>;
 } // namespace
 
 TEST_CASE("the JSON layer matches every golden fixture") {
-  const auto fixtures = all_fixtures(SCRY_JSON_FIXTURE_DIR);
+  const auto fixtures = all_fixtures(SCRYDANTIC_JSON_FIXTURE_DIR);
   REQUIRE(fixtures.size() > 1000);
   for (const auto& fixture : fixtures) {
     INFO(fixture.location);
@@ -172,8 +172,8 @@ TEST_CASE(
   // every prefix of every checked-in corpus file is replayed: the lengths the
   // fixture lists must parse and every other length must not.
   const auto accepted =
-      accepted_prefixes(fs::path{SCRY_JSON_FIXTURE_DIR} / "corpus_prefixes.list");
-  const fs::path corpus_root{SCRY_FUZZ_CORPUS_DIR};
+      accepted_prefixes(fs::path{SCRYDANTIC_JSON_FIXTURE_DIR} / "corpus_prefixes.list");
+  const fs::path corpus_root{SCRYDANTIC_FUZZ_CORPUS_DIR};
   const auto files = files_under(corpus_root, "");
   REQUIRE(files.size() > 100);
   std::size_t prefixes = 0;
