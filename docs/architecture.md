@@ -6,9 +6,12 @@ results back to the server, and it commits the conversation history when a turn
 succeeds. The host calls `Harness::update()` to run tools and to deliver
 callbacks on the host thread.
 
-The public headers under `include/scry/` define the API. For a complete program,
-see [README.md](../README.md). For build and test instructions, see
-[contributing.md](contributing.md).
+The public headers under `include/scry/` define the API. The reflection layer,
+which is the annotations, the JSON types, the strict codec, the schema generator,
+and the tool binding, is a separate library, Scrydantic, under `scrydantic/`.
+Scry links it, and Scry's public API uses its types, such as `scrydantic::Json`.
+For a complete program, see [README.md](../README.md). For build and test
+instructions, see [contributing.md](contributing.md).
 
 ## Public API
 
@@ -350,7 +353,7 @@ schema, the decoder, and the encoder. Thus these three cannot disagree.
 `examples/toolbox.cpp` shows each form.
 
 - **A toolbox.** `ToolRegistry::add(std::shared_ptr<T>)` registers each member
-  function of `T` that has the `scry::reflection::tool` annotation. Each tool is
+  function of `T` that has the `scrydantic::tool` annotation. Each tool is
   bound to that one object. `add(T&&)` first moves the object into the registry
   and then does the same. Thus the registry owns the only copy.
 - **Annotated functions.** `add<^^forecast>()` registers one annotated function.
@@ -377,7 +380,7 @@ overload. Thus units that see different declarations instantiate different
 specializations, and the linker cannot merge them.
 
 An annotated function has the name of its identifier. A
-`scry::reflection::name{"..."}` annotation on the function replaces this name.
+`scrydantic::name{"..."}` annotation on the function replaces this name.
 The description is the text of the `tool` annotation, and this text must not be
 empty. These are errors:
 
@@ -451,15 +454,15 @@ handler can take a leading `const ToolCallContext&`. `ToolHandlerFor` accepts
 either arity, and it prefers the contextual form. If the context is the last
 parameter of a handler, the handler does not compile.
 
-Handlers and tool functions return a supported value, a `Result` of one, `void`,
-or `Status`. Scry encodes a value as the tool result. `void` and a successful
+Handlers and tool functions return a supported value, a `scrydantic::Result` of
+one, `void`, or `scrydantic::Status`. Scry encodes a value as the tool result. `void` and a successful
 `Status` both send `{}`, because a tool that acts for its side effects has
 nothing to report other than success. A failed `Status` or `Result` is a handler
 error, as any other handler error is. Scry encodes the returned object without
 an additional copy or move. This is also true for aggregates whose
 user-declared destructor suppresses an implicit move constructor. Raw `Json`,
 references, futures, and awaitables are not reflected result types.
-`reflection::encode(value)` uses the same value encoder, and it does not require
+`scrydantic::encode(value)` uses the same value encoder, and it does not require
 registration.
 
 Handlers run synchronously on the host thread, inside `Harness::update()`. Thus
@@ -470,13 +473,13 @@ Scry releases the toolbox on the host thread. The registry never borrows an
 object. An lvalue passed to `add(T&&)` is a compile error. Instead, a host can
 pass a `std::shared_ptr` with a no-op deleter and own the lifetime.
 
-Parameter descriptions come from P3394 `scry::reflection::description`
+Parameter descriptions come from P3394 `scrydantic::description`
 annotations on members. If one member has more than one such annotation, the
-compilation fails. `scry::reflection::description_of<View>()` builds the same
+compilation fails. `scrydantic::description_of<View>()` builds the same
 annotation from a `std::string_view` with static storage duration. Thus a host
 can keep its parameter text in one catalog.
 
-`scry::reflection::schema_v<Value>` is the same generator for any
+`scrydantic::schema_v<Value>` is the same generator for any
 `SupportedValue`, including handler result types. Scry sends only
 `input_schema_v<Args>` to a provider. Thus a result schema is only for the
 contract export of the host.
@@ -498,7 +501,7 @@ These member values and result values are supported:
   and recursively supported aggregates. Containers must support default
   construction, move construction, and move assignment.
 - `std::variant<A, B, ...>` whose alternatives are supported aggregates. Each
-  alternative has a different `scry::reflection::tag`. Scry does not support an
+  alternative has a different `scrydantic::tag`. Scry does not support an
   untagged variant, or a variant with an alternative that is not an aggregate.
 
 Only a default member initializer, or `skip_null` on a `std::optional<T>`
@@ -552,7 +555,7 @@ that type. Thus the model receives the fixed diagnostic.
 If a declaration or a type breaks a rule above, it fails to compile at `add`,
 `schema_v`, or `input_schema_v`. A `static_assert` gives the function, the member
 path, or the namespace, and the reason. An example is `ForecastArgs does not
-satisfy scry::reflection::ToolArguments: ForecastArgs::window.when:
+satisfy scrydantic::ToolArguments: ForecastArgs::window.when:
 std::chrono::duration<long int> is not a supported reflected value`. These entry
 points have no constraints, so the compiler prints this text. The concepts
 `SupportedValue`, `ToolArguments`, `ToolHandlerFor`, and `Toolbox` are the
@@ -560,8 +563,8 @@ SFINAE-friendly form of the same checks.
 
 ### Reflected codec
 
-The reflection layer is the serialization engine of Scry. Reflected tools are
-its first consumer. Their schemas, argument decoding, and result encoding are
+The reflection layer, Scrydantic, is the serialization engine of Scry. Reflected
+tools are its first consumer. Their schemas, argument decoding, and result encoding are
 this codec applied to the argument types and the result types.
 
 One compile-time model of a type drives schema generation, encoding, and
@@ -575,46 +578,48 @@ Three concepts name what the codec accepts:
   a schema, encodes, and decodes.
 - `Encodable` adds two leaves that only encode. `std::string_view` is written
   as a JSON string, for wire text that is borrowed from a different location.
-  The validation scan that request encoding uses checks `scry::Json`, and the
+  The validation scan that request encoding uses checks `scrydantic::Json`, and the
   encoder splices it verbatim. Encoding only reads. Thus an `Encodable`
   aggregate does not have to be default-constructible or movable. It can have
   `const` members, or reference members through which it borrows a value that
   it writes.
-- `Decodable` adds `scry::Json`. This leaf captures the canonical text of the
+- `Decodable` adds `scrydantic::Json`. This leaf captures the canonical text of the
   value at its position, `null` included, as `JsonView::to_json()` writes it.
-  `std::optional<scry::Json>` reads `null` as disengaged.
+  `std::optional<scrydantic::Json>` reads `null` as disengaged.
 
 These leaves have no schema. Thus they cannot be in tool arguments, in handler
 results, or in `schema_v`.
 
-`reflection::encode(value)` accepts any `Encodable` value and returns canonical
+`scrydantic::encode(value)` accepts any `Encodable` value and returns canonical
 JSON. The writer writes object keys in canonical order, and strings with the
 escapes of the canonical writer. It writes numbers in the shortest spelling that
 reads back as the same value of their own type. Thus a `float` 0.7 is written
 `0.7`. The result then goes once through the canonical writer. This writer sets
 the exponent spelling and makes spliced `Json` text canonical.
 
-The encode fails with `tool` and the path of the value for these inputs:
+The encode fails with a `scrydantic::Error` that gives the path of the value, and
+no `model_message`, for these inputs:
 
 - A number that is not finite.
 - An enumerator value that is not declared.
 - `Json` text that is not JSON.
 - A variant that an exception made valueless.
 
-`reflection::decode<T>(json)` and `decode<T>(view)` accept any `Decodable` `T`,
-and they apply the decoding rules of the previous section. They report a failure
-as `invalid_argument`. The failure has the same path-based `message` and
-`model_message` as a tool-argument failure. Thus a host can give the failure of
-a typed answer back to the model. If the text is not JSON, the failure is
-`reflected JSON text is not valid JSON`. The tool path keeps
-`ErrorCategory::tool`. A type outside the family fails to compile, and the
+`scrydantic::decode<T>(json)` and `decode<T>(view)` accept any `Decodable` `T`,
+and they apply the decoding rules of the previous section. A failure has the
+same path-based `message` and `model_message` as a tool-argument failure. Thus a
+host can give the failure of a typed answer back to the model. If the text is
+not JSON, the failure is `reflected JSON text is not valid JSON`.
+`scrydantic::Error` has no category. Scry gives one where it reports the error:
+`ErrorCategory::tool` for a reflected tool, and `invalid_argument` for a typed
+answer. A type outside the family fails to compile, and the
 diagnostic gives the member path and the reason. `Encodable` and `Decodable` are
 the SFINAE-friendly checks.
 
-`<scry/annotations.hpp>` declares the annotations. A compiler without reflection
+`<scrydantic/annotations.hpp>` declares the annotations. A compiler without reflection
 can include this header, because its types are plain structural types. Only the
 `[[= ...]]` syntax requires C++26. Put a class annotation between the class-key
-and the class name, as in `struct [[= scry::reflection::tag{"text"}]]
+and the class name, as in `struct [[= scrydantic::tag{"text"}]]
 TextBlock { ... };`. If one entity has many annotations, each annotation takes
 its own `=`. Put them in one bracket, `[[= a, = b]]`, or in separate brackets.
 
@@ -657,7 +662,7 @@ member:
 The public message model is also reflected. `TextBlock`, `ToolCallBlock`, and
 `ToolResultBlock` carry the tags `text`, `tool_call`, and `tool_result`. Thus
 `ContentBlock` is a tagged variant. A host can give a `Message`, or a vector of
-them, to `reflection::encode()` and `decode()`. The encoding is the shape of
+them, to `scrydantic::encode()` and `decode()`. The encoding is the shape of
 each message in the `Conversation::to_json()` document.
 
 Each member of the model has an initializer. Thus `decode()` reads an absent
@@ -705,6 +710,10 @@ error. If `model_message` is empty, Scry keeps its fixed diagnostic,
 included, is too large for the cap, Scry replaces it with the generic
 `tool execution failed`.
 
+A reflected handler refuses a call with `scrydantic::tool_error()`, which takes
+the same two texts. Scry reports the error of a reflected handler, or of its
+argument decoding or result encoding, as `ErrorCategory::tool`.
+
 Reflected decode failures and unknown-tool errors carry `model_message` text
 that comes from the schema. For an unknown tool, this text gives the requested
 tool name and the registered tool names. The tool list of the request already
@@ -717,13 +726,13 @@ too large, or if an error result cannot fit its bound, the turn fails with
 posts the result to the worker. It does not confirm that the server received the
 result. Cancellation or a fatal framework failure can suppress this observer.
 
-`Json` owns serialized text. `JsonView::parse()` creates a shared immutable
-parsed document. This document has scalar accessors, `find()`, `at()`, and
-ordered `key_at()` lookup. Child views can outlive their parent. `to_json()`
-writes the canonical text of only the viewed value. Invalid input returns
-`invalid_argument`.
+`scrydantic::Json` owns serialized text. `scrydantic::JsonView::parse()` creates
+a shared immutable parsed document. This document has scalar accessors,
+`find()`, `at()`, and ordered `key_at()` lookup. Child views can outlive their
+parent. `to_json()` writes the canonical text of only the viewed value. Invalid
+input returns a `scrydantic::Error` whose message is `JSON text is not valid`.
 
-`escape_json_string()` makes a quoted JSON string for results that the host
+`scrydantic::escape_json_string()` makes a quoted JSON string for results that the host
 builds by hand. It uses exactly the escapes of the canonical writer:
 
 - `\"` and `\\`.
@@ -732,11 +741,12 @@ builds by hand. It uses exactly the escapes of the canonical writer:
 
 All other bytes, `/` and non-ASCII included, go through with no change.
 
-The code of Scry parses and writes JSON. This code is the JSON layer of the
-kernel, under `src/kernel/json/`. Scry links no JSON library and exposes none.
-The rest of `src/` reads parsed JSON through `JsonView`, and it maps its own
-data shapes with the reflected codec. `src/kernel/json/document.hpp` gives the
-full contract:
+Scrydantic's JSON core parses and writes JSON, under `scrydantic/src/json/`.
+Scry links no third-party JSON library and exposes none. The kernel's
+`src/kernel/json/codec.hpp` gives the text-level operations a Scry error
+category, and the rest of `src/` reads parsed JSON through `JsonView` and maps
+its own data shapes with the reflected codec.
+`scrydantic/src/json/document.hpp` gives the full contract:
 
 - **Accepted text** is RFC 8259 JSON that holds exactly one value. Only space,
   tab, line feed, and carriage return can surround this value. The parser
@@ -785,7 +795,7 @@ not: prose, usage, attempts, and counts.
 
 `send<Answer>(conversation, text, callbacks)` is the form for a host that polls.
 Its `Completion::structured` holds the canonical JSON of the answer for
-`reflection::decode<Answer>()`. `Answer` must satisfy `ToolArguments`, because
+`scrydantic::decode<Answer>()`. `Answer` must satisfy `ToolArguments`, because
 the tool input of a provider is always a JSON object. Any other type fails to
 compile, and the diagnostic gives the member path and the reason, as for
 `add<Args>()`.
@@ -799,8 +809,9 @@ A typed turn is the ordinary tool loop plus one response tool. A
 - `schema`, which is a JSON Schema object.
 - `validate`, which is optional and runs on the host thread.
 
-`reflection::response_format<Answer>()` pairs `input_schema_v<Answer>` with a
-`decode<Answer>()` validator. `send<Answer>()` and `ask<Answer>()` use it. For a
+`scry::response_format<Answer>()`, in `<scry/response_format.hpp>`, pairs
+`input_schema_v<Answer>` with a `decode<Answer>()` validator. The validator
+reports a rejected answer as `invalid_argument`. `send<Answer>()` and `ask<Answer>()` use it. For a
 different name, a different description, or a schema that the host writes, use
 `send_structured(conversation, text, format, callbacks)` or
 `send_and_wait_structured(conversation, text, format)`. These functions have
@@ -1197,13 +1208,26 @@ The consumer target is `scry::scry`. It is a static library, and it requires GCC
 platforms are Linux and macOS. Before 1.0, Scry does not promise API, ABI, or persistence-format
 stability.
 
-The implementation has two parts. The kernel under `src/kernel/` is the code
+Scry depends on Scrydantic, a self-contained project under `scrydantic/` with
+its own CMake package, `scrydantic`. It has two targets. `scrydantic::json` is a
+static C++23 library without reflection: the JSON core, `Json`, `JsonView`, and
+`scrydantic::Error`. `scrydantic::scrydantic` is header-only C++26 on top of it:
+the annotations, the codec, the schemas, and the tool binding. Nothing in
+`scrydantic/` includes a Scry header or links libcurl or Threads, and
+`scripts/lint.sh` checks this. `scry::scry` links `scrydantic::scrydantic`
+PUBLIC, and the installed `scry` package finds `scrydantic` as a dependency.
+`scrydantic/NOTES.md` records how the split was made and what a separate
+repository would still need.
+
+Scry's implementation has two parts. The kernel under `src/kernel/` is the code
 that parses untrusted bytes or calculates retry and transport policy. It has
-the JSON codec, the SSE parser, retry delays, and the transport seam with its
-libcurl implementation. Each build compiles the kernel as C++23 without
-reflection. The kernel can include only these public headers:
-`<scry/error.hpp>`, `<scry/json.hpp>`, `<scry/config.hpp>`,
-`<scry/turn_id.hpp>`, and `<scry/unique_function.hpp>`.
+the Scry side of the JSON codec, the SSE parser, retry delays, and the transport
+seam with its libcurl implementation. Each build compiles the kernel as C++23
+without reflection, and the kernel links only Scrydantic's C++23 JSON core. The
+kernel can include only these public headers: `<scry/error.hpp>`,
+`<scry/config.hpp>`, `<scry/turn_id.hpp>`, `<scry/unique_function.hpp>`,
+`<scrydantic/error.hpp>`, `<scrydantic/json.hpp>`, and
+`<scrydantic/detail/json_text.hpp>`.
 
 The rest of `src/` is C++26: the turn machine, the provider adapters, the
 runtime, and the reflection bridge. This code maps the types of Scry to and
@@ -1211,8 +1235,9 @@ from their wire shapes and JSON shapes. It uses reflection where reflection
 replaces hand-written shape code. The build archives the kernel objects into
 `scry::scry`. The kernel is not a separate installed target.
 
-This split keeps the layer that sees untrusted bytes available to clang-tidy,
-because clang-tidy cannot parse reflection.
+This split keeps the layer that sees untrusted bytes, the kernel and
+Scrydantic's JSON core, available to clang-tidy, because clang-tidy cannot
+parse reflection.
 
 The test build replays seed corpora for the SSE parser, the transport response
 policy, the JSON layer, the provider stream decoders, and conversation
@@ -1244,8 +1269,8 @@ Retry waits are real time, and the retry policy of the `Config` sets their
 bound. The server does not test TLS. The headers of `scry::testing` depend only
 on `<scry/*>`.
 
-libcurl is the only linked dependency. The installed package finds curl and
-Threads. Tests use Catch2, and only the standalone showcase uses Dear ImGui.
+libcurl is the only third-party linked dependency. The installed package finds
+Scrydantic, curl, and Threads. Tests use Catch2, and only the standalone showcase uses Dear ImGui.
 
 Public headers use types that Scry owns and move-only `UniqueFunction`
 callables. Stateful handles use PImpl. [contributing.md](contributing.md)

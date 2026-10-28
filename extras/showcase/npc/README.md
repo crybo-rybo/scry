@@ -39,7 +39,7 @@ not show a no-op as a success. The server that you select must support
 support that optional field, keep `ReasoningMode` at its default value.
 
 You declare the tools. You do not write them. `World` in `world.hpp` is a
-toolbox. Each member function of `World` with the `scry::reflection::tool`
+toolbox. Each member function of `World` with the `scrydantic::tool`
 annotation becomes a tool, and the tool has the name of the function.
 `harness.tools().add(world)` registers all five tools against the shared
 `World`. The host also keeps this `World` to print the final state. Scry makes

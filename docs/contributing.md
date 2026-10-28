@@ -74,25 +74,28 @@ The build directories are in `build/<preset>`. They use Ninja and export
 ## Tests
 
 The build registers each Catch2 suite with ctest under a prefix for that suite:
-`kernel.`, `runtime.`, `machine.`, `protocol.`, `provider.`, `transport.`,
-`integration.`, `reflection.`, or `testing.`. `public-api-contract` is a plain
-executable test. The build also compiles each public header alone. The
-`reflection.compile-fail.*` tests check the diagnostics for incorrect use of
-the reflected API.
+`runtime.`, `machine.`, `protocol.`, `provider.`, `transport.`, `integration.`,
+`reflection.`, or `testing.`. Scrydantic's suites, which link only Scrydantic
+and Catch2, use `scrydantic.` (codec, schemas, and tool binding) and
+`scrydantic.json.` (the JSON core). `public-api-contract` is a plain executable
+test. The build also compiles each public header alone, Scrydantic's included.
+The `reflection.compile-fail.*` and `scrydantic.compile-fail.*` tests check the
+diagnostics for incorrect use of the reflected API.
 
 ```sh
 ctest --test-dir build/dev -R 'runtime\.'                     # one suite
 ctest --test-dir build/dev -R 'event queue coalesces'         # one case by name
 ```
 
-`tests/fuzz/corpus/` has seed corpora for six `LLVMFuzzerTestOneInput`
-harnesses: the SSE parser, the transport response policy, the JSON layer, the
-two provider stream decoders, and conversation persistence.
-`tests/fuzz/replay_main.cpp` replays each corpus one time as an ordinary
-`*-fuzz-replay` test. The `asan` preset replays them with ASan and UBSan. No
-build runs a coverage-guided search. Golden fixtures also lock the acceptance
-boundary and the canonical bytes of the JSON layer. For more information, see
-[`tests/fixtures/json/`](../tests/fixtures/json/README.md).
+`tests/fuzz/corpus/` has seed corpora for five `LLVMFuzzerTestOneInput`
+harnesses: the SSE parser, the transport response policy, the two provider
+stream decoders, and conversation persistence. The JSON core's corpus is in
+`scrydantic/tests/fuzz/corpus/json/`. Each `replay_main.cpp` replays each corpus
+one time as an ordinary `*-fuzz-replay` test. The `asan` preset replays them
+with ASan and UBSan. No build runs a coverage-guided search. Golden fixtures
+also lock the acceptance boundary and the canonical bytes of the JSON core. For
+more information, see
+[`scrydantic/tests/fixtures/json/`](../scrydantic/tests/fixtures/json/README.md).
 
 - **Test behavior at the seams, not the implementation inside them.** Tests
   target the machine, adapter, and transport interfaces. If a refactor of the
@@ -168,12 +171,18 @@ with Catch2.
 ## Rules
 
 - Top-level builds enable `-Wall -Wextra -Wconversion -Wshadow -Werror`.
-- The kernel (`src/kernel/`) is C++23 without reflection, so clang-tidy can
-  analyze it. The remaining code in `src/` is C++26, and only GCC compiles it.
-  The kernel compiles with `-Werror=c++26-extensions`, and
-  `src/kernel/kernel.hpp` rejects a build that enables reflection. `lint.sh`
-  makes sure that the kernel includes only kernel headers and
-  `<scry/{config,error,json,turn_id,unique_function}.hpp>`.
+- The kernel (`src/kernel/`) and Scrydantic's JSON core
+  (`scrydantic/src/json/`) are C++23 without reflection, so clang-tidy can
+  analyze them. The remaining code in `src/` and `scrydantic/` is C++26, and
+  only GCC compiles it. Both compile with `-Werror=c++26-extensions`, and
+  `src/kernel/kernel.hpp` and `scrydantic/src/json/core.hpp` reject a build
+  that enables reflection. `lint.sh` makes sure that the kernel includes only
+  kernel headers, `<scry/{config,error,turn_id,unique_function}.hpp>`, and
+  `<scrydantic/{error,json,detail/json_text}.hpp>`, and that the JSON core
+  includes only its own headers.
+- `scrydantic/` is self-contained: it includes no Scry header, links neither
+  libcurl nor Threads, and builds on its own with `cmake -S scrydantic`.
+  `lint.sh` checks the includes and the link lines.
 - clang-tidy uses the checked-in `.clang-tidy`. The cognitive complexity must
   not be more than 25.
 - A `// TODO` must link an issue or a URL.

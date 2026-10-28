@@ -84,11 +84,11 @@ The model reads the tool schema, calls the tool, and answers. This program is
 
 ```cpp
 struct WaterArguments {
-  [[= scry::reflection::description{"Bed number, from 1 to 3"}]] std::int32_t bed;
-  [[= scry::reflection::description{"Liters to pour"}]] double liters{1.0};
+  [[= scrydantic::description{"Bed number, from 1 to 3"}]] std::int32_t bed;
+  [[= scrydantic::description{"Liters to pour"}]] double liters{1.0};
 };
 
-[[= scry::reflection::tool{"Water one bed"}]] scry::Status
+[[= scrydantic::tool{"Water one bed"}]] scrydantic::Status
     water(WaterArguments arguments);
 ```
 
@@ -145,25 +145,25 @@ The first four forms in one program:
 
 ```cpp
 // A free function. The name annotation changes the tool name for the model.
-[[= scry::reflection::tool{"Convert Celsius to Fahrenheit"},
-  = scry::reflection::name{"celsius_to_fahrenheit"}]]
+[[= scrydantic::tool{"Convert Celsius to Fahrenheit"},
+  = scrydantic::name{"celsius_to_fahrenheit"}]]
 double to_fahrenheit(double celsius);
 
 // A namespace. Each annotated function is a tool.
 namespace almanac {
-[[= scry::reflection::tool{"Planting advice for one crop"}]]
+[[= scrydantic::tool{"Planting advice for one crop"}]]
 std::string advice(Crop crop);
 }
 
 // A toolbox. Each annotated member function is a tool bound to one object.
 class Greenhouse {
 public:
-  [[= scry::reflection::tool{"Read the temperature and the roof vents"}]]
+  [[= scrydantic::tool{"Read the temperature and the roof vents"}]]
   Climate climate() const;
-  [[= scry::reflection::tool{"Open or close the roof vents"}]]
+  [[= scrydantic::tool{"Open or close the roof vents"}]]
   Climate set_vents(bool open);
-  [[= scry::reflection::tool{"Water one bed"}]]
-  scry::Status water(WaterArguments arguments);
+  [[= scrydantic::tool{"Water one bed"}]]
+  scrydantic::Status water(WaterArguments arguments);
 
   double liters() const; // no annotation, thus not a tool
 };
@@ -192,10 +192,10 @@ A tool function can have one of these parameter lists:
 Before these parameters, a tool can take `const scry::ToolCallContext&`. The
 context gives the turn, the round, and the call ID.
 
-A tool can return a supported value, a `scry::Result` of one, `void`, or
-`scry::Status`. To refuse a call, return
-`std::unexpected(scry::tool_error("text for the model"))`. The model reads the
-text and can try again. Refer to
+A tool can return a supported value, a `scrydantic::Result` of one, `void`, or
+`scrydantic::Status`. To refuse a call, return
+`std::unexpected(scrydantic::tool_error("text for the model"))`. The model reads
+the text and can try again. Refer to
 [examples/tool_policy.cpp](examples/tool_policy.cpp).
 
 ### Annotations
@@ -210,7 +210,8 @@ text and can try again. Refer to
 | `emit_null` | Data member | Writes `null` for one `std::optional` member of a `skip_null` class. |
 | `ignore_unknown` | Class | Decoding ignores JSON members that the class does not declare. |
 
-All annotations are in the `scry::reflection` namespace.
+All annotations are in the `scrydantic` namespace, in
+`<scrydantic/annotations.hpp>`.
 
 ### Typed answers
 
@@ -219,6 +220,17 @@ The same reflection codec also decodes the answer of the model.
 Scry decodes the answer strictly. If a field is incorrect, Scry identifies the
 field to the model and asks again. `send<Verdict>()` does the same from a main
 loop. Refer to [examples/typed_answer.cpp](examples/typed_answer.cpp).
+
+### Scrydantic
+
+The reflection layer is a separate library, Scrydantic, in
+[`scrydantic/`](scrydantic/). Scry links it. Scrydantic has the annotations,
+the JSON types (`scrydantic::Json`, `scrydantic::JsonView`), the strict codec
+(`scrydantic::encode()`, `scrydantic::decode<T>()`), the schema generator
+(`scrydantic::schema_v<T>`), and the tool binding (`scrydantic::bind()`).
+Scrydantic does not need Scry, libcurl, or a model. Thus, you can use it alone,
+for example to serve tools over MCP. Refer to
+[scrydantic/examples/standalone_tools.cpp](scrydantic/examples/standalone_tools.cpp).
 
 ## Runtime
 
@@ -255,7 +267,8 @@ loop. Refer to [examples/typed_answer.cpp](examples/typed_answer.cpp).
 - **CMake 3.30 or newer.** This is the first CMake version that knows the C++26
   mode of GCC.
 - **libcurl 7.84 or newer**, with development headers. libcurl is the only
-  library dependency. Scry parses and writes JSON with its own code.
+  library dependency. Scry parses and writes JSON with Scrydantic, which is in
+  this repository.
 - **Linux or macOS.** CI uses GCC 16 on Ubuntu 24.04.
 
 ## Install
@@ -277,6 +290,10 @@ Then add these lines:
 find_package(scry 0.7.0 CONFIG REQUIRED)
 target_link_libraries(app PRIVATE scry::scry)
 ```
+
+The install also has the `scrydantic` package, and `find_package(scry)` finds it.
+To use Scrydantic without Scry, use `find_package(scrydantic CONFIG REQUIRED)` and
+`scrydantic::scrydantic`.
 
 You can also use `FetchContent`. When you embed Scry, its tests and examples
 are off by default:

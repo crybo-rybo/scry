@@ -2,8 +2,179 @@
 
 This log records how Scrydantic was carved out of Scry's reflection layer: the
 couplings met, the decisions taken, and what a move to a repository of its own
-still needs. It is written phase by phase, so later sections can revise
-earlier ones.
+still needs. The summary comes first; the phase log after it is the record as
+it was written, phase by phase.
+
+## Final layout and dependency direction
+
+```
+scrydantic/                         self-contained CMake project (project(scrydantic) 0.1.0)
+  CMakeLists.txt                    targets, install, package config
+  cmake/scrydanticConfig.cmake.in   the scrydantic package
+  cmake/ExpectCompileFailure.cmake  compile-fail driver (copy of Scry's)
+  .clang-format, .gitattributes     see phase 2
+  include/scrydantic/
+    error.hpp        Error { message, model_message }, Result, Status, tool_error   (C++23)
+    json.hpp         Json, JsonKind, JsonView, escape_json_string                   (C++23)
+    annotations.hpp  description, description_of, name, tag, tool, skip_null,
+                     emit_null, ignore_unknown                                      (C++23 types)
+    codec.hpp        encode, decode, plus (via detail) concepts, schema_v,
+                     input_schema_v                                                 (C++26)
+    tools.hpp        ToolFunction, BoundTool, ToolDescriptor, bind, bind_handler,
+                     describe, tools_of, toolbox_tools_of, Toolbox, ToolHandlerFor (C++26)
+    scrydantic.hpp   umbrella
+    detail/          json_text (C++23, installed but not stable API), json_string,
+                     model, meta, schema, decode, encode, failure, tools, binding
+  src/json/          core.hpp (reflection guard), document, number, view, text     (C++23)
+  tests/             json/, codec/, tools/, multi_tu/, compile_fail/, fuzz/, fixtures/
+  examples/standalone_tools.cpp
+  NOTES.md
+```
+
+Targets: `scrydantic_json` (alias and export `scrydantic::json`), a static C++23
+library without `-freflection`; and `scrydantic` (alias and export
+`scrydantic::scrydantic`), an INTERFACE library that adds PUBLIC `cxx_std_26`
+and `-freflection` and links `scrydantic::json`. Both install into the
+`scrydantic` package (`scrydanticTargets.cmake`, namespace `scrydantic::`).
+
+Direction: `scry::scry` links `scrydantic::scrydantic` PUBLIC; Scry's C++23
+kernel links `scrydantic::json`; `scryConfig.cmake` does
+`find_dependency(scrydantic 0.1.0)`. Nothing under `scrydantic/` includes a Scry
+header or links libcurl or Threads (`scripts/lint.sh` checks both).
+
+What stays in Scry: `ToolRegistry` (all `add()` overloads and `add_dynamic`),
+`ToolDefinition`, `ToolMetadata`, `ToolCallContext`, `ToolHandler`,
+`ContextualToolHandler`, `UniqueFunction`, `response_format()` (now in
+`<scry/response_format.hpp>`), `scry::Error` and its categories,
+`scry::tool_error()` for dynamic tools, and the category-attaching JSON wrappers
+in `src/kernel/json/codec.hpp`.
+
+## Couplings, in summary
+
+| # | Coupling | Resolution | Cost |
+|---|---|---|---|
+| 1 | `ToolCallContext` in the tool model and handlers | Context is a template parameter (`void` = none), threaded through the consteval layer as `std::meta::info`; diagnostics print it with `display_string_of` | `bound_tool` and the call helpers gained a context argument |
+| 2 | `scry::Error`/`Status`/`Result` in the codec and handler rules | `scrydantic::Error {message, model_message}`; Scry maps it to `tool` (handlers) or `invalid_argument` (typed answers) | A reflected handler that returns `scry::Status` is now a compile error; one extra type-erased wrapper per reflected call |
+| 3 | `ToolEntry`, `ContextualToolHandler`, `UniqueFunction` in registration | Scrydantic returns `BoundTool<Context>` with a `std::move_only_function`; `ToolRegistry::add_reflected` wraps it | One more indirection per call |
+| 4 | `scry::Json` special case in `kind_of` | `scrydantic::Json` is Scrydantic's own type | None |
+| 5 | `reflection.hpp` pulled `events.hpp`, `tool_registry.hpp` for `response_format` | `response_format` moved to `scry` in `<scry/response_format.hpp>` | A new public header |
+| 6 | `transport_policy.cpp` used the private JSON document | Uses public `JsonView` | One copy of a bounded error body |
+| 7 | Golden-fixture prefix test walked Scry's provider seeds | 18 seeds copied into `scrydantic/tests/fuzz/corpus/` | Frozen copies; drift is possible |
+| 8 | Scry's kernel used the category-taking text operations | `<scrydantic/detail/json_text.hpp>` category-free; Scry keeps wrappers | Scry depends on a `detail` header |
+| 9 | Diagnostics named `scry::ToolRegistry::add` and `ToolRegistry::add(Toolbox&&)` | The API name is a parameter; the owned-toolbox diagnostic moved to Scry | Three wordings changed (phase 4) |
+| 10 | `scry::message.hpp`, provider and persistence types carry annotations | They now use `scrydantic::` annotations | Every Scry consumer needs Scrydantic's headers, which it has through the PUBLIC link |
+| 11 | LLVM's default clang-format include categories treat `"json/..."` as third-party | `scrydantic/.clang-format` | A second format config |
+
+## Deviations from the plan's default design
+
+- `Error`, `Result`, `Status`, `tool_error` are in `<scrydantic/error.hpp>`,
+  which `<scrydantic/json.hpp>` includes, rather than in `json.hpp` itself.
+- `bind<^^entity, Context = void>()` instead of `bind<Context, ^^entity>()`, so
+  the common context-free call needs no `void`.
+- The typed-handler form is public (`bind_handler<Args, Context>()`), because
+  `ToolRegistry::add<Args>(metadata, handler)` needs it and a standalone host
+  wants it too. The plan listed only function/namespace/toolbox binding.
+- `describe()` returns a `constexpr std::array<ToolDescriptor, N>`, not a
+  vector, so a manifest can be a constant expression.
+- `ToolHandlerFor` became generic in phase 3 rather than phase 4, because it
+  lives in `meta.hpp` with the handler return rules that coupling 2 changed.
+- `scrydantic::bind(std::shared_ptr<Toolbox>)` returns no tools for a null
+  pointer rather than an error, because a binding has no error channel and
+  Scry already rejects a null toolbox with `invalid_argument` before it binds.
+- Scrydantic is versioned on its own from 0.1.0, not at Scry's 0.7.0.
+
+## Public API breaks
+
+`docs/releases/unreleased.md` has the user-facing tables. In short:
+`scry::Json`/`JsonKind`/`JsonView`/`escape_json_string` became `scrydantic::`;
+`scry::reflection::<annotation>` became `scrydantic::<annotation>`;
+`scry::reflection::encode/decode/schema_v/input_schema_v/SupportedValue/
+Encodable/Decodable/ToolArguments` became `scrydantic::`;
+`ToolHandlerFor<H, A>` became `scrydantic::ToolHandlerFor<H, A,
+scry::ToolCallContext>`; `scry::reflection::Toolbox<T>` became
+`scrydantic::Toolbox<T, scry::ToolCallContext>`;
+`scry::reflection::response_format` became `scry::response_format`;
+`<scry/json.hpp>`, `<scry/annotations.hpp>`, `<scry/reflection.hpp>` and
+`<scry/detail/reflection_*.hpp>` are gone; reflected handlers return
+`scrydantic::Result`/`Status` and refuse with `scrydantic::tool_error()`;
+`scrydantic::decode` and `encode` errors have no category.
+
+## Open questions for a separate repository
+
+- **Detail headers Scry uses.** Scry calls `scrydantic::detail::` for the
+  diagnostics it re-prefixes (`tool_arguments_diagnostic`,
+  `tool_handler_diagnostic`, `entity_tools_diagnostic`, `toolbox_diagnostic`,
+  `display`, `static_string`), for its internal codec entry points
+  (`codec_failure`, `read_value`, `write_value`, `fields_v`, `alternatives_v`,
+  `tag_of`), and for `json_text.hpp`. In one repository that is fine; across
+  repositories each is an API promise. Either promote a small "integration"
+  API (a path-and-reason codec result, the diagnostic builders, the text
+  operations) or pin Scrydantic exactly.
+- **Versioning and compatibility.** Scrydantic starts at 0.1.0 with
+  `SameMinorVersion`. Scry's package requires the exact Scrydantic version it
+  was built with. A separate repository needs a policy for which Scrydantic
+  minors a Scry release accepts, and Scry's FetchContent instructions need a
+  Scrydantic tag too.
+- **Package name.** `scrydantic` is the CMake package, the namespace, the
+  include prefix, and the directory. Check the name for collisions before
+  publishing (PyPI's pydantic family uses similar names, and a C++ package
+  index may too).
+- **CI.** Today Scry's CI covers Scrydantic through the root build (dev, asan,
+  tsan) and `lint.sh`. A separate repository needs its own workflow: the GCC 16
+  build with the three sanitizer presets (it has no presets file of its own
+  yet), clang-format 22 with `scrydantic/.clang-format`, clang-tidy over
+  `src/json/` with a copy of `.clang-tidy`, and the include-boundary check.
+- **`std::move_only_function` vs `UniqueFunction`.** Scrydantic's
+  `ToolFunction` is `std::move_only_function`, which libc++ on macOS lacks. That
+  is harmless today because the reflection layer is GCC-16-only (libstdc++), and
+  the C++23 JSON core does not use it, so clang-tidy against libc++ still works.
+  If Scrydantic ever targets Clang with libc++, `ToolFunction` needs its own
+  wrapper; Scry's `UniqueFunction` could move down, or Scrydantic could own a
+  copy. Scry wraps each `ToolFunction` in a `UniqueFunction`, which costs one
+  indirection per reflected call.
+- **Schema dialects.** The generated schemas are one provider-neutral subset
+  (closed objects, `anyOf` for variants and optionals, numeric bounds). OpenAI's
+  strict structured outputs require every property to be listed in `required`
+  (an optional one becomes a union with null) and support only a subset of
+  keywords, so a member with a default would need a different shape there. A
+  dialect parameter (`schema_v<T, Dialect>`) is the natural extension point;
+  nothing in Scry needs it today.
+- **Error categories.** `scrydantic::Error` has no kind. A host that needs to
+  tell "not JSON", "schema mismatch", "encode failure", and "handler refusal"
+  apart must use the call site, as Scry does. If outside users ask for it, a
+  small `enum class` is the obvious addition.
+- **Duplicated test assets.** `replay_main.cpp`, `ExpectCompileFailure.cmake`
+  and 18 provider seeds are copies. A separate repository owns its copies; Scry
+  then no longer feeds new seeds into the JSON prefix test.
+- **Missing project files.** Scrydantic has no README, LICENSE, `.clang-tidy`,
+  `CMakePresets.json`, or CI of its own yet; the root ones cover it here. The
+  install does not ship a LICENSE file for Scrydantic.
+- **Catch2.** Both projects pin the same Catch2 commit. Under Scry the first
+  declaration (Scrydantic's) wins; keep them equal or let Scry inherit it.
+
+## GCC 16 reflection notes from the move
+
+- Moving `JsonView` into the namespace that also declares the public
+  `decode<T>(const JsonView&)` made an unqualified `decode<Args>(view)` inside
+  `scrydantic::detail` ambiguous through ADL (phase 3). Qualified now.
+- `std::meta::add_lvalue_reference(std::meta::add_const(dealias(^^Ctx)))`
+  compares equal to the reflection of a declared `const Ctx&` parameter type,
+  so the context can be found from a type reflection rather than a spelled
+  type, and `display_string_of(^^const Context&)` prints the alias-free
+  qualified name (`const scry::ToolCallContext&`), so diagnostics stayed
+  byte-identical.
+- A `consteval` function in the public namespace that returns
+  `^^detail::tool_set<>` works as a default template argument spliced at the
+  wrapper's call site (`typename[:scrydantic::tools_of(Entity, ^^Ctx):]`), and
+  the multi-TU tests confirm the call-site keying survives forwarding the
+  result through `scrydantic::bind<Entity, Ctx, Tools>()`.
+- `constexpr` `describe()` works: a `std::array` of `string_view`s into
+  `define_static_string` storage is usable in `static_assert`.
+- No new GCC 16 workaround was needed. The existing ones (no `if constexpr`
+  branching on an enclosing parameter inside a generic lambda; no splice in a
+  mangled signature; `define_static_array` of consteval-only class elements;
+  ASan and pointer-taking `std::string` construction in consteval code) all
+  carried over unchanged.
 
 ## Phase log
 
@@ -310,3 +481,45 @@ Test changes:
   reflected namespace. Scry's install carries the Scrydantic package beside its
   own, and `scryConfig.cmake` does `find_dependency(scrydantic 0.1.0)`.
 - `PRESET=asan ./scripts/test.sh` at the end of this phase: 521/521 pass.
+
+### Phase 6: clean-break sweep and docs
+
+- README: every annotation and handler example uses `scrydantic::`, the
+  annotations table says where they live, a short "Scrydantic" section points at
+  `scrydantic/` and the standalone example, and the install section mentions the
+  `scrydantic` package. The quickstart block still equals
+  `examples/quickstart.cpp`.
+- `docs/architecture.md`: the Scrydantic library, its targets and boundary, the
+  error mapping (`tool` for reflected tools, `invalid_argument` for typed
+  answers), the JSON core's new home, and the kernel's new include list.
+  `docs/contributing.md`: the `scrydantic.` and `scrydantic.json.` test prefixes,
+  the moved corpus and goldens, and the Scrydantic boundary rules.
+- `docs/releases/unreleased.md` lists the breaking renames, following the
+  per-version files in `docs/releases/`.
+- `extras/showcase` needed only its README changed; it configures and builds
+  against the split (`cmake -S extras/showcase`, Dear ImGui fetched; the NPC
+  example and the chat panel link).
+
+## Test mapping (baseline `ctest -N` on 2e2553d: 507 tests)
+
+Every baseline test still exists. Renamed or moved:
+
+| Baseline name | Now |
+|---|---|
+| `kernel.<case>` (15 JSON document and fixture cases) | `scrydantic.json.<case>`, same case names |
+| `kernel.json-fuzz-replay` | `scrydantic.json-fuzz-replay` |
+| `runtime.<case>` for the 14 cases of `json_view_tests.cpp` and `json_codec_validation_tests.cpp` | `scrydantic.json.<case>`, same case names |
+| `reflection.<case>` for the 13 cases of `codec_tests.cpp` | `scrydantic.<case>`, same case names |
+| `reflection.public decoding reports invalid_argument with path-based messages` | `scrydantic.public decoding reports path-based messages` |
+| `reflection.compile-fail.{duplicate-description, unsupported-schema-root, untagged-variant, duplicate-key}` | `scrydantic.compile-fail.<same>` |
+
+New tests (14): `runtime.the JSON codec wrappers give the core's verdict under
+the caller's category`; `reflection.response_format validators report a
+rejected answer as invalid_argument`; `scrydantic.` binding cases (`a namespace
+binds its tools in declaration order`, `bound handlers report decode and handler
+failures as Errors`, `one function binds alone`, `a context reaches tools that
+take it first and is not an argument`, `a shared toolbox binds its member tools
+to the object`, `typed handlers bind with and without a context`, `descriptors
+describe tools at compile time without handlers`); `scrydantic.multi-tu-a_then_b`
+and `-b_then_a`; `scrydantic.compile-fail.bind-misplaced-tool` and
+`misplaced-context`; `scrydantic.example.standalone-tools`. Total: 521.
