@@ -295,10 +295,10 @@ struct Counter {
   }
 };
 } // namespace contract
-static_assert(scry::reflection::Toolbox<contract::Counter>);
+static_assert(scrydantic::Toolbox<contract::Counter, scry::ToolCallContext>);
 // A const toolbox admits only const member tools.
-static_assert(!scry::reflection::Toolbox<const contract::Counter>);
-static_assert(!scry::reflection::Toolbox<contract::CountArguments>);
+static_assert(!scrydantic::Toolbox<const contract::Counter, scry::ToolCallContext>);
+static_assert(!scrydantic::Toolbox<contract::CountArguments, scry::ToolCallContext>);
 static_assert(std::same_as<decltype(scry::ToolMetadata::name), std::string>);
 static_assert(requires(scry::ToolRegistry& registry) {
   {

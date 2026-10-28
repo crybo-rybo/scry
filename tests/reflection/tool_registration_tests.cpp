@@ -220,24 +220,25 @@ constexpr std::string_view int32_schema =
 
 } // namespace
 
-static_assert(scry::reflection::Toolbox<registration::Counter>);
-static_assert(scry::reflection::Toolbox<registration::Reader>);
-static_assert(scry::reflection::Toolbox<const registration::Reader>);
-static_assert(!scry::reflection::Toolbox<const registration::Counter>);
-static_assert(!scry::reflection::Toolbox<registration::Position>);
-static_assert(!scry::reflection::Toolbox<std::int32_t>);
+static_assert(scrydantic::Toolbox<registration::Counter, scry::ToolCallContext>);
+static_assert(scrydantic::Toolbox<registration::Reader, scry::ToolCallContext>);
+static_assert(scrydantic::Toolbox<const registration::Reader, scry::ToolCallContext>);
+static_assert(!scrydantic::Toolbox<const registration::Counter, scry::ToolCallContext>);
+static_assert(!scrydantic::Toolbox<registration::Position, scry::ToolCallContext>);
+static_assert(!scrydantic::Toolbox<std::int32_t, scry::ToolCallContext>);
 
 // Toolbox accepts exactly the explicit object forms registration accepts: Box
 // registers below, and the const-toolbox rejection has a compile-fail test.
-static_assert(scry::reflection::Toolbox<registration::Box>);
-static_assert(!scry::reflection::Toolbox<const registration::Box>); // bump: Box&
-static_assert(scry::reflection::Toolbox<registration::ConstBox>);
-static_assert(scry::reflection::Toolbox<const registration::ConstBox>);
-static_assert(scry::reflection::Toolbox<registration::Derived>);
-static_assert(scry::reflection::Toolbox<const registration::Derived>);
-static_assert(!scry::reflection::Toolbox<registration::TakesRvalue>);
-static_assert(!scry::reflection::Toolbox<registration::Uncopyable>);
-static_assert(!scry::reflection::Toolbox<registration::Unrelated>);
+static_assert(scrydantic::Toolbox<registration::Box, scry::ToolCallContext>);
+static_assert(
+    !scrydantic::Toolbox<const registration::Box, scry::ToolCallContext>); // bump: Box&
+static_assert(scrydantic::Toolbox<registration::ConstBox, scry::ToolCallContext>);
+static_assert(scrydantic::Toolbox<const registration::ConstBox, scry::ToolCallContext>);
+static_assert(scrydantic::Toolbox<registration::Derived, scry::ToolCallContext>);
+static_assert(scrydantic::Toolbox<const registration::Derived, scry::ToolCallContext>);
+static_assert(!scrydantic::Toolbox<registration::TakesRvalue, scry::ToolCallContext>);
+static_assert(!scrydantic::Toolbox<registration::Uncopyable, scry::ToolCallContext>);
+static_assert(!scrydantic::Toolbox<registration::Unrelated, scry::ToolCallContext>);
 static_assert(!scrydantic::ToolArguments<registration::ToolOnMember>);
 
 TEST_CASE("a function without parameters takes the empty object only") {

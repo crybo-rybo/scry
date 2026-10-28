@@ -8,3 +8,4 @@
 #include <scrydantic/codec.hpp>
 #include <scrydantic/error.hpp>
 #include <scrydantic/json.hpp>
+#include <scrydantic/tools.hpp>

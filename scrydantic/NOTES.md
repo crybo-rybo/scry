@@ -192,3 +192,81 @@ Test changes:
   `examples/quickstart.cpp`, because `readme-quickstart` requires the two to be
   equal.
 - `PRESET=asan ./scripts/test.sh` at the end of this phase: 509/509 pass.
+
+### Phase 4: tool discovery and binding
+
+- `scry/detail/reflection_tools.hpp` moved to `scrydantic/detail/tools.hpp`
+  (discovery and diagnostics) and `reflection_registration.hpp` to
+  `scrydantic/detail/binding.hpp` (handler generation). `<scrydantic/tools.hpp>`
+  is the public face. Couplings 1, 3, and 5 are cut: nothing in Scrydantic names
+  `ToolCallContext`, `ToolEntry`, `ContextualToolHandler`, `UniqueFunction`,
+  `events.hpp`, or `tool_registry.hpp`.
+- Public binding API (all in `namespace scrydantic`):
+  - `ToolFunction<Context = void>`: `std::move_only_function<Result<Json>(const
+    Context&, Json)>`, or `Result<Json>(Json)` for `void`.
+  - `BoundTool<Context = void> { name, description, input_schema (Json), invoke }`.
+  - `bind_handler<Args, Context = void>(handler)`: the typed-lambda form that
+    `ToolRegistry::add<Args>(metadata, handler)` uses.
+  - `bind<^^entity, Context = void>()` for a function or namespace, and
+    `bind<Context = void>(std::shared_ptr<Toolbox>)` for a toolbox. A null
+    toolbox binds nothing; Scry keeps rejecting it with `invalid_argument` before
+    it calls `bind`.
+  - `describe<^^entity, Context = void>()` and `describe<Toolbox, Context =
+    void>()`: descriptor-only access, `constexpr std::array<ToolDescriptor, N>`
+    of `string_view`s into static storage, so a manifest can be built at compile
+    time without a toolbox object.
+  - `tools_of(entity, context)` and `toolbox_tools_of(type, context)`: the
+    consteval functions behind the `Tools` defaults, public so a wrapper (Scry)
+    can compute the default at its own call site and forward it.
+  - `Toolbox<T, Context = void>` and `ToolHandlerFor<H, Args, Context = void>`.
+- Deviation from the plan's sketch: the plan wrote `bind<Context, ^^entity>()`.
+  The entity comes first here, `bind<^^entity, Context>()`, so the common
+  context-free call is `bind<^^ns>()` rather than `bind<void, ^^ns>()`. The
+  toolbox overload takes `Context` first because the toolbox type is deduced.
+- The context is threaded through the consteval layer as a reflection
+  (`std::meta::info context`, `^^void` for none), and `bound_tool` gained a
+  `Context` template argument, because whether the leading parameter is the
+  context or an argument decides the argument object. The context parameter is
+  recognized as `add_lvalue_reference(add_const(dealias(context)))`, which GCC 16
+  compares equal to the declared `const scry::ToolCallContext&`.
+- Call-site keying is preserved: `ToolRegistry::add<Entity, Tools =
+  [:scrydantic::tools_of(Entity, ^^ToolCallContext):]>()` computes the default
+  at the host's call site and passes it to `scrydantic::bind<Entity,
+  ToolCallContext, Tools>()`; `add(Toolbox&&)` forwards its own `Tools` as
+  before. `reflection.multi-tu-a_then_b` and `-b_then_a` pass unchanged. The call
+  helpers are now keyed on (function, context) instead of the function alone;
+  the context type is the same in every unit, so the property holds.
+- Diagnostics that named Scry's API now take it from the caller:
+  `entity_tools_diagnostic<Entity, Context>(api)` prefixes `api` ("scry::
+  ToolRegistry::add" from Scry, "scrydantic::bind" or "scrydantic::describe"
+  from Scrydantic), so the `tool-on-non-function` substring did not change.
+  `owned_toolbox_diagnostic` (about `ToolRegistry::add(Toolbox&&)`) moved into
+  `scry/tool_registry.hpp`. Three texts were reworded to drop the registry:
+  "the toolbox object the registry holds cannot call it" became "the toolbox
+  object the tools are bound to cannot call it" (twice), and "is a type;
+  register an object of it as a toolbox with add(std::shared_ptr<T>) or
+  add(T&&)" became "is a type; bind an object of it as a toolbox instead". No
+  test asserted them. "is a non-static member function; register an object of
+  Lamp as a toolbox" was kept, because a test asserts it and it reads fine for
+  both libraries.
+- Scry side: `ToolRegistry` gained one private non-template member,
+  `add_reflected(std::vector<scrydantic::BoundTool<ToolCallContext>>)`, in
+  `tool_registry.cpp`. It wraps each `invoke` with
+  `scry::detail::reflected_handler`, which turns a `scrydantic::Error` into
+  `ErrorCategory::tool` (the only field dispatch reads is `model_message`, so
+  dispatch behaves as before), and then calls `add_all`. Cost: a reflected call
+  now goes through two type-erased wrappers (`UniqueFunction` around
+  `std::move_only_function`) instead of one.
+- `add<Args>(metadata, handler)` used to go through `add_dynamic`; it now builds
+  one `BoundTool` and goes through `add_reflected`. Both end in `add_all`, which
+  validates and canonicalizes the schema the same way.
+
+Test changes:
+
+- `reflection_tests.cpp` builds reflected handlers with a local
+  `make_tool_handler<Args>()` that is `reflected_handler(bind_handler<Args,
+  ToolCallContext>())`, the composition `ToolRegistry::add<Args>()` uses, so the
+  existing `ErrorCategory::tool` checks on those handlers still hold.
+- `scry::reflection::Toolbox<T>` became `scrydantic::Toolbox<T,
+  scry::ToolCallContext>` in `tool_registration_tests.cpp` and
+  `public_api_contract.cpp`.

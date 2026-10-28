@@ -171,6 +171,15 @@ template <scrydantic::SupportedValue Type>
   return scrydantic::detail::decode<Type>(*parsed);
 }
 
+// A reflected handler in the registry's shape, as ToolRegistry::add<Args>() builds
+// it.
+template <typename Args, typename Handler>
+[[nodiscard]] scry::ContextualToolHandler make_tool_handler(Handler&& handler) {
+  return scry::detail::reflected_handler(
+      scrydantic::bind_handler<Args, scry::ToolCallContext>(
+          std::forward<Handler>(handler)));
+}
+
 // A dispatchable snapshot holding one reflected handler under the given name.
 [[nodiscard]] scry::detail::ToolSnapshot
 snapshot_of(std::string name, scry::ContextualToolHandler handler) {
@@ -485,15 +494,14 @@ TEST_CASE("reflected encoding rejects non-finite and unnamed values") {
 }
 
 TEST_CASE("reflected result-encoding failures reach the model as the fixed text") {
-  auto handler = scry::reflection::detail::make_tool_handler<PresenceArguments>(
-      [](PresenceArguments) {
-        return AllTypesArguments{
-            .fixed = {1, 2},
-            .flag = true,
-            .ratio = std::numeric_limits<double>::infinity(),
-            .unit = TemperatureUnit::celsius,
-        };
-      });
+  auto handler = make_tool_handler<PresenceArguments>([](PresenceArguments) {
+    return AllTypesArguments{
+        .fixed = {1, 2},
+        .flag = true,
+        .ratio = std::numeric_limits<double>::infinity(),
+        .unit = TemperatureUnit::celsius,
+    };
+  });
   const auto tools = snapshot_of("private_calculation", std::move(handler));
 
   const auto result = scry::detail::dispatch_tool(
@@ -520,7 +528,7 @@ TEST_CASE("public encoding matches reflected tool dispatch output") {
       .unit = TemperatureUnit::fahrenheit,
       .values = {3, 4},
   };
-  auto handler = scry::reflection::detail::make_tool_handler<PresenceArguments>(
+  auto handler = make_tool_handler<PresenceArguments>(
       [value](PresenceArguments) { return value; });
   const auto tools = snapshot_of("snapshot", std::move(handler));
 
@@ -548,8 +556,7 @@ TEST_CASE("public encoding matches reflected tool dispatch output") {
 TEST_CASE("reflected erased handlers encode copy-only results without extra copies") {
   CopyOnlyResult::destructions = 0;
   const auto run_handler = [](auto body) {
-    auto handler =
-        scry::reflection::detail::make_tool_handler<PresenceArguments>(std::move(body));
+    auto handler = make_tool_handler<PresenceArguments>(std::move(body));
     return handler({},
                    scrydantic::Json{.text = R"({"nullable":null,"required":"ok"})"});
   };
@@ -575,8 +582,7 @@ TEST_CASE("reflected erased handlers encode a Result of a const-qualified value"
   // Instantiating the handler is the check: the const value type has to be
   // stripped before it reaches encode_value, or this fails to compile inside the
   // library.
-  auto handler = scry::reflection::detail::make_tool_handler<PresenceArguments>(
-      ConstExpectedHandler{});
+  auto handler = make_tool_handler<PresenceArguments>(ConstExpectedHandler{});
 
   const auto result =
       handler({}, scrydantic::Json{.text = R"({"nullable":null,"required":"ok"})"});
@@ -589,15 +595,14 @@ TEST_CASE("encoding named reflected results does not copy their values") {
   CopyOnlyResult::destructions = 0;
   SECTION("bare result") {
     const CopyOnlyResult value{.values = {1, 2, 3}};
-    const auto encoded = scry::reflection::detail::encode_handler_result(value);
+    const auto encoded = scrydantic::detail::encode_handler_result(value);
     REQUIRE(encoded);
     CHECK(encoded->text == R"({"values":[1,2,3]})");
     CHECK(CopyOnlyResult::destructions == 0);
   }
   SECTION("expected result passed as an rvalue") {
     scrydantic::Result<CopyOnlyResult> value{std::in_place, std::vector<int>{1, 2, 3}};
-    const auto encoded =
-        scry::reflection::detail::encode_handler_result(std::move(value));
+    const auto encoded = scrydantic::detail::encode_handler_result(std::move(value));
     REQUIRE(encoded);
     CHECK(encoded->text == R"({"values":[1,2,3]})");
     CHECK(CopyOnlyResult::destructions == 0);
@@ -610,7 +615,7 @@ TEST_CASE("encoding a named reflected error preserves the caller's error") {
       .message = "application rejected arguments",
       .model_message = "rejected",
   });
-  const auto encoded = scry::reflection::detail::encode_handler_result(value);
+  const auto encoded = scrydantic::detail::encode_handler_result(value);
   REQUIRE_FALSE(encoded);
   CHECK(encoded.error().message == "application rejected arguments");
   CHECK(encoded.error().model_message == "rejected");
@@ -621,15 +626,14 @@ TEST_CASE("reflected handlers returning void or Status acknowledge with an objec
   const auto arguments =
       scrydantic::Json{.text = R"({"nullable":null,"required":"ok"})"};
   int calls = 0;
-  auto acknowledging = scry::reflection::detail::make_tool_handler<PresenceArguments>(
-      [&calls](PresenceArguments) { ++calls; });
+  auto acknowledging =
+      make_tool_handler<PresenceArguments>([&calls](PresenceArguments) { ++calls; });
   auto result = acknowledging({}, arguments);
   REQUIRE(result);
   CHECK(result->text == "{}");
   CHECK(calls == 1);
 
-  auto status =
-      scry::reflection::detail::make_tool_handler<PresenceArguments>(StatusHandler{});
+  auto status = make_tool_handler<PresenceArguments>(StatusHandler{});
   result = status({}, arguments);
   REQUIRE(result);
   CHECK(result->text == "{}");
@@ -641,7 +645,7 @@ TEST_CASE("reflected handlers returning void or Status acknowledge with an objec
 }
 
 TEST_CASE("reflected erased handlers retain move-only captures and typed errors") {
-  auto handler = scry::reflection::detail::make_tool_handler<PresenceArguments>(
+  auto handler = make_tool_handler<PresenceArguments>(
       [owned = std::make_unique<std::string>("handled")](
           PresenceArguments arguments) -> scrydantic::Result<NestedResult> {
         if (arguments.required == "reject") {

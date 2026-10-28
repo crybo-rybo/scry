@@ -208,8 +208,6 @@ set(
   SCRY_CORE_PUBLIC_HEADERS
   include/scry/config.hpp
   include/scry/conversation.hpp
-  include/scry/detail/reflection_registration.hpp
-  include/scry/detail/reflection_tools.hpp
   include/scry/error.hpp
   include/scry/events.hpp
   include/scry/harness.hpp

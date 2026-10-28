@@ -21,6 +21,13 @@ struct RegisteredTool final {
 // empty so registration still rejects it.
 [[nodiscard]] ContextualToolHandler to_contextual_handler(ToolHandler handler);
 
+// A reflected tool's handler in the registry's shape. Scrydantic reports a
+// failure without a category, and every reflected failure, whether the handler's
+// own or the codec's, is a tool failure here, so it becomes ErrorCategory::tool
+// with its host and model texts unchanged.
+[[nodiscard]] ContextualToolHandler
+reflected_handler(scrydantic::ToolFunction<ToolCallContext> handler);
+
 using ToolRegistrationPtr = std::shared_ptr<const RegisteredTool>;
 using ToolSnapshot = std::vector<ToolRegistrationPtr>;
 using FrozenToolEntries = std::shared_ptr<const ToolSnapshot>;

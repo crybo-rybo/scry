@@ -25,6 +25,27 @@ ContextualToolHandler to_contextual_handler(ToolHandler handler) {
       }};
 }
 
+ContextualToolHandler
+reflected_handler(scrydantic::ToolFunction<ToolCallContext> handler) {
+  if (!handler) {
+    return {};
+  }
+  return ContextualToolHandler{
+      [inner = std::move(handler)](
+          const ToolCallContext& context,
+          scrydantic::Json input) mutable -> Result<scrydantic::Json> {
+        auto result = inner(context, std::move(input));
+        if (!result) {
+          return std::unexpected(Error{
+              .category = ErrorCategory::tool,
+              .message = std::move(result.error().message),
+              .model_message = std::move(result.error().model_message),
+          });
+        }
+        return std::move(*result);
+      }};
+}
+
 const RegisteredTool* find_tool(const ToolSnapshot& tools,
                                 const std::string_view name) noexcept {
   const auto found = std::ranges::find_if(
@@ -150,6 +171,24 @@ Status ToolRegistry::add_dynamic(ToolDefinition definition,
       .definition = std::move(definition),
       .handler = std::move(handler),
   });
+  return add_all(std::move(entries));
+}
+
+Status
+ToolRegistry::add_reflected(std::vector<scrydantic::BoundTool<ToolCallContext>> tools) {
+  std::vector<detail::ToolEntry> entries{};
+  entries.reserve(tools.size());
+  for (auto& tool : tools) {
+    entries.push_back(detail::ToolEntry{
+        .definition =
+            ToolDefinition{
+                .name = std::move(tool.name),
+                .description = std::move(tool.description),
+                .input_schema = std::move(tool.input_schema),
+            },
+        .handler = detail::reflected_handler(std::move(tool.invoke)),
+    });
+  }
   return add_all(std::move(entries));
 }
 

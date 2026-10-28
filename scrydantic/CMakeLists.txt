@@ -148,6 +148,7 @@ set(
   SCRYDANTIC_PUBLIC_HEADERS
   include/scrydantic/annotations.hpp
   include/scrydantic/codec.hpp
+  include/scrydantic/detail/binding.hpp
   include/scrydantic/detail/decode.hpp
   include/scrydantic/detail/encode.hpp
   include/scrydantic/detail/failure.hpp
@@ -155,7 +156,9 @@ set(
   include/scrydantic/detail/meta.hpp
   include/scrydantic/detail/model.hpp
   include/scrydantic/detail/schema.hpp
+  include/scrydantic/detail/tools.hpp
   include/scrydantic/scrydantic.hpp
+  include/scrydantic/tools.hpp
 )
 target_sources(
   scrydantic
