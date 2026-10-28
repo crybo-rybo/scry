@@ -23,7 +23,20 @@ if git grep -nE '#[[:space:]]*include[[:space:]]*[<"](scry|core|machine|provider
   status=1
 fi
 
-if git grep -nE '//[[:space:]]*TODO([^[:alnum:]_]|$)' -- include src testing examples tests extras |
+# Scrydantic is self-contained: nothing under scrydantic/ includes a Scry
+# header, a header from Scry's src/, or libcurl, and nothing links libcurl or
+# Threads.
+if git grep -nE '#[[:space:]]*include[[:space:]]*(<(scry|curl)/|"(core|kernel|machine|provider|reflection|runtime)/)' \
+  -- 'scrydantic/'; then
+  echo "error: scrydantic/ includes a header outside its boundary" >&2
+  status=1
+fi
+if git grep -nE '(CURL|Threads)::' -- 'scrydantic/'; then
+  echo "error: scrydantic/ links a dependency outside its boundary" >&2
+  status=1
+fi
+
+if git grep -nE '//[[:space:]]*TODO([^[:alnum:]_]|$)' -- include src testing examples tests extras scrydantic |
   grep -vE 'https?://|#[0-9]+'; then
   echo "error: TODO comments must link an issue" >&2
   status=1
