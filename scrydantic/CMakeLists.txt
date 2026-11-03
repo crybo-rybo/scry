@@ -218,3 +218,8 @@ install(
     "${PROJECT_BINARY_DIR}/scrydanticConfigVersion.cmake"
   DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/scrydantic"
 )
+
+install(
+  FILES LICENSE
+  DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/doc/scrydantic"
+)

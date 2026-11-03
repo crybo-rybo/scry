@@ -99,6 +99,19 @@ scry::ToolCallContext>`; `scry::reflection::Toolbox<T>` became
 `scrydantic::Result`/`Status` and refuse with `scrydantic::tool_error()`;
 `scrydantic::decode` and `encode` errors have no category.
 
+## Decisions for this extraction
+
+- Keep Scrydantic's category-free errors separate from Scry's runtime errors.
+  Reflected tools use `scrydantic::Result`/`Status` and `tool_error()` so they
+  can run without Scry. Dynamic Scry tools and answer validators retain
+  `scry::Result`/`Status`; Scry maps reflected failures to its own categories
+  at the integration boundary. Accepting both error types is deferred.
+- Keep Scry at 0.7.0 until the release workflow bumps it; this breaking change
+  belongs in the next minor release. Scrydantic starts at 0.1.0.
+- Keep the frozen fuzz seeds, documented null-toolbox behavior, and existing
+  handler wrappers. Corpus sharing and performance changes can be evaluated
+  separately without broadening this extraction.
+
 ## Open questions for a separate repository
 
 - **Detail headers Scry uses.** Scry calls `scrydantic::detail::` for the
@@ -111,10 +124,11 @@ scry::ToolCallContext>`; `scry::reflection::Toolbox<T>` became
   API (a path-and-reason codec result, the diagnostic builders, the text
   operations) or pin Scrydantic exactly.
 - **Versioning and compatibility.** Scrydantic starts at 0.1.0 with
-  `SameMinorVersion`. Scry's package requires the exact Scrydantic version it
-  was built with. A separate repository needs a policy for which Scrydantic
-  minors a Scry release accepts, and Scry's FetchContent instructions need a
-  Scrydantic tag too.
+  `SameMinorVersion`. Scry requests the Scrydantic version it was built with
+  as a minimum; the package accepts that version or a newer patch in the same
+  minor series (currently 0.1.x). A separate repository needs a policy for
+  which Scrydantic minors a Scry release accepts, and Scry's FetchContent
+  instructions need a Scrydantic tag too.
 - **Package name.** `scrydantic` is the CMake package, the namespace, the
   include prefix, and the directory. Check the name for collisions before
   publishing (PyPI's pydantic family uses similar names, and a C++ package
@@ -146,9 +160,10 @@ scry::ToolCallContext>`; `scry::reflection::Toolbox<T>` became
 - **Duplicated test assets.** `replay_main.cpp`, `ExpectCompileFailure.cmake`
   and 18 provider seeds are copies. A separate repository owns its copies; Scry
   then no longer feeds new seeds into the JSON prefix test.
-- **Missing project files.** Scrydantic has no README, LICENSE, `.clang-tidy`,
-  `CMakePresets.json`, or CI of its own yet; the root ones cover it here. The
-  install does not ship a LICENSE file for Scrydantic.
+- **Missing project files.** Scrydantic has its own README and MIT LICENSE,
+  and installs the license under `share/doc/scrydantic`. It still needs its
+  own `.clang-tidy`, `CMakePresets.json`, and CI before a repository move; the
+  root ones cover it here.
 - **Catch2.** Both projects pin the same Catch2 commit. Under Scry the first
   declaration (Scrydantic's) wins; keep them equal or let Scry inherit it.
 
