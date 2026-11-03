@@ -550,7 +550,11 @@ Thus the model can correct itself, and it learns nothing new.
 
 A failure of the result encoding fills no `model_message`. Such a failure
 describes the result type of the handler, and the model never sees the schema of
-that type. Thus the model receives the fixed diagnostic.
+that type. Thus the model receives the fixed diagnostic. A string result that
+holds invalid UTF-8 is such a failure. The bound handler checks its text before it
+reports success, so a host that uses Scrydantic alone never receives invalid JSON
+as a result. This check builds no document, and Scry still makes the result
+canonical after it checks the byte limit.
 
 If a declaration or a type breaks a rule above, it fails to compile at `add`,
 `schema_v`, or `input_schema_v`. A `static_assert` gives the function, the member

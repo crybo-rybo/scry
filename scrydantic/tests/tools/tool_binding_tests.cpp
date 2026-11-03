@@ -52,6 +52,28 @@ namespace session_tools {
 
 } // namespace session_tools
 
+namespace bad_text_tools {
+
+struct Note {
+  std::string text{};
+};
+
+[[= scrydantic::tool{"Return bytes that are not UTF-8"}]] inline std::string
+    raw_bytes() {
+  return std::string(1, '\xff');
+}
+
+[[= scrydantic::tool{"Return them in a member"}]] inline Note raw_member() {
+  return Note{.text = std::string(1, '\xff')};
+}
+
+[[= scrydantic::tool{"Return them in a Result"}]] inline scrydantic::Result<std::string>
+    raw_result() {
+  return std::string(1, '\xff');
+}
+
+} // namespace bad_text_tools
+
 namespace {
 
 class Counter {
@@ -136,6 +158,53 @@ TEST_CASE("bound handlers report decode and handler failures as Errors") {
   REQUIRE_FALSE(refused);
   CHECK(refused.error().message == "refused a call");
   CHECK(refused.error().model_message == "not today");
+}
+
+TEST_CASE("bound handlers refuse a result that is not valid JSON") {
+  constexpr std::string_view reason = "reflected value could not be encoded as JSON";
+  const std::string invalid(1, '\xff');
+  // Invalid UTF-8 is the one thing a supported value can hold that the writer
+  // passes through, so the public encoder is the reference for the verdict.
+  REQUIRE_FALSE(scrydantic::encode(invalid));
+  REQUIRE(scrydantic::encode(invalid).error().message == reason);
+
+  const auto check_refused = [&](const scrydantic::Result<scrydantic::Json>& result) {
+    REQUIRE_FALSE(result);
+    CHECK(result.error().message == reason);
+    // It describes the handler's own value, so the model gets nothing from it.
+    CHECK(result.error().model_message.empty());
+  };
+
+  SECTION("an annotated function") {
+    auto tools = scrydantic::bind<^^bad_text_tools>();
+    REQUIRE(tools.size() == 3);
+    check_refused(tools[0].invoke(json("{}")));
+    check_refused(tools[1].invoke(json("{}")));
+    check_refused(tools[2].invoke(json("{}")));
+  }
+  SECTION("a typed handler returning a value") {
+    auto handler =
+        scrydantic::bind_handler<Position>([&](Position) { return invalid; });
+    check_refused(handler(json(R"({"x":0,"y":0})")));
+  }
+  SECTION("a typed handler returning a Result") {
+    auto handler = scrydantic::bind_handler<Position>(
+        [&](Position) -> scrydantic::Result<std::string> { return invalid; });
+    check_refused(handler(json(R"({"x":0,"y":0})")));
+  }
+  SECTION("a typed handler with a context") {
+    auto handler = scrydantic::bind_handler<Position, Session>(
+        [&](const Session&, Position) { return invalid; });
+    check_refused(handler(Session{}, json(R"({"x":0,"y":0})")));
+  }
+}
+
+TEST_CASE("bound handlers pass well-formed multi-byte text through") {
+  auto handler = scrydantic::bind_handler<Position>(
+      [](Position) { return std::string{"caf\xc3\xa9"}; });
+  const auto result = handler(json(R"({"x":0,"y":0})"));
+  REQUIRE(result);
+  CHECK(result->text == "\"caf\xc3\xa9\"");
 }
 
 TEST_CASE("one function binds alone") {

@@ -53,6 +53,10 @@ includes only the umbrella header needs no new include.
   `scrydantic::tool_error()`. A reflected tool that still returns a Scry result
   fails to compile, and the diagnostic gives the reason. Scry reports the error
   of a reflected tool as `ErrorCategory::tool`, as before.
+- A bound handler now fails when its result holds invalid UTF-8, instead of
+  returning invalid JSON. Through Scry, the model receives `tool handler returned
+  an error` in this case, like other result-encoding failures, instead of `tool
+  handler returned invalid JSON`.
 - Dynamic tools (`add_dynamic()`) and answer validators do not change: they
   use `scry::Result`, `scry::Status`, and `scry::tool_error()`.
 

@@ -191,15 +191,29 @@ template <typename Type> [[nodiscard]] Result<Json> encode_value(const Type& val
   return Json{.text = std::move(output)};
 }
 
+// Text the writer produced that is not JSON: a string value holding invalid UTF-8,
+// the one thing the writer copies without checking. A host-only diagnostic.
+[[nodiscard]] inline Error unencodable_value_error() {
+  return Error{.message = "reflected value could not be encoded as JSON"};
+}
+
 // The canonicalizing pass encode() ends with: the writer's text is canonical
 // apart from number spelling and the bytes of spliced Json payloads.
 [[nodiscard]] inline Result<Json> canonicalize_encoded_json(const Json& json) {
   auto canonical = canonicalize_json(json);
   if (!canonical) {
-    return std::unexpected(
-        Error{.message = "reflected value could not be encoded as JSON"});
+    return std::unexpected(unencodable_value_error());
   }
   return std::move(*canonical);
+}
+
+// The check a bound tool's result ends with. It builds no document, so a host can
+// still bound an oversized result before paying for a canonicalizing parse.
+[[nodiscard]] inline Result<Json> validate_encoded_json(Json&& json) {
+  if (!validate_json(json.text)) {
+    return std::unexpected(unencodable_value_error());
+  }
+  return std::move(json);
 }
 
 } // namespace scrydantic::detail

@@ -519,6 +519,26 @@ TEST_CASE("reflected result-encoding failures reach the model as the fixed text"
   CHECK(result->result.text.find("ratio") == std::string::npos);
 }
 
+TEST_CASE("a reflected result that is not valid UTF-8 reaches the model as the fixed "
+          "text") {
+  auto handler = make_tool_handler<PresenceArguments>(
+      [](PresenceArguments) { return std::string(1, '\xff'); });
+  const auto tools = snapshot_of("read_bytes", std::move(handler));
+
+  const auto result = scry::detail::dispatch_tool(
+      tools,
+      scry::detail::ToolCallBlock{
+          .id = "call-1",
+          .name = "read_bytes",
+          .arguments = {.text = R"({"nullable":null,"required":"value"})"},
+      },
+      {}, 1024);
+
+  REQUIRE(result);
+  CHECK(result->is_error);
+  CHECK(result->result.text == R"({"error":"tool handler returned an error"})");
+}
+
 TEST_CASE("public encoding matches reflected tool dispatch output") {
   const auto value = AllTypesArguments{
       .fixed = {1, 2},

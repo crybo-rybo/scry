@@ -3,7 +3,9 @@
 // program links Scrydantic alone, with no HTTP client, runtime, or model, and
 // exits 0 only when what it printed is what it expects.
 
+#include <cmath>
 #include <cstdint>
+#include <expected>
 #include <iostream>
 #include <memory>
 #include <optional>
@@ -36,9 +38,18 @@ struct Reading {
                  .scale = Scale::celsius};
 }
 
-[[= scrydantic::tool{"Round a number to the nearest whole number"}]] inline std::int64_t
-    round_number(double value) {
-  return static_cast<std::int64_t>(value < 0 ? value - 0.5 : value + 0.5);
+[[= scrydantic::tool{"Round a number to the nearest whole number"}]] inline scrydantic::
+    Result<std::int64_t>
+        round_number(double value) {
+  // 2^63 is the first double past the range. INT64_MAX converted to double rounds
+  // up to it, so it cannot be the bound of an inclusive check.
+  constexpr double limit = 0x1p63;
+  const double rounded = std::round(value);
+  if (rounded < -limit || rounded >= limit) {
+    return std::unexpected(
+        scrydantic::tool_error("the rounded value does not fit in 64 bits"));
+  }
+  return static_cast<std::int64_t>(rounded);
 }
 
 } // namespace unit_tools
@@ -141,14 +152,23 @@ int main() {
   const auto answered = scrydantic::encode(call(tools, request));
   const auto refused = scrydantic::encode(
       call(tools, scrydantic::Json{.text = R"({"name":"write_note","arguments":{}})"}));
-  if (!answered || !refused) {
+  const auto rounded = scrydantic::encode(
+      call(tools, scrydantic::Json{
+                      .text = R"({"name":"round_number","arguments":{"value":2.5}})"}));
+  const auto too_large = scrydantic::encode(call(
+      tools, scrydantic::Json{
+                 .text = R"({"name":"round_number","arguments":{"value":1e100}})"}));
+  if (!answered || !refused || !rounded || !too_large) {
     return 1;
   }
   std::cout << "tools/call -> " << answered->text << '\n';
   std::cout << "tools/call -> " << refused->text << '\n';
+  std::cout << "tools/call -> " << rounded->text << '\n';
+  std::cout << "tools/call -> " << too_large->text << '\n';
 
   // What a client would check: the four tools in declaration order, a decoded and
-  // converted reading, and a schema-derived refusal the model can act on.
+  // converted reading, a schema-derived refusal the model can act on, and a value
+  // the schema allows but the tool refuses to round.
   const auto parsed = scrydantic::JsonView::parse(*listed);
   const auto names = parsed ? parsed->find("tools") : std::nullopt;
   std::vector<std::string_view> listed_names{};
@@ -162,6 +182,10 @@ int main() {
           R"({"content":[{"text":"{\"degrees\":212,\"scale\":\"fahrenheit\"}",)"
           R"("type":"text"}],"isError":false})" &&
       refused->text == R"({"content":[{"text":"$.text is a required member",)"
-                       R"("type":"text"}],"isError":true})";
+                       R"("type":"text"}],"isError":true})" &&
+      rounded->text == R"({"content":[{"text":"3","type":"text"}],"isError":false})" &&
+      too_large->text ==
+          R"({"content":[{"text":"the rounded value does not fit in 64 bits",)"
+          R"("type":"text"}],"isError":true})";
   return ok ? 0 : 1;
 }
