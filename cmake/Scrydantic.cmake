@@ -23,7 +23,7 @@ if(NOT TARGET scrydantic::scrydantic)
     FetchContent_Declare(
       scrydantic
       GIT_REPOSITORY https://github.com/crybo-rybo/scrydantic.git
-      GIT_TAG c703c22a79c062d0a96e4dd0c165d4131f53ce86
+      GIT_TAG dd91b96a48fa37668d9b63a042649083ac937faf
       SYSTEM
     )
     FetchContent_MakeAvailable(scrydantic)

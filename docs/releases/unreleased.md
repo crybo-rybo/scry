@@ -44,7 +44,12 @@ includes only the umbrella header needs no new include.
 
 - `scrydantic::encode()` and `scrydantic::decode()` return
   `scrydantic::Result<T>`. `scrydantic::Error` has `message` and
-  `model_message` only, with the same texts as before. It has no category.
+  `model_message` only. It has no category. The `model_message` texts are the
+  same as before. The host `message` no longer starts with `reflected `: a
+  decode failure has the same `<path> <reason>` text in both fields, such as
+  `$.city must be a string`, and an encode failure has it in `message`. Scry's
+  own diagnostics, such as `Tool manifest at $.tools[0].input_schema ...`, read
+  as before.
   `Harness::ask()` and the validator of `response_format()` still report a
   rejected answer as `ErrorCategory::invalid_argument`.
 - `scrydantic::JsonView::parse()` returns `scrydantic::Result<JsonView>`.
@@ -83,6 +88,6 @@ includes only the umbrella header needs no new include.
 - `scrydantic::describe<^^entity>()` and `scrydantic::describe<Toolbox>()` give
   the contracts at compile time, without handlers or a toolbox object.
 - Scrydantic's
-  [standalone example](https://github.com/crybo-rybo/scrydantic/blob/main/examples/standalone_tools.cpp)
+  [MCP tools example](https://github.com/crybo-rybo/scrydantic/blob/main/examples/mcp_tools.cpp)
   lists reflected tools as an MCP-style `tools/list` result and serves
   `tools/call` requests without Scry.

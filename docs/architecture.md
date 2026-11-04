@@ -540,13 +540,13 @@ because it is the double -0.0. The canonical parse merges duplicate object keys
 into one key before dispatch, and the last occurrence wins. Thus handlers do not
 see the original lexical duplicates.
 
-If the decode fails, Scry fills `Error::model_message` with the host `message`
-without its `reflected JSON at ` prefix. This text gives the JSON path of the
-incorrect value and what the schema required at that path. If an enum value is
-not known, the text also gives the declared enumerator names. If the `type` of a
-variant is missing or not known, the text gives the declared tags. If the
-argument text is not JSON at all, the text is `tool arguments are not valid
-JSON`. Each word of this text comes from the schema that the model already has.
+If the decode fails, `Error::message` and `Error::model_message` hold the same
+`<path> <reason>` text, such as `$.city must be a string`. This text gives the
+JSON path of the incorrect value and what the schema required at that path. If
+an enum value is not known, the text also gives the declared enumerator names.
+If the `type` of a variant is missing or not known, the text gives the declared
+tags. If the argument text is not JSON at all, the text is `tool arguments are
+not valid JSON`. Each word of this text comes from the schema that the model already has.
 Thus the model can correct itself, and it learns nothing new.
 
 A failure of the result encoding fills no `model_message`. Such a failure
@@ -614,7 +614,7 @@ no `model_message`, for these inputs:
 and they apply the decoding rules of the previous section. A failure has the
 same path-based `message` and `model_message` as a tool-argument failure. Thus a
 host can give the failure of a typed answer back to the model. If the text is
-not JSON, the failure is `reflected JSON text is not valid JSON`.
+not JSON, the failure is `JSON text is not valid JSON`.
 `scrydantic::Error` has no category. Scry gives one where it reports the error:
 `ErrorCategory::tool` for a reflected tool, and `invalid_argument` for a typed
 answer. A type outside the family fails to compile, and the
@@ -1300,7 +1300,7 @@ of each row links the upstream issue for the public replacement:
 
 | Need | Where | Upstream |
 |---|---|---|
-| JSON text validation, canonicalization, and number spelling for the C++23 kernel | `src/kernel/json/codec.hpp`, `codec.cpp` | [scrydantic#6](https://github.com/crybo-rybo/scrydantic/issues/6) |
+| JSON text validation and canonical number spelling for the C++23 kernel | `src/kernel/json/codec.hpp`, `codec.cpp` | [scrydantic#6](https://github.com/crybo-rybo/scrydantic/issues/6) |
 | An encoder that keeps the bytes of stored payloads and the spelling of sampling numbers | `src/reflection/codec.hpp` | [scrydantic#3](https://github.com/crybo-rybo/scrydantic/issues/3) |
 | Compile-time diagnostics, worded for Scry's call sites | `include/scry/tool_registry.hpp`, `harness.hpp`, `response_format.hpp` | [scrydantic#4](https://github.com/crybo-rybo/scrydantic/issues/4) |
 | The wire keys of a message type, so that persistence requires every member | `src/runtime/conversation_persistence.cpp` | [scrydantic#5](https://github.com/crybo-rybo/scrydantic/issues/5) |

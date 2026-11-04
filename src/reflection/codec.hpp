@@ -24,20 +24,15 @@ template <typename Type>
       [](scrydantic::Json&& json) { return std::move(json.text); });
 }
 
-// Words a Scrydantic codec failure as a Scry diagnostic about `subject`. A
-// failure from decoding a JsonView reads `<subject> at $.messages[0].role is a
-// required member`. An encode failure has no path-only text, so it reads
-// `<subject>: reflected JSON at $.body is not valid JSON`.
-// TODO(https://github.com/crybo-rybo/scrydantic/issues/7): word both the same
-// way once encode failures carry the path-only text.
+// Words a Scrydantic codec failure as a Scry diagnostic about `subject`. A failure
+// at a JSON path reads `<subject> at $.messages[0].role is a required member`;
+// one about the whole value, such as an encoded string that is not valid UTF-8,
+// reads `<subject>: the value holds a string that is not valid UTF-8, so it cannot
+// be JSON`.
 [[nodiscard]] inline std::string
 describe_codec_failure(const std::string_view subject, const scrydantic::Error& error) {
   std::string text{subject};
-  if (error.model_message.empty()) {
-    text.append(": ").append(error.message);
-  } else {
-    text.append(" at ").append(error.model_message);
-  }
+  text.append(error.message.starts_with('$') ? " at " : ": ").append(error.message);
   return text;
 }
 
