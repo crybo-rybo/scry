@@ -231,7 +231,7 @@ the JSON types (`scrydantic::Json`, `scrydantic::JsonView`), the strict codec
 (`scrydantic::schema_v<T>`), and the tool binding (`scrydantic::bind()`).
 Scrydantic does not need Scry, libcurl, or a model. Thus, you can use it alone,
 for example to serve tools over MCP. Refer to
-[Scrydantic standalone example](https://github.com/crybo-rybo/scrydantic/blob/main/examples/standalone_tools.cpp).
+[Scrydantic's MCP tools example](https://github.com/crybo-rybo/scrydantic/blob/main/examples/mcp_tools.cpp).
 
 ## Runtime
 

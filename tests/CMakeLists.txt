@@ -311,5 +311,5 @@ scry_add_reflection_compile_fail_test(
 scry_add_reflection_compile_fail_test(
   unbound-member-tool
   unbound_member_tool.cpp
-  "Lamp::toggle is a non-static member function; register an object of Lamp as a toolbox"
+  "Lamp::toggle is a non-static member function; bind an object of Lamp as a toolbox"
 )

@@ -70,5 +70,12 @@ TEST_CASE("codec failures are worded as Scry diagnostics with their path") {
       BorrowedFrame{.body = scrydantic::Json{.text = "{"}, .items = {}, .label = ""});
   REQUIRE_FALSE(invalid);
   CHECK(scry::detail::describe_codec_failure("Frame", invalid.error()) ==
-        "Frame: reflected JSON at $.body is not valid JSON");
+        "Frame at $.body is not valid JSON");
+
+  // A failure about the whole value has no path to name.
+  const auto not_utf8 = scrydantic::encode(Payload{.text = "\xff"});
+  REQUIRE_FALSE(not_utf8);
+  CHECK(
+      scry::detail::describe_codec_failure("Frame", not_utf8.error()) ==
+      "Frame: the value holds a string that is not valid UTF-8, so it cannot be JSON");
 }
