@@ -1295,12 +1295,12 @@ example `Conversation document at $.messages[0].role is a required member`.
 
 Scry carries no copy of the parser, the codec, the schema generator, or the
 binding. Some of what it needs is not yet in Scrydantic's public API, so these
-places use the installed `scrydantic/detail` headers. Each place has a `TODO`
-that links the upstream issue for the public replacement:
+places use the installed `scrydantic/detail` headers. A `TODO` in the first file
+of each row links the upstream issue for the public replacement:
 
 | Need | Where | Upstream |
 |---|---|---|
-| JSON text validation, canonicalization, and number spelling for the C++23 kernel | `src/kernel/json/codec.hpp` | [scrydantic#6](https://github.com/crybo-rybo/scrydantic/issues/6) |
+| JSON text validation, canonicalization, and number spelling for the C++23 kernel | `src/kernel/json/codec.hpp`, `codec.cpp` | [scrydantic#6](https://github.com/crybo-rybo/scrydantic/issues/6) |
 | An encoder that keeps the bytes of stored payloads and the spelling of sampling numbers | `src/reflection/codec.hpp` | [scrydantic#3](https://github.com/crybo-rybo/scrydantic/issues/3) |
 | Compile-time diagnostics, worded for Scry's call sites | `include/scry/tool_registry.hpp`, `harness.hpp`, `response_format.hpp` | [scrydantic#4](https://github.com/crybo-rybo/scrydantic/issues/4) |
 | The wire keys of a message type, so that persistence requires every member | `src/runtime/conversation_persistence.cpp` | [scrydantic#5](https://github.com/crybo-rybo/scrydantic/issues/5) |
