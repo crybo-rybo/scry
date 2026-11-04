@@ -223,9 +223,9 @@ loop. Refer to [examples/typed_answer.cpp](examples/typed_answer.cpp).
 
 ### Scrydantic
 
-The reflection layer is the official
-[Scrydantic library](https://github.com/crybo-rybo/scrydantic).
-Scry links it as a public dependency. Scrydantic has the annotations,
+The reflection layer is a separate library,
+[Scrydantic](https://github.com/crybo-rybo/scrydantic). Scry links it as a
+public dependency. Scrydantic has the annotations,
 the JSON types (`scrydantic::Json`, `scrydantic::JsonView`), the strict codec
 (`scrydantic::encode()`, `scrydantic::decode<T>()`), the schema generator
 (`scrydantic::schema_v<T>`), and the tool binding (`scrydantic::bind()`).
@@ -270,7 +270,7 @@ for example to serve tools over MCP. Refer to
 - **libcurl 7.84 or newer**, with development headers.
 - **Scrydantic 0.1.x.** Scry uses it for JSON, schemas, and reflected tools.
   CMake uses an installed package when available, otherwise fetches a pinned
-  revision from the official repository.
+  revision.
 - **Linux or macOS.** CI uses GCC 16 on Ubuntu 24.04.
 
 ## Install

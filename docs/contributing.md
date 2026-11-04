@@ -8,8 +8,8 @@ contribution to the current tree.
 To build Scry, you must have GCC 16 or newer with reflection support, and CMake
 3.30 or newer. You must also have Ninja, and libcurl 7.84 or newer with the
 development headers. CMake 3.30 is the first release that knows the C++26 mode
-of GCC (`cxx_std_26`). Scry also uses the official
-[Scrydantic library](https://github.com/crybo-rybo/scrydantic), version 0.1.x.
+of GCC (`cxx_std_26`). Scry also uses
+[Scrydantic](https://github.com/crybo-rybo/scrydantic) 0.1.x.
 CMake prefers an installed package and otherwise fetches a pinned revision.
 The tests fetch Catch2.
 

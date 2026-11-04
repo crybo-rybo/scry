@@ -19,12 +19,16 @@ file(
   WRITE "${work_dir}/dependency-paths.cmake"
   "set(CMAKE_PREFIX_PATH [==[${prefix};${DEPENDENCY_PREFIX_PATH}]==] CACHE STRING \"\")\n"
 )
+set(dependency_dir_flag "")
+if(DEPENDENCY_DIR)
+  set(dependency_dir_flag "-Dscrydantic_DIR=${DEPENDENCY_DIR}")
+endif()
 run("${CMAKE_COMMAND}" --install "${SCRY_BINARY_DIR}" --prefix "${prefix}" --config "${CONFIG}")
 
 run(
   "${CMAKE_COMMAND}" -S "${SCRY_SOURCE_DIR}/tests/package" -B "${work_dir}/consumer"
   -G Ninja -C "${work_dir}/dependency-paths.cmake"
-  "-DCMAKE_CXX_COMPILER=${CXX_COMPILER}" "-Dscrydantic_DIR=${DEPENDENCY_DIR}"
+  "-DCMAKE_CXX_COMPILER=${CXX_COMPILER}" ${dependency_dir_flag}
   "-DCMAKE_BUILD_TYPE=${CONFIG}" "-DTESTING_SUPPORT=${TESTING_SUPPORT}"
   "-DSANITIZER=${SANITIZER}"
 )
@@ -36,7 +40,7 @@ run("${CMAKE_CTEST_COMMAND}" --test-dir "${work_dir}/consumer" --output-on-failu
 run(
   "${CMAKE_COMMAND}" -S "${SCRY_SOURCE_DIR}" -B "${work_dir}/installed-dependency"
   -G Ninja -C "${work_dir}/dependency-paths.cmake"
-  "-DCMAKE_CXX_COMPILER=${CXX_COMPILER}" "-Dscrydantic_DIR=${DEPENDENCY_DIR}"
+  "-DCMAKE_CXX_COMPILER=${CXX_COMPILER}" ${dependency_dir_flag}
   -DSCRY_FETCH_SCRYDANTIC=OFF -DSCRY_BUILD_TESTS=OFF -DSCRY_BUILD_EXAMPLES=OFF
   "-DSCRY_BUILD_TESTING_SUPPORT=${TESTING_SUPPORT}"
 )

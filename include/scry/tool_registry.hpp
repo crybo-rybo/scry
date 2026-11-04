@@ -35,6 +35,8 @@ concept owned_toolbox_candidate = std::is_class_v<std::remove_cvref_t<Type>> &&
                                   !is_shared_ptr_v<std::remove_cvref_t<Type>>;
 
 // add(Toolbox&&) takes ownership, so it needs an rvalue it can move from.
+// TODO(https://github.com/crybo-rybo/scrydantic/issues/4): the diagnostics in this
+// header use Scrydantic's internal helpers until it exposes public ones.
 template <typename Passed> consteval std::string_view owned_toolbox_diagnostic() {
   using Owned = std::remove_cvref_t<Passed>;
   if constexpr (std::is_lvalue_reference_v<Passed>) {

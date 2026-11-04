@@ -27,6 +27,8 @@ struct[[= scrydantic::ignore_unknown]] AnthropicEnvelope {
 // Whether `tag` is the tag of one of the variant's alternatives. It is a template
 // because GCC 16 reports each expansion of a non-dependent `template for` as
 // shadowing the previous one.
+// TODO(https://github.com/crybo-rybo/scrydantic/issues/5): read the tags through a
+// public API once Scrydantic exposes one.
 template <typename Variant>
 [[nodiscard]] bool is_alternative_tag(const std::string_view tag) noexcept {
   bool found = false;

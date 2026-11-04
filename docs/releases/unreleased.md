@@ -1,11 +1,11 @@
 # Scry (unreleased)
 
-The reflection layer of Scry is now the external
-[Scrydantic library](https://github.com/crybo-rybo/scrydantic), which Scry links
-as a public dependency. The embedded `scrydantic/` copy has been removed.
-Scrydantic has the annotations, the JSON types, the strict codec, the schema generator, and the
-tool binding. It does not need Scry, libcurl, or a model. Thus, you can use it
-alone, for example to serve C++ tools over MCP.
+The reflection layer of Scry is now a separate library,
+[Scrydantic](https://github.com/crybo-rybo/scrydantic), which Scry links as a
+public dependency. Scrydantic has the annotations, the JSON types, the strict
+codec, the schema generator, and the tool binding. It does not need Scry,
+libcurl, or a model. Thus, you can use it alone, for example to serve C++ tools
+over MCP.
 
 The split is a clean break. The old names are removed, and there are no aliases.
 Change the names in your code as the tables below show. The behavior does not
@@ -63,15 +63,14 @@ includes only the umbrella header needs no new include.
 
 ### Packaging
 
-- CMake prefers an installed Scrydantic 0.1.x package or parent-provided targets,
-  then falls back to a pinned revision of the official repository. Set
-  `SCRY_FETCH_SCRYDANTIC=OFF` to require an installation.
-- When fetched, Scrydantic's package is installed alongside Scry. Existing
-  installations remain separate dependencies. `find_package(scry)` finds
-  Scrydantic and its `scrydantic::scrydantic` and `scrydantic::json` targets.
-- Scrydantic's sources, tests, fixtures, examples, and packaging are maintained
-  upstream; Scry's checks cover its integration and installed-package consumer.
-- `scry::scry` links `scrydantic::scrydantic` PUBLIC.
+- Scry requires Scrydantic 0.1.x. CMake uses `scrydantic::scrydantic` and
+  `scrydantic::json` targets that a parent project supplies, then an installed
+  `scrydantic` package, and otherwise fetches a pinned revision. Set
+  `SCRY_FETCH_SCRYDANTIC=OFF` to require an installed package.
+- `scry::scry` links `scrydantic::scrydantic` PUBLIC, and `find_package(scry)`
+  finds the `scrydantic` package as a dependency. When CMake fetched Scrydantic,
+  Scry's install includes that package; otherwise, keep the prefix of your
+  Scrydantic installation on `CMAKE_PREFIX_PATH`.
 
 ## New
 
@@ -83,6 +82,7 @@ includes only the umbrella header needs no new include.
   `scry::ToolCallContext`.
 - `scrydantic::describe<^^entity>()` and `scrydantic::describe<Toolbox>()` give
   the contracts at compile time, without handlers or a toolbox object.
-- The [Scrydantic standalone example](https://github.com/crybo-rybo/scrydantic/blob/main/examples/standalone_tools.cpp)
-  lists reflected tools as an
-  MCP-style `tools/list` result and serves `tools/call` requests without Scry.
+- Scrydantic's
+  [standalone example](https://github.com/crybo-rybo/scrydantic/blob/main/examples/standalone_tools.cpp)
+  lists reflected tools as an MCP-style `tools/list` result and serves
+  `tools/call` requests without Scry.

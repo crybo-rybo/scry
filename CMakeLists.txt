@@ -68,13 +68,15 @@ endif()
 
 include(cmake/Scrydantic.cmake)
 
-# Lint the kernel against the same dependency headers as the build, whether
-# Scrydantic was fetched, installed, or supplied by the parent project.
-file(
-  GENERATE
-  OUTPUT "${PROJECT_BINARY_DIR}/scrydantic-json-includes.txt"
-  CONTENT "$<JOIN:$<TARGET_PROPERTY:scrydantic::json,INTERFACE_INCLUDE_DIRECTORIES>,\n>\n"
-)
+# scripts/lint.sh lints the kernel against the dependency headers that this build
+# uses, whether Scrydantic was fetched, installed, or supplied by a parent project.
+if(PROJECT_IS_TOP_LEVEL)
+  file(
+    GENERATE
+    OUTPUT "${PROJECT_BINARY_DIR}/scrydantic-json-includes.txt"
+    CONTENT "$<JOIN:$<REMOVE_DUPLICATES:$<TARGET_PROPERTY:scrydantic::json,INTERFACE_INCLUDE_DIRECTORIES>>,\n>\n"
+  )
+endif()
 
 find_package(CURL 7.84 REQUIRED)
 find_package(Threads REQUIRED)
@@ -184,7 +186,8 @@ set_target_properties(
     POSITION_INDEPENDENT_CODE ON
     CXX_EXTENSIONS OFF
 )
-# Scrydantic's public target supplies C++26 and -freflection transitively.
+target_compile_features(scry PUBLIC cxx_std_26)
+target_compile_options(scry PUBLIC -freflection)
 target_include_directories(
   scry
   PUBLIC

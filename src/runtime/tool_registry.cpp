@@ -1,5 +1,6 @@
 #include "kernel/error.hpp"
 #include "kernel/json/codec.hpp"
+#include "reflection/codec.hpp"
 #include "runtime/tool_registry_impl.hpp"
 
 #include <algorithm>
@@ -240,7 +241,8 @@ Result<scrydantic::Json> ToolRegistry::to_json() const {
   auto encoded = scrydantic::encode(manifest);
   if (!encoded) {
     return std::unexpected(detail::make_error(
-        ErrorCategory::invalid_state, "Tool manifest: " + encoded.error().message));
+        ErrorCategory::invalid_state,
+        detail::describe_codec_failure("Tool manifest", encoded.error())));
   }
   return std::move(*encoded);
 }

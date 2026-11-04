@@ -8,8 +8,8 @@ callbacks on the host thread.
 
 The public headers under `include/scry/` define the API. The reflection layer,
 which is the annotations, the JSON types, the strict codec, the schema generator,
-and the tool binding, comes from the official
-[Scrydantic library](https://github.com/crybo-rybo/scrydantic).
+and the tool binding, is a separate library,
+[Scrydantic](https://github.com/crybo-rybo/scrydantic).
 Scry links it, and Scry's public API uses its types, such as `scrydantic::Json`.
 For a complete program, see [README.md](../README.md). For build and test
 instructions, see [contributing.md](contributing.md).
@@ -746,13 +746,13 @@ builds by hand. It uses exactly the escapes of the canonical writer:
 
 All other bytes, `/` and non-ASCII included, go through with no change.
 
-Scrydantic's upstream JSON core parses and writes JSON.
-Scry links no third-party JSON library and exposes none. The kernel's
-`src/kernel/json/codec.hpp` gives the text-level operations a Scry error
-category, and the rest of `src/` reads parsed JSON through `JsonView` and maps
-its own data shapes with the reflected codec.
-[Scrydantic’s document contract](https://github.com/crybo-rybo/scrydantic/blob/main/src/json/document.hpp)
-gives the full rules:
+Scrydantic's JSON core parses and writes JSON. Scry links no other JSON library
+and exposes none. The kernel's `src/kernel/json/codec.hpp` gives the text-level
+operations a Scry error category, and the rest of `src/` reads parsed JSON
+through `JsonView` and maps its own data shapes with the reflected codec.
+Scrydantic's
+[`src/json/document.hpp`](https://github.com/crybo-rybo/scrydantic/blob/main/src/json/document.hpp)
+gives the full contract:
 
 - **Accepted text** is RFC 8259 JSON that holds exactly one value. Only space,
   tab, line feed, and carriage return can surround this value. The parser
@@ -1218,10 +1218,10 @@ Scry depends on the external Scrydantic package. It has two targets.
 `scrydantic::json` is a static C++23 library without reflection: the JSON core,
 `Json`, `JsonView`, and `scrydantic::Error`. `scrydantic::scrydantic` is
 header-only C++26 on top of it: the annotations, the codec, the schemas, and the
-tool binding. `scry::scry` links `scrydantic::scrydantic` PUBLIC, inheriting its
-language requirements, and the installed `scry` package finds `scrydantic` as a
-dependency. Scrydantic's source and its independent checks live in the
-[official repository](https://github.com/crybo-rybo/scrydantic).
+tool binding. `scry::scry` links `scrydantic::scrydantic` PUBLIC, and the
+installed `scry` package finds `scrydantic` as a dependency. Scrydantic's
+sources and its own tests are in
+[its repository](https://github.com/crybo-rybo/scrydantic).
 
 Scry's implementation has two parts. The kernel under `src/kernel/` is the code
 that parses untrusted bytes or calculates retry and transport policy. It has
@@ -1243,9 +1243,10 @@ This split keeps the kernel available to clang-tidy, which cannot parse
 reflection. Scrydantic checks its own C++23 JSON core upstream.
 
 The test build replays seed corpora for the SSE parser, the transport response
-policy, the provider stream decoders, and conversation persistence.
-Scrydantic maintains the JSON layer's corpus upstream. These replays are ordinary tests, and the `asan` preset runs them
-with ASan and UBSan. No build does a coverage-guided search.
+policy, the provider stream decoders, and conversation persistence. These
+replays are ordinary tests, and the `asan` preset runs them with ASan and UBSan.
+No build does a coverage-guided search. The JSON core's corpus is in
+Scrydantic's repository.
 
 `scry::testing` is an optional second static library. It is installed as the
 package component `testing`, and it is built unless
@@ -1279,8 +1280,8 @@ finds Scrydantic, curl, and Threads. Tests use Catch2, and only the standalone
 showcase uses Dear ImGui.
 
 Public headers use Scry types, Scrydantic JSON types, and move-only
-`UniqueFunction` callables. Stateful handles use PImpl. [contributing.md](contributing.md)
-tells how to build and test Scry.
+`UniqueFunction` callables. Stateful handles use PImpl.
+[contributing.md](contributing.md) tells how to build and test Scry.
 
 ## Scrydantic integration
 
@@ -1289,12 +1290,18 @@ to `scrydantic::bind()` and `bind_handler()`. Typed answers and provider stream
 payloads use `scrydantic::decode()`. Conversation persistence and tool manifests
 use the public `scrydantic::encode()` canonical encoder.
 
-The remaining adapters implement Scry-specific behavior. The C++23 JSON adapter
-maps the library's text-level operations to Scry error categories. Provider
-request encoding uses Scrydantic's internal verbatim encoder to preserve stored
-JSON payload bytes and sampling-number spelling, which the public canonical
-encoder would rewrite. Persistence additionally requires all message fields,
-including fields with defaults. Registration keeps Scrydantic's detailed
-compile-time diagnostics and call-site discovery when forwarding to its binding
-API. These adapters use installed `scrydantic/detail` headers; Scry carries no
-copy of the parser, codec, schema generator, or binding implementation.
+`src/reflection/codec.hpp` words every codec failure as a Scry diagnostic, for
+example `Conversation document at $.messages[0].role is a required member`.
+
+Scry carries no copy of the parser, the codec, the schema generator, or the
+binding. Some of what it needs is not yet in Scrydantic's public API, so these
+places use the installed `scrydantic/detail` headers. Each place has a `TODO`
+that links the upstream issue for the public replacement:
+
+| Need | Where | Upstream |
+|---|---|---|
+| JSON text validation, canonicalization, and number spelling for the C++23 kernel | `src/kernel/json/codec.hpp` | [scrydantic#6](https://github.com/crybo-rybo/scrydantic/issues/6) |
+| An encoder that keeps the bytes of stored payloads and the spelling of sampling numbers | `src/reflection/codec.hpp` | [scrydantic#3](https://github.com/crybo-rybo/scrydantic/issues/3) |
+| Compile-time diagnostics, worded for Scry's call sites | `include/scry/tool_registry.hpp`, `harness.hpp`, `response_format.hpp` | [scrydantic#4](https://github.com/crybo-rybo/scrydantic/issues/4) |
+| The wire keys of a message type, so that persistence requires every member | `src/runtime/conversation_persistence.cpp` | [scrydantic#5](https://github.com/crybo-rybo/scrydantic/issues/5) |
+| The tags of a tagged variant, so that unknown Anthropic events are ignored | `src/provider/anthropic_stream.cpp` | [scrydantic#5](https://github.com/crybo-rybo/scrydantic/issues/5) |

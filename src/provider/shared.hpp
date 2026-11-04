@@ -158,9 +158,9 @@ template <typename Body>
                                                       const std::string_view dialect) {
   auto encoded = encode_text(body);
   if (!encoded) {
-    return std::unexpected(
-        make_error(ErrorCategory::invalid_config,
-                   std::string{dialect} + " request: " + encoded.error().message));
+    return std::unexpected(make_error(
+        ErrorCategory::invalid_config,
+        describe_codec_failure(std::string{dialect} + " request", encoded.error())));
   }
   return std::move(*encoded);
 }
@@ -200,8 +200,9 @@ template <typename Payload>
   auto decoded = scrydantic::decode<Payload>(view);
   if (!decoded) {
     return std::unexpected(
-        make_error(ErrorCategory::protocol, std::string{dialect} + " stream data at " +
-                                                decoded.error().model_message));
+        make_error(ErrorCategory::protocol,
+                   describe_codec_failure(std::string{dialect} + " stream data",
+                                          decoded.error())));
   }
   return std::move(*decoded);
 }

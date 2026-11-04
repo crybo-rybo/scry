@@ -12,6 +12,8 @@
 // that report a failure as a Scry Error under the caller's category; outside
 // them, parsed JSON is read through scrydantic::JsonView and reflected types
 // through the reflected codec.
+// TODO(https://github.com/crybo-rybo/scrydantic/issues/6): include a public JSON
+// text header once Scrydantic exposes one.
 namespace scry::detail {
 
 // Validates JSON text without materializing a document; see

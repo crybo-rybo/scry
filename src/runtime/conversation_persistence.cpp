@@ -1,5 +1,6 @@
 #include "kernel/error.hpp"
 #include "kernel/json/codec.hpp"
+#include "reflection/codec.hpp"
 #include "runtime/state.hpp"
 
 #include <cstddef>
@@ -48,9 +49,8 @@ struct[[= scrydantic::ignore_unknown]] ConversationDocumentHeader {
 }
 
 [[nodiscard]] Error invalid_document(const scrydantic::Error& error) {
-  return invalid_document(error.model_message.empty()
-                              ? "Conversation document: " + error.message
-                              : "Conversation document at " + error.model_message);
+  return invalid_document(
+      detail::describe_codec_failure("Conversation document", error));
 }
 
 // ---- Completeness ------------------------------------------------------------
@@ -60,6 +60,8 @@ struct[[= scrydantic::ignore_unknown]] ConversationDocumentHeader {
 // omits one. Unknown members are already rejected, so this finds the declared
 // members the document left out. `path` is relative to the document root, as a
 // codec failure's is.
+// TODO(https://github.com/crybo-rybo/scrydantic/issues/5): enumerate the wire keys
+// through a public API once Scrydantic exposes one.
 template <typename Type>
 [[nodiscard]] Status require_members(const scrydantic::JsonView& object,
                                      const std::string& path) {

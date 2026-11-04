@@ -69,6 +69,12 @@ add_test(
 # Install to an isolated prefix and build a consumer using only exported targets.
 # This catches accidental dependencies on fetched source/build paths.
 if(PROJECT_IS_TOP_LEVEL)
+  # A fetched Scrydantic leaves scrydantic_DIR NOTFOUND; the consumer then finds
+  # the copy that was installed into the stage prefix.
+  set(scrydantic_package_dir "")
+  if(scrydantic_DIR)
+    set(scrydantic_package_dir "${scrydantic_DIR}")
+  endif()
   add_test(
     NAME package-smoke
     COMMAND
@@ -79,7 +85,7 @@ if(PROJECT_IS_TOP_LEVEL)
       "-DTESTING_SUPPORT=${SCRY_BUILD_TESTING_SUPPORT}"
       "-DSANITIZER=${SCRY_SANITIZER}"
       "-DDEPENDENCY_PREFIX_PATH=${CMAKE_PREFIX_PATH}"
-      "-DDEPENDENCY_DIR=${scrydantic_DIR}"
+      "-DDEPENDENCY_DIR=${scrydantic_package_dir}"
       "-DCONFIG=$<CONFIG>"
       -P "${CMAKE_CURRENT_SOURCE_DIR}/package_smoke.cmake"
   )
@@ -230,7 +236,7 @@ function(
       "-DCXX_COMPILER=${CMAKE_CXX_COMPILER}"
       "-DSOURCE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/reflection/compile_fail/${SOURCE_NAME}"
       "-DPROJECT_INCLUDE_DIR=${PROJECT_SOURCE_DIR}/include"
-      "-DDEPENDENCY_INCLUDE_DIRS=$<TARGET_PROPERTY:scrydantic::json,INTERFACE_INCLUDE_DIRECTORIES>"
+      "-DDEPENDENCY_INCLUDE_DIRS=$<REMOVE_DUPLICATES:$<TARGET_PROPERTY:scrydantic::scrydantic,INTERFACE_INCLUDE_DIRECTORIES>>"
       "-DEXPECTED_SUBSTRING=${EXPECTED_SUBSTRING}"
       -P "${PROJECT_SOURCE_DIR}/cmake/ExpectCompileFailure.cmake"
   )
