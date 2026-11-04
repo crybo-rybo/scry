@@ -57,16 +57,16 @@ TEST_CASE("the codec escapes control characters as the canonical writer does") {
   CHECK(canonical->text == *encoded);
 }
 
-TEST_CASE("the internal codec entry points report a path and a reason") {
+TEST_CASE("the codec preserves Scrydantic diagnostics at the Scry boundary") {
   const auto view = scrydantic::JsonView::parse(
       scrydantic::Json{.text = R"({"items":[{"text":7}]})"});
   REQUIRE(view);
-  const auto decoded = scry::detail::decode_value<OwnedFrame>(*view);
+  const auto decoded = scrydantic::decode<OwnedFrame>(*view);
   REQUIRE_FALSE(decoded);
-  CHECK(scry::detail::describe(decoded.error()) == "$.items[0].text must be a string");
+  CHECK(decoded.error().model_message == "$.items[0].text must be a string");
 
   const auto invalid = scry::detail::encode_text(
       BorrowedFrame{.body = scrydantic::Json{.text = "{"}, .items = {}, .label = ""});
   REQUIRE_FALSE(invalid);
-  CHECK(scry::detail::describe(invalid.error()) == "$.body is not valid JSON");
+  CHECK(invalid.error().message == "reflected JSON at $.body is not valid JSON");
 }

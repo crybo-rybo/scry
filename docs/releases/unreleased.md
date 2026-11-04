@@ -1,8 +1,9 @@
 # Scry (unreleased)
 
-The reflection layer of Scry is now a separate library, Scrydantic. It is in
-this repository under `scrydantic/`, and Scry links it. Scrydantic has the
-annotations, the JSON types, the strict codec, the schema generator, and the
+The reflection layer of Scry is now the external
+[Scrydantic library](https://github.com/crybo-rybo/scrydantic), which Scry links
+as a public dependency. The embedded `scrydantic/` copy has been removed.
+Scrydantic has the annotations, the JSON types, the strict codec, the schema generator, and the
 tool binding. It does not need Scry, libcurl, or a model. Thus, you can use it
 alone, for example to serve C++ tools over MCP.
 
@@ -62,8 +63,14 @@ includes only the umbrella header needs no new include.
 
 ### Packaging
 
-- The install has a second CMake package, `scrydantic`, with the targets
-  `scrydantic::scrydantic` and `scrydantic::json`. `find_package(scry)` finds it.
+- CMake prefers an installed Scrydantic 0.1.x package or parent-provided targets,
+  then falls back to a pinned revision of the official repository. Set
+  `SCRY_FETCH_SCRYDANTIC=OFF` to require an installation.
+- When fetched, Scrydantic's package is installed alongside Scry. Existing
+  installations remain separate dependencies. `find_package(scry)` finds
+  Scrydantic and its `scrydantic::scrydantic` and `scrydantic::json` targets.
+- Scrydantic's sources, tests, fixtures, examples, and packaging are maintained
+  upstream; Scry's checks cover its integration and installed-package consumer.
 - `scry::scry` links `scrydantic::scrydantic` PUBLIC.
 
 ## New
@@ -76,5 +83,6 @@ includes only the umbrella header needs no new include.
   `scry::ToolCallContext`.
 - `scrydantic::describe<^^entity>()` and `scrydantic::describe<Toolbox>()` give
   the contracts at compile time, without handlers or a toolbox object.
-- `scrydantic/examples/standalone_tools.cpp` lists reflected tools as an
+- The [Scrydantic standalone example](https://github.com/crybo-rybo/scrydantic/blob/main/examples/standalone_tools.cpp)
+  lists reflected tools as an
   MCP-style `tools/list` result and serves `tools/call` requests without Scry.

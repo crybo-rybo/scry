@@ -21,13 +21,14 @@ jobs:
       # differently and cannot parse libstdc++'s <expected>, so both tools come
       # from apt.llvm.org.
       # clang-tidy reads the libstdc++ headers of the newest GCC that it finds.
-      # g++-14 makes sure that the headers of that GCC are installed.
+      # GCC 16 also lets lint configure Scry to resolve Scrydantic's headers.
       - name: Install clang-format and clang-tidy
         run: |
           wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
           echo "deb https://apt.llvm.org/noble/ llvm-toolchain-noble-22 main" | sudo tee /etc/apt/sources.list.d/llvm-22.list
+          sudo add-apt-repository --yes ppa:ubuntu-toolchain-r/test
           sudo apt-get update
-          sudo apt-get install -y clang-format-22 clang-tidy-22 g++-14 libcurl4-openssl-dev
+          sudo apt-get install -y clang-format-22 clang-tidy-22 g++-16 libcurl4-openssl-dev ninja-build
       - run: ./scripts/format.sh --check
         env:
           CLANG_FORMAT: clang-format-22

@@ -34,7 +34,7 @@ The disposable self-signed key and certificate under `tls/` follow the same
 
 The golden files of the JSON layer, which record its acceptance boundary and
 its canonical bytes, moved with the layer into Scrydantic. See
-[`scrydantic/tests/fixtures/json/README.md`](../../scrydantic/tests/fixtures/json/README.md).
+[Scrydantic JSON fixtures](https://github.com/crybo-rybo/scrydantic/blob/main/tests/fixtures/json/README.md).
 
 There is no golden file for OpenAI streaming. `openai_stream_tests.cpp` builds
 each chunk from a template, so it can change one field at a time. The

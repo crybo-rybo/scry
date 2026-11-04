@@ -1,12 +1,12 @@
 #include "kernel/error.hpp"
 #include "kernel/json/codec.hpp"
-#include "reflection/codec.hpp"
 #include "runtime/tool_registry_impl.hpp"
 
 #include <algorithm>
 #include <cstdint>
 #include <iterator>
 #include <memory>
+#include <scrydantic/codec.hpp>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -236,18 +236,13 @@ Result<scrydantic::Json> ToolRegistry::to_json() const {
         .input_schema = definition.input_schema,
     });
   }
-  // Registration already canonicalized each schema. The codec validates it as it
-  // splices it, so a broken invariant is a diagnostic rather than a null or
-  // partial schema, and the final pass keeps the manifest canonical regardless.
-  auto encoded = detail::encode_text(manifest);
+  // The public codec validates each schema and canonicalizes the whole manifest.
+  auto encoded = scrydantic::encode(manifest);
   if (!encoded) {
-    return std::unexpected(
-        detail::make_error(ErrorCategory::invalid_state,
-                           "Tool manifest at " + detail::describe(encoded.error())));
+    return std::unexpected(detail::make_error(
+        ErrorCategory::invalid_state, "Tool manifest: " + encoded.error().message));
   }
-  return detail::canonicalize_json(scrydantic::Json{.text = std::move(*encoded)},
-                                   ErrorCategory::invalid_state,
-                                   "Tool manifest could not be encoded");
+  return std::move(*encoded);
 }
 
 } // namespace scry

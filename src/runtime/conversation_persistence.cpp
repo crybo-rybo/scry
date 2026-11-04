@@ -1,6 +1,5 @@
 #include "kernel/error.hpp"
 #include "kernel/json/codec.hpp"
-#include "reflection/codec.hpp"
 #include "runtime/state.hpp"
 
 #include <cstddef>
@@ -10,6 +9,7 @@
 #include <scry/error.hpp>
 #include <scry/message.hpp>
 #include <scrydantic/annotations.hpp>
+#include <scrydantic/codec.hpp>
 #include <scrydantic/json.hpp>
 #include <string>
 #include <string_view>
@@ -47,8 +47,10 @@ struct[[= scrydantic::ignore_unknown]] ConversationDocumentHeader {
   return detail::make_error(ErrorCategory::invalid_config, std::move(message));
 }
 
-[[nodiscard]] Error invalid_document(const detail::CodecFailure& failure) {
-  return invalid_document("Conversation document at " + detail::describe(failure));
+[[nodiscard]] Error invalid_document(const scrydantic::Error& error) {
+  return invalid_document(error.model_message.empty()
+                              ? "Conversation document: " + error.message
+                              : "Conversation document at " + error.model_message);
 }
 
 // ---- Completeness ------------------------------------------------------------
@@ -64,10 +66,9 @@ template <typename Type>
   template for (constexpr auto field : scrydantic::detail::fields_v<Type>) {
     constexpr std::string_view key = field.key_view();
     if (!object.find(key).has_value()) {
-      return std::unexpected(invalid_document(detail::CodecFailure{
-          .reason = "is a required member",
-          .path = path + "." + std::string{key},
-      }));
+      return std::unexpected(invalid_document("Conversation document at $" + path +
+                                              "." + std::string{key} +
+                                              " is a required member"));
     }
   }
   return {};
@@ -183,7 +184,7 @@ Result<scrydantic::Json> Conversation::to_json() const {
   if (auto status = validate_messages(*impl_->messages); !status) {
     return std::unexpected(std::move(status.error()));
   }
-  auto encoded = detail::encode_text(ConversationDocumentView{
+  auto encoded = scrydantic::encode(ConversationDocumentView{
       .messages = *impl_->messages,
       .system_prompt = impl_->config.system_prompt,
       .version = conversation_document_version,
@@ -191,11 +192,7 @@ Result<scrydantic::Json> Conversation::to_json() const {
   if (!encoded) {
     return std::unexpected(invalid_document(encoded.error()));
   }
-  // The splice keeps stored arguments and results byte for byte; this pass is what
-  // makes the document canonical.
-  return detail::canonicalize_json(scrydantic::Json{.text = std::move(*encoded)},
-                                   ErrorCategory::invalid_config,
-                                   "Conversation document could not be encoded");
+  return std::move(*encoded);
 }
 
 Result<Conversation> Conversation::from_json(const scrydantic::Json& json) {
@@ -203,7 +200,7 @@ Result<Conversation> Conversation::from_json(const scrydantic::Json& json) {
   if (!root) {
     return std::unexpected(invalid_document("Conversation document is not valid JSON"));
   }
-  auto header = detail::decode_value<ConversationDocumentHeader>(*root);
+  auto header = scrydantic::decode<ConversationDocumentHeader>(*root);
   if (!header) {
     return std::unexpected(invalid_document(header.error()));
   }
@@ -211,7 +208,7 @@ Result<Conversation> Conversation::from_json(const scrydantic::Json& json) {
     return std::unexpected(
         invalid_document("Conversation document version is not supported"));
   }
-  auto document = detail::decode_value<ConversationDocument>(*root);
+  auto document = scrydantic::decode<ConversationDocument>(*root);
   if (!document) {
     return std::unexpected(invalid_document(document.error()));
   }

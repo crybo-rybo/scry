@@ -1,54 +1,25 @@
 #pragma once
 
-#include <scrydantic/detail/decode.hpp>
+#include <scrydantic/codec.hpp>
 #include <scrydantic/detail/encode.hpp>
-#include <scrydantic/detail/failure.hpp>
-#include <scrydantic/detail/meta.hpp>
 #include <scrydantic/json.hpp>
 #include <string>
 #include <string_view>
 #include <utility>
 
-// The library's own entry points into Scrydantic's reflected codec. The public
-// scrydantic::encode() and decode() report a failure as a scrydantic::Error; these
-// return the codec's failure, a JSON path and a reason, so each caller words its
-// own diagnostic under its own ErrorCategory.
 namespace scry::detail {
 
-using CodecFailure = scrydantic::detail::codec_failure;
-
-template <typename Type> using CodecResult = scrydantic::detail::codec_result<Type>;
-
-// The failure as `$.messages[0].role is a required member`.
-[[nodiscard]] inline std::string describe(const CodecFailure& failure) {
-  std::string text{"$"};
-  text.append(failure.path);
-  text.push_back(' ');
-  text.append(failure.reason);
-  return text;
-}
-
-// Decodes by the rules scrydantic::decode() applies.
+// Provider requests preserve stored JSON payload bytes and pre-spelled sampling
+// numbers. Scrydantic's public encode() canonicalizes the whole document, so this
+// one adapter uses its uncanonicalized encoder. All other reflected encoding and
+// decoding uses the public API. Keep this dependency on Scrydantic internals
+// isolated until it exposes a public verbatim encoding operation.
 template <typename Type>
-[[nodiscard]] CodecResult<Type> decode_value(const scrydantic::JsonView& view) {
-  constexpr std::string_view problem = scrydantic::detail::decodable_diagnostic<Type>();
-  static_assert(problem.empty(), problem);
-  return scrydantic::detail::read_value<Type>(view);
-}
-
-// Encodes without the canonicalizing pass scrydantic::encode() ends with. Keys are
-// in canonical order and strings carry the canonical escapes, so the text is
-// canonical apart from number spelling and the bytes of spliced scrydantic::Json
-// payloads, each of which the codec has validated.
-template <typename Type>
-[[nodiscard]] CodecResult<std::string> encode_text(const Type& value) {
+[[nodiscard]] scrydantic::Result<std::string> encode_text(const Type& value) {
   constexpr std::string_view problem = scrydantic::detail::encodable_diagnostic<Type>();
   static_assert(problem.empty(), problem);
-  std::string output{};
-  if (auto status = scrydantic::detail::write_value(output, value); !status) {
-    return std::unexpected(std::move(status.error()));
-  }
-  return output;
+  return scrydantic::detail::encode_value(value).transform(
+      [](scrydantic::Json&& json) { return std::move(json.text); });
 }
 
 } // namespace scry::detail

@@ -223,14 +223,15 @@ loop. Refer to [examples/typed_answer.cpp](examples/typed_answer.cpp).
 
 ### Scrydantic
 
-The reflection layer is a separate library, Scrydantic, in
-[`scrydantic/`](scrydantic/). Scry links it. Scrydantic has the annotations,
+The reflection layer is the official
+[Scrydantic library](https://github.com/crybo-rybo/scrydantic).
+Scry links it as a public dependency. Scrydantic has the annotations,
 the JSON types (`scrydantic::Json`, `scrydantic::JsonView`), the strict codec
 (`scrydantic::encode()`, `scrydantic::decode<T>()`), the schema generator
 (`scrydantic::schema_v<T>`), and the tool binding (`scrydantic::bind()`).
 Scrydantic does not need Scry, libcurl, or a model. Thus, you can use it alone,
 for example to serve tools over MCP. Refer to
-[scrydantic/examples/standalone_tools.cpp](scrydantic/examples/standalone_tools.cpp).
+[Scrydantic standalone example](https://github.com/crybo-rybo/scrydantic/blob/main/examples/standalone_tools.cpp).
 
 ## Runtime
 
@@ -266,9 +267,10 @@ for example to serve tools over MCP. Refer to
   `-std=c++26 -freflection`. Scry does not support Clang or MSVC.
 - **CMake 3.30 or newer.** This is the first CMake version that knows the C++26
   mode of GCC.
-- **libcurl 7.84 or newer**, with development headers. libcurl is the only
-  library dependency. Scry parses and writes JSON with Scrydantic, which is in
-  this repository.
+- **libcurl 7.84 or newer**, with development headers.
+- **Scrydantic 0.1.x.** Scry uses it for JSON, schemas, and reflected tools.
+  CMake uses an installed package when available, otherwise fetches a pinned
+  revision from the official repository.
 - **Linux or macOS.** CI uses GCC 16 on Ubuntu 24.04.
 
 ## Install
@@ -291,9 +293,18 @@ find_package(scry 0.7.0 CONFIG REQUIRED)
 target_link_libraries(app PRIVATE scry::scry)
 ```
 
-The install also has the `scrydantic` package, and `find_package(scry)` finds it.
-To use Scrydantic without Scry, use `find_package(scrydantic CONFIG REQUIRED)` and
-`scrydantic::scrydantic`.
+When CMake fetches Scrydantic, installation includes its package alongside Scry.
+When using an existing Scrydantic installation, keep its prefix on
+`CMAKE_PREFIX_PATH` for downstream consumers too. `find_package(scry)` resolves
+Scrydantic automatically; `scry::scry` supplies its headers, C++26 reflection
+flags, and JSON library transitively.
+
+To require an installed dependency and prevent a download, configure Scry with
+`-DSCRY_FETCH_SCRYDANTIC=OFF` and set `CMAKE_PREFIX_PATH` or `scrydantic_DIR`.
+For local Scrydantic development, use CMake's
+`-DFETCHCONTENT_SOURCE_DIR_SCRYDANTIC=/path/to/scrydantic` override. A parent
+project can also supply `scrydantic::scrydantic` and `scrydantic::json` targets
+before adding Scry. Scrydantic's tests and examples run in its own repository.
 
 You can also use `FetchContent`. When you embed Scry, its tests and examples
 are off by default:

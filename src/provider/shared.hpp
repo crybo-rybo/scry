@@ -160,7 +160,7 @@ template <typename Body>
   if (!encoded) {
     return std::unexpected(
         make_error(ErrorCategory::invalid_config,
-                   std::string{dialect} + " request at " + describe(encoded.error())));
+                   std::string{dialect} + " request: " + encoded.error().message));
   }
   return std::move(*encoded);
 }
@@ -197,11 +197,11 @@ parse_payload(const std::string_view data, const std::string_view dialect) {
 template <typename Payload>
 [[nodiscard]] Result<Payload> decode_payload(const scrydantic::JsonView& view,
                                              const std::string_view dialect) {
-  auto decoded = decode_value<Payload>(view);
+  auto decoded = scrydantic::decode<Payload>(view);
   if (!decoded) {
     return std::unexpected(
         make_error(ErrorCategory::protocol, std::string{dialect} + " stream data at " +
-                                                describe(decoded.error())));
+                                                decoded.error().model_message));
   }
   return std::move(*decoded);
 }

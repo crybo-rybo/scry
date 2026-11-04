@@ -8,7 +8,8 @@ callbacks on the host thread.
 
 The public headers under `include/scry/` define the API. The reflection layer,
 which is the annotations, the JSON types, the strict codec, the schema generator,
-and the tool binding, is a separate library, Scrydantic, under `scrydantic/`.
+and the tool binding, comes from the official
+[Scrydantic library](https://github.com/crybo-rybo/scrydantic).
 Scry links it, and Scry's public API uses its types, such as `scrydantic::Json`.
 For a complete program, see [README.md](../README.md). For build and test
 instructions, see [contributing.md](contributing.md).
@@ -745,12 +746,13 @@ builds by hand. It uses exactly the escapes of the canonical writer:
 
 All other bytes, `/` and non-ASCII included, go through with no change.
 
-Scrydantic's JSON core parses and writes JSON, under `scrydantic/src/json/`.
+Scrydantic's upstream JSON core parses and writes JSON.
 Scry links no third-party JSON library and exposes none. The kernel's
 `src/kernel/json/codec.hpp` gives the text-level operations a Scry error
 category, and the rest of `src/` reads parsed JSON through `JsonView` and maps
 its own data shapes with the reflected codec.
-`scrydantic/src/json/document.hpp` gives the full contract:
+[Scrydantic’s document contract](https://github.com/crybo-rybo/scrydantic/blob/main/src/json/document.hpp)
+gives the full rules:
 
 - **Accepted text** is RFC 8259 JSON that holds exactly one value. Only space,
   tab, line feed, and carriage return can surround this value. The parser
@@ -1212,16 +1214,14 @@ The consumer target is `scry::scry`. It is a static library, and it requires GCC
 platforms are Linux and macOS. Before 1.0, Scry does not promise API, ABI, or persistence-format
 stability.
 
-Scry depends on Scrydantic, a self-contained project under `scrydantic/` with
-its own CMake package, `scrydantic`. It has two targets. `scrydantic::json` is a
-static C++23 library without reflection: the JSON core, `Json`, `JsonView`, and
-`scrydantic::Error`. `scrydantic::scrydantic` is header-only C++26 on top of it:
-the annotations, the codec, the schemas, and the tool binding. Nothing in
-`scrydantic/` includes a Scry header or links libcurl or Threads, and
-`scripts/lint.sh` checks this. `scry::scry` links `scrydantic::scrydantic`
-PUBLIC, and the installed `scry` package finds `scrydantic` as a dependency.
-`scrydantic/NOTES.md` records how the split was made and what a separate
-repository would still need.
+Scry depends on the external Scrydantic package. It has two targets.
+`scrydantic::json` is a static C++23 library without reflection: the JSON core,
+`Json`, `JsonView`, and `scrydantic::Error`. `scrydantic::scrydantic` is
+header-only C++26 on top of it: the annotations, the codec, the schemas, and the
+tool binding. `scry::scry` links `scrydantic::scrydantic` PUBLIC, inheriting its
+language requirements, and the installed `scry` package finds `scrydantic` as a
+dependency. Scrydantic's source and its independent checks live in the
+[official repository](https://github.com/crybo-rybo/scrydantic).
 
 Scry's implementation has two parts. The kernel under `src/kernel/` is the code
 that parses untrusted bytes or calculates retry and transport policy. It has
@@ -1239,13 +1239,12 @@ from their wire shapes and JSON shapes. It uses reflection where reflection
 replaces hand-written shape code. The build archives the kernel objects into
 `scry::scry`. The kernel is not a separate installed target.
 
-This split keeps the layer that sees untrusted bytes, the kernel and
-Scrydantic's JSON core, available to clang-tidy, because clang-tidy cannot
-parse reflection.
+This split keeps the kernel available to clang-tidy, which cannot parse
+reflection. Scrydantic checks its own C++23 JSON core upstream.
 
 The test build replays seed corpora for the SSE parser, the transport response
-policy, the JSON layer, the provider stream decoders, and conversation
-persistence. These replays are ordinary tests, and the `asan` preset runs them
+policy, the provider stream decoders, and conversation persistence.
+Scrydantic maintains the JSON layer's corpus upstream. These replays are ordinary tests, and the `asan` preset runs them
 with ASan and UBSan. No build does a coverage-guided search.
 
 `scry::testing` is an optional second static library. It is installed as the
@@ -1273,9 +1272,29 @@ Retry waits are real time, and the retry policy of the `Config` sets their
 bound. The server does not test TLS. The headers of `scry::testing` depend only
 on `<scry/*>`.
 
-libcurl is the only third-party linked dependency. The installed package finds
-Scrydantic, curl, and Threads. Tests use Catch2, and only the standalone showcase uses Dear ImGui.
+The linked dependencies are Scrydantic's JSON core and libcurl. CMake reuses
+Scrydantic targets supplied by a parent project, prefers a compatible installed
+package, and otherwise fetches a pinned upstream revision. The installed package
+finds Scrydantic, curl, and Threads. Tests use Catch2, and only the standalone
+showcase uses Dear ImGui.
 
-Public headers use types that Scry owns and move-only `UniqueFunction`
-callables. Stateful handles use PImpl. [contributing.md](contributing.md)
+Public headers use Scry types, Scrydantic JSON types, and move-only
+`UniqueFunction` callables. Stateful handles use PImpl. [contributing.md](contributing.md)
 tells how to build and test Scry.
+
+## Scrydantic integration
+
+Scry delegates tool discovery, schemas, argument decoding, and result encoding
+to `scrydantic::bind()` and `bind_handler()`. Typed answers and provider stream
+payloads use `scrydantic::decode()`. Conversation persistence and tool manifests
+use the public `scrydantic::encode()` canonical encoder.
+
+The remaining adapters implement Scry-specific behavior. The C++23 JSON adapter
+maps the library's text-level operations to Scry error categories. Provider
+request encoding uses Scrydantic's internal verbatim encoder to preserve stored
+JSON payload bytes and sampling-number spelling, which the public canonical
+encoder would rewrite. Persistence additionally requires all message fields,
+including fields with defaults. Registration keeps Scrydantic's detailed
+compile-time diagnostics and call-site discovery when forwarding to its binding
+API. These adapters use installed `scrydantic/detail` headers; Scry carries no
+copy of the parser, codec, schema generator, or binding implementation.

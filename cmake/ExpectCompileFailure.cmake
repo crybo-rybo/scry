@@ -1,16 +1,16 @@
 # cmake -DCXX_COMPILER=... -DSOURCE_FILE=... -DPROJECT_INCLUDE_DIR=...
-#       [-DDEPENDENCY_INCLUDE_DIR=...] -DEXPECTED_SUBSTRING=...
+#       [-DDEPENDENCY_INCLUDE_DIRS=...] -DEXPECTED_SUBSTRING=...
 #       -P ExpectCompileFailure.cmake
 #
 # Passes when SOURCE_FILE fails to compile with a diagnostic containing
 # EXPECTED_SUBSTRING. -fsyntax-only still instantiates templates and
 # constant-evaluates, so the reflection diagnostics fire without an object file.
-# DEPENDENCY_INCLUDE_DIR names the public headers of Scrydantic, which Scry's
+# DEPENDENCY_INCLUDE_DIRS names the public headers of Scrydantic, which Scry's
 # headers include.
 set(include_flags "-I${PROJECT_INCLUDE_DIR}")
-if(DEPENDENCY_INCLUDE_DIR)
-  list(APPEND include_flags "-I${DEPENDENCY_INCLUDE_DIR}")
-endif()
+foreach(include_dir IN LISTS DEPENDENCY_INCLUDE_DIRS)
+  list(APPEND include_flags "-I${include_dir}")
+endforeach()
 execute_process(
   COMMAND
     "${CXX_COMPILER}" -std=c++26 -freflection ${include_flags}
