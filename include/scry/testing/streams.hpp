@@ -3,7 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
-#include <scry/json.hpp>
+#include <scrydantic/json.hpp>
 #include <string>
 #include <string_view>
 
@@ -49,9 +49,9 @@ anthropic_message_start(const std::string_view message_id,
                         const std::uint32_t input_tokens) {
   auto frame = std::string{"event: message_start\ndata: "};
   frame += R"({"type":"message_start","message":{"id":)";
-  frame += escape_json_string(message_id);
+  frame += scrydantic::escape_json_string(message_id);
   if (!request_id.empty()) {
-    frame += R"(,"request_id":)" + escape_json_string(request_id);
+    frame += R"(,"request_id":)" + scrydantic::escape_json_string(request_id);
   }
   frame += R"(,"type":"message","role":"assistant","content":[],)";
   frame += R"("model":"test-model","stop_reason":null,"usage":{"input_tokens":)";
@@ -66,7 +66,7 @@ anthropic_message_end(const std::string_view stop_reason,
                       const std::size_t output_tokens) {
   auto frame = std::string{"event: message_delta\ndata: "};
   frame += R"({"type":"message_delta","delta":{"stop_reason":)";
-  frame += escape_json_string(stop_reason);
+  frame += scrydantic::escape_json_string(stop_reason);
   frame += R"(},"usage":{"output_tokens":)";
   frame += std::to_string(output_tokens);
   frame += R"(}})";
@@ -85,7 +85,7 @@ anthropic_message_end(const std::string_view stop_reason,
   events += "\n\nevent: content_block_delta\ndata: ";
   events += R"({"type":"content_block_delta","index":)" + position + ",";
   events += R"("delta":{"type":"text_delta","text":)";
-  events += escape_json_string(text);
+  events += scrydantic::escape_json_string(text);
   events += R"(}})";
   events += "\n\nevent: content_block_stop\ndata: ";
   events += R"({"type":"content_block_stop","index":)" + position + "}";
@@ -99,16 +99,16 @@ anthropic_message_end(const std::string_view stop_reason,
   auto events = std::string{"event: content_block_start\ndata: "};
   events += R"({"type":"content_block_start","index":)" + position;
   events += R"(,"content_block":{"type":"tool_use","id":)";
-  events += escape_json_string(block.id);
+  events += scrydantic::escape_json_string(block.id);
   events += R"(,"name":)";
-  events += escape_json_string(block.name);
+  events += scrydantic::escape_json_string(block.name);
   events += R"(,"input":{}}})";
   events += "\n\n";
   if (!block.arguments.empty()) {
     events += "event: content_block_delta\ndata: ";
     events += R"({"type":"content_block_delta","index":)" + position;
     events += R"(,"delta":{"type":"input_json_delta","partial_json":)";
-    events += escape_json_string(block.arguments);
+    events += scrydantic::escape_json_string(block.arguments);
     events += R"(}})";
     events += "\n\n";
   }
@@ -120,7 +120,7 @@ anthropic_message_end(const std::string_view stop_reason,
 
 // Everything each OpenAI-compatible chunk repeats before its choices array.
 [[nodiscard]] inline std::string openai_chunk_prefix(const std::string_view id) {
-  return R"(data: {"id":)" + escape_json_string(id) +
+  return R"(data: {"id":)" + scrydantic::escape_json_string(id) +
          R"(,"object":"chat.completion.chunk","choices":)";
 }
 
@@ -131,7 +131,7 @@ openai_stream_end(const std::string_view prefix, const std::string_view finish_r
                   const std::uint32_t completion_tokens) {
   auto stream = std::string{prefix};
   stream += R"([{"index":0,"delta":{},"finish_reason":)";
-  stream += escape_json_string(finish_reason);
+  stream += scrydantic::escape_json_string(finish_reason);
   stream += R"(}]})";
   stream += "\n\n";
   stream += prefix;
@@ -150,11 +150,11 @@ openai_stream_end(const std::string_view prefix, const std::string_view finish_r
                                                   const ToolUseBlock& block) {
   auto entry = std::string{R"({"index":)"} + std::to_string(index);
   entry += R"(,"id":)";
-  entry += escape_json_string(block.id);
+  entry += scrydantic::escape_json_string(block.id);
   entry += R"(,"type":"function","function":{"name":)";
-  entry += escape_json_string(block.name);
+  entry += scrydantic::escape_json_string(block.name);
   entry += R"(,"arguments":)";
-  entry += escape_json_string(block.arguments);
+  entry += scrydantic::escape_json_string(block.arguments);
   entry += R"(}})";
   return entry;
 }
@@ -253,7 +253,7 @@ anthropic_text_tool_stream(const std::string_view text,
   stream += "\n\n";
   stream += prefix;
   stream += R"([{"index":0,"delta":{"content":)";
-  stream += escape_json_string(text);
+  stream += scrydantic::escape_json_string(text);
   stream += R"(},"finish_reason":null}]})";
   stream += "\n\n";
   stream += stream_frames::openai_stream_end(prefix, "stop", prompt_tokens,
@@ -317,7 +317,7 @@ openai_tool_stream(const std::initializer_list<ToolUseBlock> blocks,
   const auto prefix = stream_frames::openai_chunk_prefix(completion_id);
   auto stream = prefix;
   stream += R"([{"index":0,"delta":{"role":"assistant","content":)";
-  stream += escape_json_string(text);
+  stream += scrydantic::escape_json_string(text);
   stream += R"(},"finish_reason":null}]})";
   stream += "\n\n";
   stream += prefix;
@@ -350,7 +350,7 @@ openai_tool_stream(const std::initializer_list<ToolUseBlock> blocks,
 [[nodiscard]] inline std::string openai_error_body(const int status,
                                                    const std::string_view type) {
   auto body = std::string{R"({"error":{"message":"scripted error","type":)"};
-  body += escape_json_string(type);
+  body += scrydantic::escape_json_string(type);
   body += R"(,"code":)";
   body += std::to_string(status);
   body += "}}";
@@ -367,7 +367,7 @@ openai_tool_stream(const std::initializer_list<ToolUseBlock> blocks,
 /// @return A complete Anthropic error body.
 [[nodiscard]] inline std::string anthropic_error_body(const std::string_view type) {
   auto body = std::string{R"({"type":"error","error":{"type":)"};
-  body += escape_json_string(type);
+  body += scrydantic::escape_json_string(type);
   body += R"(,"message":"scripted error"}})";
   return body;
 }

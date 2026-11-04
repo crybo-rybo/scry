@@ -25,7 +25,7 @@ using OptionalBlock = Result<std::optional<ContentBlock>>;
   return ContentBlock{ToolCallBlock{
       .id = std::move(content.id),
       .name = std::move(content.name),
-      .arguments = streaming_start ? Json{} : std::move(content.input),
+      .arguments = streaming_start ? scrydantic::Json{} : std::move(content.input),
   }};
 }
 

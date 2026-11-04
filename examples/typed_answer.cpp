@@ -2,7 +2,7 @@
 //
 // ask<T>() blocks for the answer. send<T>() is the poll-friendly form: the
 // answer arrives in Completion::structured inside update(), for
-// scry::reflection::decode<T>(). send_structured() and
+// scrydantic::decode<T>(). send_structured() and
 // send_and_wait_structured() take a hand-written ResponseFormat instead.
 
 #include <expected>
@@ -15,9 +15,8 @@ namespace {
 /// The answer the model must give. Its schema, its strict decoder, and the
 /// errors the model sees when it gets the shape wrong are generated from this.
 struct Verdict {
-  [[= scry::reflection::description{
-      "Is the claim supported by evidence?"}]] bool supported{};
-  [[= scry::reflection::description{
+  [[= scrydantic::description{"Is the claim supported by evidence?"}]] bool supported{};
+  [[= scrydantic::description{
       "One sentence explaining the verdict"}]] std::string reason{};
 };
 
@@ -29,8 +28,8 @@ struct Verdict {
       .name = "score",
       .schema = {.text = R"({"type":"object","required":["score"],)"
                          R"("properties":{"score":{"type":"integer"}}})"},
-      .validate = [](const scry::Json& answer) -> scry::Status {
-        auto parsed = scry::JsonView::parse(answer);
+      .validate = [](const scrydantic::Json& answer) -> scry::Status {
+        auto parsed = scrydantic::JsonView::parse(answer);
         if (!parsed || !parsed->find("score")) {
           return std::unexpected(scry::tool_error("score is required"));
         }

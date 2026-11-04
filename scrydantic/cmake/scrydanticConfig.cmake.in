@@ -1,0 +1,18 @@
+@PACKAGE_INIT@
+
+include("${CMAKE_CURRENT_LIST_DIR}/scrydanticTargets.cmake")
+
+# scrydantic::scrydantic's public headers are C++26 and use P2996 reflection,
+# so a consumer on any other toolchain cannot compile against this package.
+if(
+  NOT CMAKE_CXX_COMPILER_ID STREQUAL "GNU"
+  OR CMAKE_CXX_COMPILER_VERSION VERSION_LESS 16
+)
+  set(scrydantic_FOUND FALSE)
+  set(
+    scrydantic_NOT_FOUND_MESSAGE
+    "scrydantic requires GCC 16 or newer (C++26 reflection)"
+  )
+endif()
+
+check_required_components(scrydantic)

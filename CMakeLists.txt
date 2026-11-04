@@ -61,6 +61,21 @@ if(
   message(FATAL_ERROR "Scry requires GCC 16 or newer (C++26 reflection)")
 endif()
 
+# CTest is enabled before any subdirectory registers tests, Scrydantic's
+# included, so ctest runs every suite from the build root.
+if(SCRY_BUILD_TESTS)
+  include(CTest)
+endif()
+
+# Scrydantic, the reflected codec and tool layer, is a self-contained project
+# under scrydantic/ that Scry builds first and links PUBLIC. Its options follow
+# Scry's.
+set(SCRYDANTIC_BUILD_TESTS ${SCRY_BUILD_TESTS})
+set(SCRYDANTIC_BUILD_EXAMPLES ${SCRY_BUILD_EXAMPLES})
+set(SCRYDANTIC_WARNINGS_AS_ERRORS ${SCRY_WARNINGS_AS_ERRORS})
+set(SCRYDANTIC_SANITIZER ${SCRY_SANITIZER})
+add_subdirectory(scrydantic)
+
 find_package(CURL 7.84 REQUIRED)
 find_package(Threads REQUIRED)
 
@@ -88,20 +103,19 @@ if(SCRY_SANITIZER_FLAGS)
   target_link_options(scry_project_options INTERFACE ${SCRY_SANITIZER_FLAGS})
 endif()
 
-# The kernel is the reflection-free layer under the library: the JSON codec, the
-# SSE parser, retry delay arithmetic, and the transport seam with its libcurl
-# implementation, which is everything that parses untrusted bytes. It is compiled
-# as C++23 without -freflection, so plain clang-tidy can analyze it
-# (scripts/lint.sh). It never links scry, so scry's PUBLIC C++26 and -freflection
-# cannot reach it. src/kernel/kernel.hpp states the include boundary.
+# The kernel is the reflection-free layer under the library: the Scry-facing
+# layer of the JSON codec, the SSE parser, retry delay arithmetic, and the
+# transport seam with its libcurl implementation, which is everything that
+# parses untrusted bytes apart from Scrydantic's JSON core. It is compiled as
+# C++23 without -freflection, so plain clang-tidy can analyze it
+# (scripts/lint.sh). It never links scry or scrydantic::scrydantic, so their
+# PUBLIC C++26 and -freflection cannot reach it; it links only Scrydantic's C++23
+# JSON core. src/kernel/kernel.hpp states the include boundary.
 add_library(
   scry_kernel
   OBJECT
     src/kernel/error.cpp
     src/kernel/json/codec.cpp
-    src/kernel/json/document.cpp
-    src/kernel/json/number.cpp
-    src/kernel/json/view.cpp
     src/kernel/retry.cpp
     src/kernel/sse.cpp
     src/kernel/transport/curl_error.cpp
@@ -129,11 +143,11 @@ target_include_directories(
     "${PROJECT_SOURCE_DIR}/src"
 )
 # A target that links the kernel objects directly, such as a kernel test, also
-# needs libcurl and Threads at link time. scry takes the objects through
-# $<TARGET_OBJECTS:...> instead and declares both dependencies itself.
+# needs the JSON core, libcurl, and Threads at link time. scry takes the objects
+# through $<TARGET_OBJECTS:...> instead and declares those dependencies itself.
 target_link_libraries(
   scry_kernel
-  PUBLIC CURL::libcurl Threads::Threads
+  PUBLIC scrydantic::json CURL::libcurl Threads::Threads
   PRIVATE scry_project_options
 )
 
@@ -147,7 +161,6 @@ add_library(
     src/provider/openai_request.cpp
     src/provider/openai_stream.cpp
     src/provider/provider.cpp
-    src/reflection/json_bridge.cpp
     src/runtime/config.cpp
     src/runtime/conversation.cpp
     src/runtime/conversation_persistence.cpp
@@ -184,6 +197,7 @@ target_include_directories(
 )
 target_link_libraries(
   scry
+  PUBLIC scrydantic::scrydantic
   PRIVATE
     CURL::libcurl
     Threads::Threads
@@ -192,25 +206,13 @@ target_link_libraries(
 
 set(
   SCRY_CORE_PUBLIC_HEADERS
-  include/scry/annotations.hpp
   include/scry/config.hpp
   include/scry/conversation.hpp
-  include/scry/detail/reflection_codec.hpp
-  include/scry/detail/reflection_decode.hpp
-  include/scry/detail/reflection_encode.hpp
-  include/scry/detail/reflection_json.hpp
-  include/scry/detail/reflection_json_string.hpp
-  include/scry/detail/reflection_meta.hpp
-  include/scry/detail/reflection_model.hpp
-  include/scry/detail/reflection_registration.hpp
-  include/scry/detail/reflection_schema.hpp
-  include/scry/detail/reflection_tools.hpp
   include/scry/error.hpp
   include/scry/events.hpp
   include/scry/harness.hpp
-  include/scry/json.hpp
   include/scry/message.hpp
-  include/scry/reflection.hpp
+  include/scry/response_format.hpp
   include/scry/scry.hpp
   include/scry/tool.hpp
   include/scry/tool_registry.hpp
@@ -244,9 +246,7 @@ if(SCRY_BUILD_EXAMPLES)
   add_subdirectory(examples)
 endif()
 
-# CTest is enabled from this top-level file so ctest runs from the build root.
 if(SCRY_BUILD_TESTS)
-  include(CTest)
   add_subdirectory(tests)
 endif()
 

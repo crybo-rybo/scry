@@ -10,7 +10,8 @@
 #include <optional>
 #include <scry/config.hpp>
 #include <scry/harness.hpp>
-#include <scry/reflection.hpp>
+#include <scry/response_format.hpp>
+#include <scrydantic/codec.hpp>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -33,15 +34,14 @@ enum UnscopedUnit {
 };
 
 struct PresenceArguments {
-  [[= scry::reflection::description{"C++ default"}]] std::string defaulted{"fallback"};
+  [[= scrydantic::description{"C++ default"}]] std::string defaulted{"fallback"};
   std::optional<std::int16_t> nullable;
   std::optional<std::int16_t> optional_nullable = std::nullopt;
-  [[= scry::reflection::description{"Annotation text"}]] std::string required;
+  [[= scrydantic::description{"Annotation text"}]] std::string required;
 };
 
 struct EscapedDescriptionArguments {
-  [[= scry::reflection::description{
-      "quote\" slash\\\b\f\n\r\t\x01"}]] std::string value;
+  [[= scrydantic::description{"quote\" slash\\\b\f\n\r\t\x01"}]] std::string value;
 };
 
 struct NestedResult {
@@ -96,13 +96,15 @@ struct DirectHandler {
 };
 
 struct ExpectedHandler {
-  scry::Result<NestedResult> operator()(PresenceArguments) const { return {}; }
+  scrydantic::Result<NestedResult> operator()(PresenceArguments) const { return {}; }
 };
 
 // A const-qualified value is supported, so a Result of one is too, just as a
 // handler returning a const value directly is.
 struct ConstExpectedHandler {
-  scry::Result<const std::int32_t> operator()(PresenceArguments) const { return 7; }
+  scrydantic::Result<const std::int32_t> operator()(PresenceArguments) const {
+    return 7;
+  }
 };
 
 struct ReferenceHandler {
@@ -110,7 +112,7 @@ struct ReferenceHandler {
 };
 
 struct RawJsonHandler {
-  scry::Json operator()(PresenceArguments) const { return {}; }
+  scrydantic::Json operator()(PresenceArguments) const { return {}; }
 };
 
 struct VoidHandler {
@@ -124,11 +126,11 @@ inline constexpr std::string_view direction = "Direction of travel";
 } // namespace catalog
 
 struct CatalogArguments {
-  [[= scry::reflection::description_of<catalog::direction>()]] std::string heading;
+  [[= scrydantic::description_of<catalog::direction>()]] std::string heading;
 };
 
 struct LiteralArguments {
-  [[= scry::reflection::description{"Direction of travel"}]] std::string heading;
+  [[= scrydantic::description{"Direction of travel"}]] std::string heading;
 };
 
 struct ContextHandler {
@@ -151,21 +153,31 @@ struct VoidContextHandler {
 
 // Refuses a call whose required text is "reject" and acknowledges any other.
 struct StatusHandler {
-  scry::Status operator()(PresenceArguments arguments) const {
+  scrydantic::Status operator()(PresenceArguments arguments) const {
     if (arguments.required == "reject") {
-      return std::unexpected(scry::tool_error("rejected by the handler"));
+      return std::unexpected(scrydantic::tool_error("rejected by the handler"));
     }
     return {};
   }
 };
 
-template <scry::reflection::SupportedValue Type>
-[[nodiscard]] scry::Result<Type> decode_value(const std::string_view text) {
-  auto parsed = scry::JsonView::parse(scry::Json{.text = std::string{text}});
+template <scrydantic::SupportedValue Type>
+[[nodiscard]] scrydantic::Result<Type> decode_value(const std::string_view text) {
+  auto parsed =
+      scrydantic::JsonView::parse(scrydantic::Json{.text = std::string{text}});
   if (!parsed) {
     return std::unexpected(std::move(parsed.error()));
   }
-  return scry::reflection::detail::decode<Type>(*parsed);
+  return scrydantic::detail::decode<Type>(*parsed);
+}
+
+// A reflected handler in the registry's shape, as ToolRegistry::add<Args>() builds
+// it.
+template <typename Args, typename Handler>
+[[nodiscard]] scry::ContextualToolHandler make_tool_handler(Handler&& handler) {
+  return scry::detail::reflected_handler(
+      scrydantic::bind_handler<Args, scry::ToolCallContext>(
+          std::forward<Handler>(handler)));
 }
 
 // A dispatchable snapshot holding one reflected handler under the given name.
@@ -185,70 +197,72 @@ snapshot_of(std::string name, scry::ContextualToolHandler handler) {
 
 } // namespace
 
-static_assert(scry::reflection::SupportedValue<bool>);
-static_assert(scry::reflection::SupportedValue<std::vector<std::int32_t>>);
-static_assert(scry::reflection::SupportedValue<AllTypesArguments>);
-static_assert(scry::reflection::ToolArguments<NumericArguments>);
-static_assert(scry::reflection::ToolArguments<PresenceArguments>);
-static_assert(scry::reflection::ToolHandlerFor<DirectHandler, PresenceArguments>);
-static_assert(scry::reflection::ToolHandlerFor<ExpectedHandler, PresenceArguments>);
-static_assert(
-    scry::reflection::ToolHandlerFor<ConstExpectedHandler, PresenceArguments>);
-static_assert(!scry::reflection::ToolHandlerFor<ReferenceHandler, PresenceArguments>);
-static_assert(!scry::reflection::ToolHandlerFor<RawJsonHandler, PresenceArguments>);
+static_assert(scrydantic::SupportedValue<bool>);
+static_assert(scrydantic::SupportedValue<std::vector<std::int32_t>>);
+static_assert(scrydantic::SupportedValue<AllTypesArguments>);
+static_assert(scrydantic::ToolArguments<NumericArguments>);
+static_assert(scrydantic::ToolArguments<PresenceArguments>);
+static_assert(scrydantic::ToolHandlerFor<DirectHandler, PresenceArguments>);
+static_assert(scrydantic::ToolHandlerFor<ExpectedHandler, PresenceArguments>);
+static_assert(scrydantic::ToolHandlerFor<ConstExpectedHandler, PresenceArguments>);
+static_assert(!scrydantic::ToolHandlerFor<ReferenceHandler, PresenceArguments>);
+static_assert(!scrydantic::ToolHandlerFor<RawJsonHandler, PresenceArguments>);
 // void and Status acknowledge a call with {}; see the acknowledgment test below.
-static_assert(scry::reflection::ToolHandlerFor<VoidHandler, PresenceArguments>);
-static_assert(scry::reflection::ToolHandlerFor<ContextHandler, PresenceArguments>);
-static_assert(
-    !scry::reflection::ToolHandlerFor<ReversedContextHandler, PresenceArguments>);
-static_assert(scry::reflection::ToolHandlerFor<VoidContextHandler, PresenceArguments>);
-static_assert(scry::reflection::ToolHandlerFor<StatusHandler, PresenceArguments>);
-static_assert(!scry::reflection::ToolArguments<CharacterArguments>);
-static_assert(!scry::reflection::ToolArguments<NestedOptionalArguments>);
-static_assert(!scry::reflection::ToolArguments<PackedBooleanArguments>);
-static_assert(!scry::reflection::ToolArguments<AliasedEnumArguments>);
-static_assert(!scry::reflection::ToolArguments<UnscopedEnumArguments>);
+static_assert(scrydantic::ToolHandlerFor<VoidHandler, PresenceArguments>);
+// Scry's registry binds handlers with its call context.
+static_assert(scrydantic::ToolHandlerFor<ContextHandler, PresenceArguments,
+                                         scry::ToolCallContext>);
+static_assert(!scrydantic::ToolHandlerFor<ReversedContextHandler, PresenceArguments,
+                                          scry::ToolCallContext>);
+static_assert(scrydantic::ToolHandlerFor<VoidContextHandler, PresenceArguments,
+                                         scry::ToolCallContext>);
+static_assert(scrydantic::ToolHandlerFor<StatusHandler, PresenceArguments>);
+static_assert(!scrydantic::ToolArguments<CharacterArguments>);
+static_assert(!scrydantic::ToolArguments<NestedOptionalArguments>);
+static_assert(!scrydantic::ToolArguments<PackedBooleanArguments>);
+static_assert(!scrydantic::ToolArguments<AliasedEnumArguments>);
+static_assert(!scrydantic::ToolArguments<UnscopedEnumArguments>);
 
 static_assert(
-    scry::reflection::input_schema_v<PresenceArguments> ==
+    scrydantic::input_schema_v<PresenceArguments> ==
     R"({"additionalProperties":false,"properties":{"defaulted":{"description":"C++ default","type":"string"},"nullable":{"anyOf":[{"maximum":32767,"minimum":-32768,"type":"integer"},{"type":"null"}]},"optional_nullable":{"anyOf":[{"maximum":32767,"minimum":-32768,"type":"integer"},{"type":"null"}]},"required":{"description":"Annotation text","type":"string"}},"required":["nullable","required"],"type":"object"})");
 static_assert(
-    scry::reflection::input_schema_v<EscapedDescriptionArguments> ==
+    scrydantic::input_schema_v<EscapedDescriptionArguments> ==
     R"({"additionalProperties":false,"properties":{"value":{"description":"quote\" slash\\\b\f\n\r\t\u0001","type":"string"}},"required":["value"],"type":"object"})");
 static_assert(
-    scry::reflection::input_schema_v<AllTypesArguments> ==
+    scrydantic::input_schema_v<AllTypesArguments> ==
     R"({"additionalProperties":false,"properties":{"fixed":{"items":{"maximum":2147483647,"minimum":-2147483648,"type":"integer"},"maxItems":2,"minItems":2,"type":"array"},"flag":{"type":"boolean"},"nested":{"additionalProperties":false,"properties":{"label":{"type":"string"}},"required":[],"type":"object"},"ratio":{"type":"number"},"unit":{"enum":["celsius","fahrenheit"],"type":"string"},"values":{"items":{"maximum":2147483647,"minimum":-2147483648,"type":"integer"},"type":"array"}},"required":[],"type":"object"})");
 static_assert(
-    scry::reflection::input_schema_v<NumericArguments> ==
+    scrydantic::input_schema_v<NumericArguments> ==
     R"({"additionalProperties":false,"properties":{"floating":{"type":"number"},"signed_value":{"maximum":32767,"minimum":-32768,"type":"integer"},"unsigned_value":{"maximum":65535,"minimum":0,"type":"integer"}},"required":["floating","signed_value","unsigned_value"],"type":"object"})");
 
 // A catalog-sourced description must be indistinguishable from the literal form.
-static_assert(scry::reflection::input_schema_v<CatalogArguments> ==
-              scry::reflection::input_schema_v<LiteralArguments>);
+static_assert(scrydantic::input_schema_v<CatalogArguments> ==
+              scrydantic::input_schema_v<LiteralArguments>);
 static_assert(
-    scry::reflection::input_schema_v<CatalogArguments> ==
+    scrydantic::input_schema_v<CatalogArguments> ==
     R"({"additionalProperties":false,"properties":{"heading":{"description":"Direction of travel","type":"string"}},"required":["heading"],"type":"object"})");
-static_assert(scry::reflection::description_of<catalog::direction>().view() ==
+static_assert(scrydantic::description_of<catalog::direction>().view() ==
               catalog::direction);
 
 // Result types and bare enums are schema roots too, even though Scry never sends
 // either to a model.
-static_assert(std::same_as<decltype(scry::reflection::schema_v<NestedResult>),
-                           const std::string_view>);
-static_assert(scry::reflection::schema_v<NestedResult> ==
-              scry::reflection::input_schema_v<NestedResult>);
 static_assert(
-    scry::reflection::schema_v<NestedResult> ==
+    std::same_as<decltype(scrydantic::schema_v<NestedResult>), const std::string_view>);
+static_assert(scrydantic::schema_v<NestedResult> ==
+              scrydantic::input_schema_v<NestedResult>);
+static_assert(
+    scrydantic::schema_v<NestedResult> ==
     R"({"additionalProperties":false,"properties":{"label":{"type":"string"}},"required":[],"type":"object"})");
-static_assert(scry::reflection::schema_v<TemperatureUnit> ==
+static_assert(scrydantic::schema_v<TemperatureUnit> ==
               R"({"enum":["celsius","fahrenheit"],"type":"string"})");
 static_assert(
-    scry::reflection::schema_v<std::vector<TemperatureUnit>> ==
+    scrydantic::schema_v<std::vector<TemperatureUnit>> ==
     R"({"items":{"enum":["celsius","fahrenheit"],"type":"string"},"type":"array"})");
 
 TEST_CASE("reflected decoding preserves defaults and required nullability") {
-  auto decoded = scry::reflection::detail::decode_arguments<PresenceArguments>(
-      scry::Json{.text = R"({"nullable":null,"required":"Detroit"})"});
+  auto decoded = scrydantic::detail::decode_arguments<PresenceArguments>(
+      scrydantic::Json{.text = R"({"nullable":null,"required":"Detroit"})"});
 
   REQUIRE(decoded);
   CHECK(decoded->defaulted == "fallback");
@@ -259,8 +273,8 @@ TEST_CASE("reflected decoding preserves defaults and required nullability") {
 
 TEST_CASE("reflected decode failures carry a schema-derived model message") {
   const auto model_message = [](const std::string_view text) {
-    auto decoded = scry::reflection::detail::decode_arguments<AllTypesArguments>(
-        scry::Json{.text = std::string{text}});
+    auto decoded = scrydantic::detail::decode_arguments<AllTypesArguments>(
+        scrydantic::Json{.text = std::string{text}});
     REQUIRE_FALSE(decoded);
     // The model copy is the host copy without the library-facing prefix.
     CHECK(decoded.error().message ==
@@ -290,24 +304,23 @@ TEST_CASE("reflected decode failures carry a schema-derived model message") {
                       R"("unit":"kelvin","values":[]})") ==
         "$.unit is not a declared enumerator; must be one of: celsius, fahrenheit");
 
-  auto required = scry::reflection::detail::decode_arguments<PresenceArguments>(
-      scry::Json{.text = R"({"required":"Detroit"})"});
+  auto required = scrydantic::detail::decode_arguments<PresenceArguments>(
+      scrydantic::Json{.text = R"({"required":"Detroit"})"});
   REQUIRE_FALSE(required);
   CHECK(required.error().message ==
         "reflected JSON at $.nullable is a required member");
   CHECK(required.error().model_message == "$.nullable is a required member");
 
-  auto malformed = scry::reflection::detail::decode_arguments<PresenceArguments>(
-      scry::Json{.text = "{"});
+  auto malformed = scrydantic::detail::decode_arguments<PresenceArguments>(
+      scrydantic::Json{.text = "{"});
   REQUIRE_FALSE(malformed);
-  CHECK(malformed.error().category == scry::ErrorCategory::tool);
   CHECK(malformed.error().message == "reflected tool arguments are not valid JSON");
   CHECK(malformed.error().model_message == "tool arguments are not valid JSON");
 }
 
 TEST_CASE("reflected codec round trips every supported composite family") {
-  auto decoded = scry::reflection::detail::decode_arguments<
-      AllTypesArguments>(scry::Json{
+  auto decoded = scrydantic::detail::decode_arguments<
+      AllTypesArguments>(scrydantic::Json{
       .text =
           R"({"fixed":[1,2],"flag":true,"nested":{"label":"indoors"},"ratio":0.1,"unit":"fahrenheit","values":[3,4]})"});
 
@@ -319,7 +332,7 @@ TEST_CASE("reflected codec round trips every supported composite family") {
   CHECK(decoded->unit == TemperatureUnit::fahrenheit);
   CHECK(decoded->values == std::vector<std::int32_t>{3, 4});
 
-  const auto encoded = scry::reflection::encode(*decoded);
+  const auto encoded = scrydantic::encode(*decoded);
   REQUIRE(encoded);
   CHECK(
       encoded->text ==
@@ -328,15 +341,15 @@ TEST_CASE("reflected codec round trips every supported composite family") {
 
 TEST_CASE("reflected numeric decoding accepts exact boundaries and signs") {
   auto decoded =
-      scry::reflection::detail::decode_arguments<NumericArguments>(scry::Json{
+      scrydantic::detail::decode_arguments<NumericArguments>(scrydantic::Json{
           .text = R"({"floating":7,"signed_value":-32768,"unsigned_value":65535})"});
   REQUIRE(decoded);
   CHECK(decoded->floating == 7.0F);
   CHECK(decoded->signed_value == std::int16_t{-32768});
   CHECK(decoded->unsigned_value == std::uint16_t{65535});
 
-  decoded = scry::reflection::detail::decode_arguments<NumericArguments>(
-      scry::Json{.text = R"({"floating":1e39,"signed_value":0,"unsigned_value":1})"});
+  decoded = scrydantic::detail::decode_arguments<NumericArguments>(scrydantic::Json{
+      .text = R"({"floating":1e39,"signed_value":0,"unsigned_value":1})"});
   REQUIRE_FALSE(decoded);
   CHECK(decoded.error().message ==
         "reflected JSON at $.floating must be a finite in-range number");
@@ -422,22 +435,20 @@ TEST_CASE("reflected fixed-array decoding distinguishes kind size and element er
 }
 
 TEST_CASE("reflected encoding covers nullable enum and sequence results") {
-  CHECK(scry::reflection::encode(std::optional<std::int16_t>{})->text == "null");
-  CHECK(scry::reflection::encode(std::optional<std::int16_t>{std::int16_t{7}})->text ==
-        "7");
-  CHECK(scry::reflection::encode(TemperatureUnit::celsius)->text == R"("celsius")");
-  CHECK(scry::reflection::encode(TemperatureUnit::fahrenheit)->text ==
-        R"("fahrenheit")");
-  CHECK(scry::reflection::encode(std::vector<std::int32_t>{})->text == "[]");
-  CHECK(scry::reflection::encode(std::vector<std::int32_t>{1, 2})->text == "[1,2]");
+  CHECK(scrydantic::encode(std::optional<std::int16_t>{})->text == "null");
+  CHECK(scrydantic::encode(std::optional<std::int16_t>{std::int16_t{7}})->text == "7");
+  CHECK(scrydantic::encode(TemperatureUnit::celsius)->text == R"("celsius")");
+  CHECK(scrydantic::encode(TemperatureUnit::fahrenheit)->text == R"("fahrenheit")");
+  CHECK(scrydantic::encode(std::vector<std::int32_t>{})->text == "[]");
+  CHECK(scrydantic::encode(std::vector<std::int32_t>{1, 2})->text == "[1,2]");
 }
 
 TEST_CASE("reflected encoding uses Scry canonical number spelling") {
-  const auto fraction = scry::reflection::encode(0.1);
-  const auto exponent = scry::reflection::encode(1e20);
-  const auto negative_zero = scry::reflection::encode(-0.0);
+  const auto fraction = scrydantic::encode(0.1);
+  const auto exponent = scrydantic::encode(1e20);
+  const auto negative_zero = scrydantic::encode(-0.0);
   // A float is spelled as the float it is, not as the double it widens to.
-  const auto single = scry::reflection::encode(0.7F);
+  const auto single = scrydantic::encode(0.7F);
 
   REQUIRE(fraction);
   REQUIRE(exponent);
@@ -451,11 +462,11 @@ TEST_CASE("reflected encoding uses Scry canonical number spelling") {
 }
 
 TEST_CASE("reflected sequence encoding propagates fallible element errors") {
-  const auto encoded = scry::reflection::encode(
+  const auto encoded = scrydantic::encode(
       std::vector<double>{1.0, std::numeric_limits<double>::infinity()});
   REQUIRE_FALSE(encoded);
-  CHECK(encoded.error().category == scry::ErrorCategory::tool);
   CHECK(encoded.error().message == "reflected JSON at $[1] must be finite");
+  CHECK(encoded.error().model_message.empty());
 }
 
 TEST_CASE("reflected encoding rejects non-finite and unnamed values") {
@@ -466,9 +477,8 @@ TEST_CASE("reflected encoding rejects non-finite and unnamed values") {
       .ratio = std::numeric_limits<double>::infinity(),
       .unit = TemperatureUnit::celsius,
   };
-  auto encoded = scry::reflection::encode(value);
+  auto encoded = scrydantic::encode(value);
   REQUIRE_FALSE(encoded);
-  CHECK(encoded.error().category == scry::ErrorCategory::tool);
   CHECK(encoded.error().message == "reflected JSON at $.ratio must be finite");
   // A result type's schema never reaches the model, so an encoding failure
   // carries nothing for it to act on.
@@ -476,24 +486,22 @@ TEST_CASE("reflected encoding rejects non-finite and unnamed values") {
 
   value.ratio = 1.0;
   value.unit = static_cast<TemperatureUnit>(99);
-  encoded = scry::reflection::encode(value);
+  encoded = scrydantic::encode(value);
   REQUIRE_FALSE(encoded);
-  CHECK(encoded.error().category == scry::ErrorCategory::tool);
   CHECK(encoded.error().message ==
         "reflected JSON at $.unit is not a declared enumerator value");
   CHECK(encoded.error().model_message.empty());
 }
 
 TEST_CASE("reflected result-encoding failures reach the model as the fixed text") {
-  auto handler = scry::reflection::detail::make_tool_handler<PresenceArguments>(
-      [](PresenceArguments) {
-        return AllTypesArguments{
-            .fixed = {1, 2},
-            .flag = true,
-            .ratio = std::numeric_limits<double>::infinity(),
-            .unit = TemperatureUnit::celsius,
-        };
-      });
+  auto handler = make_tool_handler<PresenceArguments>([](PresenceArguments) {
+    return AllTypesArguments{
+        .fixed = {1, 2},
+        .flag = true,
+        .ratio = std::numeric_limits<double>::infinity(),
+        .unit = TemperatureUnit::celsius,
+    };
+  });
   const auto tools = snapshot_of("private_calculation", std::move(handler));
 
   const auto result = scry::detail::dispatch_tool(
@@ -511,6 +519,26 @@ TEST_CASE("reflected result-encoding failures reach the model as the fixed text"
   CHECK(result->result.text.find("ratio") == std::string::npos);
 }
 
+TEST_CASE("a reflected result that is not valid UTF-8 reaches the model as the fixed "
+          "text") {
+  auto handler = make_tool_handler<PresenceArguments>(
+      [](PresenceArguments) { return std::string(1, '\xff'); });
+  const auto tools = snapshot_of("read_bytes", std::move(handler));
+
+  const auto result = scry::detail::dispatch_tool(
+      tools,
+      scry::detail::ToolCallBlock{
+          .id = "call-1",
+          .name = "read_bytes",
+          .arguments = {.text = R"({"nullable":null,"required":"value"})"},
+      },
+      {}, 1024);
+
+  REQUIRE(result);
+  CHECK(result->is_error);
+  CHECK(result->result.text == R"({"error":"tool handler returned an error"})");
+}
+
 TEST_CASE("public encoding matches reflected tool dispatch output") {
   const auto value = AllTypesArguments{
       .fixed = {1, 2},
@@ -520,11 +548,11 @@ TEST_CASE("public encoding matches reflected tool dispatch output") {
       .unit = TemperatureUnit::fahrenheit,
       .values = {3, 4},
   };
-  auto handler = scry::reflection::detail::make_tool_handler<PresenceArguments>(
+  auto handler = make_tool_handler<PresenceArguments>(
       [value](PresenceArguments) { return value; });
   const auto tools = snapshot_of("snapshot", std::move(handler));
 
-  const auto direct = scry::reflection::encode(value);
+  const auto direct = scrydantic::encode(value);
   const auto through_dispatch = scry::detail::dispatch_tool(
       tools,
       scry::detail::ToolCallBlock{
@@ -548,19 +576,20 @@ TEST_CASE("public encoding matches reflected tool dispatch output") {
 TEST_CASE("reflected erased handlers encode copy-only results without extra copies") {
   CopyOnlyResult::destructions = 0;
   const auto run_handler = [](auto body) {
-    auto handler =
-        scry::reflection::detail::make_tool_handler<PresenceArguments>(std::move(body));
-    return handler({}, scry::Json{.text = R"({"nullable":null,"required":"ok"})"});
+    auto handler = make_tool_handler<PresenceArguments>(std::move(body));
+    return handler({},
+                   scrydantic::Json{.text = R"({"nullable":null,"required":"ok"})"});
   };
 
-  scry::Result<scry::Json> result{};
+  scry::Result<scrydantic::Json> result{};
   SECTION("bare result") {
     result = run_handler(
         [](PresenceArguments) { return CopyOnlyResult{.values = {1, 2, 3}}; });
   }
   SECTION("expected result") {
-    result = run_handler([](PresenceArguments) -> scry::Result<CopyOnlyResult> {
-      return scry::Result<CopyOnlyResult>{std::in_place, std::vector<int>{1, 2, 3}};
+    result = run_handler([](PresenceArguments) -> scrydantic::Result<CopyOnlyResult> {
+      return scrydantic::Result<CopyOnlyResult>{std::in_place,
+                                                std::vector<int>{1, 2, 3}};
     });
   }
 
@@ -573,11 +602,10 @@ TEST_CASE("reflected erased handlers encode a Result of a const-qualified value"
   // Instantiating the handler is the check: the const value type has to be
   // stripped before it reaches encode_value, or this fails to compile inside the
   // library.
-  auto handler = scry::reflection::detail::make_tool_handler<PresenceArguments>(
-      ConstExpectedHandler{});
+  auto handler = make_tool_handler<PresenceArguments>(ConstExpectedHandler{});
 
   const auto result =
-      handler({}, scry::Json{.text = R"({"nullable":null,"required":"ok"})"});
+      handler({}, scrydantic::Json{.text = R"({"nullable":null,"required":"ok"})"});
 
   REQUIRE(result);
   CHECK(result->text == "7");
@@ -587,15 +615,14 @@ TEST_CASE("encoding named reflected results does not copy their values") {
   CopyOnlyResult::destructions = 0;
   SECTION("bare result") {
     const CopyOnlyResult value{.values = {1, 2, 3}};
-    const auto encoded = scry::reflection::detail::encode_handler_result(value);
+    const auto encoded = scrydantic::detail::encode_handler_result(value);
     REQUIRE(encoded);
     CHECK(encoded->text == R"({"values":[1,2,3]})");
     CHECK(CopyOnlyResult::destructions == 0);
   }
   SECTION("expected result passed as an rvalue") {
-    scry::Result<CopyOnlyResult> value{std::in_place, std::vector<int>{1, 2, 3}};
-    const auto encoded =
-        scry::reflection::detail::encode_handler_result(std::move(value));
+    scrydantic::Result<CopyOnlyResult> value{std::in_place, std::vector<int>{1, 2, 3}};
+    const auto encoded = scrydantic::detail::encode_handler_result(std::move(value));
     REQUIRE(encoded);
     CHECK(encoded->text == R"({"values":[1,2,3]})");
     CHECK(CopyOnlyResult::destructions == 0);
@@ -604,60 +631,62 @@ TEST_CASE("encoding named reflected results does not copy their values") {
 }
 
 TEST_CASE("encoding a named reflected error preserves the caller's error") {
-  scry::Result<CopyOnlyResult> value = std::unexpected(scry::Error{
-      .category = scry::ErrorCategory::tool,
+  scrydantic::Result<CopyOnlyResult> value = std::unexpected(scrydantic::Error{
       .message = "application rejected arguments",
+      .model_message = "rejected",
   });
-  const auto encoded = scry::reflection::detail::encode_handler_result(value);
+  const auto encoded = scrydantic::detail::encode_handler_result(value);
   REQUIRE_FALSE(encoded);
-  CHECK(encoded.error().category == scry::ErrorCategory::tool);
   CHECK(encoded.error().message == "application rejected arguments");
+  CHECK(encoded.error().model_message == "rejected");
   CHECK(value.error().message == "application rejected arguments");
 }
 
 TEST_CASE("reflected handlers returning void or Status acknowledge with an object") {
-  const auto arguments = scry::Json{.text = R"({"nullable":null,"required":"ok"})"};
+  const auto arguments =
+      scrydantic::Json{.text = R"({"nullable":null,"required":"ok"})"};
   int calls = 0;
-  auto acknowledging = scry::reflection::detail::make_tool_handler<PresenceArguments>(
-      [&calls](PresenceArguments) { ++calls; });
+  auto acknowledging =
+      make_tool_handler<PresenceArguments>([&calls](PresenceArguments) { ++calls; });
   auto result = acknowledging({}, arguments);
   REQUIRE(result);
   CHECK(result->text == "{}");
   CHECK(calls == 1);
 
-  auto status =
-      scry::reflection::detail::make_tool_handler<PresenceArguments>(StatusHandler{});
+  auto status = make_tool_handler<PresenceArguments>(StatusHandler{});
   result = status({}, arguments);
   REQUIRE(result);
   CHECK(result->text == "{}");
 
-  result = status({}, scry::Json{.text = R"({"nullable":null,"required":"reject"})"});
+  result =
+      status({}, scrydantic::Json{.text = R"({"nullable":null,"required":"reject"})"});
   REQUIRE_FALSE(result);
   CHECK(result.error().model_message == "rejected by the handler");
 }
 
 TEST_CASE("reflected erased handlers retain move-only captures and typed errors") {
-  auto handler = scry::reflection::detail::make_tool_handler<PresenceArguments>(
+  auto handler = make_tool_handler<PresenceArguments>(
       [owned = std::make_unique<std::string>("handled")](
-          PresenceArguments arguments) -> scry::Result<NestedResult> {
+          PresenceArguments arguments) -> scrydantic::Result<NestedResult> {
         if (arguments.required == "reject") {
-          return std::unexpected(scry::Error{
-              .category = scry::ErrorCategory::tool,
+          return std::unexpected(scrydantic::Error{
               .message = "application rejected arguments",
           });
         }
         return NestedResult{.label = *owned + ":" + arguments.required};
       });
 
-  auto result = handler({}, scry::Json{.text = R"({"nullable":null,"required":"ok"})"});
+  auto result =
+      handler({}, scrydantic::Json{.text = R"({"nullable":null,"required":"ok"})"});
   REQUIRE(result);
   CHECK(result->text == R"({"label":"handled:ok"})");
 
-  result = handler({}, scry::Json{.text = R"({"nullable":null,"required":"reject"})"});
+  result =
+      handler({}, scrydantic::Json{.text = R"({"nullable":null,"required":"reject"})"});
   REQUIRE_FALSE(result);
   CHECK(result.error().message == "application rejected arguments");
 
-  result = handler({}, scry::Json{.text = R"({"required":"missing nullable"})"});
+  result = handler({}, scrydantic::Json{.text = R"({"required":"missing nullable"})"});
   REQUIRE_FALSE(result);
   CHECK(result.error().category == scry::ErrorCategory::tool);
 }
@@ -705,14 +734,14 @@ TEST_CASE("tool manifests include reflected and explicit contracts together") {
       {.name = "explicit",
        .description = "Explicit arguments",
        .input_schema = {.text = R"({"type":"object"})"}},
-      [](scry::Json input) -> scry::Result<scry::Json> { return input; }));
+      [](scrydantic::Json input) -> scry::Result<scrydantic::Json> { return input; }));
 
   const auto manifest = harness->tools().to_json();
   REQUIRE(manifest);
   CHECK(
       manifest->text ==
       std::string{R"({"tools":[{"description":"Reflected arguments","input_schema":)"} +
-          std::string{scry::reflection::input_schema_v<PresenceArguments>} +
+          std::string{scrydantic::input_schema_v<PresenceArguments>} +
           R"(,"name":"presence"},{"description":"Explicit arguments","input_schema":{"type":"object"},"name":"explicit"}],"version":1})");
 }
 
@@ -745,7 +774,8 @@ TEST_CASE("reflected handlers may take the call context as a leading parameter")
   const auto snapshot =
       scry::detail::ToolRegistryAccess::snapshot(harness.tools()).entries;
   REQUIRE(snapshot);
-  const auto arguments = scry::Json{.text = R"({"nullable":null,"required":"value"})"};
+  const auto arguments =
+      scrydantic::Json{.text = R"({"nullable":null,"required":"value"})"};
 
   const auto contextual = scry::detail::dispatch_tool(
       *snapshot,
@@ -771,4 +801,27 @@ TEST_CASE("reflected handlers may take the call context as a leading parameter")
       {}, 1024);
   REQUIRE(plain);
   CHECK(plain->result.text == R"({"label":""})");
+}
+
+TEST_CASE("response_format validators report a rejected answer as invalid_argument") {
+  // Scrydantic's errors carry no category; Scry files a rejected typed answer
+  // under invalid_argument, with the decoder's host and model texts.
+  auto format = scry::response_format<PresenceArguments>();
+  REQUIRE(format.validate);
+  CHECK(format.schema.text == scrydantic::input_schema_v<PresenceArguments>);
+  CHECK(format.validate(
+      scrydantic::Json{.text = R"({"nullable":null,"required":"ok"})"}));
+
+  const auto missing =
+      format.validate(scrydantic::Json{.text = R"({"required":"ok"})"});
+  REQUIRE_FALSE(missing);
+  CHECK(missing.error().category == scry::ErrorCategory::invalid_argument);
+  CHECK(missing.error().message == "reflected JSON at $.nullable is a required member");
+  CHECK(missing.error().model_message == "$.nullable is a required member");
+
+  const auto malformed = format.validate(scrydantic::Json{.text = "{"});
+  REQUIRE_FALSE(malformed);
+  CHECK(malformed.error().category == scry::ErrorCategory::invalid_argument);
+  CHECK(malformed.error().message == "reflected JSON text is not valid JSON");
+  CHECK(malformed.error().model_message == "JSON text is not valid JSON");
 }

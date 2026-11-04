@@ -4,7 +4,7 @@
 #include <cstddef>
 #include <scry/conversation.hpp>
 #include <scry/harness.hpp>
-#include <scry/json.hpp>
+#include <scrydantic/json.hpp>
 #include <string>
 #include <string_view>
 #include <utility>

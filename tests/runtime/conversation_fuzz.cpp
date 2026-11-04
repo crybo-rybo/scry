@@ -2,7 +2,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <scry/conversation.hpp>
-#include <scry/json.hpp>
+#include <scrydantic/json.hpp>
 #include <span>
 #include <string>
 
@@ -14,7 +14,8 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data,
   }
   auto input = std::string{reinterpret_cast<const char*>(bytes.data()), bytes.size()};
 
-  auto restored = scry::Conversation::from_json(scry::Json{.text = std::move(input)});
+  auto restored =
+      scry::Conversation::from_json(scrydantic::Json{.text = std::move(input)});
   if (!restored) {
     return 0;
   }

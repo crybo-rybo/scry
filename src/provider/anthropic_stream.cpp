@@ -8,7 +8,7 @@
 #include <initializer_list>
 #include <meta>
 #include <optional>
-#include <scry/json.hpp>
+#include <scrydantic/json.hpp>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -20,7 +20,7 @@ namespace {
 
 // Carries only the discriminator, so an event can be matched against its SSE
 // name, or ignored as unknown, before its payload is decoded.
-struct[[= reflection::ignore_unknown]] AnthropicEnvelope {
+struct[[= scrydantic::ignore_unknown]] AnthropicEnvelope {
   std::string type;
 };
 
@@ -31,8 +31,8 @@ template <typename Variant>
 [[nodiscard]] bool is_alternative_tag(const std::string_view tag) noexcept {
   bool found = false;
   template for (constexpr std::meta::info alternative :
-                reflection::detail::alternatives_v<Variant>) {
-    found = found || tag == *reflection::detail::tag_of(alternative);
+                scrydantic::detail::alternatives_v<Variant>) {
+    found = found || tag == *scrydantic::detail::tag_of(alternative);
   }
   return found;
 }
@@ -44,7 +44,7 @@ template <typename Variant>
 
 // Everything one event's handler reads or changes.
 struct EventContext {
-  const JsonView& root;
+  const scrydantic::JsonView& root;
   ProviderDecodeState& state;
   AnthropicProviderDecodeState& decode;
   std::vector<ProviderEvent>& out;
@@ -52,7 +52,7 @@ struct EventContext {
 
 // A best-effort read: an identifier that is absent or not a string is empty.
 [[nodiscard]] std::string
-request_identifier(const JsonView& root,
+request_identifier(const scrydantic::JsonView& root,
                    const std::initializer_list<std::string_view> path) {
   return std::string{string_at(root, path).value_or("")};
 }

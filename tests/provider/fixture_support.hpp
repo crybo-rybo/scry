@@ -10,7 +10,7 @@
 #include <iterator>
 #include <optional>
 #include <scry/config.hpp>
-#include <scry/json.hpp>
+#include <scrydantic/json.hpp>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -56,8 +56,8 @@ openai_config(std::string base_url = "https://api.openai.test/v1") {
   };
 }
 
-[[nodiscard]] inline JsonView json_view(const std::string_view text) {
-  auto view = JsonView::parse(Json{.text = std::string{text}});
+[[nodiscard]] inline scrydantic::JsonView json_view(const std::string_view text) {
+  auto view = scrydantic::JsonView::parse(scrydantic::Json{.text = std::string{text}});
   REQUIRE(view);
   return *view;
 }
@@ -70,7 +70,7 @@ openai_config(std::string base_url = "https://api.openai.test/v1") {
 
 // The string members named `field` of each element of the array at `name`.
 [[nodiscard]] inline std::vector<std::string>
-member_strings(const JsonView& owner, const std::string_view name,
+member_strings(const scrydantic::JsonView& owner, const std::string_view name,
                const std::string_view field) {
   const auto array = owner.find(name);
   REQUIRE(array);

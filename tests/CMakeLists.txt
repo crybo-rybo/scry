@@ -1,3 +1,5 @@
+# Scrydantic's tests declare Catch2 first when they are built; this is the same
+# revision, so the declaration that wins does not matter.
 FetchContent_Declare(
   Catch2
   GIT_REPOSITORY https://github.com/catchorg/Catch2.git
@@ -72,8 +74,7 @@ add_executable(
   runtime/codec_internals_tests.cpp
   runtime/config_tests.cpp
   runtime/conversation_persistence_tests.cpp
-  runtime/json_codec_validation_tests.cpp
-  runtime/json_view_tests.cpp
+  runtime/json_codec_wrapper_tests.cpp
   runtime/message_reflection_tests.cpp
   runtime/pump_regression_tests.cpp
   runtime/queue_tests.cpp
@@ -105,7 +106,6 @@ if(SCRY_BUILD_TESTING_SUPPORT)
   add_subdirectory(transport)
   add_subdirectory(integration)
 endif()
-add_subdirectory(kernel)
 add_subdirectory(machine)
 add_subdirectory(e2e)
 add_subdirectory(protocol)
@@ -136,9 +136,6 @@ scry_add_fuzz_replay(
 scry_add_fuzz_replay(
   scry_response_policy_fuzz_replay response_policy "transport."
   transport/response_policy_fuzz.cpp scry_kernel
-)
-scry_add_fuzz_replay(
-  scry_json_fuzz_replay json "kernel." fuzz/json_fuzz.cpp scry_kernel
 )
 scry_add_fuzz_replay(
   scry_anthropic_fuzz_replay anthropic "provider." provider/anthropic_fuzz.cpp
@@ -215,6 +212,7 @@ function(
       "-DCXX_COMPILER=${CMAKE_CXX_COMPILER}"
       "-DSOURCE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/reflection/compile_fail/${SOURCE_NAME}"
       "-DPROJECT_INCLUDE_DIR=${PROJECT_SOURCE_DIR}/include"
+      "-DDEPENDENCY_INCLUDE_DIR=${PROJECT_SOURCE_DIR}/scrydantic/include"
       "-DEXPECTED_SUBSTRING=${EXPECTED_SUBSTRING}"
       -P "${PROJECT_SOURCE_DIR}/cmake/ExpectCompileFailure.cmake"
   )
@@ -223,39 +221,19 @@ endfunction()
 scry_add_reflection_compile_fail_test(
   unsupported-arguments
   unsupported_arguments.cpp
-  "does not satisfy scry::reflection::ToolArguments: UnsupportedArguments::value: char is a character type"
+  "does not satisfy scrydantic::ToolArguments: UnsupportedArguments::value: char is a character type"
 )
 scry_add_reflection_compile_fail_test(
   wrong-context-order
   wrong_context_order.cpp
   "is not invocable as (Arguments) or as (const scry::ToolCallContext&, Arguments)"
 )
-scry_add_reflection_compile_fail_test(
-  duplicate-description
-  duplicate_description.cpp
-  "Arguments::value: a reflected member may have at most one scry::reflection::description annotation"
-)
-scry_add_reflection_compile_fail_test(
-  unsupported-schema-root
-  unsupported_schema_root.cpp
-  "does not satisfy scry::reflection::SupportedValue: scry::Json is raw JSON, which has no schema"
-)
-scry_add_reflection_compile_fail_test(
-  untagged-variant
-  untagged_variant.cpp
-  "Arguments::shape: std::variant<Circle, Square> has the alternative Circle without a scry::reflection::tag annotation"
-)
-scry_add_reflection_compile_fail_test(
-  duplicate-key
-  duplicate_key.cpp
-  "does not satisfy scry::reflection::Encodable: Limits has members limit and max_tokens that both map to the JSON key"
-)
 # The type after the path is the dealiased std::chrono::seconds, whose spelling
 # varies with the platform's int64_t, so the assertion stops at the path.
 scry_add_reflection_compile_fail_test(
   unsupported-nested-member
   unsupported_nested_member.cpp
-  "does not satisfy scry::reflection::ToolArguments: ForecastArgs::window.when: std::chrono::duration<"
+  "does not satisfy scrydantic::ToolArguments: ForecastArgs::window.when: std::chrono::duration<"
 )
 
 # Reflected tool declarations: each rejection names the function, member, or
@@ -263,12 +241,12 @@ scry_add_reflection_compile_fail_test(
 scry_add_reflection_compile_fail_test(
   toolbox-without-tools
   toolbox_without_tools.cpp
-  "Lamp does not satisfy scry::reflection::Toolbox: Lamp declares no function annotated with scry::reflection::tool"
+  "Lamp does not satisfy scrydantic::Toolbox: Lamp declares no function annotated with scrydantic::tool"
 )
 scry_add_reflection_compile_fail_test(
   tool-on-non-function
   tool_on_non_function.cpp
-  "scry::ToolRegistry::add<^^lamp_tools>(): lamp_tools::brightness carries scry::reflection::tool, which applies to functions"
+  "scry::ToolRegistry::add<^^lamp_tools>(): lamp_tools::brightness carries scrydantic::tool, which applies to functions"
 )
 scry_add_reflection_compile_fail_test(
   unnamed-parameter
@@ -283,7 +261,7 @@ scry_add_reflection_compile_fail_test(
 scry_add_reflection_compile_fail_test(
   unsupported-tool-result
   unsupported_tool_result.cpp
-  "Lamp::describe returns scry::Json, which is not void, scry::Status, a SupportedValue, or a Result of one"
+  "Lamp::describe returns scrydantic::Json, which is not void, scrydantic::Status, a SupportedValue, or a Result of one"
 )
 scry_add_reflection_compile_fail_test(
   duplicate-tool-name
@@ -299,7 +277,7 @@ scry_add_reflection_compile_fail_test(
 scry_add_reflection_compile_fail_test(
   scalar-answer
   scalar_answer.cpp
-  "int does not satisfy scry::reflection::ToolArguments: int is not a plain aggregate"
+  "int does not satisfy scrydantic::ToolArguments: int is not a plain aggregate"
 )
 scry_add_reflection_compile_fail_test(
   explicit-object-const-toolbox

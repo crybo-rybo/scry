@@ -7,7 +7,7 @@
 #include <cstdint>
 #include <deque>
 #include <optional>
-#include <scry/annotations.hpp>
+#include <scrydantic/annotations.hpp>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -36,9 +36,9 @@ struct OpenAiToolCall {
 // An assistant message with tool calls and no text sends `"content": null`, a
 // distinct wire value from an omitted member, so `content` keeps its null while
 // the class omits the others when they are disengaged.
-struct[[= reflection::skip_null]] OpenAiMessage {
+struct[[= scrydantic::skip_null]] OpenAiMessage {
   std::string_view role;
-  [[= reflection::emit_null]] std::optional<std::string_view> content;
+  [[= scrydantic::emit_null]] std::optional<std::string_view> content;
   std::optional<std::string_view> tool_call_id;
   std::optional<std::vector<OpenAiToolCall>> tool_calls;
 };
@@ -46,7 +46,7 @@ struct[[= reflection::skip_null]] OpenAiMessage {
 struct OpenAiToolFunction {
   std::string_view name;
   std::string_view description;
-  const Json& parameters;
+  const scrydantic::Json& parameters;
 };
 
 struct OpenAiTool {
@@ -58,15 +58,15 @@ struct OpenAiStreamOptions {
   bool include_usage;
 };
 
-struct[[= reflection::skip_null]] OpenAiBody {
+struct[[= scrydantic::skip_null]] OpenAiBody {
   std::string_view model;
   std::vector<OpenAiMessage> messages;
   std::optional<std::vector<OpenAiTool>> tools;
   // "required" makes the model call one of the offered tools; a typed turn sends
   // it so the model answers through its response tool.
   std::optional<std::string_view> tool_choice;
-  Json temperature;
-  std::optional<Json> top_p;
+  scrydantic::Json temperature;
+  std::optional<scrydantic::Json> top_p;
   std::optional<std::uint32_t> max_tokens;
   std::optional<std::uint32_t> seed;
   std::optional<std::string_view> reasoning_effort;

@@ -58,9 +58,10 @@ using scry::testing::ToolUseBlock;
 }
 
 [[nodiscard]] inline scry::ToolHandler static_handler(std::string result) {
-  return [result = std::move(result)](scry::Json) -> scry::Result<scry::Json> {
-    return scry::Json{.text = result};
-  };
+  return
+      [result = std::move(result)](scrydantic::Json) -> scry::Result<scrydantic::Json> {
+        return scrydantic::Json{.text = result};
+      };
 }
 
 // Yields the value, failing the test when the result carries an error. Catch2's

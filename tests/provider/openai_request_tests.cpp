@@ -40,7 +40,8 @@ using namespace scry::test_fixtures;
                           ToolCallBlock{
                               .id = "call-weather",
                               .name = "weather",
-                              .arguments = Json{.text = R"({"city":"Paris"})"},
+                              .arguments =
+                                  scrydantic::Json{.text = R"({"city":"Paris"})"},
                           },
                       },
               },
@@ -50,11 +51,13 @@ using namespace scry::test_fixtures;
                       {
                           ToolResultBlock{
                               .tool_call_id = "call-weather",
-                              .result = Json{.text = R"({"temperature":21})"},
+                              .result =
+                                  scrydantic::Json{.text = R"({"temperature":21})"},
                           },
                           ToolResultBlock{
                               .tool_call_id = "call-other",
-                              .result = Json{.text = R"({"error":"closed"})"},
+                              .result =
+                                  scrydantic::Json{.text = R"({"error":"closed"})"},
                               .is_error = true,
                           },
                       },
@@ -66,7 +69,8 @@ using namespace scry::test_fixtures;
                   .name = "weather",
                   .description = "Get weather",
                   .input_schema =
-                      Json{.text = R"({"type":"object","required":["city"]})"},
+                      scrydantic::Json{.text =
+                                           R"({"type":"object","required":["city"]})"},
               },
           }),
       .sampling =
@@ -205,7 +209,7 @@ TEST_CASE("OpenAI request preserves assistant text-only and tool-only shapes") {
               .content = {ToolCallBlock{
                   .id = "call",
                   .name = "lookup",
-                  .arguments = Json{.text = "{}"},
+                  .arguments = scrydantic::Json{.text = "{}"},
               }}},
   };
   model_request.tools.reset();
@@ -235,19 +239,19 @@ TEST_CASE("OpenAI request rejects malformed tool boundary fields") {
   require_invalid_request(openai_config(), invalid);
 
   invalid = request();
-  invalid.messages[1].content = {
-      ToolResultBlock{.tool_call_id = "call", .result = Json{.text = "{}"}}};
+  invalid.messages[1].content = {ToolResultBlock{
+      .tool_call_id = "call", .result = scrydantic::Json{.text = "{}"}}};
   require_invalid_request(openai_config(), invalid);
 
   invalid = request();
-  invalid.messages.front().content.push_back(
-      ToolResultBlock{.tool_call_id = "call", .result = Json{.text = "{}"}});
+  invalid.messages.front().content.push_back(ToolResultBlock{
+      .tool_call_id = "call", .result = scrydantic::Json{.text = "{}"}});
   require_invalid_request(openai_config(), invalid);
 
   invalid = request();
   invalid.messages.front().content = {
       TextBlock{},
-      ToolResultBlock{.tool_call_id = "call", .result = Json{.text = "{}"}},
+      ToolResultBlock{.tool_call_id = "call", .result = scrydantic::Json{.text = "{}"}},
   };
   require_invalid_request(openai_config(), invalid);
 
@@ -277,7 +281,8 @@ TEST_CASE("OpenAI request leaves a history ending in tool results unmerged") {
                               ToolCallBlock{
                                   .id = "tool_1",
                                   .name = "lookup",
-                                  .arguments = Json{.text = R"({"key":"value"})"},
+                                  .arguments =
+                                      scrydantic::Json{.text = R"({"key":"value"})"},
                               },
                           }},
               Message{.role = Role::user,
@@ -285,7 +290,8 @@ TEST_CASE("OpenAI request leaves a history ending in tool results unmerged") {
                           {
                               ToolResultBlock{
                                   .tool_call_id = "tool_1",
-                                  .result = Json{.text = R"({"answer":42})"},
+                                  .result =
+                                      scrydantic::Json{.text = R"({"answer":42})"},
                               },
                           }},
           });

@@ -45,7 +45,8 @@ struct HookCounts {
 }
 
 [[nodiscard]] scry::AnswerValidator rejecting(std::string model_message) {
-  return [model_message = std::move(model_message)](const scry::Json&) -> scry::Status {
+  return [model_message =
+              std::move(model_message)](const scrydantic::Json&) -> scry::Status {
     return std::unexpected(scry::Error{
         .category = scry::ErrorCategory::invalid_argument,
         .message = "host-only diagnostic",
@@ -64,7 +65,7 @@ TEST_CASE("the answer validator runs on the update thread and accepts the answer
   const auto route = fixture.add(
       401, {
                .callbacks = counting_hooks(hooks),
-               .validate_answer = [&](const scry::Json& answer) -> scry::Status {
+               .validate_answer = [&](const scrydantic::Json& answer) -> scry::Status {
                  validator_thread = std::this_thread::get_id();
                  validated = answer.text;
                  return {};
@@ -127,10 +128,10 @@ TEST_CASE("a validator that publishes nothing or throws is answered like a handl
   }
   SECTION("a throw") {
     PumpFixture fixture;
-    const auto route =
-        fixture.add(405, {.validate_answer = [](const scry::Json&) -> scry::Status {
-                      throw std::runtime_error{"secret detail"};
-                    }});
+    const auto route = fixture.add(
+        405, {.validate_answer = [](const scrydantic::Json&) -> scry::Status {
+          throw std::runtime_error{"secret detail"};
+        }});
     REQUIRE(fixture.events->push(answer_event(route->id()), 1024));
     static_cast<void>(fixture.pump.update({}));
     const auto result = pop_tool_result(fixture);
@@ -146,20 +147,21 @@ TEST_CASE("a misplaced answer is refused without its validator or the call limit
   std::size_t validations = 0;
   std::size_t handler_calls = 0;
   const scry::detail::ToolSnapshot tools{registered_tool(
-      "forecast", [&handler_calls](scry::Json) -> scry::Result<scry::Json> {
+      "forecast", [&handler_calls](scrydantic::Json) -> scry::Result<scrydantic::Json> {
         ++handler_calls;
-        return scry::Json{.text = "{}"};
+        return scrydantic::Json{.text = "{}"};
       })};
   const auto route = fixture.add(
-      406, {
-               .tools = frozen_tools(tools),
-               .max_tool_calls = 1,
-               .callbacks = counting_hooks(hooks),
-               .validate_answer = [&validations](const scry::Json&) -> scry::Status {
-                 ++validations;
-                 return {};
-               },
-           });
+      406,
+      {
+          .tools = frozen_tools(tools),
+          .max_tool_calls = 1,
+          .callbacks = counting_hooks(hooks),
+          .validate_answer = [&validations](const scrydantic::Json&) -> scry::Status {
+            ++validations;
+            return {};
+          },
+      });
   REQUIRE(fixture.events->push(
       answer_event(route->id(), ToolCallRole::misplaced_answer, "answer-1"), 1024));
   REQUIRE(fixture.events->push(tool_event(route->id(), "forecast", "call-2"), 1024));
@@ -186,11 +188,11 @@ TEST_CASE("a misplaced answer is refused without its validator or the call limit
 TEST_CASE("a validator that cancels the turn posts no verdict") {
   PumpFixture fixture;
   std::shared_ptr<scry::detail::TurnRoute> route;
-  route =
-      fixture.add(407, {.validate_answer = [&route](const scry::Json&) -> scry::Status {
-                    static_cast<void>(route->cancel());
-                    return {};
-                  }});
+  route = fixture.add(
+      407, {.validate_answer = [&route](const scrydantic::Json&) -> scry::Status {
+        static_cast<void>(route->cancel());
+        return {};
+      }});
   REQUIRE(fixture.events->push(answer_event(route->id()), 1024));
 
   static_cast<void>(fixture.pump.update({}));
@@ -207,16 +209,17 @@ TEST_CASE("an answer of a turn cancelled from a callback is never validated") {
   std::shared_ptr<scry::detail::TurnRoute> route;
   std::size_t validations = 0;
   route = fixture.add(
-      408, {
-               .callbacks = {.on_text_delta =
-                                 [&route](std::string_view) {
-                                   static_cast<void>(route->cancel());
-                                 }},
-               .validate_answer = [&validations](const scry::Json&) -> scry::Status {
-                 ++validations;
-                 return {};
-               },
-           });
+      408,
+      {
+          .callbacks = {.on_text_delta =
+                            [&route](std::string_view) {
+                              static_cast<void>(route->cancel());
+                            }},
+          .validate_answer = [&validations](const scrydantic::Json&) -> scry::Status {
+            ++validations;
+            return {};
+          },
+      });
   REQUIRE(fixture.events->push(
       scry::detail::TextDeltaEvent{.turn_id = route->id(), .text = "thinking"}, 1024));
   REQUIRE(fixture.events->push(answer_event(route->id()), 1024));
@@ -249,7 +252,7 @@ TEST_CASE("a disconnected turn still validates its answer and posts the verdict"
       {
           .callbacks = {.on_text_delta =
                             [&](std::string_view) { disconnect_if(!from_validator); }},
-          .validate_answer = [&](const scry::Json&) -> scry::Status {
+          .validate_answer = [&](const scrydantic::Json&) -> scry::Status {
             ++validations;
             disconnect_if(from_validator);
             return {};

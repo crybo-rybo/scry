@@ -19,19 +19,17 @@ struct Position {
 };
 
 struct StrideArguments {
-  [[= scry::reflection::description{"Tiles to move east"}]] std::int32_t tiles{};
+  [[= scrydantic::description{"Tiles to move east"}]] std::int32_t tiles{};
 };
 
 // Every form a free tool function can take.
 namespace grid {
 
 // No parameters: the tool takes {} and nothing else.
-[[= scry::reflection::tool{"Report the origin"}]] inline Position origin() {
-  return {};
-}
+[[= scrydantic::tool{"Report the origin"}]] inline Position origin() { return {}; }
 
 // Plain parameters: an argument object is synthesized from them.
-[[= scry::reflection::tool{"Offset the origin"}]] inline Position
+[[= scrydantic::tool{"Offset the origin"}]] inline Position
     offset(std::int32_t dx, const std::int32_t& dy) {
   return {.x = dx, .y = dy};
 }
@@ -39,8 +37,8 @@ namespace grid {
 // The context, then one aggregate: exactly like add<StrideArguments>(), and named
 // by annotation rather than by the function.
 [[
-  = scry::reflection::tool{"Stride east"},
-  = scry::reflection::name{"stride_east"}
+  = scrydantic::tool{"Stride east"},
+  = scrydantic::name{"stride_east"}
 ]] inline Position stride(const scry::ToolCallContext& context,
                           StrideArguments arguments) {
   return {.x = arguments.tiles, .y = static_cast<std::int32_t>(context.round)};
@@ -53,26 +51,23 @@ inline Position unannotated() { return {}; }
 
 class Counter {
 public:
-  [[= scry::reflection::tool{"Add to the counter"}]] std::int32_t
-      increment(std::int32_t by) {
+  [[= scrydantic::tool{"Add to the counter"}]] std::int32_t increment(std::int32_t by) {
     value_ += by;
     return value_;
   }
 
-  [[= scry::reflection::tool{"Read the counter"}]] std::int32_t read() const {
+  [[= scrydantic::tool{"Read the counter"}]] std::int32_t read() const {
     return value_;
   }
 
-  [[= scry::reflection::tool{"Reset the counter"}]] void reset() { value_ = 0; }
+  [[= scrydantic::tool{"Reset the counter"}]] void reset() { value_ = 0; }
 
-  [[= scry::reflection::tool{"Name the call being serviced"}]] std::string
+  [[= scrydantic::tool{"Name the call being serviced"}]] std::string
       whoami(const scry::ToolCallContext& context) const {
     return std::string{context.tool_name};
   }
 
-  [[= scry::reflection::tool{"Count one tool call"}]] static std::int32_t one() {
-    return 1;
-  }
+  [[= scrydantic::tool{"Count one tool call"}]] static std::int32_t one() { return 1; }
 
   // Not a tool, and callable by the host.
   [[nodiscard]] std::int32_t value() const noexcept { return value_; }
@@ -85,17 +80,17 @@ private:
 struct Reader {
   std::int32_t fixed{};
 
-  [[= scry::reflection::tool{"Read the fixed value"}]] std::int32_t peek() const {
+  [[= scrydantic::tool{"Read the fixed value"}]] std::int32_t peek() const {
     return fixed;
   }
 };
 
 // Its third tool is named like one of Counter's.
 struct Colliding {
-  [[= scry::reflection::tool{"First"}]] std::int32_t alpha() const { return 1; }
-  [[= scry::reflection::tool{"Second"}]] std::int32_t beta() const { return 2; }
-  [[ = scry::reflection::tool{"Third"},
-     = scry::reflection::name{"reset"} ]] std::int32_t gamma() const {
+  [[= scrydantic::tool{"First"}]] std::int32_t alpha() const { return 1; }
+  [[= scrydantic::tool{"Second"}]] std::int32_t beta() const { return 2; }
+  [[ = scrydantic::tool{"Third"},
+     = scrydantic::name{"reset"} ]] std::int32_t gamma() const {
     return 3;
   }
 };
@@ -105,27 +100,26 @@ struct Colliding {
 struct Box {
   std::int32_t value{7};
 
-  [[= scry::reflection::tool{"Get value"}]] std::int32_t read(this const Box& self) {
+  [[= scrydantic::tool{"Get value"}]] std::int32_t read(this const Box& self) {
     return self.value;
   }
 
-  [[= scry::reflection::tool{"Get the value of a copy"}]] std::int32_t
-      copy(this Box self) {
+  [[= scrydantic::tool{"Get the value of a copy"}]] std::int32_t copy(this Box self) {
     return self.value;
   }
 
-  [[= scry::reflection::tool{"Add to the value without keeping it"}]] std::int32_t
+  [[= scrydantic::tool{"Add to the value without keeping it"}]] std::int32_t
       add_to(this const Box& self, std::int32_t amount) {
     return self.value + amount;
   }
 
-  [[= scry::reflection::tool{"Name the call being serviced"}]] std::string
+  [[= scrydantic::tool{"Name the call being serviced"}]] std::string
       whoami(this const Box&, const scry::ToolCallContext& context) {
     return std::string{context.tool_name};
   }
 
-  [[= scry::reflection::tool{"Add to the value"}]] std::int32_t bump(this Box& self,
-                                                                     std::int32_t by) {
+  [[= scrydantic::tool{"Add to the value"}]] std::int32_t bump(this Box& self,
+                                                               std::int32_t by) {
     self.value += by;
     return self.value;
   }
@@ -135,12 +129,11 @@ struct Box {
 struct ConstBox {
   std::int32_t value{3};
 
-  [[= scry::reflection::tool{"Get value"}]] std::int32_t
-      read(this const ConstBox& self) {
+  [[= scrydantic::tool{"Get value"}]] std::int32_t read(this const ConstBox& self) {
     return self.value;
   }
 
-  [[= scry::reflection::tool{"Get the value of a copy"}]] std::int32_t
+  [[= scrydantic::tool{"Get the value of a copy"}]] std::int32_t
       copy(this ConstBox self) {
     return self.value;
   }
@@ -155,27 +148,24 @@ struct Base {
 struct Derived : Base {
   std::int32_t own{5};
 
-  [[= scry::reflection::tool{"Read the base"}]] std::int32_t
+  [[= scrydantic::tool{"Read the base"}]] std::int32_t
       read_base(this const Base& self) {
     return self.base;
   }
 
-  [[= scry::reflection::tool{"Read a sliced copy"}]] std::int32_t
-      sliced(this Base self) {
+  [[= scrydantic::tool{"Read a sliced copy"}]] std::int32_t sliced(this Base self) {
     return self.base;
   }
 };
 
 // tool describes functions; on a data member it is rejected.
 struct ToolOnMember {
-  [[= scry::reflection::tool{"City to query"}]] std::string city;
+  [[= scrydantic::tool{"City to query"}]] std::string city;
 };
 
 // The explicit object forms registration rejects.
 struct TakesRvalue {
-  [[= scry::reflection::tool{"Consume"}]] std::int32_t take(this TakesRvalue&&) {
-    return 0;
-  }
+  [[= scrydantic::tool{"Consume"}]] std::int32_t take(this TakesRvalue&&) { return 0; }
 };
 
 struct Uncopyable {
@@ -186,11 +176,11 @@ struct Uncopyable {
   Uncopyable& operator=(Uncopyable&&) = default;
   ~Uncopyable() = default;
 
-  [[= scry::reflection::tool{"Copy"}]] std::int32_t copy(this Uncopyable) { return 0; }
+  [[= scrydantic::tool{"Copy"}]] std::int32_t copy(this Uncopyable) { return 0; }
 };
 
 struct Unrelated {
-  [[= scry::reflection::tool{"Read"}]] std::int32_t read(this const Position& self) {
+  [[= scrydantic::tool{"Read"}]] std::int32_t read(this const Position& self) {
     return self.x;
   }
 };
@@ -201,7 +191,7 @@ namespace {
 
 // Invokes a registered tool the way dispatch does, naming the call it stands in
 // for. The snapshot is released on return, so it never extends a toolbox's life.
-[[nodiscard]] scry::Result<scry::Json>
+[[nodiscard]] scry::Result<scrydantic::Json>
 call(scry::ToolRegistry& registry, const std::string_view name, std::string arguments) {
   const auto snapshot = scry::detail::ToolRegistryAccess::snapshot(registry).entries;
   const auto* tool = scry::detail::find_tool(*snapshot, name);
@@ -212,7 +202,7 @@ call(scry::ToolRegistry& registry, const std::string_view name, std::string argu
           .tool_name = tool->definition.name,
           .round = 2,
       },
-      scry::Json{.text = std::move(arguments)});
+      scrydantic::Json{.text = std::move(arguments)});
 }
 
 [[nodiscard]] std::string schema_of(scry::ToolRegistry& registry,
@@ -230,25 +220,26 @@ constexpr std::string_view int32_schema =
 
 } // namespace
 
-static_assert(scry::reflection::Toolbox<registration::Counter>);
-static_assert(scry::reflection::Toolbox<registration::Reader>);
-static_assert(scry::reflection::Toolbox<const registration::Reader>);
-static_assert(!scry::reflection::Toolbox<const registration::Counter>);
-static_assert(!scry::reflection::Toolbox<registration::Position>);
-static_assert(!scry::reflection::Toolbox<std::int32_t>);
+static_assert(scrydantic::Toolbox<registration::Counter, scry::ToolCallContext>);
+static_assert(scrydantic::Toolbox<registration::Reader, scry::ToolCallContext>);
+static_assert(scrydantic::Toolbox<const registration::Reader, scry::ToolCallContext>);
+static_assert(!scrydantic::Toolbox<const registration::Counter, scry::ToolCallContext>);
+static_assert(!scrydantic::Toolbox<registration::Position, scry::ToolCallContext>);
+static_assert(!scrydantic::Toolbox<std::int32_t, scry::ToolCallContext>);
 
 // Toolbox accepts exactly the explicit object forms registration accepts: Box
 // registers below, and the const-toolbox rejection has a compile-fail test.
-static_assert(scry::reflection::Toolbox<registration::Box>);
-static_assert(!scry::reflection::Toolbox<const registration::Box>); // bump: Box&
-static_assert(scry::reflection::Toolbox<registration::ConstBox>);
-static_assert(scry::reflection::Toolbox<const registration::ConstBox>);
-static_assert(scry::reflection::Toolbox<registration::Derived>);
-static_assert(scry::reflection::Toolbox<const registration::Derived>);
-static_assert(!scry::reflection::Toolbox<registration::TakesRvalue>);
-static_assert(!scry::reflection::Toolbox<registration::Uncopyable>);
-static_assert(!scry::reflection::Toolbox<registration::Unrelated>);
-static_assert(!scry::reflection::ToolArguments<registration::ToolOnMember>);
+static_assert(scrydantic::Toolbox<registration::Box, scry::ToolCallContext>);
+static_assert(
+    !scrydantic::Toolbox<const registration::Box, scry::ToolCallContext>); // bump: Box&
+static_assert(scrydantic::Toolbox<registration::ConstBox, scry::ToolCallContext>);
+static_assert(scrydantic::Toolbox<const registration::ConstBox, scry::ToolCallContext>);
+static_assert(scrydantic::Toolbox<registration::Derived, scry::ToolCallContext>);
+static_assert(scrydantic::Toolbox<const registration::Derived, scry::ToolCallContext>);
+static_assert(!scrydantic::Toolbox<registration::TakesRvalue, scry::ToolCallContext>);
+static_assert(!scrydantic::Toolbox<registration::Uncopyable, scry::ToolCallContext>);
+static_assert(!scrydantic::Toolbox<registration::Unrelated, scry::ToolCallContext>);
+static_assert(!scrydantic::ToolArguments<registration::ToolOnMember>);
 
 TEST_CASE("a function without parameters takes the empty object only") {
   scry::ToolRegistry registry;

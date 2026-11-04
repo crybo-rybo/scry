@@ -6,9 +6,10 @@
 using namespace scry::test_support;
 
 TEST_CASE("tool dispatch canonicalizes successful handler results") {
-  const scry::detail::ToolSnapshot tools{
-      registered_tool("forecast", [](scry::Json) -> scry::Result<scry::Json> {
-        return scry::Json{.text = R"( { "z": [2, 1], "a": {"y":true,"x":null} } )"};
+  const scry::detail::ToolSnapshot tools{registered_tool(
+      "forecast", [](scrydantic::Json) -> scry::Result<scrydantic::Json> {
+        return scrydantic::Json{.text =
+                                    R"( { "z": [2, 1], "a": {"y":true,"x":null} } )"};
       })};
 
   const auto result = scry::detail::dispatch_tool(tools, tool_call(), {}, 1024);
@@ -31,8 +32,8 @@ TEST_CASE("tool dispatch turns an unknown tool into a model-visible error") {
 
 TEST_CASE(
     "tool dispatch names the registered tools in registration-independent order") {
-  const auto stub = [](scry::Json) -> scry::Result<scry::Json> {
-    return scry::Json{.text = "{}"};
+  const auto stub = [](scrydantic::Json) -> scry::Result<scrydantic::Json> {
+    return scrydantic::Json{.text = "{}"};
   };
   const scry::detail::ToolSnapshot tools{
       registered_tool("move", stub),
@@ -49,8 +50,8 @@ TEST_CASE(
 }
 
 TEST_CASE("tool dispatch does not disclose handler-returned Error details") {
-  const scry::detail::ToolSnapshot tools{
-      registered_tool("forecast", [](scry::Json) -> scry::Result<scry::Json> {
+  const scry::detail::ToolSnapshot tools{registered_tool(
+      "forecast", [](scrydantic::Json) -> scry::Result<scrydantic::Json> {
         return std::unexpected(scry::Error{
             .category = scry::ErrorCategory::tool,
             .message = "secret application message",
@@ -67,8 +68,8 @@ TEST_CASE("tool dispatch does not disclose handler-returned Error details") {
 }
 
 TEST_CASE("tool dispatch forwards a handler's model_message unchanged") {
-  const scry::detail::ToolSnapshot tools{
-      registered_tool("forecast", [](scry::Json) -> scry::Result<scry::Json> {
+  const scry::detail::ToolSnapshot tools{registered_tool(
+      "forecast", [](scrydantic::Json) -> scry::Result<scrydantic::Json> {
         return std::unexpected(scry::tool_error("north, south, east, or west only",
                                                 "secret application message"));
       })};
@@ -82,8 +83,8 @@ TEST_CASE("tool dispatch forwards a handler's model_message unchanged") {
 }
 
 TEST_CASE("tool dispatch drops an oversized model_message for the fixed diagnostic") {
-  const scry::detail::ToolSnapshot tools{
-      registered_tool("forecast", [](scry::Json) -> scry::Result<scry::Json> {
+  const scry::detail::ToolSnapshot tools{registered_tool(
+      "forecast", [](scrydantic::Json) -> scry::Result<scrydantic::Json> {
         return std::unexpected(scry::tool_error(std::string(4096, 'x')));
       })};
 
@@ -105,19 +106,20 @@ TEST_CASE("tool dispatch contains standard and non-standard handler exceptions")
   };
 
   SECTION("standard exception") {
-    check_exception([](scry::Json) -> scry::Result<scry::Json> {
+    check_exception([](scrydantic::Json) -> scry::Result<scrydantic::Json> {
       throw std::runtime_error{"secret exception message"};
     });
   }
   SECTION("non-standard exception") {
-    check_exception([](scry::Json) -> scry::Result<scry::Json> { throw 7; });
+    check_exception(
+        [](scrydantic::Json) -> scry::Result<scrydantic::Json> { throw 7; });
   }
 }
 
 TEST_CASE("tool dispatch turns invalid handler JSON into a bounded tool error") {
-  const scry::detail::ToolSnapshot tools{
-      registered_tool("forecast", [](scry::Json) -> scry::Result<scry::Json> {
-        return scry::Json{.text = "{"};
+  const scry::detail::ToolSnapshot tools{registered_tool(
+      "forecast", [](scrydantic::Json) -> scry::Result<scrydantic::Json> {
+        return scrydantic::Json{.text = "{"};
       })};
 
   const auto result = scry::detail::dispatch_tool(tools, tool_call(), {}, 1024);
@@ -129,9 +131,9 @@ TEST_CASE("tool dispatch turns invalid handler JSON into a bounded tool error") 
 
 TEST_CASE("tool dispatch enforces the canonical result byte limit exactly") {
   constexpr std::string_view canonical = R"({"a":1})";
-  const scry::detail::ToolSnapshot tools{
-      registered_tool("forecast", [](scry::Json) -> scry::Result<scry::Json> {
-        return scry::Json{.text = R"({"a":1})"};
+  const scry::detail::ToolSnapshot tools{registered_tool(
+      "forecast", [](scrydantic::Json) -> scry::Result<scrydantic::Json> {
+        return scrydantic::Json{.text = R"({"a":1})"};
       })};
 
   const auto exact =
@@ -160,12 +162,12 @@ TEST_CASE("tool dispatch hands the handler the identity of the call it is servic
   const scry::detail::ToolSnapshot tools{
       registered_tool("forecast",
                       [&observed](const scry::ToolCallContext& context,
-                                  scry::Json) -> scry::Result<scry::Json> {
+                                  scrydantic::Json) -> scry::Result<scrydantic::Json> {
                         // The views borrow from `call`, which the test keeps
                         // alive, so holding them is safe here; a handler that
                         // keeps them past its return must copy the text instead.
                         observed = context;
-                        return scry::Json{.text = "{}"};
+                        return scrydantic::Json{.text = "{}"};
                       })};
   const auto call = tool_call("forecast", "call-7");
   const scry::ToolCallContext context{
@@ -187,11 +189,11 @@ TEST_CASE("tool dispatch hands the handler the identity of the call it is servic
 }
 
 TEST_CASE("a plain handler is adapted without disturbing its arguments") {
-  scry::Json seen{};
+  scrydantic::Json seen{};
   const scry::detail::ToolSnapshot tools{
-      registered_tool("forecast", [&seen](scry::Json arguments) {
+      registered_tool("forecast", [&seen](scrydantic::Json arguments) {
         seen = arguments;
-        return scry::Result<scry::Json>{std::move(arguments)};
+        return scry::Result<scrydantic::Json>{std::move(arguments)};
       })};
 
   const auto result = scry::detail::dispatch_tool(tools, tool_call(), {}, 1024);

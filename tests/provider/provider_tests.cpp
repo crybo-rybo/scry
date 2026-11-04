@@ -97,7 +97,8 @@ namespace {
                               ToolCallBlock{
                                   .id = "tool_1",
                                   .name = "lookup",
-                                  .arguments = Json{.text = R"({"key":"value"})"},
+                                  .arguments =
+                                      scrydantic::Json{.text = R"({"key":"value"})"},
                               },
                           }},
               Message{.role = Role::user,
@@ -105,7 +106,8 @@ namespace {
                           {
                               ToolResultBlock{
                                   .tool_call_id = "tool_1",
-                                  .result = Json{.text = R"({"answer":42})"},
+                                  .result =
+                                      scrydantic::Json{.text = R"({"answer":42})"},
                               },
                           }},
           });
@@ -156,7 +158,8 @@ namespace {
                               ToolCallBlock{
                                   .id = "tool_1",
                                   .name = "lookup",
-                                  .arguments = Json{.text = R"({"key":"value"})"},
+                                  .arguments =
+                                      scrydantic::Json{.text = R"({"key":"value"})"},
                               },
                           }},
               Message{.role = Role::user,
@@ -164,7 +167,8 @@ namespace {
                           {
                               ToolResultBlock{
                                   .tool_call_id = "tool_1",
-                                  .result = Json{.text = R"({"answer":42})"},
+                                  .result =
+                                      scrydantic::Json{.text = R"({"answer":42})"},
                               },
                           }},
               Message{.role = Role::assistant,
@@ -181,7 +185,7 @@ namespace {
 }
 
 // The string member `field` of the element at `index` of the array at `name`.
-[[nodiscard]] std::string element_string(const JsonView& owner,
+[[nodiscard]] std::string element_string(const scrydantic::JsonView& owner,
                                          const std::string_view name,
                                          const std::size_t index,
                                          const std::string_view field) {

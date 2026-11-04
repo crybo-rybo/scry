@@ -2,7 +2,7 @@
 
 #include <cstdint>
 #include <optional>
-#include <scry/annotations.hpp>
+#include <scrydantic/annotations.hpp>
 #include <string>
 #include <vector>
 
@@ -41,7 +41,7 @@ struct MoveOutcome {
   Direction direction{};
   bool moved{};
   Position position{};
-  [[= scry::reflection::skip_null]] std::optional<std::string> reason{};
+  [[= scrydantic::skip_null]] std::optional<std::string> reason{};
 };
 
 // The NPC's world and its tools. The world is a toolbox: registering it with
@@ -56,17 +56,17 @@ public:
 
   [[nodiscard]] Position position() const noexcept;
 
-  [[= scry::reflection::tool{
+  [[= scrydantic::tool{
       "Observe the NPC position, bounds, and available moves."}]] Observation
       look() const;
 
-  [[= scry::reflection::tool{"Move the NPC one cell north."}]] MoveOutcome move_north();
+  [[= scrydantic::tool{"Move the NPC one cell north."}]] MoveOutcome move_north();
 
-  [[= scry::reflection::tool{"Move the NPC one cell south."}]] MoveOutcome move_south();
+  [[= scrydantic::tool{"Move the NPC one cell south."}]] MoveOutcome move_south();
 
-  [[= scry::reflection::tool{"Move the NPC one cell east."}]] MoveOutcome move_east();
+  [[= scrydantic::tool{"Move the NPC one cell east."}]] MoveOutcome move_east();
 
-  [[= scry::reflection::tool{"Move the NPC one cell west."}]] MoveOutcome move_west();
+  [[= scrydantic::tool{"Move the NPC one cell west."}]] MoveOutcome move_west();
 
   MoveOutcome move(Direction direction);
 

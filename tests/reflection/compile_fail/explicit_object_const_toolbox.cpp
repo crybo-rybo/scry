@@ -3,7 +3,7 @@
 
 struct Lamp {
   bool lit{};
-  [[= scry::reflection::tool{"Toggle the lamp"}]] bool toggle(this Lamp& self) {
+  [[= scrydantic::tool{"Toggle the lamp"}]] bool toggle(this Lamp& self) {
     return self.lit = !self.lit;
   }
 };

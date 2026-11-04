@@ -5,7 +5,7 @@
 
 #include <cstdint>
 #include <optional>
-#include <scry/annotations.hpp>
+#include <scrydantic/annotations.hpp>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -17,19 +17,19 @@ namespace {
 
 // The Messages API request as reflected wire structs; see the note in
 // provider/shared.hpp for what they borrow.
-struct[[= reflection::tag{"text"}]] AnthropicText {
+struct[[= scrydantic::tag{"text"}]] AnthropicText {
   std::string_view text;
 };
 
-struct[[= reflection::tag{"tool_use"}]] AnthropicToolUse {
+struct[[= scrydantic::tag{"tool_use"}]] AnthropicToolUse {
   std::string_view id;
   std::string_view name;
-  const Json& input;
+  const scrydantic::Json& input;
 };
 
 // `content` is a JSON string holding the result document, not the document
 // itself, which is why it is a string_view and `input` above is a Json.
-struct[[= reflection::tag{"tool_result"}]] AnthropicToolResult {
+struct[[= scrydantic::tag{"tool_result"}]] AnthropicToolResult {
   std::string_view tool_use_id;
   std::string_view content;
   bool is_error;
@@ -46,7 +46,7 @@ struct AnthropicMessage {
 struct AnthropicTool {
   std::string_view name;
   std::string_view description;
-  const Json& input_schema;
+  const scrydantic::Json& input_schema;
 };
 
 // `{"type":"any"}` requires the model to call one of the offered tools; a typed
@@ -55,15 +55,15 @@ struct AnthropicToolChoice {
   std::string_view type;
 };
 
-struct[[= reflection::skip_null]] AnthropicBody {
+struct[[= scrydantic::skip_null]] AnthropicBody {
   std::string_view model;
   std::optional<std::uint32_t> max_tokens;
   std::optional<std::string_view> system;
   std::vector<AnthropicMessage> messages;
   std::optional<std::vector<AnthropicTool>> tools;
   std::optional<AnthropicToolChoice> tool_choice;
-  Json temperature;
-  std::optional<Json> top_p;
+  scrydantic::Json temperature;
+  std::optional<scrydantic::Json> top_p;
   bool stream;
 };
 

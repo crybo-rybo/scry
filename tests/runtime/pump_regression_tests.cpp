@@ -735,9 +735,9 @@ TEST_CASE("disconnecting from inside on_text_delta does not destroy the running 
 TEST_CASE("disconnecting from inside on_tool_call does not destroy the running "
           "callback") {
   PumpFixture fixture;
-  const scry::detail::ToolSnapshot tools{
-      registered_tool("forecast", [](scry::Json) -> scry::Result<scry::Json> {
-        return scry::Json{.text = R"({"ok":true})"};
+  const scry::detail::ToolSnapshot tools{registered_tool(
+      "forecast", [](scrydantic::Json) -> scry::Result<scrydantic::Json> {
+        return scrydantic::Json{.text = R"({"ok":true})"};
       })};
   std::shared_ptr<scry::detail::TurnRoute> route;
   std::size_t observed_size = 0;
@@ -774,12 +774,13 @@ TEST_CASE("disconnecting from inside a tool handler suppresses that call's obser
   std::shared_ptr<scry::detail::TurnRoute> route;
   std::size_t observer_calls = 0;
   bool disconnect_reported = false;
-  const scry::detail::ToolSnapshot tools{registered_tool(
-      "forecast",
-      [&route, &disconnect_reported](scry::Json) -> scry::Result<scry::Json> {
-        disconnect_reported = route->disconnect();
-        return scry::Json{.text = R"({"ok":true})"};
-      })};
+  const scry::detail::ToolSnapshot tools{
+      registered_tool("forecast",
+                      [&route, &disconnect_reported](
+                          scrydantic::Json) -> scry::Result<scrydantic::Json> {
+                        disconnect_reported = route->disconnect();
+                        return scrydantic::Json{.text = R"({"ok":true})"};
+                      })};
   route = fixture.add(
       226, {
                .tools = frozen_tools(tools),

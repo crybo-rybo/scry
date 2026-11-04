@@ -4,6 +4,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <chrono>
 #include <cstddef>
+#include <expected>
 #include <optional>
 #include <scry/scry.hpp>
 #include <scry/testing/scripted_server.hpp>
@@ -22,7 +23,7 @@ using scry::testing::ScriptedServer;
 namespace {
 
 struct Verdict {
-  [[= scry::reflection::description{"Is the claim supported?"}]] bool supported{};
+  [[= scrydantic::description{"Is the claim supported?"}]] bool supported{};
   std::string reason{};
 };
 
@@ -61,7 +62,9 @@ constexpr std::string_view canonical_answer =
   return {.id = id, .name = "respond", .arguments = arguments};
 }
 
-template <typename Value> [[nodiscard]] Value unwrap(scry::Result<Value> result) {
+// Scry's own results and Scrydantic's alike.
+template <typename Value, typename Error>
+[[nodiscard]] Value unwrap(std::expected<Value, Error> result) {
   REQUIRE(result);
   return std::move(*result);
 }
@@ -73,7 +76,7 @@ template <typename Value> [[nodiscard]] Value unwrap(scry::Result<Value> result)
 // Both dialects encode the committed answer as an assistant text block; a JSON
 // string escapes its quotes.
 [[nodiscard]] std::string escaped(const std::string_view json) {
-  auto quoted = scry::escape_json_string(json);
+  auto quoted = scrydantic::escape_json_string(json);
   return quoted.substr(1, quoted.size() - 2);
 }
 
@@ -177,8 +180,7 @@ TEST_CASE("send<T> completes an OpenAI-compatible answer that persists and repla
   CHECK(streamed == "Checked.");
   CHECK((*finished)->text == "Checked.");
   REQUIRE((*finished)->structured);
-  const auto verdict =
-      unwrap(scry::reflection::decode<Verdict>(*(*finished)->structured));
+  const auto verdict = unwrap(scrydantic::decode<Verdict>(*(*finished)->structured));
   CHECK(verdict.reason == "It is rock.");
   CHECK(contains(server.requests().front().body, R"("tool_choice":"required")"));
   require_answer_only_as_text(conversation);
@@ -248,7 +250,8 @@ TEST_CASE("an Anthropic follow-up after a rejected answer alternates roles") {
 
   static_cast<void>(unwrap(harness.send_and_wait(conversation, "Thanks.")));
   const auto follow_up = server.requests().back().body;
-  const auto body = unwrap(scry::JsonView::parse(scry::Json{.text = follow_up}));
+  const auto body =
+      unwrap(scrydantic::JsonView::parse(scrydantic::Json{.text = follow_up}));
   const auto messages = body.find("messages");
   REQUIRE(messages);
   std::vector<std::string> roles;
@@ -291,8 +294,8 @@ TEST_CASE("the per-turn call limit tells a typed turn to finish on its response 
       conversation, "Is the moon made of cheese?",
       scry::ResponseFormat{
           .name = "verdict",
-          .schema = {.text = std::string{scry::reflection::input_schema_v<Verdict>}},
-          .validate = [&validated](const scry::Json& answer) -> scry::Status {
+          .schema = {.text = std::string{scrydantic::input_schema_v<Verdict>}},
+          .validate = [&validated](const scrydantic::Json& answer) -> scry::Status {
             validated.push_back(answer.text);
             return {};
           },

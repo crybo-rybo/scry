@@ -19,8 +19,30 @@ ContextualToolHandler to_contextual_handler(ToolHandler handler) {
     return {};
   }
   return ContextualToolHandler{
-      [inner = std::move(handler)](const ToolCallContext&, Json input) mutable {
+      [inner = std::move(handler)](const ToolCallContext&,
+                                   scrydantic::Json input) mutable {
         return inner(std::move(input));
+      }};
+}
+
+ContextualToolHandler
+reflected_handler(scrydantic::ToolFunction<ToolCallContext> handler) {
+  if (!handler) {
+    return {};
+  }
+  return ContextualToolHandler{
+      [inner = std::move(handler)](
+          const ToolCallContext& context,
+          scrydantic::Json input) mutable -> Result<scrydantic::Json> {
+        auto result = inner(context, std::move(input));
+        if (!result) {
+          return std::unexpected(Error{
+              .category = ErrorCategory::tool,
+              .message = std::move(result.error().message),
+              .model_message = std::move(result.error().model_message),
+          });
+        }
+        return std::move(*result);
       }};
 }
 
@@ -42,7 +64,7 @@ constexpr std::uint64_t tool_manifest_version = 1;
 struct ToolManifestEntry {
   std::string_view name;
   std::string_view description;
-  const Json& input_schema;
+  const scrydantic::Json& input_schema;
 };
 
 struct ToolManifest {
@@ -152,6 +174,24 @@ Status ToolRegistry::add_dynamic(ToolDefinition definition,
   return add_all(std::move(entries));
 }
 
+Status
+ToolRegistry::add_reflected(std::vector<scrydantic::BoundTool<ToolCallContext>> tools) {
+  std::vector<detail::ToolEntry> entries{};
+  entries.reserve(tools.size());
+  for (auto& tool : tools) {
+    entries.push_back(detail::ToolEntry{
+        .definition =
+            ToolDefinition{
+                .name = std::move(tool.name),
+                .description = std::move(tool.description),
+                .input_schema = std::move(tool.input_schema),
+            },
+        .handler = detail::reflected_handler(std::move(tool.invoke)),
+    });
+  }
+  return add_all(std::move(entries));
+}
+
 Status ToolRegistry::add_all(std::vector<detail::ToolEntry> entries) {
   if (impl_ == nullptr) {
     return std::unexpected(inactive_registry());
@@ -181,7 +221,7 @@ std::vector<std::string> ToolRegistry::names() const {
   return registered;
 }
 
-Result<Json> ToolRegistry::to_json() const {
+Result<scrydantic::Json> ToolRegistry::to_json() const {
   if (impl_ == nullptr) {
     return std::unexpected(inactive_registry());
   }
@@ -205,7 +245,7 @@ Result<Json> ToolRegistry::to_json() const {
         detail::make_error(ErrorCategory::invalid_state,
                            "Tool manifest at " + detail::describe(encoded.error())));
   }
-  return detail::canonicalize_json(Json{.text = std::move(*encoded)},
+  return detail::canonicalize_json(scrydantic::Json{.text = std::move(*encoded)},
                                    ErrorCategory::invalid_state,
                                    "Tool manifest could not be encoded");
 }

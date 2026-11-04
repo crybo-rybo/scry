@@ -68,11 +68,11 @@ TEST_CASE("tool exchange budget is exact across every ordered result") {
   };
   const ToolResultBlock first_result{
       .tool_call_id = "call-a",
-      .result = scry::Json{.text = "{}"},
+      .result = scrydantic::Json{.text = "{}"},
   };
   const ToolResultBlock second_result{
       .tool_call_id = "call-b",
-      .result = scry::Json{.text = "{}"},
+      .result = scrydantic::Json{.text = "{}"},
   };
   auto tools = tool_policy();
   tools.max_exchange_bytes = message_payload_bytes(assistant) +
@@ -99,7 +99,7 @@ TEST_CASE("cumulative tool results cannot cross the exchange budget") {
   };
   const ToolResultBlock result_block{
       .tool_call_id = "call-a",
-      .result = scry::Json{.text = "{}"},
+      .result = scrydantic::Json{.text = "{}"},
   };
   auto tools = tool_policy();
   tools.max_exchange_bytes =
@@ -225,7 +225,7 @@ TEST_CASE("dropped calls must fit the remaining exchange budget") {
   };
   const ToolResultBlock round_result{
       .tool_call_id = "call-1",
-      .result = scry::Json{.text = R"({"ok":true})"},
+      .result = scrydantic::Json{.text = R"({"ok":true})"},
   };
   const auto dropped = tool_call("call-2", "again");
   // Room for the round that runs, one byte short of the calls it may not run.

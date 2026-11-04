@@ -22,7 +22,7 @@
 #include <initializer_list>
 #include <optional>
 #include <scry/config.hpp>
-#include <scry/json.hpp>
+#include <scrydantic/json.hpp>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -181,21 +181,21 @@ sanitize_error_token(const std::string_view value) {
 }
 
 // Parses one SSE `data` payload.
-[[nodiscard]] inline Result<JsonView> parse_payload(const std::string_view data,
-                                                    const std::string_view dialect) {
-  auto root = JsonView::parse(Json{.text = std::string{data}});
+[[nodiscard]] inline Result<scrydantic::JsonView>
+parse_payload(const std::string_view data, const std::string_view dialect) {
+  auto root = scrydantic::JsonView::parse(scrydantic::Json{.text = std::string{data}});
   if (!root) {
     return std::unexpected(make_error(
         ErrorCategory::protocol, std::string{dialect} + " SSE data is not valid JSON"));
   }
-  return root;
+  return std::move(*root);
 }
 
 // Decodes a provider payload with the reflected codec. A shape the codec rejects
 // is a protocol error naming the path; the path holds only declared keys and
 // indices, never provider text.
 template <typename Payload>
-[[nodiscard]] Result<Payload> decode_payload(const JsonView& view,
+[[nodiscard]] Result<Payload> decode_payload(const scrydantic::JsonView& view,
                                              const std::string_view dialect) {
   auto decoded = decode_value<Payload>(view);
   if (!decoded) {
@@ -211,9 +211,10 @@ template <typename Payload>
 // best-effort: each value is independently optional, and one of the wrong type
 // reads as absent without failing its event or hiding its siblings. The codec
 // decodes an object all or nothing, so these few reads use the view directly.
-[[nodiscard]] inline std::optional<JsonView>
-member_at(const JsonView& root, const std::initializer_list<std::string_view> path) {
-  std::optional<JsonView> value{root};
+[[nodiscard]] inline std::optional<scrydantic::JsonView>
+member_at(const scrydantic::JsonView& root,
+          const std::initializer_list<std::string_view> path) {
+  std::optional<scrydantic::JsonView> value{root};
   for (const auto key : path) {
     value = value->find(key);
     if (!value) {
@@ -225,7 +226,8 @@ member_at(const JsonView& root, const std::initializer_list<std::string_view> pa
 
 // The string at a member path, or nullopt when it is absent or not a string.
 [[nodiscard]] inline std::optional<std::string_view>
-string_at(const JsonView& root, const std::initializer_list<std::string_view> path) {
+string_at(const scrydantic::JsonView& root,
+          const std::initializer_list<std::string_view> path) {
   const auto value = member_at(root, path);
   return value ? value->string() : std::nullopt;
 }
@@ -233,7 +235,7 @@ string_at(const JsonView& root, const std::initializer_list<std::string_view> pa
 // The sanitized string at `root.error.<field>`, or nullopt when it is absent,
 // not a string, or unsafe.
 [[nodiscard]] inline std::optional<std::string>
-error_token(const JsonView& root, const std::string_view field) {
+error_token(const scrydantic::JsonView& root, const std::string_view field) {
   return string_at(root, {"error", field}).and_then(sanitize_error_token);
 }
 

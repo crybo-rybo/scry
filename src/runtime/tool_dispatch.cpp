@@ -18,7 +18,7 @@ namespace {
 }
 
 [[nodiscard]] Result<ToolResultBlock>
-successful_result(const ToolCallBlock& call, const Json& value,
+successful_result(const ToolCallBlock& call, const scrydantic::Json& value,
                   const std::size_t max_result_bytes) {
   // Canonicalizing parses and re-serializes, so rejecting an already-oversized
   // payload here keeps an unbounded handler return from being parsed at all.
@@ -77,7 +77,7 @@ successful_result(const ToolCallBlock& call, const Json& value,
 dispatch_tool_handler(ContextualToolHandler& handler, const ToolCallBlock& call,
                       const ToolCallContext& context,
                       const std::size_t max_result_bytes) {
-  Result<Json> invoked{};
+  Result<scrydantic::Json> invoked{};
   try {
     invoked = handler(context, call.arguments);
   } catch (...) {

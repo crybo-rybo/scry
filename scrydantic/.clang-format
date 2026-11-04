@@ -1,0 +1,19 @@
+BasedOnStyle: LLVM
+ColumnLimit: 88
+DerivePointerAlignment: false
+PointerAlignment: Left
+SortIncludes: CaseSensitive
+IncludeBlocks: Regroup
+NamespaceIndentation: None
+# LLVM's default categories with two changes: a JSON core source includes
+# "json/core.hpp", the reflection guard, before its own header, and "json/" is
+# this project's own source directory rather than a third-party library.
+IncludeCategories:
+  - Regex: '^"json/core\.hpp"$'
+    Priority: -1
+  - Regex: '^"(llvm|llvm-c|clang|clang-c)/'
+    Priority: 2
+  - Regex: '^(<|"(gtest|gmock|isl)/)'
+    Priority: 3
+  - Regex: '.*'
+    Priority: 1

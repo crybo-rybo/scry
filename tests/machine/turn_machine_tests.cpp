@@ -132,7 +132,7 @@ TEST_CASE("a tool round starts without the response's empty text block") {
       .result =
           {
               .tool_call_id = "call-1",
-              .result = scry::Json{.text = R"({"ok":true})"},
+              .result = scrydantic::Json{.text = R"({"ok":true})"},
           },
       .observed_at = at(1ms),
   });

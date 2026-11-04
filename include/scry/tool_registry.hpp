@@ -7,13 +7,12 @@
 #include <cstddef>
 #include <memory>
 #include <meta>
-#include <scry/detail/reflection_meta.hpp>
-#include <scry/detail/reflection_registration.hpp>
-#include <scry/detail/reflection_schema.hpp>
-#include <scry/detail/reflection_tools.hpp>
 #include <scry/error.hpp>
-#include <scry/json.hpp>
 #include <scry/tool.hpp>
+#include <scrydantic/detail/meta.hpp>
+#include <scrydantic/detail/schema.hpp>
+#include <scrydantic/json.hpp>
+#include <scrydantic/tools.hpp>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -34,6 +33,24 @@ inline constexpr bool is_shared_ptr_v<std::shared_ptr<Type>> = true;
 template <typename Type>
 concept owned_toolbox_candidate = std::is_class_v<std::remove_cvref_t<Type>> &&
                                   !is_shared_ptr_v<std::remove_cvref_t<Type>>;
+
+// add(Toolbox&&) takes ownership, so it needs an rvalue it can move from.
+template <typename Passed> consteval std::string_view owned_toolbox_diagnostic() {
+  using Owned = std::remove_cvref_t<Passed>;
+  if constexpr (std::is_lvalue_reference_v<Passed>) {
+    return scrydantic::detail::static_string(
+        scrydantic::detail::display(std::meta::dealias(^^Owned)) +
+        " is passed as an lvalue: ToolRegistry::add(Toolbox&&) takes ownership of a "
+        "toolbox, so std::move it in, or share it through std::shared_ptr");
+  } else if constexpr (!std::constructible_from<Owned, Passed>) {
+    return scrydantic::detail::static_string(
+        scrydantic::detail::display(std::meta::dealias(^^Owned)) +
+        " cannot be moved into the registry; share it through std::shared_ptr "
+        "instead");
+  } else {
+    return scrydantic::detail::toolbox_diagnostic<Owned, ToolCallContext>();
+  }
+}
 } // namespace detail
 
 /// Additive registry of model-callable tools.
@@ -41,7 +58,7 @@ concept owned_toolbox_candidate = std::is_class_v<std::remove_cvref_t<Type>> &&
 /// Tools are declared in C++ and registered by reflection: the argument schema,
 /// the strict argument decoder, and the result encoder are generated from the
 /// declaration. add() takes a typed argument aggregate and a callable, a function
-/// annotated with scry::reflection::tool, every such function of a namespace, or
+/// annotated with scrydantic::tool, every such function of a namespace, or
 /// a toolbox object whose annotated member functions become tools bound to it.
 /// add_dynamic() is the escape hatch for tools known only at runtime, such as
 /// bridged or scripted ones: a hand-written JSON schema and a handler that takes
@@ -84,20 +101,23 @@ public:
 
   /// Registers a callable whose arguments are a reflected aggregate.
   ///
-  /// The argument schema is generated as scry::reflection::input_schema_v<Args>,
+  /// The argument schema is generated as scrydantic::input_schema_v<Args>,
   /// incoming JSON is decoded strictly into `Args`, and the typed return is
   /// encoded back to JSON. A handler may take a leading const ToolCallContext& to
   /// learn which turn, round, and call it is running for; the context is borrowed
   /// for the invocation only. It may return a supported value, a Result of one,
-  /// `void`, or scry::Status; the last two send `{}` on success.
+  /// `void`, or scrydantic::Status; the last two send `{}` on success. A failure
+  /// reaches the model and the host as an ErrorCategory::tool error.
   ///
   /// The template is unconstrained so that a rejected type fails with a diagnostic
-  /// naming the offending member and the reason; scry::reflection::ToolArguments
-  /// and scry::reflection::ToolHandlerFor are the SFINAE-friendly form of the same
-  /// checks.
-  /// @tparam Args Complete reflected argument aggregate satisfying ToolArguments.
-  /// @tparam Handler Move-constructible callable satisfying ToolHandlerFor<Handler,
-  /// Args>.
+  /// naming the offending member and the reason; scrydantic::ToolArguments
+  /// and scrydantic::ToolHandlerFor are the SFINAE-friendly form of the same
+  /// checks. This is scrydantic::bind_handler<Args, ToolCallContext>() under a
+  /// name the host chooses.
+  /// @tparam Args Complete reflected argument aggregate satisfying
+  /// scrydantic::ToolArguments.
+  /// @tparam Handler Move-constructible callable satisfying
+  /// scrydantic::ToolHandlerFor<Handler, Args, ToolCallContext>.
   /// @param metadata Provider-visible tool name and description.
   /// @param handler Callable invoked with Args moved by value, optionally preceded
   /// by a const ToolCallContext& naming the call being serviced.
@@ -108,11 +128,12 @@ public:
 
   /// Registers one annotated function, or every annotated function of a namespace.
   ///
+  /// This is scrydantic::bind<Entity, ToolCallContext>(), registered.
   /// `tools.add<^^forecast>()` registers a function declared with
-  /// `[[= scry::reflection::tool{"description"}]]`; `tools.add<^^npc_tools>()`
+  /// `[[= scrydantic::tool{"description"}]]`; `tools.add<^^npc_tools>()`
   /// registers every function so declared directly in that namespace, in
   /// declaration order. A tool is named after the function unless a
-  /// scry::reflection::name annotation overrides it. Its parameters, after an
+  /// scrydantic::name annotation overrides it. Its parameters, after an
   /// optional leading const ToolCallContext&, are either nothing (the tool takes
   /// `{}`), one plain aggregate (the argument object, as for add<Args>()), or any
   /// other list of named parameters of supported types, which is synthesized into
@@ -130,12 +151,14 @@ public:
   /// @tparam Tools Leave defaulted. The tools `Entity` holds at the call site, each
   /// with the name, description, and parameter names seen there; it gives each
   /// distinct view its own specialization, which the linker cannot merge with
-  /// another translation unit's.
+  /// another translation unit's. It is scrydantic::tools_of(), computed here so
+  /// that it is this call site's view.
   /// @return Success, an immediate validation/duplicate-name error, or
   /// ErrorCategory::invalid_state for an inactive registry. A namespace is
   /// registered all or nothing.
-  template <std::meta::info Entity,
-            typename Tools = typename[:reflection::detail::entity_tool_set(Entity):]>
+  template <
+      std::meta::info Entity,
+      typename Tools = typename[:scrydantic::tools_of(Entity, ^^ToolCallContext):]>
   [[nodiscard]] Status add();
 
   /// Registers a shared toolbox: every tool member function of `Toolbox`, bound to
@@ -150,7 +173,8 @@ public:
   /// explicit object parameter is called on the toolbox, which must initialize
   /// that parameter as an lvalue, `const` when the toolbox is; the parameters
   /// after it follow the rules of add<^^function>().
-  /// @tparam Toolbox Class satisfying scry::reflection::Toolbox.
+  /// @tparam Toolbox Class satisfying scrydantic::Toolbox<Toolbox,
+  /// ToolCallContext>.
   /// @tparam Tools Leave defaulted. The tool member functions of `Toolbox` as the
   /// call site sees them, since an out-of-class definition can annotate a member
   /// in some translation units only; see add<^^Entity>().
@@ -158,9 +182,9 @@ public:
   /// @return Success, ErrorCategory::invalid_argument for a null toolbox or an
   /// immediate validation/duplicate-name error, or ErrorCategory::invalid_state
   /// for an inactive registry. The toolbox is registered all or nothing.
-  template <
-      typename Toolbox,
-      typename Tools = typename[:reflection::detail::toolbox_tool_set(^^Toolbox):]>
+  template <typename Toolbox,
+            typename Tools =
+                typename[:scrydantic::toolbox_tools_of(^^Toolbox, ^^ToolCallContext):]>
   [[nodiscard]] Status add(std::shared_ptr<Toolbox> toolbox);
 
   /// Registers an owned toolbox: moves it into the registry, then registers it as
@@ -169,13 +193,15 @@ public:
   /// The registry owns the only reference, so the toolbox's state is reachable
   /// only through its tools. Share it through std::shared_ptr instead when the
   /// host needs to see that state too.
-  /// @tparam Toolbox Movable class satisfying scry::reflection::Toolbox, passed as
-  /// an rvalue.
+  /// @tparam Toolbox Movable class satisfying scrydantic::Toolbox<Toolbox,
+  /// ToolCallContext>, passed as an rvalue.
   /// @tparam Tools Leave defaulted, as for add(std::shared_ptr<Toolbox>).
   /// @param toolbox Toolbox to take ownership of.
   /// @return As add(std::shared_ptr<Toolbox>).
-  template <typename Toolbox, typename Tools = typename
-            [:reflection::detail::toolbox_tool_set(^^std::remove_cvref_t<Toolbox>):]>
+  template <typename Toolbox,
+            typename Tools =
+                typename[:scrydantic::toolbox_tools_of(^^std::remove_cvref_t<Toolbox>,
+                                                       ^^ToolCallContext):]>
     requires detail::owned_toolbox_candidate<Toolbox>
   [[nodiscard]] Status add(Toolbox&& toolbox);
 
@@ -233,7 +259,7 @@ public:
   /// in-flight turn's frozen tool set. Object keys are emitted in lexical order.
   /// @return Canonical JSON, or ErrorCategory::invalid_state if the registry is
   /// inactive or its manifest cannot be encoded.
-  [[nodiscard]] Result<Json> to_json() const;
+  [[nodiscard]] Result<scrydantic::Json> to_json() const;
 
 private:
   class Impl;
@@ -241,6 +267,11 @@ private:
   // Validates every entry, against each other and against the registry, then
   // inserts them all; a failure inserts none.
   [[nodiscard]] Status add_all(std::vector<detail::ToolEntry> entries);
+
+  // Registers reflected tools through add_all(). Their handlers' Scrydantic
+  // errors reach dispatch as ErrorCategory::tool errors.
+  [[nodiscard]] Status
+  add_reflected(std::vector<scrydantic::BoundTool<ToolCallContext>> tools);
 
   std::unique_ptr<Impl> impl_;
 
@@ -250,45 +281,47 @@ private:
 template <typename Args, typename Handler>
 Status ToolRegistry::add(ToolMetadata metadata, Handler&& handler) {
   constexpr std::string_view arguments_problem =
-      reflection::detail::tool_arguments_diagnostic<Args>();
+      scrydantic::detail::tool_arguments_diagnostic<Args>();
   static_assert(arguments_problem.empty(), arguments_problem);
   if constexpr (!arguments_problem.empty()) {
     return {};
   } else {
     constexpr std::string_view handler_problem =
-        reflection::detail::tool_handler_diagnostic<Handler, Args>();
+        scrydantic::detail::tool_handler_diagnostic<Handler, Args, ToolCallContext>();
     static_assert(handler_problem.empty(), handler_problem);
     if constexpr (!handler_problem.empty()) {
       return {};
     } else {
-      return add_dynamic(
-          ToolDefinition{
-              .name = std::move(metadata.name),
-              .description = std::move(metadata.description),
-              .input_schema =
-                  Json{.text = std::string{reflection::input_schema_v<Args>}},
-          },
-          reflection::detail::make_tool_handler<Args>(std::forward<Handler>(handler)));
+      std::vector<scrydantic::BoundTool<ToolCallContext>> tools{};
+      tools.push_back(scrydantic::BoundTool<ToolCallContext>{
+          .name = std::move(metadata.name),
+          .description = std::move(metadata.description),
+          .input_schema =
+              scrydantic::Json{.text = std::string{scrydantic::input_schema_v<Args>}},
+          .invoke = scrydantic::bind_handler<Args, ToolCallContext>(
+              std::forward<Handler>(handler)),
+      });
+      return add_reflected(std::move(tools));
     }
   }
 }
 
 template <std::meta::info Entity, typename Tools> Status ToolRegistry::add() {
   constexpr std::string_view problem =
-      reflection::detail::entity_tools_diagnostic<Entity>();
+      scrydantic::detail::entity_tools_diagnostic<Entity, ToolCallContext>(
+          "scry::ToolRegistry::add");
   static_assert(problem.empty(), problem);
   if constexpr (!problem.empty()) {
     return {};
   } else {
-    return add_all(
-        reflection::detail::tool_set_entries(Tools{}, std::shared_ptr<void>{}));
+    return add_reflected(scrydantic::bind<Entity, ToolCallContext, Tools>());
   }
 }
 
 template <typename Toolbox, typename Tools>
 Status ToolRegistry::add(std::shared_ptr<Toolbox> toolbox) {
   constexpr std::string_view problem =
-      reflection::detail::toolbox_diagnostic<Toolbox>();
+      scrydantic::detail::toolbox_diagnostic<Toolbox, ToolCallContext>();
   static_assert(problem.empty(), problem);
   if constexpr (!problem.empty()) {
     return {};
@@ -299,15 +332,15 @@ Status ToolRegistry::add(std::shared_ptr<Toolbox> toolbox) {
           .message = "toolbox must not be null",
       });
     }
-    return add_all(reflection::detail::tool_set_entries(Tools{}, toolbox));
+    return add_reflected(
+        scrydantic::bind<ToolCallContext, Toolbox, Tools>(std::move(toolbox)));
   }
 }
 
 template <typename Toolbox, typename Tools>
   requires detail::owned_toolbox_candidate<Toolbox>
 Status ToolRegistry::add(Toolbox&& toolbox) {
-  constexpr std::string_view problem =
-      reflection::detail::owned_toolbox_diagnostic<Toolbox>();
+  constexpr std::string_view problem = detail::owned_toolbox_diagnostic<Toolbox>();
   static_assert(problem.empty(), problem);
   if constexpr (!problem.empty()) {
     return {};

@@ -224,7 +224,7 @@ TEST_CASE("model completion validates finish and content consistency") {
     auto response = final_response();
     response.content = {ToolResultBlock{
         .tool_call_id = "call-1",
-        .result = scry::Json{.text = "{}"},
+        .result = scrydantic::Json{.text = "{}"},
     }};
     check_rejected_response(std::move(response), ErrorCategory::protocol);
   }
