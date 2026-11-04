@@ -22,12 +22,12 @@ public:
     initialized_ = true;
 
     const auto* version = curl_version_info(CURLVERSION_NOW);
+    const auto features =
+        version == nullptr ? 0U : static_cast<unsigned int>(version->features);
     status_ = validate_curl_runtime_capabilities({
         .version_number = version == nullptr ? 0U : version->version_num,
-        .thread_safe =
-            version != nullptr && (version->features & CURL_VERSION_THREADSAFE) != 0,
-        .asynchronous_dns =
-            version != nullptr && (version->features & CURL_VERSION_ASYNCHDNS) != 0,
+        .thread_safe = (features & CURL_VERSION_THREADSAFE) != 0,
+        .asynchronous_dns = (features & CURL_VERSION_ASYNCHDNS) != 0,
     });
     if (!status_) {
       curl_global_cleanup();

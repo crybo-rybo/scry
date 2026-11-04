@@ -1,7 +1,7 @@
 @PACKAGE_INIT@
 
 include(CMakeFindDependencyMacro)
-find_dependency(scrydantic @SCRYDANTIC_VERSION@)
+find_dependency(scrydantic @SCRY_SCRYDANTIC_MIN_VERSION@ CONFIG)
 find_dependency(CURL 7.84)
 find_dependency(Threads)
 

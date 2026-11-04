@@ -61,20 +61,22 @@ if(
   message(FATAL_ERROR "Scry requires GCC 16 or newer (C++26 reflection)")
 endif()
 
-# CTest is enabled before any subdirectory registers tests, Scrydantic's
-# included, so ctest runs every suite from the build root.
+# CTest is enabled before any subdirectory registers tests.
 if(SCRY_BUILD_TESTS)
   include(CTest)
 endif()
 
-# Scrydantic, the reflected codec and tool layer, is a self-contained project
-# under scrydantic/ that Scry builds first and links PUBLIC. Its options follow
-# Scry's.
-set(SCRYDANTIC_BUILD_TESTS ${SCRY_BUILD_TESTS})
-set(SCRYDANTIC_BUILD_EXAMPLES ${SCRY_BUILD_EXAMPLES})
-set(SCRYDANTIC_WARNINGS_AS_ERRORS ${SCRY_WARNINGS_AS_ERRORS})
-set(SCRYDANTIC_SANITIZER ${SCRY_SANITIZER})
-add_subdirectory(scrydantic)
+include(cmake/Scrydantic.cmake)
+
+# scripts/lint.sh lints the kernel against the dependency headers that this build
+# uses, whether Scrydantic was fetched, installed, or supplied by a parent project.
+if(PROJECT_IS_TOP_LEVEL)
+  file(
+    GENERATE
+    OUTPUT "${PROJECT_BINARY_DIR}/scrydantic-json-includes.txt"
+    CONTENT "$<JOIN:$<REMOVE_DUPLICATES:$<TARGET_PROPERTY:scrydantic::json,INTERFACE_INCLUDE_DIRECTORIES>>,\n>\n"
+  )
+endif()
 
 find_package(CURL 7.84 REQUIRED)
 find_package(Threads REQUIRED)

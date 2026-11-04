@@ -8,8 +8,10 @@ contribution to the current tree.
 To build Scry, you must have GCC 16 or newer with reflection support, and CMake
 3.30 or newer. You must also have Ninja, and libcurl 7.84 or newer with the
 development headers. CMake 3.30 is the first release that knows the C++26 mode
-of GCC (`cxx_std_26`). libcurl is the only library dependency of Scry. The
-tests fetch Catch2.
+of GCC (`cxx_std_26`). Scry also uses
+[Scrydantic](https://github.com/crybo-rybo/scrydantic) 0.1.x.
+CMake prefers an installed package and otherwise fetches a pinned revision.
+The tests fetch Catch2.
 
 The formatter is clang-format, and the linter is clang-tidy. The scripts use
 the versions on your `PATH`. CI uses version 22 of both tools. Version 18 and
@@ -69,18 +71,27 @@ The build directories are in `build/<preset>`. They use Ninja and export
 | `SCRY_BUILD_EXAMPLES` | On at top level | Compile the programs under `examples/` |
 | `SCRY_BUILD_TESTING_SUPPORT` | On | Build and install `scry::testing` |
 | `SCRY_WARNINGS_AS_ERRORS` | On at top level | Treat project warnings as errors |
-| `SCRY_SANITIZER` | `none` | Select `none`, `address-undefined`, or `thread` |
+| `SCRY_SANITIZER` | `none` | Select `none`, `address-undefined`, or `thread`; also instruments fetched Scrydantic |
+| `SCRY_FETCH_SCRYDANTIC` | On | Fetch the pinned dependency when no installed package or parent targets are available |
+
+Set `CMAKE_PREFIX_PATH` or `scrydantic_DIR` to use an installed Scrydantic.
+Set `SCRY_FETCH_SCRYDANTIC=OFF` to require one. For local dependency changes,
+set `FETCHCONTENT_SOURCE_DIR_SCRYDANTIC` to a separate Scrydantic checkout.
+`lint.sh` configures `build/lint` to resolve the same dependency headers; set
+`CXX` to the compiler name if it differs from `g++-16`, and
+`SCRY_LINT_BUILD_DIR` to use another lint build directory.
 
 ## Tests
 
 The build registers each Catch2 suite with ctest under a prefix for that suite:
 `runtime.`, `machine.`, `protocol.`, `provider.`, `transport.`, `integration.`,
-`reflection.`, or `testing.`. Scrydantic's suites, which link only Scrydantic
-and Catch2, use `scrydantic.` (codec, schemas, and tool binding) and
-`scrydantic.json.` (the JSON core). `public-api-contract` is a plain executable
-test. The build also compiles each public header alone, Scrydantic's included.
-The `reflection.compile-fail.*` and `scrydantic.compile-fail.*` tests check the
-diagnostics for incorrect use of the reflected API.
+`reflection.`, or `testing.`. `public-api-contract` is a plain executable
+test. The build also compiles each Scry public header alone. The
+`reflection.compile-fail.*` tests check diagnostics for incorrect use of the
+reflected API against the resolved Scrydantic headers. `package-smoke` installs
+to an isolated prefix, builds and runs an installed-package consumer, and
+configures Scry against the installed dependency with fetching disabled.
+Scrydantic's own codec, schema, JSON, and binding suites run upstream.
 
 ```sh
 ctest --test-dir build/dev -R 'runtime\.'                     # one suite
@@ -89,13 +100,11 @@ ctest --test-dir build/dev -R 'event queue coalesces'         # one case by name
 
 `tests/fuzz/corpus/` has seed corpora for five `LLVMFuzzerTestOneInput`
 harnesses: the SSE parser, the transport response policy, the two provider
-stream decoders, and conversation persistence. The JSON core's corpus is in
-`scrydantic/tests/fuzz/corpus/json/`. Each `replay_main.cpp` replays each corpus
-one time as an ordinary `*-fuzz-replay` test. The `asan` preset replays them
-with ASan and UBSan. No build runs a coverage-guided search. Golden fixtures
-also lock the acceptance boundary and the canonical bytes of the JSON core. For
-more information, see
-[`scrydantic/tests/fixtures/json/`](../scrydantic/tests/fixtures/json/README.md).
+stream decoders, and conversation persistence. `replay_main.cpp` replays each
+corpus once as an ordinary `*-fuzz-replay` test. The `asan` preset replays them
+with ASan and UBSan. No build runs a coverage-guided search. The JSON core's
+corpus and golden fixtures are maintained in the
+[Scrydantic repository](https://github.com/crybo-rybo/scrydantic/tree/main/tests).
 
 - **Test behavior at the seams, not the implementation inside them.** Tests
   target the machine, adapter, and transport interfaces. If a refactor of the
@@ -171,18 +180,15 @@ with Catch2.
 ## Rules
 
 - Top-level builds enable `-Wall -Wextra -Wconversion -Wshadow -Werror`.
-- The kernel (`src/kernel/`) and Scrydantic's JSON core
-  (`scrydantic/src/json/`) are C++23 without reflection, so clang-tidy can
-  analyze them. The remaining code in `src/` and `scrydantic/` is C++26, and
-  only GCC compiles it. Both compile with `-Werror=c++26-extensions`, and
-  `src/kernel/kernel.hpp` and `scrydantic/src/json/core.hpp` reject a build
-  that enables reflection. `lint.sh` makes sure that the kernel includes only
-  kernel headers, `<scry/{config,error,turn_id,unique_function}.hpp>`, and
-  `<scrydantic/{error,json,detail/json_text}.hpp>`, and that the JSON core
-  includes only its own headers.
-- `scrydantic/` is self-contained: it includes no Scry header, links neither
-  libcurl nor Threads, and builds on its own with `cmake -S scrydantic`.
-  `lint.sh` checks the includes and the link lines.
+- The kernel (`src/kernel/`) is C++23 without reflection, so clang-tidy can
+  analyze it. The remaining code in `src/` is C++26, and only GCC compiles it.
+  The kernel compiles with `-Werror=c++26-extensions`, and
+  `src/kernel/kernel.hpp` rejects a build that enables reflection. `lint.sh`
+  checks that it includes only kernel headers,
+  `<scry/{config,error,turn_id,unique_function}.hpp>`, and
+  `<scrydantic/{error,json,detail/json_text}.hpp>`.
+- Dependency sources are maintained, formatted, linted, and tested upstream.
+  Scry retains only adapters for its own diagnostics and provider wire format.
 - clang-tidy uses the checked-in `.clang-tidy`. The cognitive complexity must
   not be more than 25.
 - A `// TODO` must link an issue or a URL.

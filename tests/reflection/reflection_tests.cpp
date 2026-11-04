@@ -163,12 +163,7 @@ struct StatusHandler {
 
 template <scrydantic::SupportedValue Type>
 [[nodiscard]] scrydantic::Result<Type> decode_value(const std::string_view text) {
-  auto parsed =
-      scrydantic::JsonView::parse(scrydantic::Json{.text = std::string{text}});
-  if (!parsed) {
-    return std::unexpected(std::move(parsed.error()));
-  }
-  return scrydantic::detail::decode<Type>(*parsed);
+  return scrydantic::decode<Type>(scrydantic::Json{.text = std::string{text}});
 }
 
 // A reflected handler in the registry's shape, as ToolRegistry::add<Args>() builds
@@ -261,7 +256,7 @@ static_assert(
     R"({"items":{"enum":["celsius","fahrenheit"],"type":"string"},"type":"array"})");
 
 TEST_CASE("reflected decoding preserves defaults and required nullability") {
-  auto decoded = scrydantic::detail::decode_arguments<PresenceArguments>(
+  auto decoded = scrydantic::decode<PresenceArguments>(
       scrydantic::Json{.text = R"({"nullable":null,"required":"Detroit"})"});
 
   REQUIRE(decoded);
@@ -273,7 +268,7 @@ TEST_CASE("reflected decoding preserves defaults and required nullability") {
 
 TEST_CASE("reflected decode failures carry a schema-derived model message") {
   const auto model_message = [](const std::string_view text) {
-    auto decoded = scrydantic::detail::decode_arguments<AllTypesArguments>(
+    auto decoded = scrydantic::decode<AllTypesArguments>(
         scrydantic::Json{.text = std::string{text}});
     REQUIRE_FALSE(decoded);
     // The model copy is the host copy without the library-facing prefix.
@@ -304,23 +299,22 @@ TEST_CASE("reflected decode failures carry a schema-derived model message") {
                       R"("unit":"kelvin","values":[]})") ==
         "$.unit is not a declared enumerator; must be one of: celsius, fahrenheit");
 
-  auto required = scrydantic::detail::decode_arguments<PresenceArguments>(
+  auto required = scrydantic::decode<PresenceArguments>(
       scrydantic::Json{.text = R"({"required":"Detroit"})"});
   REQUIRE_FALSE(required);
   CHECK(required.error().message ==
         "reflected JSON at $.nullable is a required member");
   CHECK(required.error().model_message == "$.nullable is a required member");
 
-  auto malformed = scrydantic::detail::decode_arguments<PresenceArguments>(
-      scrydantic::Json{.text = "{"});
+  auto handler = make_tool_handler<PresenceArguments>([](PresenceArguments) {});
+  auto malformed = handler({}, scrydantic::Json{.text = "{"});
   REQUIRE_FALSE(malformed);
   CHECK(malformed.error().message == "reflected tool arguments are not valid JSON");
   CHECK(malformed.error().model_message == "tool arguments are not valid JSON");
 }
 
 TEST_CASE("reflected codec round trips every supported composite family") {
-  auto decoded = scrydantic::detail::decode_arguments<
-      AllTypesArguments>(scrydantic::Json{
+  auto decoded = scrydantic::decode<AllTypesArguments>(scrydantic::Json{
       .text =
           R"({"fixed":[1,2],"flag":true,"nested":{"label":"indoors"},"ratio":0.1,"unit":"fahrenheit","values":[3,4]})"});
 
@@ -340,15 +334,14 @@ TEST_CASE("reflected codec round trips every supported composite family") {
 }
 
 TEST_CASE("reflected numeric decoding accepts exact boundaries and signs") {
-  auto decoded =
-      scrydantic::detail::decode_arguments<NumericArguments>(scrydantic::Json{
-          .text = R"({"floating":7,"signed_value":-32768,"unsigned_value":65535})"});
+  auto decoded = scrydantic::decode<NumericArguments>(scrydantic::Json{
+      .text = R"({"floating":7,"signed_value":-32768,"unsigned_value":65535})"});
   REQUIRE(decoded);
   CHECK(decoded->floating == 7.0F);
   CHECK(decoded->signed_value == std::int16_t{-32768});
   CHECK(decoded->unsigned_value == std::uint16_t{65535});
 
-  decoded = scrydantic::detail::decode_arguments<NumericArguments>(scrydantic::Json{
+  decoded = scrydantic::decode<NumericArguments>(scrydantic::Json{
       .text = R"({"floating":1e39,"signed_value":0,"unsigned_value":1})"});
   REQUIRE_FALSE(decoded);
   CHECK(decoded.error().message ==
@@ -443,7 +436,7 @@ TEST_CASE("reflected encoding covers nullable enum and sequence results") {
   CHECK(scrydantic::encode(std::vector<std::int32_t>{1, 2})->text == "[1,2]");
 }
 
-TEST_CASE("reflected encoding uses Scry canonical number spelling") {
+TEST_CASE("reflected encoding uses Scrydantic canonical number spelling") {
   const auto fraction = scrydantic::encode(0.1);
   const auto exponent = scrydantic::encode(1e20);
   const auto negative_zero = scrydantic::encode(-0.0);
@@ -609,37 +602,6 @@ TEST_CASE("reflected erased handlers encode a Result of a const-qualified value"
 
   REQUIRE(result);
   CHECK(result->text == "7");
-}
-
-TEST_CASE("encoding named reflected results does not copy their values") {
-  CopyOnlyResult::destructions = 0;
-  SECTION("bare result") {
-    const CopyOnlyResult value{.values = {1, 2, 3}};
-    const auto encoded = scrydantic::detail::encode_handler_result(value);
-    REQUIRE(encoded);
-    CHECK(encoded->text == R"({"values":[1,2,3]})");
-    CHECK(CopyOnlyResult::destructions == 0);
-  }
-  SECTION("expected result passed as an rvalue") {
-    scrydantic::Result<CopyOnlyResult> value{std::in_place, std::vector<int>{1, 2, 3}};
-    const auto encoded = scrydantic::detail::encode_handler_result(std::move(value));
-    REQUIRE(encoded);
-    CHECK(encoded->text == R"({"values":[1,2,3]})");
-    CHECK(CopyOnlyResult::destructions == 0);
-  }
-  CHECK(CopyOnlyResult::destructions == 1);
-}
-
-TEST_CASE("encoding a named reflected error preserves the caller's error") {
-  scrydantic::Result<CopyOnlyResult> value = std::unexpected(scrydantic::Error{
-      .message = "application rejected arguments",
-      .model_message = "rejected",
-  });
-  const auto encoded = scrydantic::detail::encode_handler_result(value);
-  REQUIRE_FALSE(encoded);
-  CHECK(encoded.error().message == "application rejected arguments");
-  CHECK(encoded.error().model_message == "rejected");
-  CHECK(value.error().message == "application rejected arguments");
 }
 
 TEST_CASE("reflected handlers returning void or Status acknowledge with an object") {

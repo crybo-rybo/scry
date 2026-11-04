@@ -45,6 +45,7 @@ namespace detail {
 /// object.
 /// @return The response format.
 template <typename Answer> [[nodiscard]] ResponseFormat response_format() {
+  // TODO(https://github.com/crybo-rybo/scrydantic/issues/4): public diagnostic.
   constexpr std::string_view problem =
       scrydantic::detail::tool_arguments_diagnostic<Answer>();
   static_assert(problem.empty(), problem);
