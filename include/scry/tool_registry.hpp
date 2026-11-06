@@ -1,7 +1,7 @@
 #pragma once
 
 #if !defined(__cpp_impl_reflection)
-#error "Scry requires a compiler implementing P2996 (GCC 16 or newer)"
+#error "Scry requires a compiler implementing P2996 (GCC 16.2 or newer)"
 #endif
 
 #include <cstddef>

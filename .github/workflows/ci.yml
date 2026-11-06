@@ -12,23 +12,43 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+defaults:
+  run:
+    # Explicitly bash, so every step also runs with -o pipefail.
+    shell: bash
+
+# Every job runs in the official GCC image, pinned by digest, because
+# Scrydantic requires GCC 16.2 or newer, and Ubuntu's toolchain PPA packages
+# only development snapshots of GCC 16. To update GCC, change the tag and the
+# digest here; the other jobs reuse it. The image is Debian with git, and with
+# the scripts' compiler as plain `g++`.
 jobs:
   lint:
     runs-on: ubuntu-24.04
+    container:
+      image: &gcc-image gcc:16.2.0@sha256:07280eb2e744f1b7a2d8d4a3894c089ea07266c109758afc388a634bd098e4eb
+    env:
+      CXX: g++
     steps:
       - uses: actions/checkout@v7
-      # Ubuntu 24.04 ships LLVM 18, which formats reflection annotations
-      # differently and cannot parse libstdc++'s <expected>, so both tools come
-      # from apt.llvm.org.
-      # clang-tidy reads the libstdc++ headers of the newest GCC that it finds.
-      # GCC 16 also lets lint configure Scry to resolve Scrydantic's headers.
+      # The scripts list sources with git, which refuses a checkout that another
+      # user owns, as the container's workspace is.
+      - run: git config --global --add safe.directory "${GITHUB_WORKSPACE}"
+      # Debian's LLVM is older than the formatter the scripts expect, so both
+      # tools come from apt.llvm.org. clang-tidy reads the libstdc++ headers of
+      # Debian's own GCC; GCC 16.2 lets lint configure Scry to resolve
+      # Scrydantic's headers.
       - name: Install clang-format and clang-tidy
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
-          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
-          echo "deb https://apt.llvm.org/noble/ llvm-toolchain-noble-22 main" | sudo tee /etc/apt/sources.list.d/llvm-22.list
-          sudo add-apt-repository --yes ppa:ubuntu-toolchain-r/test
-          sudo apt-get update
-          sudo apt-get install -y clang-format-22 clang-tidy-22 g++-16 libcurl4-openssl-dev ninja-build
+          . /etc/os-release
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key -o /etc/apt/trusted.gpg.d/apt.llvm.org.asc
+          echo "deb https://apt.llvm.org/${VERSION_CODENAME}/ llvm-toolchain-${VERSION_CODENAME}-22 main" \
+            > /etc/apt/sources.list.d/llvm-22.list
+          apt-get update -o Acquire::Retries=5
+          apt-get install -y --no-install-recommends -o Acquire::Retries=5 \
+            clang-format-22 clang-tidy-22 cmake libcurl4-openssl-dev ninja-build
       - run: ./scripts/format.sh --check
         env:
           CLANG_FORMAT: clang-format-22
@@ -42,15 +62,26 @@ jobs:
       fail-fast: false
       matrix:
         preset: [dev, asan, tsan]
+        include:
+          # The runners' high-entropy ASLR gives TSan a memory layout it cannot
+          # use, so TSan disables ASLR and runs itself again. Docker's default
+          # seccomp profile forbids that personality() call.
+          - preset: tsan
+            container-options: --security-opt seccomp=unconfined
     runs-on: ubuntu-24.04
+    container:
+      image: *gcc-image
+      options: ${{ matrix.container-options }}
     steps:
       - uses: actions/checkout@v7
-      - name: Install GCC 16
+      - name: Install CMake, Ninja, and libcurl
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
-          sudo add-apt-repository --yes ppa:ubuntu-toolchain-r/test
-          sudo apt-get install -y g++-16 libcurl4-openssl-dev ninja-build
-          # High-entropy ASLR breaks ASan/TSan shadow memory on these runners.
-          sudo sysctl vm.mmap_rnd_bits=28
+          apt-get update -o Acquire::Retries=5
+          apt-get install -y --no-install-recommends -o Acquire::Retries=5 \
+            cmake libcurl4-openssl-dev ninja-build
       - run: ./scripts/test.sh
         env:
+          CXX: g++
           PRESET: ${{ matrix.preset }}

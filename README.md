@@ -140,15 +140,17 @@ guarantees and the limits. Read it before you rely on a specific behavior.
 
 ## Requirements
 
-- **GCC 16 or newer.** The public headers use C++26 reflection and need
+- **GCC 16.2 or newer.** The public headers use C++26 reflection and need
   `-std=c++26 -freflection`. Scry does not support Clang or MSVC.
 - **CMake 3.30 or newer** and Ninja. 3.30 is the first CMake version that
   knows the C++26 mode of GCC.
 - **libcurl 7.84 or newer**, with development headers.
-- **Scrydantic 0.1.x.** Scry uses it for JSON, schemas, and reflected tools.
+- **Scrydantic 0.2.x.** Scry uses it for JSON, schemas, and reflected tools.
   CMake uses an installed package when available, otherwise fetches a pinned
   revision.
-- **Linux or macOS.** CI uses GCC 16 on Ubuntu 24.04.
+- **Linux or macOS.** CI uses the official `gcc:16.2.0` image. Ubuntu's
+  toolchain PPA packages only development snapshots of GCC 16, which
+  Scrydantic rejects.
 
 ## Install
 
@@ -162,7 +164,8 @@ cmake --build build/release
 cmake --install build/release --prefix /your/prefix
 ```
 
-In your project, configure with GCC 16 and `-DCMAKE_PREFIX_PATH=/your/prefix`.
+In your project, configure with GCC 16.2 or newer and
+`-DCMAKE_PREFIX_PATH=/your/prefix`.
 Then add these lines:
 
 ```cmake
@@ -215,8 +218,8 @@ PRESET=asan ./scripts/test.sh      # or PRESET=tsan
 ./scripts/test-e2e.sh              # live model; see the header of the script
 ```
 
-CI runs these scripts: the format check and the lint in one job, and
-`test.sh` with the `dev`, `asan`, and `tsan` presets in another. The presets
+CI runs these scripts in the `gcc:16.2.0` image: the format check and the lint
+in one job, and `test.sh` with the `dev`, `asan`, and `tsan` presets in another. The presets
 select `g++-16` and build into `build/<preset>` with Ninja. If your compiler
 has a different name, set `CXX` for the scripts. The formatter is clang-format
 and the linter is clang-tidy, version 22 or newer; older versions format
