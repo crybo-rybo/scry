@@ -241,7 +241,6 @@ thread-sanitizer runtime on Apple Silicon.
 | [examples/seeded_trials.cpp](examples/seeded_trials.cpp) | The same prompt, many times, with a fixed sampling seed |
 | [examples/testing_scripted.cpp](examples/testing_scripted.cpp) | A downstream test with a scripted server on loopback and no model |
 | [extras/showcase](extras/showcase) | A Dear ImGui chat panel, and a grid world where the model controls an NPC with tools |
-| [docs/releases](docs/releases) | The notes of each release |
 
 ## License
 

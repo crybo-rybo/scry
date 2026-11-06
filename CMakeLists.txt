@@ -13,10 +13,10 @@ project(
 #
 # To cut a release: raise the version above; update the find_package version and
 # the FetchContent GIT_TAG in README.md and the version assertions in
-# tests/public_api_contract.cpp; write docs/releases/vX.Y.Z.md; then
+# tests/public_api_contract.cpp; then
 #   git tag vX.Y.Z && git push origin vX.Y.Z
-#   gh release create vX.Y.Z --notes-file docs/releases/vX.Y.Z.md
-# No workflow publishes a release.
+#   gh release create vX.Y.Z --generate-notes
+# The release notes live on the GitHub release. No workflow publishes one.
 set(
   SCRY_GENERATED_INCLUDE_DIR
   "${PROJECT_BINARY_DIR}/generated/include"
