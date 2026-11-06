@@ -978,3 +978,13 @@ TEST_CASE("a Harness adopts a registry built before it and runs its handlers") {
   CHECK(completion->text == "all done");
   CHECK(calls == 1);
 }
+
+TEST_CASE("a user message that is not UTF-8 is refused before its turn is queued") {
+  auto fixture = make_harness_fixture(test_config(), {});
+  const auto turn = fixture.harness.send(fixture.conversation, "caf\xFF");
+  REQUIRE_FALSE(turn);
+  CHECK(turn.error().category == scry::ErrorCategory::invalid_argument);
+  CHECK(turn.error().message == "user message must be valid UTF-8");
+  CHECK(fixture.server.requests().empty());
+  CHECK(fixture.conversation.message_count() == 0);
+}

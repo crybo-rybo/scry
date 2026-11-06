@@ -4,6 +4,8 @@
 
 #include "kernel/error.hpp"
 
+#include <algorithm>
+#include <cstddef>
 #include <scrydantic/json.hpp>
 #include <string>
 #include <string_view>
@@ -54,6 +56,31 @@ Status validate_json_object(const std::string_view input, const ErrorCategory ca
 bool json_root_is_object(const std::string_view text) noexcept {
   const auto first = text.find_first_not_of(json_whitespace);
   return first != std::string_view::npos && text[first] == '{';
+}
+
+std::size_t json_nesting_depth(const std::string_view text) noexcept {
+  std::size_t depth = 0;
+  std::size_t deepest = 0;
+  bool in_string = false;
+  bool escaped = false;
+  for (const char character : text) {
+    if (in_string) {
+      if (escaped) {
+        escaped = false;
+      } else if (character == '\\') {
+        escaped = true;
+      } else if (character == '"') {
+        in_string = false;
+      }
+    } else if (character == '"') {
+      in_string = true;
+    } else if (character == '[' || character == '{') {
+      deepest = std::max(deepest, ++depth);
+    } else if (character == ']' || character == '}') {
+      --depth;
+    }
+  }
+  return deepest;
 }
 
 Result<scrydantic::Json> canonicalize_json(const scrydantic::Json& json,

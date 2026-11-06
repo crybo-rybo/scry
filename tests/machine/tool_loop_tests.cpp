@@ -287,6 +287,32 @@ TEST_CASE("tool argument byte limit is exact and checked before dispatch") {
   }
 }
 
+// An object whose member `a` nests arrays to a total depth of `depth`.
+[[nodiscard]] std::string nested_arguments(const std::size_t depth) {
+  return "{\"a\":" + std::string(depth - 1, '[') + std::string(depth - 1, ']') + "}";
+}
+
+TEST_CASE("tool arguments nest no deeper than a request body can carry them") {
+  SECTION("the deepest arguments are accepted") {
+    auto machine = make_machine();
+    begin(machine);
+    const auto transition = machine.apply(ModelCompleted{
+        .response = tool_response({tool_call("call-1", "tool", nested_arguments(251))}),
+    });
+    only_command<PublishToolCall>(transition);
+  }
+
+  SECTION("one level deeper is a protocol failure") {
+    auto machine = make_machine();
+    begin(machine);
+    const auto transition = machine.apply(ModelCompleted{
+        .response = tool_response({tool_call("call-1", "tool", nested_arguments(252))}),
+    });
+    CHECK(only_command<PublishError>(transition).error.category ==
+          scry::ErrorCategory::protocol);
+  }
+}
+
 TEST_CASE("tool-call IDs remain unique across the full turn") {
   auto machine = make_machine();
   begin(machine);

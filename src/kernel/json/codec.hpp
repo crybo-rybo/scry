@@ -2,6 +2,7 @@
 
 #include "kernel/error.hpp"
 
+#include <cstddef>
 #include <scry/error.hpp>
 #include <scrydantic/json.hpp>
 #include <string_view>
@@ -27,6 +28,11 @@ namespace scry::detail {
 // is read, so the rest of the text must be valid JSON already or be validated
 // separately.
 [[nodiscard]] bool json_root_is_object(std::string_view text) noexcept;
+
+// The deepest nesting of arrays and objects in `text`, counting an empty one, or
+// zero for a scalar. Only brackets outside strings are counted, so the text must
+// be valid JSON already.
+[[nodiscard]] std::size_t json_nesting_depth(std::string_view text) noexcept;
 
 // Rewrites JSON text in canonical form, as scrydantic::JsonView::to_json() writes
 // it: object keys in lexical order, no insignificant whitespace, and the

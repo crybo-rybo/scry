@@ -67,3 +67,10 @@ TEST_CASE("the JSON codec wrappers give the core's verdict under the caller's "
     }
   }
 }
+
+TEST_CASE("the nesting depth counts only brackets outside strings") {
+  CHECK(scry::detail::json_nesting_depth("1") == 0);
+  CHECK(scry::detail::json_nesting_depth("{}") == 1);
+  CHECK(scry::detail::json_nesting_depth(R"({"a":[1,{"b":[]}],"c":{}})") == 4);
+  CHECK(scry::detail::json_nesting_depth(R"({"[{\"[":"]]]{{"})") == 1);
+}

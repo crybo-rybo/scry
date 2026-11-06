@@ -194,3 +194,20 @@ TEST_CASE("request encoders reject text that is not UTF-8 instead of sending it"
         "JSON"));
   }
 }
+
+TEST_CASE("the deepest tool arguments the turn accepts fit an Anthropic body") {
+  // TurnMachine accepts arguments 251 deep; the body holds them five levels down.
+  auto request = scry::test_fixtures::bytes_text_request("t");
+  request.messages.push_back(scry::Message{
+      .role = scry::Role::assistant,
+      .content = {scry::ToolCallBlock{
+          .id = "call-1",
+          .name = "tool",
+          .arguments = scrydantic::Json{.text = "{\"a\":" + std::string(250, '[') +
+                                                std::string(250, ']') + "}"},
+      }},
+  });
+  const auto config = scry::test_fixtures::anthropic_config();
+  const auto adapter = scry::detail::make_provider_adapter(config.dialect);
+  CHECK(adapter->make_request(config, request));
+}

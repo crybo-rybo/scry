@@ -20,6 +20,7 @@
 #include <optional>
 #include <random>
 #include <scry/harness.hpp>
+#include <scrydantic/json.hpp>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -322,6 +323,13 @@ Result<Turn> Harness::send_turn(Conversation& conversation,
   if (impl_ == nullptr || conversation.impl_ == nullptr) {
     return std::unexpected(detail::make_error(
         ErrorCategory::invalid_state, "Harness and Conversation must both be active"));
+  }
+  // A request body holding text that is not UTF-8 would not be JSON, so the text
+  // is refused here, before the turn is queued, rather than when its request is
+  // encoded.
+  if (!scrydantic::is_valid_json(scrydantic::escape_json_string(user_message_text))) {
+    return std::unexpected(detail::make_error(ErrorCategory::invalid_argument,
+                                              "user message must be valid UTF-8"));
   }
   auto route = impl_->send(conversation.impl_, std::move(user_message_text),
                            std::move(callbacks), std::move(format));

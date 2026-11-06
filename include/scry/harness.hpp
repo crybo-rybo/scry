@@ -94,9 +94,11 @@ public:
   /// is destroyed first; see ~Harness().
   /// @param conversation Conversation that receives the exchange on successful
   /// completion.
-  /// @param user_message User text appended transactionally if the turn succeeds.
+  /// @param user_message UTF-8 user text appended transactionally if the turn
+  /// succeeds.
   /// @param callbacks Optional per-turn observers delivered inside update().
-  /// @return A controllable Turn handle, or an immediate admission error.
+  /// @return A controllable Turn handle, or an immediate admission error, including
+  /// ErrorCategory::invalid_argument for text that is not UTF-8.
   [[nodiscard]] Result<Turn> send(Conversation& conversation, std::string user_message,
                                   TurnCallbacks callbacks = {});
 
