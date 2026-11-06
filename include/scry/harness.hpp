@@ -261,8 +261,10 @@ Result<Answered<Answer>> Harness::ask(Conversation& conversation,
   if constexpr (!problem.empty()) {
     return std::unexpected(Error{});
   } else {
-    auto completion = send_and_wait_structured(conversation, std::move(user_message),
-                                               response_format<Answer>());
+    auto accepted = std::make_shared<std::optional<detail::AcceptedAnswer<Answer>>>();
+    auto completion =
+        send_and_wait_structured(conversation, std::move(user_message),
+                                 detail::keeping_response_format<Answer>(accepted));
     if (!completion) {
       return std::unexpected(std::move(completion.error()));
     }
@@ -271,6 +273,12 @@ Result<Answered<Answer>> Harness::ask(Conversation& conversation,
           .category = ErrorCategory::invalid_state,
           .message = "a typed turn completed without an answer",
       });
+    }
+    if (*accepted && (*accepted)->json.text == completion->structured->text) {
+      return Answered<Answer>{
+          .value = std::move((*accepted)->value),
+          .completion = std::move(*completion),
+      };
     }
     auto value = scrydantic::decode<Answer>(*completion->structured);
     if (!value) {

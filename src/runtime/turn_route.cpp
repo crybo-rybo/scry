@@ -266,7 +266,8 @@ std::optional<Result<ToolResultBlock>> TurnRoute::admit(const ToolCallEvent& eve
 // effects on host state are the one thing the rollback cannot undo; the limit and
 // the hook have already spent their counts by then, and a suppressed call is not
 // a refusal.
-std::optional<Result<ToolResultBlock>> TurnRoute::produce(const ToolCallEvent& event) {
+std::optional<Result<ToolResultBlock>>
+TurnRoute::produce(const ToolCallEvent& event, std::optional<Error>& handler_error) {
   auto refusal = admit(event);
   if (cancelled_->load(std::memory_order_acquire)) {
     return std::nullopt;
@@ -275,7 +276,7 @@ std::optional<Result<ToolResultBlock>> TurnRoute::produce(const ToolCallEvent& e
     return refusal;
   }
   return dispatch_tool(*tools_, event.call, call_context(turn_id_, event),
-                       max_tool_result_bytes_);
+                       max_tool_result_bytes_, &handler_error);
 }
 
 // Takes the consumed event by mutable reference so that, once the result is
@@ -292,7 +293,8 @@ void TurnRoute::dispatch(ToolCallEvent& event) {
     settle_answer(event);
     return;
   }
-  auto produced = produce(event);
+  std::optional<Error> handler_error{};
+  auto produced = produce(event, handler_error);
   if (!produced) {
     return;
   }
@@ -301,7 +303,7 @@ void TurnRoute::dispatch(ToolCallEvent& event) {
   if (cancelled_->load(std::memory_order_acquire)) {
     return;
   }
-  auto observed = observation(event, result);
+  auto observed = observation(event, result, std::move(handler_error));
   post(ToolResultCommand{
       .turn_id = turn_id_,
       .result = std::move(result),
@@ -387,7 +389,8 @@ void TurnRoute::post(WorkerCommand command) {
 // InvocationGuard defers clearing on_tool_call until the frame returns.
 std::optional<ToolCall>
 TurnRoute::observation(const ToolCallEvent& event,
-                       const Result<ToolResultBlock>& result) const {
+                       const Result<ToolResultBlock>& result,
+                       std::optional<Error> handler_error) const {
   if (!result.has_value() || !callbacks_.on_tool_call || disconnected_) {
     return std::nullopt;
   }
@@ -395,6 +398,7 @@ TurnRoute::observation(const ToolCallEvent& event,
       .turn_id = turn_id_,
       .result = result->result,
       .is_error = result->is_error,
+      .error = std::move(handler_error),
       .round = event.round,
       .index = event.index,
   };

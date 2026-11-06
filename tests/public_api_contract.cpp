@@ -28,6 +28,8 @@ static_assert(std::is_aggregate_v<scry::HttpHeader>);
 static_assert(std::is_enum_v<scry::ReasoningMode>);
 static_assert(std::is_aggregate_v<scry::Error>);
 static_assert(std::same_as<decltype(scry::Error::model_message), std::string>);
+static_assert(
+    std::same_as<decltype(scry::Error::issues), std::vector<scrydantic::Issue>>);
 static_assert(std::same_as<decltype(scry::tool_error(std::string{})), scry::Error>);
 static_assert(std::is_aggregate_v<scrydantic::Json>);
 static_assert(std::is_enum_v<scrydantic::JsonKind>);
@@ -62,6 +64,8 @@ static_assert(std::same_as<decltype(scry::ToolCall::turn_id), scry::TurnId>);
 static_assert(std::same_as<decltype(scry::ToolCall::arguments), scrydantic::Json>);
 static_assert(std::same_as<decltype(scry::ToolCall::result), scrydantic::Json>);
 static_assert(std::same_as<decltype(scry::ToolCall::is_error), bool>);
+static_assert(
+    std::same_as<decltype(scry::ToolCall::error), std::optional<scry::Error>>);
 static_assert(std::same_as<decltype(scry::ToolCall::round), std::uint32_t>);
 static_assert(std::same_as<decltype(scry::ToolCall::index), std::uint32_t>);
 static_assert(std::same_as<decltype(scry::Completion::turn_id), scry::TurnId>);

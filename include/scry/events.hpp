@@ -66,6 +66,13 @@ struct ToolCall {
   /// returned invalid JSON, the model requested an unknown tool, or the call was
   /// refused before its handler ran.
   bool is_error{false};
+  /// The error the handler returned, when it returned one. Its `message` is the
+  /// host-side diagnostic the model never sees. For a reflected tool whose
+  /// arguments failed to decode, or failed a constraint or validator, its
+  /// `issues` list each problem as data. Empty for a successful call, a refusal,
+  /// an unknown tool, a handler that threw, and a handler result that was not
+  /// JSON.
+  std::optional<Error> error{};
   /// One-based tool round within the turn that issued this call.
   std::uint32_t round{};
   /// Zero-based position of this call in its round's batch, in provider order.
