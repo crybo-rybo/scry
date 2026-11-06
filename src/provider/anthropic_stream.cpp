@@ -81,10 +81,6 @@ void apply_stop_reason(const std::optional<std::string>& reason,
                    "Anthropic stream emitted more than one message_start"));
   }
   auto& message = event.message;
-  if (message.type != "message") {
-    return std::unexpected(make_error(ErrorCategory::protocol,
-                                      "Anthropic message_start is not a message"));
-  }
   if (context.state.response.provider_request_id.empty()) {
     context.state.response.provider_request_id =
         request_identifier(context.root, {"message", "request_id"});

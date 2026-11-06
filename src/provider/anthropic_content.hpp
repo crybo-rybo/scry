@@ -55,11 +55,14 @@ struct[[ = scrydantic::ignore_unknown, = scrydantic::skip_null ]] AnthropicUsage
   std::optional<std::uint64_t> output_tokens;
 };
 
-// message_start's message. An absent `usage` is the empty default, while a null
-// one is rejected, as it must be an object when present.
+// message_start's message, whose type is always `message`. An absent `usage` is
+// the empty default, while a null one is rejected, as it must be an object when
+// present.
+enum class AnthropicMessageType : std::uint8_t { message };
+
 struct[[ = scrydantic::ignore_unknown, = scrydantic::skip_null ]]
     AnthropicResponseMessage {
-  std::string type;
+  AnthropicMessageType type;
   std::vector<AnthropicContent> content;
   std::optional<std::string> stop_reason;
   AnthropicUsage usage{};
