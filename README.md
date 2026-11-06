@@ -89,8 +89,10 @@ checks that the block above is the file, and CI compiles it.
 
 ```cpp
 struct WaterArguments {
-  [[= scrydantic::description{"Bed number, from 1 to 3"}]] std::int32_t bed;
-  [[= scrydantic::description{"Liters to pour"}]] double liters{1.0};
+  [[= scrydantic::description{"Bed number"}, = scrydantic::range{.min = 1, .max = 3}]]
+  std::int32_t bed;
+  [[= scrydantic::description{"Liters to pour"},
+    = scrydantic::range{.exclusive_min = 0.0}]] double liters{1.0};
 };
 
 [[= scrydantic::tool{"Water one bed"}]] scrydantic::Status
@@ -105,24 +107,30 @@ tool name `water`:
   "additionalProperties": false,
   "properties": {
     "bed": {
-      "description": "Bed number, from 1 to 3",
-      "maximum": 2147483647,
-      "minimum": -2147483648,
+      "description": "Bed number",
+      "maximum": 3,
+      "minimum": 1,
       "type": "integer"
     },
-    "liters": { "description": "Liters to pour", "type": "number" }
+    "liters": {
+      "description": "Liters to pour",
+      "exclusiveMinimum": 0,
+      "type": "number"
+    }
   },
   "required": ["bed"],
   "type": "object"
 }
 ```
 
-- **The types set the schema.** `std::int32_t` gives an integer with the range
-  of the type. `liters` has a default value, thus it is not required.
-- **The same types decode the arguments.** Scry rejects a missing required
-  member, an incorrect type, a value out of range, and an unknown member. The
-  model gets an error message that identifies the field, and the turn
-  continues. Your function gets only valid arguments.
+- **The types and constraints set the schema.** `std::int32_t` gives an
+  integer, and `range` bounds it; without `range`, the bounds are those of the
+  type. `liters` has a default value, thus it is not required.
+- **The same declarations decode the arguments.** Scry rejects a missing
+  required member, an incorrect type, a value out of range, a value past a
+  constraint, and an unknown member. The model gets one line for each problem,
+  each with the path of the field, and the turn continues. Your function gets
+  only valid arguments.
 - **Errors occur at compile time.** If a declaration uses a type that Scry
   cannot encode, the compiler stops. The diagnostic gives the member and the
   reason.

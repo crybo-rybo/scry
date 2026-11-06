@@ -15,10 +15,17 @@ struct Climate {
   bool vents_open{};
 };
 
-// An argument aggregate: the form for descriptions, defaults, or optional members.
+// An argument aggregate: the form for descriptions, defaults, optional members, or
+// constraints. A constraint is in the schema the model sees, and an argument past
+// it is refused before the handler runs.
 struct WaterArguments {
-  [[= scrydantic::description{"Bed number, from 1 to 3"}]] std::int32_t bed;
-  [[= scrydantic::description{"Liters to pour"}]] double liters{1.0};
+  [[
+    = scrydantic::description{"Bed number"}, = scrydantic::range{.min = 1, .max = 3}
+  ]] std::int32_t bed;
+  [[
+    = scrydantic::description{"Liters to pour"},
+    = scrydantic::range{.exclusive_min = 0.0}
+  ]] double liters{1.0};
 };
 
 // A toolbox: each annotated member function is a tool bound to one object. Its
@@ -42,8 +49,9 @@ public:
   // model as {} or as the refusal's text.
   [[= scrydantic::tool{"Water one bed"}]] scrydantic::Status
       water(const WaterArguments arguments) {
-    if (arguments.bed < 1 || arguments.bed > 3) {
-      return std::unexpected(scrydantic::tool_error("there are only beds 1 to 3"));
+    if (liters_ + arguments.liters > tank_liters) {
+      return std::unexpected(
+          scrydantic::tool_error("the tank does not hold that much"));
     }
     liters_ += arguments.liters;
     return {};
@@ -52,6 +60,8 @@ public:
   [[nodiscard]] double liters() const noexcept { return liters_; } // not a tool
 
 private:
+  static constexpr double tank_liters = 20.0;
+
   Climate climate_{.temperature_c = 27.0};
   double liters_{};
 };
