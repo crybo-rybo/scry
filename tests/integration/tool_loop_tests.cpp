@@ -47,6 +47,23 @@ const std::string final_stream =
   });
 }
 
+// The ordinal tools, reflected with a constraint and with a validator.
+struct BoundedOrdinal {
+  [[= scrydantic::range{.max = 0}]] std::int32_t ordinal;
+};
+
+[[nodiscard]] scrydantic::Status odd_ordinal(const std::int32_t& ordinal) {
+  if (ordinal % 2 != 0) {
+    return {};
+  }
+  return std::unexpected(
+      scrydantic::tool_error("must be odd", "even ordinals are reserved"));
+}
+
+struct CheckedOrdinal {
+  [[= scrydantic::check<&odd_ordinal>]] std::int32_t ordinal;
+};
+
 [[nodiscard]] std::size_t count_occurrences(const std::string& text,
                                             const std::string_view needle) {
   std::size_t total = 0;
@@ -263,6 +280,7 @@ TEST_CASE("a failing tool handler reaches the observer as an error result") {
                                  .arguments = call.arguments,
                                  .result = call.result,
                                  .is_error = call.is_error,
+                                 .error = call.error,
                              });
                            },
                        .on_finished =
@@ -277,9 +295,67 @@ TEST_CASE("a failing tool handler reaches the observer as an error result") {
   CHECK(observed[0].name == "first_tool");
   CHECK(observed[0].is_error);
   CHECK(observed[0].result.text == R"({"error":"tool handler returned an error"})");
+  // The observer is given the handler's own error, which the model is not.
+  REQUIRE(observed[0].error);
+  CHECK(observed[0].error->message == "handler said no");
+  CHECK(observed[0].error->issues.empty());
   CHECK(observed[1].name == "second_tool");
   CHECK_FALSE(observed[1].is_error);
   CHECK(observed[1].result.text == R"({"handled":"second"})");
+  CHECK_FALSE(observed[1].error);
+}
+
+TEST_CASE("constraint and validator rejections reach the observer as issues") {
+  auto fixture = make_harness_fixture(
+      test_config(), {scripted_response(two_tool_stream, "tool-request"),
+                      scripted_response(final_stream, "final-request")});
+  auto& harness = fixture.harness;
+  std::size_t handler_calls = 0;
+  REQUIRE(harness.tools().add<BoundedOrdinal>(
+      {.name = "first_tool", .description = "Accepts no ordinal above zero"},
+      [&handler_calls](BoundedOrdinal) { ++handler_calls; }));
+  REQUIRE(harness.tools().add<CheckedOrdinal>(
+      {.name = "second_tool", .description = "Accepts an odd ordinal"},
+      [&handler_calls](CheckedOrdinal) { ++handler_calls; }));
+
+  std::vector<scry::ToolCall> observed;
+  bool finished = false;
+  REQUIRE(harness.send(
+      fixture.conversation, "Run both tools",
+      {
+          .on_tool_call =
+              [&observed](const scry::ToolCall& call) { observed.push_back(call); },
+          .on_finished =
+              [&finished](scry::Result<scry::Completion> outcome) {
+                finished = outcome.has_value();
+              },
+      }));
+  REQUIRE(pump_until(harness, [&finished] { return finished; }));
+
+  CHECK(handler_calls == 0);
+  REQUIRE(observed.size() == 2);
+  for (const auto& call : observed) {
+    CHECK(call.is_error);
+    REQUIRE(call.error);
+    CHECK(call.error->category == scry::ErrorCategory::tool);
+    REQUIRE(call.error->issues.size() == 1);
+    CHECK(call.error->issues[0].path ==
+          std::vector<scrydantic::PathSegment>{std::string{"ordinal"}});
+  }
+  CHECK(observed[0].result.text == R"({"error":"$.ordinal must be at most 0"})");
+  CHECK(observed[0].error->issues[0].kind ==
+        scrydantic::IssueKind::violated_constraint);
+  CHECK(observed[0].error->issues[0].reason == "must be at most 0");
+  // A validator's host text goes to the observer only; the model reads its own.
+  CHECK(observed[1].result.text == R"({"error":"$.ordinal must be odd"})");
+  CHECK(observed[1].error->issues[0].kind == scrydantic::IssueKind::failed_check);
+  CHECK(observed[1].error->message == "$.ordinal even ordinals are reserved");
+
+  const auto requests = fixture.server.requests();
+  REQUIRE(requests.size() == 2);
+  CHECK(requests[0].body.find(R"("maximum":0)") != std::string::npos);
+  CHECK(requests[1].body.find("$.ordinal must be odd") != std::string::npos);
+  CHECK(requests[1].body.find("reserved") == std::string::npos);
 }
 
 TEST_CASE("a queued turn waits for the active turn's app-thread tool round") {
@@ -901,4 +977,14 @@ TEST_CASE("a Harness adopts a registry built before it and runs its handlers") {
   REQUIRE(completion);
   CHECK(completion->text == "all done");
   CHECK(calls == 1);
+}
+
+TEST_CASE("a user message that is not UTF-8 is refused before its turn is queued") {
+  auto fixture = make_harness_fixture(test_config(), {});
+  const auto turn = fixture.harness.send(fixture.conversation, "caf\xFF");
+  REQUIRE_FALSE(turn);
+  CHECK(turn.error().category == scry::ErrorCategory::invalid_argument);
+  CHECK(turn.error().message == "user message must be valid UTF-8");
+  CHECK(fixture.server.requests().empty());
+  CHECK(fixture.conversation.message_count() == 0);
 }

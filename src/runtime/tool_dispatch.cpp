@@ -76,7 +76,8 @@ successful_result(const ToolCallBlock& call, const scrydantic::Json& value,
 [[nodiscard]] Result<ToolResultBlock>
 dispatch_tool_handler(ContextualToolHandler& handler, const ToolCallBlock& call,
                       const ToolCallContext& context,
-                      const std::size_t max_result_bytes) {
+                      const std::size_t max_result_bytes,
+                      std::optional<Error>* const handler_error) {
   Result<scrydantic::Json> invoked{};
   try {
     invoked = handler(context, call.arguments);
@@ -86,10 +87,15 @@ dispatch_tool_handler(ContextualToolHandler& handler, const ToolCallBlock& call,
   if (!invoked) {
     // Only text the handler deliberately published travels on; `message` and any
     // exception text stay on the host side of the boundary.
-    const auto& published = invoked.error().model_message;
-    return error_result(
-        call, published.empty() ? handler_failed_message : std::string_view{published},
-        max_result_bytes);
+    auto result = error_result(call,
+                               invoked.error().model_message.empty()
+                                   ? handler_failed_message
+                                   : std::string_view{invoked.error().model_message},
+                               max_result_bytes);
+    if (handler_error != nullptr) {
+      *handler_error = std::move(invoked.error());
+    }
+    return result;
   }
   return successful_result(call, *invoked, max_result_bytes);
 }
@@ -118,13 +124,15 @@ Result<ToolResultBlock> error_result(const ToolCallBlock& call,
 Result<ToolResultBlock> dispatch_tool(const ToolSnapshot& snapshot,
                                       const ToolCallBlock& call,
                                       const ToolCallContext& context,
-                                      const std::size_t max_result_bytes) {
+                                      const std::size_t max_result_bytes,
+                                      std::optional<Error>* const handler_error) {
   const auto* const registration = find_tool(snapshot, call.name);
   if (registration == nullptr) {
     return error_result(call, unknown_tool_message(snapshot, call.name),
                         max_result_bytes);
   }
-  return dispatch_tool_handler(registration->handler, call, context, max_result_bytes);
+  return dispatch_tool_handler(registration->handler, call, context, max_result_bytes,
+                               handler_error);
 }
 
 } // namespace scry::detail

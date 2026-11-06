@@ -39,7 +39,7 @@ using AnthropicBlock =
     std::variant<AnthropicText, AnthropicToolUse, AnthropicToolResult>;
 
 struct AnthropicMessage {
-  std::string_view role;
+  Role role;
   std::vector<AnthropicBlock> content;
 };
 
@@ -106,9 +106,8 @@ struct[[= scrydantic::skip_null]] AnthropicBody {
 // results, and the next send appends another user message straight after it.
 [[nodiscard]] Status append_message(std::vector<AnthropicMessage>& encoded,
                                     const Message& message) {
-  const std::string_view role = message.role == Role::user ? "user" : "assistant";
-  if (encoded.empty() || encoded.back().role != role) {
-    encoded.push_back(AnthropicMessage{.role = role, .content = {}});
+  if (encoded.empty() || encoded.back().role != message.role) {
+    encoded.push_back(AnthropicMessage{.role = message.role, .content = {}});
   }
   auto& content = encoded.back().content;
   for (const auto& block : message.content) {

@@ -1,13 +1,12 @@
 // The text-level entry points in kernel/json/codec.hpp are thin layers over
-// Scrydantic's JSON core, whose own tests hold it to the golden fixtures. So each
-// entry point must give the core's verdict and canonical text, and report a
+// Scrydantic's public JSON core, whose own tests hold it to the golden fixtures. So
+// each entry point must give the core's verdict and canonical text, and report a
 // rejection as a Scry Error under the caller's category and message.
 
 #include "kernel/json/codec.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 #include <scry/error.hpp>
-#include <scrydantic/detail/json_text.hpp>
 #include <scrydantic/json.hpp>
 #include <string>
 #include <string_view>
@@ -38,8 +37,10 @@ TEST_CASE("the JSON codec wrappers give the core's verdict under the caller's "
        }) {
     INFO(input);
     const scrydantic::Json text{.text = std::string{input}};
-    const bool valid = scrydantic::detail::validate_json(input);
-    const bool object = scrydantic::detail::validate_json_object(input);
+    const auto view = scrydantic::JsonView::parse(text);
+    const bool valid = scrydantic::is_valid_json(input);
+    REQUIRE(view.has_value() == valid);
+    const bool object = valid && view->kind() == scrydantic::JsonKind::object;
 
     const auto validated = scry::detail::validate_json(input, category, failure);
     REQUIRE(validated.has_value() == valid);
@@ -53,7 +54,7 @@ TEST_CASE("the JSON codec wrappers give the core's verdict under the caller's "
     REQUIRE(canonical_object.has_value() == object);
 
     if (valid) {
-      CHECK(canonical->text == scrydantic::detail::canonicalize_json(text)->text);
+      CHECK(canonical->text == view->to_json().text);
     } else {
       check_rejection(validated.error());
       check_rejection(canonical.error());
@@ -65,4 +66,11 @@ TEST_CASE("the JSON codec wrappers give the core's verdict under the caller's "
       check_rejection(canonical_object.error());
     }
   }
+}
+
+TEST_CASE("the nesting depth counts only brackets outside strings") {
+  CHECK(scry::detail::json_nesting_depth("1") == 0);
+  CHECK(scry::detail::json_nesting_depth("{}") == 1);
+  CHECK(scry::detail::json_nesting_depth(R"({"a":[1,{"b":[]}],"c":{}})") == 4);
+  CHECK(scry::detail::json_nesting_depth(R"({"[{\"[":"]]]{{"})") == 1);
 }

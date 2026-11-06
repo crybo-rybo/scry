@@ -17,9 +17,9 @@
 //
 // Kernel code may include only the standard library, libcurl, other kernel
 // headers, the public headers <scry/config.hpp>, <scry/error.hpp>,
-// <scry/turn_id.hpp>, and <scry/unique_function.hpp>, and Scrydantic's C++23
-// JSON core headers <scrydantic/error.hpp>, <scrydantic/json.hpp>, and
-// <scrydantic/detail/json_text.hpp>. scripts/lint.sh checks that list.
+// <scry/turn_id.hpp>, and <scry/unique_function.hpp>, and Scrydantic's public
+// C++23 JSON core headers <scrydantic/error.hpp> and <scrydantic/json.hpp>.
+// scripts/lint.sh checks that list.
 
 #if defined(__cpp_impl_reflection)
 #error "src/kernel/ is C++23 without reflection; compile it without -freflection"

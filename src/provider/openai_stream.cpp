@@ -20,32 +20,39 @@ namespace {
 
 // Chat Completions stream chunks as reflected aggregates. Every class ignores
 // members it does not declare, because servers add fields, and reads an absent or
-// null optional member as disengaged. What the codec cannot express - chunk
-// identity, fragment accumulation, the finish lifecycle - stays below.
+// null optional member as disengaged. The codec also rejects the values Scry does
+// not support: a tool type other than function, a role other than assistant, an
+// empty identifier or name, a second choice, and a choice index other than zero.
+// What the codec cannot express - chunk identity, fragment accumulation, the
+// finish lifecycle - stays below.
+
+enum class OpenAiToolType : std::uint8_t { function };
+
+enum class OpenAiRole : std::uint8_t { assistant };
 
 struct[[ = scrydantic::ignore_unknown, = scrydantic::skip_null ]]
     OpenAiFunctionFragment {
-  std::optional<std::string> name;
+  [[= scrydantic::length{.min = 1}]] std::optional<std::string> name;
   std::optional<std::string> arguments;
 };
 
 struct[[ = scrydantic::ignore_unknown, = scrydantic::skip_null ]] OpenAiToolFragment {
   std::size_t index;
-  std::optional<std::string> id;
-  std::optional<std::string> type;
+  [[= scrydantic::length{.min = 1}]] std::optional<std::string> id;
+  std::optional<OpenAiToolType> type;
   std::optional<OpenAiFunctionFragment> function;
 };
 
 // `function_call` is the deprecated legacy field: any value but null is refused.
 struct[[ = scrydantic::ignore_unknown, = scrydantic::skip_null ]] OpenAiDelta {
-  std::optional<std::string> role;
+  std::optional<OpenAiRole> role;
   std::optional<std::string> content;
   std::optional<std::vector<OpenAiToolFragment>> tool_calls;
   std::optional<scrydantic::Json> function_call;
 };
 
 struct[[ = scrydantic::ignore_unknown, = scrydantic::skip_null ]] OpenAiChoice {
-  std::uint64_t index;
+  [[= scrydantic::range{.max = 0}]] std::uint64_t index;
   OpenAiDelta delta;
   std::optional<std::string> finish_reason;
 };
@@ -57,9 +64,9 @@ struct[[ = scrydantic::ignore_unknown, = scrydantic::skip_null ]] OpenAiUsage {
 };
 
 struct[[ = scrydantic::ignore_unknown, = scrydantic::skip_null ]] OpenAiChunk {
-  std::string id;
+  [[= scrydantic::length{.min = 1}]] std::string id;
   std::string object;
-  std::vector<OpenAiChoice> choices;
+  [[= scrydantic::items{.max = 1}]] std::vector<OpenAiChoice> choices;
   std::optional<OpenAiUsage> usage;
 };
 
@@ -141,17 +148,12 @@ openai_error_category(const std::string_view token) noexcept {
 }
 
 // Records a streamed tool id or name. Either may repeat across fragments, but
-// never empty and never changed.
+// never change; the codec has already rejected an empty one.
 [[nodiscard]] Status apply_tool_string(const std::optional<std::string>& value,
                                        const std::string_view field,
                                        std::string& destination) {
   if (!value) {
     return {};
-  }
-  if (value->empty()) {
-    return std::unexpected(make_error(ErrorCategory::protocol,
-                                      "OpenAI streamed tool " + std::string{field} +
-                                          " must not be empty"));
   }
   if (!destination.empty() && destination != *value) {
     return std::unexpected(make_error(ErrorCategory::protocol,
@@ -159,23 +161,6 @@ openai_error_category(const std::string_view token) noexcept {
                                           " changed mid-stream"));
   }
   destination = *value;
-  return {};
-}
-
-[[nodiscard]] Status apply_tool_type(const std::optional<std::string>& type,
-                                     OpenAiToolDecodeState& tool) {
-  if (!type) {
-    return {};
-  }
-  if (type->empty()) {
-    return std::unexpected(make_error(ErrorCategory::protocol,
-                                      "OpenAI streamed tool type must not be empty"));
-  }
-  if (*type != "function") {
-    return std::unexpected(make_error(
-        ErrorCategory::protocol, "OpenAI streamed tool call type must be function"));
-  }
-  tool.typed = true;
   return {};
 }
 
@@ -217,8 +202,9 @@ apply_function_fragment(const std::optional<OpenAiFunctionFragment>& function,
   if (auto id = apply_tool_string(fragment.id, "id", tool.id); !id) {
     return id;
   }
-  if (auto type = apply_tool_type(fragment.type, tool); !type) {
-    return type;
+  // The codec admits only the function type, so any type marks the call typed.
+  if (fragment.type) {
+    tool.typed = true;
   }
   if (auto function = apply_function_fragment(fragment.function, tool,
                                               state.max_tool_arguments_bytes);
@@ -298,11 +284,7 @@ apply_tool_fragments(const std::optional<std::vector<OpenAiToolFragment>>& fragm
   return {};
 }
 
-[[nodiscard]] Status validate_delta_role(const OpenAiDelta& delta) {
-  if (delta.role && *delta.role != "assistant") {
-    return std::unexpected(make_error(
-        ErrorCategory::protocol, "OpenAI streamed response role must be assistant"));
-  }
+[[nodiscard]] Status validate_delta(const OpenAiDelta& delta) {
   if (delta.function_call) {
     return std::unexpected(
         make_error(ErrorCategory::protocol,
@@ -317,10 +299,6 @@ apply_tool_fragments(const std::optional<std::vector<OpenAiToolFragment>>& fragm
     return std::unexpected(make_error(
         ErrorCategory::protocol, "OpenAI stream data is not a Chat Completions chunk"));
   }
-  if (chunk.id.empty()) {
-    return std::unexpected(make_error(ErrorCategory::protocol,
-                                      "OpenAI stream chunk ID must not be empty"));
-  }
   if (decode.chunk_id.empty()) {
     decode.chunk_id = chunk.id;
   } else if (decode.chunk_id != chunk.id) {
@@ -332,16 +310,12 @@ apply_tool_fragments(const std::optional<std::vector<OpenAiToolFragment>>& fragm
 
 [[nodiscard]] Status validate_choice(const OpenAiChoice& choice,
                                      const OpenAiProviderDecodeState& decode) {
-  if (choice.index != 0) {
-    return std::unexpected(
-        make_error(ErrorCategory::protocol, "OpenAI stream choice index must be zero"));
-  }
   if (decode.finish_observed) {
     return std::unexpected(
         make_error(ErrorCategory::protocol,
                    "OpenAI stream emitted semantic data after its finish reason"));
   }
-  return validate_delta_role(choice.delta);
+  return validate_delta(choice.delta);
 }
 
 [[nodiscard]] Status apply_finish_reason(const std::optional<std::string>& reason,
@@ -396,11 +370,6 @@ apply_tool_fragments(const std::optional<std::vector<OpenAiToolFragment>>& fragm
     }
     apply_usage(chunk.usage, state.response.usage);
     return {};
-  }
-  if (chunk.choices.size() != 1) {
-    return std::unexpected(
-        make_error(ErrorCategory::protocol,
-                   "OpenAI stream chunk must contain at most one choice"));
   }
   return apply_choice(chunk, state, decode, out);
 }

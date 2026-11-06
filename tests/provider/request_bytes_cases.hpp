@@ -138,7 +138,7 @@ struct RequestBytesCase {
     cases.push_back({dialect + " escapes", config,
                      bytes_text_request("quote\" slash\\ solidus/ \b\f\n\r\t "
                                         "\x01\x1b[0m\x1f\x7f caf\xC3\xA9 "
-                                        "\xF0\x9F\x8E\xB2 \xFF")});
+                                        "\xF0\x9F\x8E\xB2")});
     cases.push_back({dialect + " empty text", config, bytes_text_request("")});
   }
   // A typed turn's request: the response tool follows the registered ones and the

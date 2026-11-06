@@ -4,6 +4,7 @@
 #include "runtime/tool_registry_impl.hpp"
 
 #include <cstddef>
+#include <optional>
 #include <scry/error.hpp>
 #include <string_view>
 
@@ -23,9 +24,11 @@ inline constexpr std::string_view handler_failed_message =
                                                    std::string_view message,
                                                    std::size_t max_result_bytes);
 
-[[nodiscard]] Result<ToolResultBlock> dispatch_tool(const ToolSnapshot& snapshot,
-                                                    const ToolCallBlock& call,
-                                                    const ToolCallContext& context,
-                                                    std::size_t max_result_bytes);
+// Runs the call's handler. When the handler returns an error and
+// `handler_error` is not null, the error is also kept there for the host.
+[[nodiscard]] Result<ToolResultBlock>
+dispatch_tool(const ToolSnapshot& snapshot, const ToolCallBlock& call,
+              const ToolCallContext& context, std::size_t max_result_bytes,
+              std::optional<Error>* handler_error = nullptr);
 
 } // namespace scry::detail

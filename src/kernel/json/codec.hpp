@@ -2,23 +2,21 @@
 
 #include "kernel/error.hpp"
 
+#include <cstddef>
 #include <scry/error.hpp>
-#include <scrydantic/detail/json_text.hpp>
 #include <scrydantic/json.hpp>
 #include <string_view>
 
 // The JSON codec's text-level operations, which the rest of src/ uses. They are
-// thin layers over Scrydantic's JSON core (<scrydantic/detail/json_text.hpp>)
+// thin layers over Scrydantic's public C++23 JSON core (<scrydantic/json.hpp>)
 // that report a failure as a Scry Error under the caller's category; outside
 // them, parsed JSON is read through scrydantic::JsonView and reflected types
 // through the reflected codec.
-// TODO(https://github.com/crybo-rybo/scrydantic/issues/6): include a public JSON
-// text header once Scrydantic exposes one.
 namespace scry::detail {
 
 // Validates JSON text without materializing a document; see
-// scrydantic::detail::validate_json. The object variant also requires the root
-// to be an object.
+// scrydantic::is_valid_json. The object variant also requires the root to be an
+// object.
 [[nodiscard]] Status validate_json(std::string_view input, ErrorCategory category,
                                    std::string_view failure_message);
 
@@ -29,11 +27,16 @@ namespace scry::detail {
 // Whether the first byte after leading whitespace opens an object. Only that byte
 // is read, so the rest of the text must be valid JSON already or be validated
 // separately.
-using scrydantic::detail::json_root_is_object;
+[[nodiscard]] bool json_root_is_object(std::string_view text) noexcept;
 
-// Rewrites JSON text in canonical form: object keys in lexical order, no
-// insignificant whitespace, and the canonical spelling of every number and
-// string escape.
+// The deepest nesting of arrays and objects in `text`, counting an empty one, or
+// zero for a scalar. Only brackets outside strings are counted, so the text must
+// be valid JSON already.
+[[nodiscard]] std::size_t json_nesting_depth(std::string_view text) noexcept;
+
+// Rewrites JSON text in canonical form, as scrydantic::JsonView::to_json() writes
+// it: object keys in lexical order, no insignificant whitespace, and the
+// canonical spelling of every number and string escape.
 [[nodiscard]] Result<scrydantic::Json>
 canonicalize_json(const scrydantic::Json& json, ErrorCategory category,
                   std::string_view failure_message);
@@ -42,10 +45,11 @@ canonicalize_json(const scrydantic::Json& json, ErrorCategory category,
 canonicalize_json_object(const scrydantic::Json& json, ErrorCategory category,
                          std::string_view failure_message);
 
-using scrydantic::detail::make_json_error_object;
+// `{"error":<message>}`, with the message quoted by scrydantic::escape_json_string.
+[[nodiscard]] scrydantic::Json make_json_error_object(std::string_view message);
 
 // A double spelled as the canonical writer spells it; see
-// scrydantic::detail::canonical_json_number.
-using scrydantic::detail::canonical_json_number;
+// scrydantic::format_json_number. A non-finite value is written as null.
+[[nodiscard]] scrydantic::Json canonical_json_number(double value);
 
 } // namespace scry::detail

@@ -271,9 +271,8 @@ TEST_CASE("reflected decode failures carry a schema-derived model message") {
     auto decoded = scrydantic::decode<AllTypesArguments>(
         scrydantic::Json{.text = std::string{text}});
     REQUIRE_FALSE(decoded);
-    // The model copy is the host copy without the library-facing prefix.
-    CHECK(decoded.error().message ==
-          "reflected JSON at " + decoded.error().model_message);
+    // With no validator text for the host alone, both copies are the same.
+    CHECK(decoded.error().message == decoded.error().model_message);
     return decoded.error().model_message;
   };
 
@@ -302,14 +301,13 @@ TEST_CASE("reflected decode failures carry a schema-derived model message") {
   auto required = scrydantic::decode<PresenceArguments>(
       scrydantic::Json{.text = R"({"required":"Detroit"})"});
   REQUIRE_FALSE(required);
-  CHECK(required.error().message ==
-        "reflected JSON at $.nullable is a required member");
+  CHECK(required.error().message == "$.nullable is a required member");
   CHECK(required.error().model_message == "$.nullable is a required member");
 
   auto handler = make_tool_handler<PresenceArguments>([](PresenceArguments) {});
   auto malformed = handler({}, scrydantic::Json{.text = "{"});
   REQUIRE_FALSE(malformed);
-  CHECK(malformed.error().message == "reflected tool arguments are not valid JSON");
+  CHECK(malformed.error().message == "tool arguments are not valid JSON");
   CHECK(malformed.error().model_message == "tool arguments are not valid JSON");
 }
 
@@ -344,8 +342,7 @@ TEST_CASE("reflected numeric decoding accepts exact boundaries and signs") {
   decoded = scrydantic::decode<NumericArguments>(scrydantic::Json{
       .text = R"({"floating":1e39,"signed_value":0,"unsigned_value":1})"});
   REQUIRE_FALSE(decoded);
-  CHECK(decoded.error().message ==
-        "reflected JSON at $.floating must be a finite in-range number");
+  CHECK(decoded.error().message == "$.floating must be a finite in-range number");
 }
 
 TEST_CASE("reflected signed integer decoding covers every strict boundary") {
@@ -458,7 +455,7 @@ TEST_CASE("reflected sequence encoding propagates fallible element errors") {
   const auto encoded = scrydantic::encode(
       std::vector<double>{1.0, std::numeric_limits<double>::infinity()});
   REQUIRE_FALSE(encoded);
-  CHECK(encoded.error().message == "reflected JSON at $[1] must be finite");
+  CHECK(encoded.error().message == "$[1] must be finite");
   CHECK(encoded.error().model_message.empty());
 }
 
@@ -472,7 +469,7 @@ TEST_CASE("reflected encoding rejects non-finite and unnamed values") {
   };
   auto encoded = scrydantic::encode(value);
   REQUIRE_FALSE(encoded);
-  CHECK(encoded.error().message == "reflected JSON at $.ratio must be finite");
+  CHECK(encoded.error().message == "$.ratio must be finite");
   // A result type's schema never reaches the model, so an encoding failure
   // carries nothing for it to act on.
   CHECK(encoded.error().model_message.empty());
@@ -481,8 +478,7 @@ TEST_CASE("reflected encoding rejects non-finite and unnamed values") {
   value.unit = static_cast<TemperatureUnit>(99);
   encoded = scrydantic::encode(value);
   REQUIRE_FALSE(encoded);
-  CHECK(encoded.error().message ==
-        "reflected JSON at $.unit is not a declared enumerator value");
+  CHECK(encoded.error().message == "$.unit is not a declared enumerator value");
   CHECK(encoded.error().model_message.empty());
 }
 
@@ -778,12 +774,12 @@ TEST_CASE("response_format validators report a rejected answer as invalid_argume
       format.validate(scrydantic::Json{.text = R"({"required":"ok"})"});
   REQUIRE_FALSE(missing);
   CHECK(missing.error().category == scry::ErrorCategory::invalid_argument);
-  CHECK(missing.error().message == "reflected JSON at $.nullable is a required member");
+  CHECK(missing.error().message == "$.nullable is a required member");
   CHECK(missing.error().model_message == "$.nullable is a required member");
 
   const auto malformed = format.validate(scrydantic::Json{.text = "{"});
   REQUIRE_FALSE(malformed);
   CHECK(malformed.error().category == scry::ErrorCategory::invalid_argument);
-  CHECK(malformed.error().message == "reflected JSON text is not valid JSON");
+  CHECK(malformed.error().message == "JSON text is not valid JSON");
   CHECK(malformed.error().model_message == "JSON text is not valid JSON");
 }

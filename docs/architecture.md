@@ -540,14 +540,20 @@ because it is the double -0.0. The canonical parse merges duplicate object keys
 into one key before dispatch, and the last occurrence wins. Thus handlers do not
 see the original lexical duplicates.
 
-If the decode fails, Scry fills `Error::model_message` with the host `message`
-without its `reflected JSON at ` prefix. This text gives the JSON path of the
-incorrect value and what the schema required at that path. If an enum value is
+If the decode fails, Scry fills `Error::model_message` with one line for each
+issue that the decode found, up to `scrydantic::max_issues`. Each line gives the
+JSON path of the incorrect value and what the schema, a constraint, or a
+validator required at that path. `Error::issues` holds the same issues as data,
+and `Error::message` holds the host's text, which differs only where a
+`scrydantic::check` validator gave a separate host message. An `on_tool_call`
+observer gets this error in `ToolCall::error`; the model gets `model_message`
+alone. If an enum value is
 not known, the text also gives the declared enumerator names. If the `type` of a
 variant is missing or not known, the text gives the declared tags. If the
 argument text is not JSON at all, the text is `tool arguments are not valid
-JSON`. Each word of this text comes from the schema that the model already has.
-Thus the model can correct itself, and it learns nothing new.
+JSON`. Each word of this text comes from the schema that the model already has,
+or from the model text of a validator. Thus the model can correct itself, and it
+learns nothing new.
 
 A failure of the result encoding fills no `model_message`. Such a failure
 describes the result type of the handler, and the model never sees the schema of
@@ -614,7 +620,9 @@ no `model_message`, for these inputs:
 and they apply the decoding rules of the previous section. A failure has the
 same path-based `message` and `model_message` as a tool-argument failure. Thus a
 host can give the failure of a typed answer back to the model. If the text is
-not JSON, the failure is `reflected JSON text is not valid JSON`.
+not JSON, the failure is `JSON text is not valid JSON`. `Harness::ask<Answer>()`
+returns the answer that the validator of its response format accepted, so it
+does not decode the answer, or run the answer's validators, a second time.
 `scrydantic::Error` has no category. Scry gives one where it reports the error:
 `ErrorCategory::tool` for a reflected tool, and `invalid_argument` for a typed
 answer. A type outside the family fails to compile, and the
@@ -1230,8 +1238,7 @@ seam with its libcurl implementation. Each build compiles the kernel as C++23
 without reflection, and the kernel links only Scrydantic's C++23 JSON core. The
 kernel can include only these public headers: `<scry/error.hpp>`,
 `<scry/config.hpp>`, `<scry/turn_id.hpp>`, `<scry/unique_function.hpp>`,
-`<scrydantic/error.hpp>`, `<scrydantic/json.hpp>`, and
-`<scrydantic/detail/json_text.hpp>`.
+`<scrydantic/error.hpp>` and `<scrydantic/json.hpp>`.
 
 The rest of `src/` is C++26: the turn machine, the provider adapters, the
 runtime, and the reflection bridge. This code maps the types of Scry to and
@@ -1285,23 +1292,27 @@ build and test Scry.
 
 ## Scrydantic integration
 
-Scry delegates tool discovery, schemas, argument decoding, and result encoding
-to `scrydantic::bind()` and `bind_handler()`. Typed answers and provider stream
-payloads use `scrydantic::decode()`. Conversation persistence and tool manifests
-use the public `scrydantic::encode()` canonical encoder.
+Scry uses only Scrydantic's public API, and it carries no copy of the parser,
+the codec, the schema generator, or the binding:
+
+| Need | Scrydantic API |
+|---|---|
+| Tool discovery, schemas, argument decoding, and result encoding | `bind()`, `bind_handler()`, `input_schema_v` |
+| Typed answers and provider stream payloads | `decode()`, with constraints and enumerations on the wire structs |
+| Conversation persistence and tool manifests | `encode()` |
+| Provider request bodies, which keep stored payload bytes and pre-spelled sampling numbers | `encode_verbatim()` |
+| JSON validation, canonical text, string escapes, and number spelling in the C++23 kernel | `is_valid_json()`, `JsonView::to_json()`, `escape_json_string()`, `format_json_number()` |
+| Compile-time diagnostics, worded for Scry's call sites | `<scrydantic/diagnostics.hpp>` |
+| The wire keys of a message type, so that persistence requires every member | `keys_v` |
+| The tags of a tagged variant, so that unknown Anthropic events are ignored | `tags_v` |
+| Rejections that a host can read | `Error::issues`, copied into `scry::Error::issues` |
 
 `src/reflection/codec.hpp` words every codec failure as a Scry diagnostic, for
-example `Conversation document at $.messages[0].role is a required member`.
+example `Conversation document at $.messages[0].role is a required member`. A
+decode that found several issues has one line for each.
 
-Scry carries no copy of the parser, the codec, the schema generator, or the
-binding. Some of what it needs is not yet in Scrydantic's public API, so these
-places use the installed `scrydantic/detail` headers. A `TODO` in the first file
-of each row links the upstream issue for the public replacement:
-
-| Need | Where | Upstream |
-|---|---|---|
-| JSON text validation, canonicalization, and number spelling for the C++23 kernel | `src/kernel/json/codec.hpp`, `codec.cpp` | [scrydantic#6](https://github.com/crybo-rybo/scrydantic/issues/6) |
-| An encoder that keeps the bytes of stored payloads and the spelling of sampling numbers | `src/reflection/codec.hpp` | [scrydantic#3](https://github.com/crybo-rybo/scrydantic/issues/3) |
-| Compile-time diagnostics, worded for Scry's call sites | `include/scry/tool_registry.hpp`, `harness.hpp`, `response_format.hpp` | [scrydantic#4](https://github.com/crybo-rybo/scrydantic/issues/4) |
-| The wire keys of a message type, so that persistence requires every member | `src/runtime/conversation_persistence.cpp` | [scrydantic#5](https://github.com/crybo-rybo/scrydantic/issues/5) |
-| The tags of a tagged variant, so that unknown Anthropic events are ignored | `src/provider/anthropic_stream.cpp` | [scrydantic#5](https://github.com/crybo-rybo/scrydantic/issues/5) |
+The conversation document keeps its own semantic rules, such as nonempty text
+and which role may carry which block. They are not constraints on the public
+message types: the rules belong to a stored document, not to every `Message`
+that a host builds or decodes, and `to_json()` applies them as well, while an
+encode checks no constraint.
