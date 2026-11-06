@@ -3,6 +3,7 @@
 #include <scry/error.hpp>
 #include <scry/events.hpp>
 #include <scrydantic/codec.hpp>
+#include <scrydantic/diagnostics.hpp>
 #include <scrydantic/json.hpp>
 #include <string>
 #include <string_view>
@@ -45,9 +46,7 @@ namespace detail {
 /// object.
 /// @return The response format.
 template <typename Answer> [[nodiscard]] ResponseFormat response_format() {
-  // TODO(https://github.com/crybo-rybo/scrydantic/issues/4): public diagnostic.
-  constexpr std::string_view problem =
-      scrydantic::detail::tool_arguments_diagnostic<Answer>();
+  constexpr std::string_view problem = scrydantic::tool_arguments_diagnostic<Answer>();
   static_assert(problem.empty(), problem);
   if constexpr (!problem.empty()) {
     return {};

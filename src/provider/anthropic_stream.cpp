@@ -4,10 +4,11 @@
 #include "provider/anthropic_content.hpp"
 #include "provider/shared.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <initializer_list>
-#include <meta>
 #include <optional>
+#include <scrydantic/codec.hpp>
 #include <scrydantic/json.hpp>
 #include <string>
 #include <string_view>
@@ -24,24 +25,9 @@ struct[[= scrydantic::ignore_unknown]] AnthropicEnvelope {
   std::string type;
 };
 
-// Whether `tag` is the tag of one of the variant's alternatives. It is a template
-// because GCC 16 reports each expansion of a non-dependent `template for` as
-// shadowing the previous one.
-// TODO(https://github.com/crybo-rybo/scrydantic/issues/5): read the tags through a
-// public API once Scrydantic exposes one.
-template <typename Variant>
-[[nodiscard]] bool is_alternative_tag(const std::string_view tag) noexcept {
-  bool found = false;
-  template for (constexpr std::meta::info alternative :
-                scrydantic::detail::alternatives_v<Variant>) {
-    found = found || tag == *scrydantic::detail::tag_of(alternative);
-  }
-  return found;
-}
-
 // The Anthropic events Scry knows are exactly the alternatives of AnthropicEvent.
 [[nodiscard]] bool known_event(const std::string_view name) noexcept {
-  return is_alternative_tag<AnthropicEvent>(name);
+  return std::ranges::contains(scrydantic::tags_v<AnthropicEvent>, name);
 }
 
 // Everything one event's handler reads or changes.

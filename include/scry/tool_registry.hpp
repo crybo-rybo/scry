@@ -9,8 +9,8 @@
 #include <meta>
 #include <scry/error.hpp>
 #include <scry/tool.hpp>
-#include <scrydantic/detail/meta.hpp>
-#include <scrydantic/detail/schema.hpp>
+#include <scrydantic/codec.hpp>
+#include <scrydantic/diagnostics.hpp>
 #include <scrydantic/json.hpp>
 #include <scrydantic/tools.hpp>
 #include <string>
@@ -34,23 +34,27 @@ template <typename Type>
 concept owned_toolbox_candidate = std::is_class_v<std::remove_cvref_t<Type>> &&
                                   !is_shared_ptr_v<std::remove_cvref_t<Type>>;
 
+// `text` after the name of `Type`, as a string that outlives constant evaluation.
+template <typename Type>
+consteval std::string_view type_diagnostic(const std::string_view text) {
+  std::string message{std::meta::display_string_of(std::meta::dealias(^^Type))};
+  message.append(text);
+  return {std::define_static_string(message), message.size()};
+}
+
 // add(Toolbox&&) takes ownership, so it needs an rvalue it can move from.
-// TODO(https://github.com/crybo-rybo/scrydantic/issues/4): the diagnostics in this
-// header use Scrydantic's internal helpers until it exposes public ones.
 template <typename Passed> consteval std::string_view owned_toolbox_diagnostic() {
   using Owned = std::remove_cvref_t<Passed>;
   if constexpr (std::is_lvalue_reference_v<Passed>) {
-    return scrydantic::detail::static_string(
-        scrydantic::detail::display(std::meta::dealias(^^Owned)) +
+    return type_diagnostic<Owned>(
         " is passed as an lvalue: ToolRegistry::add(Toolbox&&) takes ownership of a "
         "toolbox, so std::move it in, or share it through std::shared_ptr");
   } else if constexpr (!std::constructible_from<Owned, Passed>) {
-    return scrydantic::detail::static_string(
-        scrydantic::detail::display(std::meta::dealias(^^Owned)) +
+    return type_diagnostic<Owned>(
         " cannot be moved into the registry; share it through std::shared_ptr "
         "instead");
   } else {
-    return scrydantic::detail::toolbox_diagnostic<Owned, ToolCallContext>();
+    return scrydantic::toolbox_diagnostic<Owned, ToolCallContext>();
   }
 }
 } // namespace detail
@@ -282,36 +286,28 @@ private:
 
 template <typename Args, typename Handler>
 Status ToolRegistry::add(ToolMetadata metadata, Handler&& handler) {
-  constexpr std::string_view arguments_problem =
-      scrydantic::detail::tool_arguments_diagnostic<Args>();
-  static_assert(arguments_problem.empty(), arguments_problem);
-  if constexpr (!arguments_problem.empty()) {
+  constexpr std::string_view problem =
+      scrydantic::tool_handler_diagnostic<Handler, Args, ToolCallContext>();
+  static_assert(problem.empty(), problem);
+  if constexpr (!problem.empty()) {
     return {};
   } else {
-    constexpr std::string_view handler_problem =
-        scrydantic::detail::tool_handler_diagnostic<Handler, Args, ToolCallContext>();
-    static_assert(handler_problem.empty(), handler_problem);
-    if constexpr (!handler_problem.empty()) {
-      return {};
-    } else {
-      std::vector<scrydantic::BoundTool<ToolCallContext>> tools{};
-      tools.push_back(scrydantic::BoundTool<ToolCallContext>{
-          .name = std::move(metadata.name),
-          .description = std::move(metadata.description),
-          .input_schema =
-              scrydantic::Json{.text = std::string{scrydantic::input_schema_v<Args>}},
-          .invoke = scrydantic::bind_handler<Args, ToolCallContext>(
-              std::forward<Handler>(handler)),
-      });
-      return add_reflected(std::move(tools));
-    }
+    std::vector<scrydantic::BoundTool<ToolCallContext>> tools{};
+    tools.push_back(scrydantic::BoundTool<ToolCallContext>{
+        .name = std::move(metadata.name),
+        .description = std::move(metadata.description),
+        .input_schema =
+            scrydantic::Json{.text = std::string{scrydantic::input_schema_v<Args>}},
+        .invoke = scrydantic::bind_handler<Args, ToolCallContext>(
+            std::forward<Handler>(handler)),
+    });
+    return add_reflected(std::move(tools));
   }
 }
 
 template <std::meta::info Entity, typename Tools> Status ToolRegistry::add() {
   constexpr std::string_view problem =
-      scrydantic::detail::entity_tools_diagnostic<Entity, ToolCallContext>(
-          "scry::ToolRegistry::add");
+      scrydantic::tools_diagnostic<Entity, ToolCallContext>("scry::ToolRegistry::add");
   static_assert(problem.empty(), problem);
   if constexpr (!problem.empty()) {
     return {};
@@ -323,7 +319,7 @@ template <std::meta::info Entity, typename Tools> Status ToolRegistry::add() {
 template <typename Toolbox, typename Tools>
 Status ToolRegistry::add(std::shared_ptr<Toolbox> toolbox) {
   constexpr std::string_view problem =
-      scrydantic::detail::toolbox_diagnostic<Toolbox, ToolCallContext>();
+      scrydantic::toolbox_diagnostic<Toolbox, ToolCallContext>();
   static_assert(problem.empty(), problem);
   if constexpr (!problem.empty()) {
     return {};

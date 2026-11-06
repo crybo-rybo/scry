@@ -6,7 +6,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
-#include <meta>
 #include <scry/error.hpp>
 #include <scry/message.hpp>
 #include <scrydantic/annotations.hpp>
@@ -60,13 +59,10 @@ struct[[= scrydantic::ignore_unknown]] ConversationDocumentHeader {
 // omits one. Unknown members are already rejected, so this finds the declared
 // members the document left out. `path` is relative to the document root, as a
 // codec failure's is.
-// TODO(https://github.com/crybo-rybo/scrydantic/issues/5): enumerate the wire keys
-// through a public API once Scrydantic exposes one.
 template <typename Type>
 [[nodiscard]] Status require_members(const scrydantic::JsonView& object,
                                      const std::string& path) {
-  template for (constexpr auto field : scrydantic::detail::fields_v<Type>) {
-    constexpr std::string_view key = field.key_view();
+  for (const std::string_view key : scrydantic::keys_v<Type>) {
     if (!object.find(key).has_value()) {
       return std::unexpected(invalid_document("Conversation document at $" + path +
                                               "." + std::string{key} +

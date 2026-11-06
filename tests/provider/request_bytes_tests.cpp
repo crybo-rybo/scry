@@ -48,9 +48,8 @@ constexpr std::array<std::string_view, 10> request_bytes{
     "\"model\":\"claude-test\",\"stream\":true,\"temperature\":1}",
     "{\"max_tokens\":16,\"messages\":[{\"content\":[{\"text\":\"quote\\\" slash\\\\ "
     "solidus/ \\b\\f\\n\\r\\t \\u0001\\u001B[0m\\u001F\x7F caf\xC3\xA9 "
-    "\xF0\x9F\x8E\xB2 "
-    "\xFF\",\"type\":\"text\"}],\"role\":\"user\"}],\"model\":\"claude-test\","
-    "\"stream\":true,\"temperature\":1}",
+    "\xF0\x9F\x8E\xB2\",\"type\":\"text\"}],\"role\":\"user\"}],\"model\":"
+    "\"claude-test\",\"stream\":true,\"temperature\":1}",
     "{\"max_tokens\":16,\"messages\":[{\"content\":[{\"text\":\"\",\"type\":\"text\"}],"
     "\"role\":\"user\"}],\"model\":\"claude-test\",\"stream\":true,\"temperature\":1}",
     "{\"max_tokens\":64,\"messages\":[{\"content\":\"Be "
@@ -89,8 +88,9 @@ constexpr std::array<std::string_view, 10> request_bytes{
     "\"reasoning_effort\":\"none\",\"seed\":4294967295,\"stream\":true,\"stream_"
     "options\":{\"include_usage\":true},\"temperature\":1}",
     "{\"max_tokens\":16,\"messages\":[{\"content\":\"quote\\\" slash\\\\ solidus/ "
-    "\\b\\f\\n\\r\\t \\u0001\\u001B[0m\\u001F\x7F caf\xC3\xA9 \xF0\x9F\x8E\xB2 "
-    "\xFF\",\"role\":\"user\"}],\"model\":\"chat-model\",\"stream\":true,\"stream_"
+    "\\b\\f\\n\\r\\t \\u0001\\u001B[0m\\u001F\x7F caf\xC3\xA9 "
+    "\xF0\x9F\x8E\xB2\",\"role\":\"user\"}],\"model\":\"chat-model\",\"stream\":"
+    "true,\"stream_"
     "options\":{\"include_usage\":true},\"temperature\":1}",
     "{\"max_tokens\":16,\"messages\":[{\"content\":\"\",\"role\":\"user\"}],\"model\":"
     "\"chat-model\",\"stream\":true,\"stream_options\":{\"include_usage\":true},"
@@ -176,5 +176,21 @@ TEST_CASE("sampling numbers keep the canonical spelling in request bodies") {
       CHECK(encoded->body.ends_with("\"temperature\":" + std::string{spelling} +
                                     ",\"top_p\":" + std::string{spelling} + "}"));
     }
+  }
+}
+
+TEST_CASE("request encoders reject text that is not UTF-8 instead of sending it") {
+  // A body holding such a string would not be JSON, so it fails before transport.
+  for (const auto& config : {scry::test_fixtures::anthropic_config(),
+                             scry::test_fixtures::openai_config()}) {
+    INFO(config.model);
+    const auto adapter = scry::detail::make_provider_adapter(config.dialect);
+    const auto encoded = adapter->make_request(
+        config, scry::test_fixtures::bytes_text_request("caf\xFF"));
+    REQUIRE_FALSE(encoded);
+    CHECK(encoded.error().category == scry::ErrorCategory::invalid_config);
+    CHECK(encoded.error().message.ends_with(
+        "request: the value holds a string that is not valid UTF-8, so it cannot be "
+        "JSON"));
   }
 }
