@@ -1,3 +1,27 @@
+# Scry's test suites. ctest registers each Catch2 suite under a prefix: runtime.,
+# machine., protocol., provider., transport., integration., reflection., and
+# testing. public-api-contract, readme-quickstart, package-smoke, the header
+# checks, the multi-TU links, the fuzz-corpus replays, and the
+# reflection.compile-fail.* diagnostics checks are plain tests. Run one suite
+# with `ctest --test-dir build/dev -R 'runtime\.'` and one case with
+# `-R 'event queue coalesces'`.
+#
+# Rules the suites follow:
+# - Test behavior at the seams, not the implementation inside them: the machine,
+#   adapter, and transport interfaces. A test that a refactor of the internals
+#   breaks was coupled to the wrong thing.
+# - Use fakes, not mocks. The scripted server is the fake; it survives refactors
+#   and reads as documentation.
+# - Stay deterministic. No real sleeps, wall-clock time, or network in unit
+#   tests; time is an injected event, so a fake clock tests backoff to the
+#   millisecond. Transport and integration tests use loopback HTTP/TLS servers
+#   through the public API and scry::testing::ScriptedServer, and wait for a
+#   request, a hold, or a callback, never a sleep. A retry waits in real time, so
+#   a delay test checks a lower bound and an upper bound only to catch a hang.
+# - Each bug fix lands with a regression test, kept permanently.
+#
+# The e2e/ smoke needs a live model and runs only through scripts/test-e2e.sh.
+
 FetchContent_Declare(
   Catch2
   GIT_REPOSITORY https://github.com/catchorg/Catch2.git

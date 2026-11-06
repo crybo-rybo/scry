@@ -86,3 +86,11 @@ includes only the umbrella header needs no new include.
   [standalone example](https://github.com/crybo-rybo/scrydantic/blob/main/examples/standalone_tools.cpp)
   lists reflected tools as an MCP-style `tools/list` result and serves
   `tools/call` requests without Scry.
+
+## Repository
+
+- `docs/contributing.md` and the pull request template are removed. The README
+  holds the build and test commands, `docs/guide.md` is the usage guide by
+  task, and `docs/architecture.md` keeps the guarantees. The release steps are
+  a comment next to the version in `CMakeLists.txt`, and the test rules are a
+  comment at the top of `tests/CMakeLists.txt`.

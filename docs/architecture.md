@@ -11,8 +11,8 @@ which is the annotations, the JSON types, the strict codec, the schema generator
 and the tool binding, is a separate library,
 [Scrydantic](https://github.com/crybo-rybo/scrydantic).
 Scry links it, and Scry's public API uses its types, such as `scrydantic::Json`.
-For a complete program, see [README.md](../README.md). For build and test
-instructions, see [contributing.md](contributing.md).
+For a complete program, see [README.md](../README.md). For usage by task, see
+[guide.md](guide.md).
 
 ## Public API
 
@@ -785,8 +785,8 @@ gives the full contract:
   exponent (`1E-5`, `1E20`). Zero is `0`, and negative zero is `-0`. Canonical
   text reads back as the same tree, and it writes back as itself.
 
-Golden fixtures in `tests/fixtures/json/goldens.tar.xz` lock the acceptance
-boundary and the canonical bytes.
+Golden fixtures in the Scrydantic repository lock the acceptance boundary and
+the canonical bytes.
 
 ## Typed completions
 
@@ -1280,8 +1280,8 @@ finds Scrydantic, curl, and Threads. Tests use Catch2, and only the standalone
 showcase uses Dear ImGui.
 
 Public headers use Scry types, Scrydantic JSON types, and move-only
-`UniqueFunction` callables. Stateful handles use PImpl.
-[contributing.md](contributing.md) tells how to build and test Scry.
+`UniqueFunction` callables. Stateful handles use PImpl. The README tells how to
+build and test Scry.
 
 ## Scrydantic integration
 
