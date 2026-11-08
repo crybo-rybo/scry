@@ -10,6 +10,13 @@ project(
 
 # The CMake project version above is the only place the release number lives;
 # the public <scry/version.hpp> is generated from it so the two cannot drift.
+#
+# To cut a release: raise the version above; update the find_package version and
+# the FetchContent GIT_TAG in README.md and the version assertions in
+# tests/public_api_contract.cpp; then
+#   git tag vX.Y.Z && git push origin vX.Y.Z
+#   gh release create vX.Y.Z --generate-notes
+# The release notes live on the GitHub release. No workflow publishes one.
 set(
   SCRY_GENERATED_INCLUDE_DIR
   "${PROJECT_BINARY_DIR}/generated/include"
