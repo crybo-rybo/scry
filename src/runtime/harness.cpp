@@ -166,6 +166,14 @@ public:
           detail::make_error(ErrorCategory::resource_limit,
                              "user message exceeds the Conversation byte limit"));
     }
+    // A request body holding text that is not UTF-8 would not be JSON, so the text
+    // is refused here, before the turn is queued, rather than when its request is
+    // encoded. The check escapes a copy of the text, which can be several times its
+    // size, so it runs only once the admission checks above have bounded that size.
+    if (!scrydantic::is_valid_json(scrydantic::escape_json_string(text))) {
+      return std::unexpected(detail::make_error(ErrorCategory::invalid_argument,
+                                                "user message must be valid UTF-8"));
+    }
     if (next_turn_id_ == std::numeric_limits<std::uint64_t>::max()) {
       return std::unexpected(detail::make_error(
           ErrorCategory::invalid_state, "Harness exhausted its Turn identifiers"));
@@ -323,13 +331,6 @@ Result<Turn> Harness::send_turn(Conversation& conversation,
   if (impl_ == nullptr || conversation.impl_ == nullptr) {
     return std::unexpected(detail::make_error(
         ErrorCategory::invalid_state, "Harness and Conversation must both be active"));
-  }
-  // A request body holding text that is not UTF-8 would not be JSON, so the text
-  // is refused here, before the turn is queued, rather than when its request is
-  // encoded.
-  if (!scrydantic::is_valid_json(scrydantic::escape_json_string(user_message_text))) {
-    return std::unexpected(detail::make_error(ErrorCategory::invalid_argument,
-                                              "user message must be valid UTF-8"));
   }
   auto route = impl_->send(conversation.impl_, std::move(user_message_text),
                            std::move(callbacks), std::move(format));

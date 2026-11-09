@@ -988,3 +988,18 @@ TEST_CASE("a user message that is not UTF-8 is refused before its turn is queued
   CHECK(fixture.server.requests().empty());
   CHECK(fixture.conversation.message_count() == 0);
 }
+
+TEST_CASE("a user message over the byte limit is refused for its size before its "
+          "encoding is checked") {
+  auto config = test_config();
+  config.limits.max_conversation_bytes = 1024;
+  auto fixture = make_harness_fixture(config, {});
+  // Escaping a control byte takes six bytes, so the UTF-8 check would build a copy
+  // six times this size if it ran before the byte limit.
+  const auto turn =
+      fixture.harness.send(fixture.conversation, std::string(4096, '\x01') + "\xFF");
+  REQUIRE_FALSE(turn);
+  CHECK(turn.error().category == scry::ErrorCategory::resource_limit);
+  CHECK(fixture.server.requests().empty());
+  CHECK(fixture.conversation.message_count() == 0);
+}
