@@ -365,6 +365,21 @@ static_assert(std::same_as<decltype(scry::Answered<contract::Verdict>::value),
                            contract::Verdict>);
 static_assert(std::same_as<decltype(scry::Answered<contract::Verdict>::completion),
                            scry::Completion>);
+// A typed send delivers the decoded answer; its other callbacks are TurnCallbacks'.
+static_assert(std::is_aggregate_v<scry::AnswerCallbacks<contract::Verdict>>);
+static_assert(
+    std::same_as<
+        decltype(scry::AnswerCallbacks<contract::Verdict>::on_finished),
+        scry::UniqueFunction<void(scry::Result<scry::Answered<contract::Verdict>>)>>);
+static_assert(
+    std::same_as<decltype(scry::AnswerCallbacks<contract::Verdict>::on_text_delta),
+                 decltype(scry::TurnCallbacks::on_text_delta)>);
+static_assert(
+    std::same_as<decltype(scry::AnswerCallbacks<contract::Verdict>::on_tool_request),
+                 decltype(scry::TurnCallbacks::on_tool_request)>);
+static_assert(
+    std::same_as<decltype(scry::AnswerCallbacks<contract::Verdict>::on_tool_call),
+                 decltype(scry::TurnCallbacks::on_tool_call)>);
 // An answer is a tool input, so it is an object: ToolArguments is the check.
 static_assert(scrydantic::ToolArguments<contract::Verdict>);
 static_assert(!scrydantic::ToolArguments<contract::Opaque>);
@@ -383,7 +398,8 @@ static_assert(requires(scry::Harness& harness, scry::Conversation& conversation)
     harness.send<contract::Verdict>(conversation, std::string{})
   } -> std::same_as<scry::Result<scry::Turn>>;
   {
-    harness.send<contract::Verdict>(conversation, std::string{}, scry::TurnCallbacks{})
+    harness.send<contract::Verdict>(conversation, std::string{},
+                                    scry::AnswerCallbacks<contract::Verdict>{})
   } -> std::same_as<scry::Result<scry::Turn>>;
   {
     harness.send_and_wait_structured(conversation, std::string{},
