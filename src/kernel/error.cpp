@@ -32,4 +32,13 @@ Error tool_error(std::string model_message, std::string host_message) {
   };
 }
 
+Error tool_error(scrydantic::Error error) {
+  return Error{
+      .category = ErrorCategory::tool,
+      .message = std::move(error.message),
+      .model_message = std::move(error.model_message),
+      .issues = std::move(error.issues),
+  };
+}
+
 } // namespace scry

@@ -100,6 +100,19 @@ struct Error {
 [[nodiscard]] Error tool_error(std::string model_message,
                                std::string host_message = {});
 
+/// Reports a Scrydantic failure as an ErrorCategory::tool error.
+///
+/// A scrydantic::Error has no category. This keeps its `message`, its
+/// `model_message`, and its `issues`, and files it as a tool error, which is what
+/// Scry does with the failure of a reflected tool. Use it in a callable that
+/// returns a scry::Result and calls Scrydantic itself: a dynamic tool's handler,
+/// or a hand-written AnswerValidator, that decodes its JSON with
+/// scrydantic::decode<T>() forwards a failure in one line, and the model reads
+/// the same path-and-reason lines that a reflected tool would have given it.
+/// @param error Failure of a Scrydantic operation, such as a strict decode.
+/// @return An ErrorCategory::tool error carrying the same texts and issues.
+[[nodiscard]] Error tool_error(scrydantic::Error error);
+
 /// Result of a fallible Scry operation.
 template <typename T> using Result = std::expected<T, Error>;
 

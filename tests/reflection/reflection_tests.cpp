@@ -431,6 +431,40 @@ TEST_CASE("reflected handlers may take the call context as a leading parameter")
   CHECK(plain->result.text == R"({"label":""})");
 }
 
+TEST_CASE("a dynamic tool forwards a Scrydantic decode failure with tool_error") {
+  // A dynamic handler returns scry::Result, and Scrydantic's errors have no
+  // category. scry::tool_error() files one as a tool error and keeps its texts
+  // and issues, so the model and the host get what a reflected tool gives them.
+  const auto tools = snapshot_of(
+      "presence",
+      [](const scry::ToolCallContext&,
+         const scrydantic::Json& arguments) -> scry::Result<scrydantic::Json> {
+        auto decoded = scrydantic::decode<PresenceArguments>(arguments);
+        if (!decoded) {
+          return std::unexpected(scry::tool_error(std::move(decoded.error())));
+        }
+        return scrydantic::Json{.text = "{}"};
+      });
+
+  std::optional<scry::Error> handler_error;
+  const auto result =
+      scry::detail::dispatch_tool(tools,
+                                  scry::detail::ToolCallBlock{
+                                      .id = "call-1",
+                                      .name = "presence",
+                                      .arguments = {.text = R"({"required":7})"},
+                                  },
+                                  {}, 1024, &handler_error);
+
+  REQUIRE(result);
+  CHECK(result->is_error);
+  CHECK(result->result.text ==
+        R"({"error":"$.nullable is a required member\n$.required must be a string"})");
+  REQUIRE(handler_error);
+  CHECK(handler_error->category == scry::ErrorCategory::tool);
+  CHECK(handler_error->issues.size() == 2);
+}
+
 TEST_CASE("response_format validators report a rejected answer as invalid_argument") {
   // Scrydantic's errors carry no category; Scry files a rejected typed answer
   // under invalid_argument, with the decoder's host and model texts.

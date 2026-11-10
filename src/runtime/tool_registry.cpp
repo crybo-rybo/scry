@@ -37,12 +37,7 @@ reflected_handler(scrydantic::ToolFunction<ToolCallContext> handler) {
           scrydantic::Json input) mutable -> Result<scrydantic::Json> {
         auto result = inner(context, std::move(input));
         if (!result) {
-          return std::unexpected(Error{
-              .category = ErrorCategory::tool,
-              .message = std::move(result.error().message),
-              .model_message = std::move(result.error().model_message),
-              .issues = std::move(result.error().issues),
-          });
+          return std::unexpected(tool_error(std::move(result.error())));
         }
         return std::move(*result);
       }};

@@ -31,6 +31,11 @@ static_assert(std::same_as<decltype(scry::Error::model_message), std::string>);
 static_assert(
     std::same_as<decltype(scry::Error::issues), std::vector<scrydantic::Issue>>);
 static_assert(std::same_as<decltype(scry::tool_error(std::string{})), scry::Error>);
+// A Scrydantic failure converts to a Scry tool error, and a string literal still
+// selects the two-text overload.
+static_assert(
+    std::same_as<decltype(scry::tool_error(scrydantic::Error{})), scry::Error>);
+static_assert(std::same_as<decltype(scry::tool_error("text")), scry::Error>);
 static_assert(std::is_aggregate_v<scrydantic::Json>);
 static_assert(std::is_enum_v<scrydantic::JsonKind>);
 static_assert(std::is_default_constructible_v<scrydantic::JsonView>);
@@ -608,6 +613,19 @@ int main() {
   const auto split = scry::tool_error("north or south only", "rejected move west");
   if (split.model_message != "north or south only" ||
       split.message != "rejected move west") {
+    return 1;
+  }
+  const auto forwarded = scry::tool_error(scrydantic::Error{
+      .message = "$.bed has no row in beds",
+      .model_message = "$.bed must be a known bed",
+      .issues = {{.kind = scrydantic::IssueKind::failed_check,
+                  .path = {std::string{"bed"}},
+                  .reason = "must be a known bed"}},
+  });
+  if (forwarded.category != scry::ErrorCategory::tool ||
+      forwarded.message != "$.bed has no row in beds" ||
+      forwarded.model_message != "$.bed must be a known bed" ||
+      forwarded.issues.size() != 1) {
     return 1;
   }
 
