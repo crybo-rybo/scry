@@ -1,13 +1,16 @@
 #include <iostream>
 #include <optional>
-#include <scry/scry.hpp>
+#include <scrydantic/scrydantic.hpp>
 #include <string>
 #include <variant>
 #include <vector>
 
-// Scry's reflected codec on its own: no model, no Harness. One annotated type
-// yields its JSON Schema, a strict decoder with model-readable errors, and a
-// canonical encoder. Constraints bound a member in the schema and in decoding.
+// Scrydantic on its own: no Scry header, no model, no Harness. Scry links
+// Scrydantic publicly, so a program that links scry::scry can use it for its own
+// JSON too. One annotated type yields its JSON Schema, a strict decoder with
+// model-readable errors, and a canonical encoder. A tool's arguments and a typed
+// answer go through exactly this, so this is also how to see what a model will be
+// sent and what it will be told when it gets a value wrong.
 namespace {
 
 enum class Priority {

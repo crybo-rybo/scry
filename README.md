@@ -1,17 +1,58 @@
 # Scry
 
-Scry is a C++26 library that connects an application to a large language model
-(LLM). The model can call C++ functions in your application as tools.
+Scry is a C++26 library that runs a conversation between your application and
+a large language model (LLM). It sends the request, streams the answer, runs
+the C++ functions that the model calls as tools, sends their results back, and
+repeats until the model gives its final answer. Then it commits the exchange
+to the conversation history.
 
-You write a usual C++ function and add one annotation. At compile time, Scry
-uses C++26 static reflection to read the declaration. From the declaration,
-Scry makes the tool name, the JSON schema, a strict argument decoder, and a
-result encoder. You do not write JSON, and the schema always agrees with the
-code.
+You declare a tool as a usual C++ function with one annotation. You do not
+write JSON: the tool's JSON schema, a strict argument decoder, and a result
+encoder come from the declaration by C++26 static reflection, so the schema
+always agrees with the code.
 
 Your application keeps control of its main loop. Scry does the network work on
 a background thread. Your tools and callbacks run on your thread, and only when
 you call `update()`.
+
+## What Scry does
+
+- **Runs the tool loop.** One `send()` covers the whole exchange: the request,
+  each round of tool calls, and the final answer. Scry bounds the rounds and
+  the calls, and it retries a failed request before any output arrived.
+- **Fits a main loop.** `send()` returns at once. Call `update()` from your
+  frame with a time budget. Text deltas, tool handlers, and completion
+  callbacks run inside it, on the calling thread, so your tools need no locks.
+  `send_and_wait()` and `ask()` do the pumping for scripts and tests.
+- **Returns typed answers.** `ask<Verdict>()` makes the model answer with a
+  C++ struct. A reply of the wrong shape goes back to the model with the
+  reason, and the model tries again.
+- **Lets you decide which calls run.** A tool can refuse a call with a message
+  for the model. A hook can refuse a call before its handler runs. A refusal
+  answers the model and never fails the turn.
+- **Speaks two protocols.** Anthropic Messages, and OpenAI-compatible Chat
+  Completions, which covers local servers such as Ollama. Both stream.
+- **Keeps history consistent.** A turn commits its messages together when it
+  succeeds. A failed or cancelled turn commits nothing. A conversation saves
+  to JSON and restores from it.
+- **Is testable without a model.** `scry::testing` is a scripted HTTP server
+  on loopback. Your tests run all of Scry against it, with no network.
+
+## Scry and Scrydantic
+
+Scry is built on [Scrydantic](https://github.com/crybo-rybo/scrydantic), a
+separate library that turns C++ declarations into JSON. A program that uses
+Scry uses both, and each has its own namespace:
+
+| | Scrydantic (`scrydantic::`) | Scry (`scry::`) |
+|---|---|---|
+| Does | Turns a struct into a JSON schema, a strict decoder, and an encoder. Turns an annotated function into a tool handler. Parses and writes JSON. | Registers tools, talks to the model, runs the tool loop, delivers events to your thread, and keeps the conversation. |
+| You write | The annotations (`tool`, `description`, `range`, ...), `Json`, and what a tool returns (`Result<T>`, `Status`, `tool_error()`). | `ToolRegistry`, `Harness`, `Conversation`, `Config`, the turn callbacks, and `Error`. |
+| Documented in | The [Scrydantic guide](https://github.com/crybo-rybo/scrydantic/blob/main/docs/guide.md): supported types, annotations, constraints, validators, and decode errors. | The [Scry guide](docs/guide.md) and [architecture](docs/architecture.md). |
+
+`<scry/scry.hpp>` includes Scrydantic, and the `scry::scry` CMake target links
+it, so you add nothing more. Scrydantic needs neither Scry nor a network. You
+can use it alone, for example to serve the same tools over MCP.
 
 ## Quickstart
 
@@ -24,8 +65,8 @@ you call `update()`.
 #include <thread>
 #include <utility>
 
-// Each annotated member function becomes a tool that is bound to this object. Scry
-// generates the JSON schema from the signature and decodes the model's arguments.
+// Each annotated member function becomes a tool that is bound to this object. The
+// JSON schema and the argument decoder come from the signature, by reflection.
 class HostTools {
 public:
   [[= scrydantic::tool{"Report the state of one subsystem"}]] std::string
@@ -75,8 +116,8 @@ int main() {
 }
 ```
 
-The model reads the tool schema, calls `subsystem_state`, and answers. With
-a local `qwen2.5:7b`, the program printed:
+The model reads the tool schema, calls `subsystem_state`, and answers. A run
+against a local `qwen2.5:7b` printed:
 
 ```
 The renderer is currently running.
@@ -97,10 +138,13 @@ struct WaterArguments {
 
 [[= scrydantic::tool{"Water one bed"}]] scrydantic::Status
     water(WaterArguments arguments);
+
+scry::ToolRegistry tools;
+tools.add<^^water>(); // returns scry::Status: examine it
 ```
 
-Scry makes this schema from the declaration, and the model gets it under the
-tool name `water`:
+Scrydantic makes this schema from the declaration, and Scry sends it to the
+model under the tool name `water`:
 
 ```json
 {
@@ -123,42 +167,52 @@ tool name `water`:
 }
 ```
 
-- **The types and constraints set the schema.** `std::int32_t` gives an
-  integer, and `range` bounds it; without `range`, the bounds are those of the
-  type. `liters` has a default value, thus it is not required.
-- **The same declarations decode the arguments.** Scry rejects a missing
-  required member, an incorrect type, a value out of range, a value past a
-  constraint, and an unknown member. The model gets one line for each problem,
-  each with the path of the field, and the turn continues. Your function gets
-  only valid arguments.
-- **Errors occur at compile time.** If a declaration uses a type that Scry
-  cannot encode, the compiler stops. The diagnostic gives the member and the
-  reason.
+When the model calls `water`, the same declaration decodes its arguments.
+Three things follow for your application:
 
-Scry supports `bool`, integers, floating-point types, `std::string`, enums (as
-strings), nested structs, `std::vector`, `std::array`, `std::optional`, and
-tagged `std::variant`. Run [examples/toolbox.cpp](examples/toolbox.cpp) with
-`--tool-manifest` to print the schema of every tool in a program. This needs
-no model and no network.
+- **Your function gets only valid arguments.** A missing member, an incorrect
+  type, a value past a constraint, and an unknown member are all rejected
+  before the call.
+- **The model can correct itself.** Scry sends each problem back as the tool
+  result, one line for each, with the path of the field: `$.bed must be at
+  most 3`. The turn continues, and the model calls again.
+- **A type that has no JSON form does not compile.** The diagnostic gives the
+  member and the reason.
 
-The [guide](docs/guide.md) covers the rest: every way to package tools,
-typed answers, the main loop, providers, errors, persistence, and testing
-without a model. [docs/architecture.md](docs/architecture.md) states the
-guarantees and the limits. Read it before you rely on a specific behavior.
+The [Scrydantic guide](https://github.com/crybo-rybo/scrydantic/blob/main/docs/guide.md)
+lists the supported types and every annotation. To print the schema of each
+tool in a program, with no model and no network, call
+`ToolRegistry::to_json()`, or run [examples/toolbox.cpp](examples/toolbox.cpp)
+with `--tool-manifest`.
+
+## An answer as a C++ value
+
+```cpp
+struct Verdict {
+  [[= scrydantic::description{"Is the claim supported by evidence?"}]] bool supported{};
+  [[= scrydantic::description{"One sentence explaining the verdict"}]] std::string reason{};
+};
+
+auto verdict = harness->ask<Verdict>(*conversation, "Is the moon made of cheese?");
+if (verdict)
+  std::cout << verdict->value.supported << ' ' << verdict->value.reason << '\n';
+```
+
+The model can still call your tools before it answers.
+[examples/typed_answer.cpp](examples/typed_answer.cpp) is the full program.
 
 ## Requirements
 
 - **GCC 16.2 or newer.** The public headers use C++26 reflection and need
-  `-std=c++26 -freflection`. Scry does not support Clang or MSVC.
-- **CMake 3.30 or newer** and Ninja. 3.30 is the first CMake version that
-  knows the C++26 mode of GCC.
+  `-std=c++26 -freflection`. Scry does not support Clang or MSVC. The official
+  `gcc:16.2.0` container image has this compiler. Ubuntu's toolchain PPA
+  packages only development snapshots of GCC 16, which do not qualify.
+- **CMake 3.30 or newer.** 3.30 is the first CMake version that knows the
+  C++26 mode of GCC.
 - **libcurl 7.84 or newer**, with development headers.
-- **Scrydantic 0.2.x.** Scry uses it for JSON, schemas, and reflected tools.
-  CMake uses an installed package when available, otherwise fetches a pinned
-  revision.
-- **Linux or macOS.** CI uses the official `gcc:16.2.0` image. Ubuntu's
-  toolchain PPA packages only development snapshots of GCC 16, which
-  Scrydantic rejects.
+- **Scrydantic 0.2.x.** CMake uses an installed package when one is
+  available. Otherwise it fetches a pinned revision.
+- **Linux or macOS.**
 
 ## Install
 
@@ -200,58 +254,57 @@ FetchContent_MakeAvailable(scry)
 target_link_libraries(app PRIVATE scry::scry)
 ```
 
+For the scripted test server, request the `testing` component and link
+`scry::testing` to your tests:
+
+```cmake
+find_package(scry 0.7.0 CONFIG REQUIRED COMPONENTS testing)
+target_link_libraries(app_tests PRIVATE scry::scry scry::testing)
+```
+
 | Option | Default | Purpose |
 |---|---|---|
-| `SCRY_BUILD_TESTS` | On at top level | Build the tests |
-| `SCRY_BUILD_EXAMPLES` | On at top level | Compile the programs under `examples/` |
-| `SCRY_BUILD_TESTING_SUPPORT` | On | Build and install `scry::testing`, the scripted server for tests without a model |
-| `SCRY_WARNINGS_AS_ERRORS` | On at top level | Treat project warnings as errors |
-| `SCRY_SANITIZER` | `none` | `none`, `address-undefined`, or `thread`. Also instruments a fetched Scrydantic |
+| `SCRY_BUILD_TESTING_SUPPORT` | On | Build and install `scry::testing` |
 | `SCRY_FETCH_SCRYDANTIC` | On | Fetch the pinned Scrydantic when no installed package or parent target exists |
+| `SCRY_BUILD_TESTS` | On at top level | Build Scry's own tests |
+| `SCRY_BUILD_EXAMPLES` | On at top level | Compile the programs under `examples/` |
+| `SCRY_WARNINGS_AS_ERRORS` | On at top level | Treat warnings in Scry's own sources as errors |
+| `SCRY_SANITIZER` | `none` | `none`, `address-undefined`, or `thread`. Also instruments a fetched Scrydantic |
 
 To require an installed Scrydantic and prevent a download, set
 `-DSCRY_FETCH_SCRYDANTIC=OFF` and set `CMAKE_PREFIX_PATH` or `scrydantic_DIR`.
-For local Scrydantic development, set `FETCHCONTENT_SOURCE_DIR_SCRYDANTIC` to
-your checkout. A parent project can also supply the `scrydantic::scrydantic`
-and `scrydantic::json` targets before it adds Scry.
+A parent project can also supply the `scrydantic::scrydantic` and
+`scrydantic::json` targets before it adds Scry.
 
-## Build and test
-
-```sh
-./scripts/test.sh                  # configure, build, parallel ctest (dev preset)
-./scripts/test.sh -R 'runtime\.'   # the script sends extra arguments to ctest
-PRESET=asan ./scripts/test.sh      # or PRESET=tsan
-./scripts/format.sh --fix          # --check (the default) only verifies
-./scripts/lint.sh                  # clang-tidy on the kernel, plus the repository rules
-./scripts/test-e2e.sh              # live model; see the header of the script
-```
-
-CI runs these scripts in the `gcc:16.2.0` image: the format check and the lint
-in one job, and `test.sh` with the `dev`, `asan`, and `tsan` presets in another. The presets
-select `g++-16` and build into `build/<preset>` with Ninja. If your compiler
-has a different name, set `CXX` for the scripts. The formatter is clang-format
-and the linter is clang-tidy, version 22 or newer; older versions format
-reflection annotations differently. Set `CLANG_FORMAT` and `CLANG_TIDY` to
-use a specific binary. `.clangd` points editors at `build/dev`.
-
-The tests download Catch2. `tsan` runs only on Linux, because GCC supplies no
-thread-sanitizer runtime on Apple Silicon.
-
-## More
+## Documentation
 
 | Resource | Content |
 |---|---|
-| [docs/guide.md](docs/guide.md) | How to use Scry, by task |
-| [docs/architecture.md](docs/architecture.md) | The design, the guarantees, and the operation limits |
+| [docs/guide.md](docs/guide.md) | How to use Scry, by task: tools, typed answers, the main loop, providers, errors, persistence, and tests |
+| [docs/architecture.md](docs/architecture.md) | What Scry guarantees and where its limits are. Read it before you rely on a specific behavior |
 | [include/scry/](include/scry/) | The API reference, in the public headers |
-| [examples/main_loop.cpp](examples/main_loop.cpp) | A reflected tool, a dynamic tool, an admission hook, and the history |
-| [examples/toolbox.cpp](examples/toolbox.cpp) | Each way to package a reflected tool in one program |
-| [examples/tool_policy.cpp](examples/tool_policy.cpp) | A tool refuses a call with a message, and the model tries again |
-| [examples/typed_values.cpp](examples/typed_values.cpp) | The reflected codec alone: an answer type, its schema, a strict decode, and the error text |
-| [examples/typed_answer.cpp](examples/typed_answer.cpp) | A turn that ends with a C++ value |
-| [examples/seeded_trials.cpp](examples/seeded_trials.cpp) | The same prompt, many times, with a fixed sampling seed |
-| [examples/testing_scripted.cpp](examples/testing_scripted.cpp) | A downstream test with a scripted server on loopback and no model |
-| [extras/showcase](extras/showcase) | A Dear ImGui chat panel, and a grid world where the model controls an NPC with tools |
+| [Scrydantic guide](https://github.com/crybo-rybo/scrydantic/blob/main/docs/guide.md) | Types, annotations, constraints, validators, schemas, and decode errors |
+| [docs/development.md](docs/development.md) | How to build, test, and change Scry itself |
+
+## Examples
+
+Each program is under [examples/](examples/) and compiles with the library.
+Those that talk to a model assume an OpenAI-compatible server on
+`127.0.0.1:11434`, such as `ollama serve`.
+
+| Program | Shows | Needs a model |
+|---|---|---|
+| [quickstart.cpp](examples/quickstart.cpp) | One tool, one turn, and a polling loop | Yes |
+| [toolbox.cpp](examples/toolbox.cpp) | Each way to register a reflected tool, and the tool manifest | Only without `--tool-manifest` |
+| [tool_policy.cpp](examples/tool_policy.cpp) | A tool refuses a call with a message, and the model tries again | Yes |
+| [main_loop.cpp](examples/main_loop.cpp) | A frame loop with an update budget, a dynamic tool, an admission hook, and the committed history | Yes |
+| [typed_answer.cpp](examples/typed_answer.cpp) | A turn that ends with a C++ value, and one with a hand-written response format | Yes |
+| [seeded_trials.cpp](examples/seeded_trials.cpp) | The same prompt, many times, with a fixed sampling seed | Yes |
+| [testing_scripted.cpp](examples/testing_scripted.cpp) | A test of an application against the scripted server | No |
+| [typed_values.cpp](examples/typed_values.cpp) | Scrydantic alone: a schema, a strict decode, and the text a model gets for an incorrect value | No |
+
+[extras/showcase](extras/showcase) has two larger programs: a Dear ImGui chat
+panel, and a grid world where the model controls an NPC with tools.
 
 ## License
 

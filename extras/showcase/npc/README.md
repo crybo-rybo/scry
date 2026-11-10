@@ -42,12 +42,13 @@ You declare the tools. You do not write them. `World` in `world.hpp` is a
 toolbox. Each member function of `World` with the `scrydantic::tool`
 annotation becomes a tool, and the tool has the name of the function.
 `harness.tools().add(world)` registers all five tools against the shared
-`World`. The host also keeps this `World` to print the final state. Scry makes
-the schema of each tool from its parameters. These tools have no parameters.
-Thus, the model sends `{}`, and Scry rejects all other arguments before the NPC
-moves. Scry encodes the `Observation` and `MoveOutcome` results from their
-members. Registration is atomic. If one of the five names is already in use,
-Scry registers none of the five tools.
+`World`. The host also keeps this `World` to print the final state.
+[Scrydantic](https://github.com/crybo-rybo/scrydantic), the reflection library
+that Scry builds on, makes the schema of each tool from its parameters. These
+tools have no parameters. Thus, the model sends `{}`, and all other arguments
+are rejected before the NPC moves. The `Observation` and `MoveOutcome` results
+are encoded from their members. Registration is atomic. If one of the five
+names is already in use, Scry registers none of the five tools.
 
 The world is temporary by design. If a model turn fails or is cancelled, the
 example does not roll back the movement that already occurred. A real

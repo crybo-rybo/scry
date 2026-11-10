@@ -38,7 +38,7 @@ public:
     return climate_;
   }
 
-  // Plain parameters: Scry synthesizes the argument object {"open": boolean}.
+  // Plain parameters become the members of the argument object {"open": boolean}.
   [[= scrydantic::tool{"Open or close the roof vents"}]] Climate
       set_vents(const bool open) {
     climate_ = {.temperature_c = open ? 21.0 : 27.0, .vents_open = open};

@@ -5,8 +5,8 @@
 #include <thread>
 #include <utility>
 
-// Each annotated member function becomes a tool that is bound to this object. Scry
-// generates the JSON schema from the signature and decodes the model's arguments.
+// Each annotated member function becomes a tool that is bound to this object. The
+// JSON schema and the argument decoder come from the signature, by reflection.
 class HostTools {
 public:
   [[= scrydantic::tool{"Report the state of one subsystem"}]] std::string

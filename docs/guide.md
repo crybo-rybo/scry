@@ -9,11 +9,89 @@ Every example assumes an OpenAI-compatible server on `127.0.0.1:11434`, such
 as `ollama serve` with a model that supports tools. The outputs below came from
 a local `qwen2.5:7b`. Another model answers with other words.
 
+- [The pieces](#the-pieces)
+- [Declare tools](#declare-tools)
+- [Refuse a call, and let the model try again](#refuse-a-call-and-let-the-model-try-again)
+- [Control which calls run](#control-which-calls-run)
+- [Register a tool that has no C++ declaration](#register-a-tool-that-has-no-c-declaration)
+- [Get a typed answer](#get-a-typed-answer)
+- [Drive a turn from a main loop](#drive-a-turn-from-a-main-loop)
+- [Configure the provider](#configure-the-provider)
+- [Handle errors](#handle-errors)
+- [Save and restore a conversation](#save-and-restore-a-conversation)
+- [Test without a model](#test-without-a-model)
+
+## The pieces
+
+A program that uses Scry has four objects:
+
+| Object | What it is |
+| --- | --- |
+| `scry::ToolRegistry` | The tools that the model can call. You build it, and the Harness takes it. |
+| `scry::Harness` | One configured connection to a model: the provider settings, the registry, and a worker thread for the network. |
+| `scry::Conversation` | A system prompt and the committed message history. Many conversations can share one Harness. |
+| `scry::Turn` | The handle to one exchange that `send()` accepted: one user message, the tool rounds that the model asks for, and the final answer. |
+
+A turn goes through these steps:
+
+1. `harness.send(conversation, text, callbacks)` checks the request and
+   returns a `Turn` at once.
+2. The worker sends the request and reads the stream.
+3. Each time you call `harness.update()`, Scry delivers what is ready on your
+   thread: text deltas, and the tool calls of the model, which run your
+   functions.
+4. Scry sends the tool results back. Steps 2 to 4 repeat until the model
+   answers without a tool call.
+5. Inside `update()`, Scry commits the whole exchange to the conversation and
+   then calls `on_finished`.
+
+`send_and_wait()` and `ask<T>()` do steps 1 to 5 in one blocking call.
+
+### Two libraries, two namespaces
+
+Scry does not make schemas or parse JSON. It uses
+[Scrydantic](https://github.com/crybo-rybo/scrydantic) for that, and
+`<scry/scry.hpp>` includes it. The split is by namespace:
+
+- **`scrydantic::`** is everything about a C++ type as JSON: the annotations
+  on your structs and functions, `Json` and `JsonView`, `encode()`,
+  `decode<T>()`, and `schema_v<T>`. The
+  [Scrydantic guide](https://github.com/crybo-rybo/scrydantic/blob/main/docs/guide.md)
+  is the reference for the supported types, the annotations, the constraints,
+  the validators, and the text of a decode error.
+- **`scry::`** is everything about a conversation with a model: the registry,
+  the Harness, turns, callbacks, configuration, and history. This guide is
+  about that.
+
+Each library has its own `Error`, `Result<T>`, `Status`, and `tool_error()`.
+Which one a function of yours returns depends on who calls it:
+
+| You write | It returns | It refuses with |
+| --- | --- | --- |
+| A reflected tool: an annotated function or member function, or an `add<Args>()` handler | A value, `void`, `scrydantic::Result<T>`, or `scrydantic::Status` | `scrydantic::tool_error()` |
+| A validator for `scrydantic::check` | `scrydantic::Status` | `scrydantic::tool_error()` |
+| A dynamic tool, for `add_dynamic()` | `scry::Result<scrydantic::Json>` | `scry::tool_error()` |
+| A hand-written `ResponseFormat::validate` | `scry::Status` | `scry::tool_error()` |
+
+The rule: code that Scrydantic calls from a declaration returns Scrydantic's
+types, and code that you give to Scry as a JSON callable returns Scry's. Both
+`tool_error()` functions take the same two texts, one for the model and one
+for the host. A `scrydantic::Error` has no category. Scry gives it one when it
+reports it to you: `tool` for a tool call, and `invalid_argument` for a typed
+answer. Everything that Scry returns to you is a `scry::Result` or a
+`scry::Status`.
+
 ## Declare tools
 
-Each form is optional. Use the form that agrees with your code, or use many
-forms in one registry. All forms, except `add_dynamic()`, get the schema from
-reflection.
+A tool is a C++ function that the model can call. Annotate it with
+`scrydantic::tool` and register it. Scrydantic makes its schema, its argument
+decoder, and its result encoder from the declaration. Scry keeps it in a
+registry, sends the schema to the model, and calls the function when the model
+asks.
+
+Each registration form is optional. Use the form that agrees with your code,
+or use many forms in one registry. All forms, except `add_dynamic()`, get the
+schema from reflection.
 
 | Form | Registration | Use it when |
 | --- | --- | --- |
@@ -83,52 +161,39 @@ uses the tools that were registered when `send()` accepted it.
 A tool function can have one of these parameter lists:
 
 - **No parameters.** The tool takes `{}`.
-- **Plain parameters.** Scry makes an argument object with one required member
-  for each parameter. `set_vents(bool open)` takes `{"open": true}`. Each
-  parameter must have a name, and GCC 16 cannot read annotations on
-  parameters, so this form has no descriptions or defaults.
+- **Plain parameters.** The argument object has one required member for each
+  parameter. `set_vents(bool open)` takes `{"open": true}`. Each parameter
+  must have a name, and GCC 16 cannot read annotations on parameters, so this
+  form has no descriptions or defaults.
 - **One struct.** The struct is the argument object. Use this form for
-  descriptions, default values, and optional members.
-
-Before these parameters, a tool can take `const scry::ToolCallContext&`. The
-context gives the turn, the round, the call ID, and the tool name. Its string
-views are valid only until the handler returns.
+  descriptions, default values, optional members, and constraints.
 
 A tool can return a supported value, a `scrydantic::Result` of one, `void`, or
 `scrydantic::Status`. `void` and a successful `Status` send `{}` to the model.
 
-Supported member and result types: `bool`, integers up to 64 bits, finite
-`float` and `double`, `std::string`, scoped enums (as the enumerator name),
-`std::optional<T>`, `std::vector<T>`, `std::array<T, N>`, nested aggregates,
-and `std::variant` of tagged aggregates. A member with a default initializer
-is not required. Only `std::optional` accepts `null`.
+These rules are Scrydantic's, and its guide has them in full: the
+[types](https://github.com/crybo-rybo/scrydantic/blob/main/docs/guide.md#models)
+that a member, a parameter, or a result can have, which members are required,
+and the [annotations](https://github.com/crybo-rybo/scrydantic/blob/main/docs/guide.md#annotations)
+that describe a member (`description`), rename it (`name`), bound it (`range`,
+`length`, `items`, ...), or check it (`check`). All of them are in the
+`scrydantic` namespace.
 
-### Annotations
+Scry adds one thing to a tool's signature. Before its other parameters, a tool
+can take `const scry::ToolCallContext&`. The context gives the turn, the
+round, the call ID, and the tool name, and it is not part of the schema. Its
+string views are valid only until the handler returns.
 
-| Annotation | Applies to | Effect |
-| --- | --- | --- |
-| `tool{"..."}` | Function | Makes the function a tool. The text is the tool description. |
-| `name{"..."}` | Function or data member | Changes the tool name or the JSON key. |
-| `description{"..."}` | Data member | Describes the parameter to the model. |
-| `tag{"..."}` | Class | Identifies a `std::variant` alternative, under the key `"type"`. |
-| `skip_null` | Class or data member | Omits an empty `std::optional` instead of writing `null`. |
-| `emit_null` | Data member | Writes `null` for one `std::optional` member of a `skip_null` class. |
-| `ignore_unknown` | Class | Decoding ignores JSON members that the class does not declare. |
-| `range`, `multiple_of` | Number member | Bounds the value, in the schema and in decoding. |
-| `length`, `pattern` | String member | Bounds the length in the schema and in decoding; `pattern` is in the schema only. |
-| `items` | `std::vector` member | Bounds the number of elements, in the schema and in decoding. |
-| `check<&fn>` | Data member or class | Runs a validator after decoding. |
+```cpp
+[[= scrydantic::tool{"Water one bed"}]]
+scrydantic::Status water(const scry::ToolCallContext& call, WaterArguments arguments);
+```
 
-All annotations are in the `scrydantic` namespace, in
-`<scrydantic/annotations.hpp>`. Put a class annotation between `struct` and the
-class name: `struct [[= scrydantic::tag{"note"}]] Note { ... };`.
-
-### Constraints and validators
+### What the model and the host see of a rejected value
 
 A constraint bounds a member in the schema that the model sees and in the
 decode, so the handler never sees a value past it. A validator checks what a
-schema cannot express. It takes the member, or the whole object for a class,
-as `const T&` and returns `scrydantic::Status`:
+schema cannot express:
 
 ```cpp
 scrydantic::Status known_city(const std::string& city) {
@@ -144,15 +209,19 @@ struct Booking {
 };
 ```
 
-For `{"city":"Rome","guests":9}`, the model gets both problems, one line each:
-`$.city must be a known city` and `$.guests must be at most 8`. The validator's
-second text, `has no row in cities`, is for the host only.
+When the model calls a tool that takes a `Booking` with
+`{"city":"Rome","guests":9}`, your function does not run. Scry answers the
+model with both problems as the tool result, one line each: `$.city must be a
+known city` and `$.guests must be at most 8`. The turn continues, and the
+model can call again.
 
-The host gets the same problems as data. `scry::Error::issues` lists each one
-as a `scrydantic::Issue`, with its kind, its path, and its reason. For a tool
-call, `on_tool_call` receives the handler's error in `ToolCall::error`, with
-the host text in `message`. Typed answers use the same rules, and
-`ask<Answer>()` runs an answer's validators once for each candidate.
+The host gets the same problems as data. `on_tool_call` receives the error in
+`ToolCall::error`, a `scry::Error` of category `tool`. Its `issues` lists each
+problem as a `scrydantic::Issue`, with its kind, its path, and its reason. Its
+`message` has the lines for the host, here `$.city has no row in cities`.
+Scry never sends that text to the model. Typed answers follow the same rules:
+[`ask<Answer>()`](#get-a-typed-answer) sends a rejected answer back to the
+model in the same way.
 
 ## Refuse a call, and let the model try again
 
@@ -294,11 +363,14 @@ A typed turn is the ordinary tool loop plus one response tool. The model can
 still call your tools first. The committed history holds the answer as a text
 block, so a restored conversation works with both dialects.
 
-### Use the codec alone
+### See what the model is sent, without a model
 
-The schema generator, the encoder, and the decoder work without a model or a
-Harness. [examples/typed_values.cpp](../examples/typed_values.cpp) declares a
-tagged variant, a `skip_null` class, and two constraints, and prints:
+A typed answer and a tool's arguments go through Scrydantic's schema generator
+and strict decoder. Both work without a Harness, so you can print the schema of
+a type, and the text that a model gets for an incorrect value, in a unit test
+or a small program. [examples/typed_values.cpp](../examples/typed_values.cpp)
+includes only `<scrydantic/scrydantic.hpp>`. It declares a tagged variant, a
+`skip_null` class, and two constraints, and prints:
 
 ```
 schema: {"additionalProperties":false,"properties":{"actions":{"items":{"anyOf":[{"additionalProperties":false,"properties":{"priority":{"enum":["low","high"],"type":"string"},"text":{"description":"What to remind the user of","minLength":1,"type":"string"},"type":{"enum":["reminder"],"type":"string"}},"required":["text","type"],"type":"object"},{"additionalProperties":false,"properties":{"body":{"type":"string"},"type":{"enum":["note"],"type":"string"}},"required":["body","type"],"type":"object"}]},"maxItems":5,"type":"array"},"summary":{"anyOf":[{"type":"string"},{"type":"null"}]}},"required":["actions"],"type":"object"}
@@ -310,18 +382,15 @@ issue at $.actions[0].type
 issue at $.actions[1].text
 ```
 
-The lines after `rejected:` are `Error::model_message` for a decode of
-`{"actions":[{"type":"alarm","text":"now"},{"type":"reminder","text":""}]}`,
-one line for each issue. It is written to go back to the model as it is. The
-last two lines print the path of each `Error::issues` entry.
+The lines after `rejected:` are `scrydantic::Error::model_message` for a decode
+of `{"actions":[{"type":"alarm","text":"now"},{"type":"reminder","text":""}]}`,
+one line for each issue. In a turn, Scry sends this text to the model as it
+is. The last two lines print the path of each entry of `Error::issues`.
 
-This layer is a separate library,
-[Scrydantic](https://github.com/crybo-rybo/scrydantic). Scry links it as a
-public dependency. Scrydantic has the annotations, `scrydantic::Json` and
-`JsonView`, `encode()` and `decode<T>()`, `schema_v<T>`, and the tool binding
-`bind()`. It does not need Scry, libcurl, or a model, so you can use it alone,
-for example to serve tools over MCP. Refer to the
-[Scrydantic MCP tools example](https://github.com/crybo-rybo/scrydantic/blob/main/examples/mcp_tools.cpp).
+For the tools of a registry, `ToolRegistry::to_json()` gives every schema in
+one document. For everything else that Scrydantic does alone, such as serving
+the same annotated functions over MCP, refer to
+[its repository](https://github.com/crybo-rybo/scrydantic).
 
 ## Drive a turn from a main loop
 
@@ -413,11 +482,17 @@ by default.
 
 ## Handle errors
 
-Each call that can fail returns `scry::Result<T>`, which is
+Each Scry call that can fail returns `scry::Result<T>`, which is
 `std::expected<T, scry::Error>`, or `scry::Status`. `Error::category` is the
 programmatic reason, `message` is the host diagnostic, and `retryable` says if
 a new request can succeed. Scry sanitizes provider text and removes the API
 key from diagnostics.
+
+`scry::Error` is not `scrydantic::Error`, which has only the texts and the
+issues of a codec failure. You get a `scrydantic::Error` only from a
+Scrydantic function that you call yourself, such as `scrydantic::decode<T>()`.
+When Scry reports a failure that began in Scrydantic, it copies the texts and
+the issues into a `scry::Error` and sets the category.
 
 | Category | Meaning |
 | --- | --- |
@@ -487,7 +562,7 @@ retryable `network` failure. For fast retries in a test, set
 cancellation, set a low `config.timeouts.shutdown`.
 
 [examples/testing_scripted.cpp](../examples/testing_scripted.cpp) is a complete
-test in this form, without a test framework. It passed as part of the test
-suite of this repository. [tests/testing/](../tests/testing/) has the
+test in this form, without a test framework. The test suite of this repository
+runs it. [tests/testing/](../tests/testing/) has the
 equivalent with Catch2. [scripted_server.hpp](../include/scry/testing/scripted_server.hpp)
 documents the script.
