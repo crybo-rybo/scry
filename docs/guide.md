@@ -321,7 +321,7 @@ public dependency. Scrydantic has the annotations, `scrydantic::Json` and
 `JsonView`, `encode()` and `decode<T>()`, `schema_v<T>`, and the tool binding
 `bind()`. It does not need Scry, libcurl, or a model, so you can use it alone,
 for example to serve tools over MCP. Refer to the
-[Scrydantic standalone example](https://github.com/crybo-rybo/scrydantic/blob/main/examples/standalone_tools.cpp).
+[Scrydantic MCP tools example](https://github.com/crybo-rybo/scrydantic/blob/main/examples/mcp_tools.cpp).
 
 ## Drive a turn from a main loop
 
