@@ -116,8 +116,9 @@ int main() {
 }
 ```
 
-The model reads the tool schema, calls `subsystem_state`, and answers. A run
-against a local `qwen2.5:7b` printed:
+The model reads the tool schema, calls `subsystem_state`, and answers. The
+words depend on the model. The program names `qwen3:8b`, and any model that
+supports tools works. This output is from a run with `qwen2.5:7b`:
 
 ```
 The renderer is currently running.

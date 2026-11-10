@@ -6,8 +6,10 @@ guarantees behind each behavior and the limits. The public headers under
 [include/scry/](../include/scry/) are the API reference.
 
 Every example assumes an OpenAI-compatible server on `127.0.0.1:11434`, such
-as `ollama serve` with a model that supports tools. The outputs below came from
-a local `qwen2.5:7b`. Another model answers with other words.
+as `ollama serve` with a model that supports tools. The programs name
+`qwen3:8b`. To use another model, change `Config::model`. The outputs below
+were recorded with a local `qwen2.5:7b`, and another model answers with other
+words.
 
 - [The pieces](#the-pieces)
 - [Declare tools](#declare-tools)
@@ -80,6 +82,11 @@ for the host. A `scrydantic::Error` has no category. Scry gives it one when it
 reports it to you: `tool` for a tool call, and `invalid_argument` for a typed
 answer. Everything that Scry returns to you is a `scry::Result` or a
 `scry::Status`.
+
+To cross from one to the other yourself, pass the `scrydantic::Error` to
+`scry::tool_error()`. It keeps the texts and the issues and sets the category
+`tool`. [A dynamic tool](#register-a-tool-that-has-no-c-declaration) uses it
+to forward a decode failure.
 
 ## Declare tools
 
@@ -326,6 +333,25 @@ tools.add_dynamic(
 escapes. [examples/main_loop.cpp](../examples/main_loop.cpp) has the complete
 handler.
 
+When a C++ struct does describe the arguments, or a part of them, the handler
+can decode it with Scrydantic and forward a failure with `scry::tool_error()`.
+The model then gets the same lines as for a reflected tool, each with the path
+of the field, and `ToolCall::error` holds the issues for the host:
+
+```cpp
+struct EchoArguments {
+  std::string text;
+};
+
+[](const scrydantic::Json& arguments) -> scry::Result<scrydantic::Json> {
+  auto echo = scrydantic::decode<EchoArguments>(arguments);
+  if (!echo)
+    return std::unexpected(scry::tool_error(std::move(echo.error())));
+  return scrydantic::Json{
+      .text = R"({"echo":)" + scrydantic::escape_json_string(echo->text) + "}"};
+}
+```
+
 ## Get a typed answer
 
 `ask<Answer>()` makes the model answer with a C++ value instead of text. The
@@ -346,13 +372,30 @@ if (verdict)
   std::cout << verdict->value.supported << ' ' << verdict->value.reason << '\n';
 ```
 
-`ask()` blocks. `send<Answer>()` is the form for a main loop: the answer
-arrives as canonical JSON in `Completion::structured`, for
-`scrydantic::decode<Answer>()`. For a response tool with another name, another
-description, or a hand-written schema and validator, pass a `ResponseFormat`
-to `send_structured()` or `send_and_wait_structured()`.
-[examples/typed_answer.cpp](../examples/typed_answer.cpp) uses both forms. It
-printed:
+`ask()` blocks. `send<Answer>()` is the form for a main loop. Its
+`on_finished` receives the same `Answered<Answer>` that `ask()` returns: the
+decoded `value`, and the `completion` with the text, the usage, and the counts.
+
+```cpp
+auto turn = harness->send<Verdict>(*conversation, "Is the moon made of cheese?", {
+    .on_finished = [](scry::Result<scry::Answered<Verdict>> done) {
+      if (done)
+        std::cout << done->value.reason << '\n';
+    },
+});
+// ... call harness->update() from your loop until turn->finished()
+```
+
+The value is the one that Scry already decoded to accept the answer. Do not
+decode `completion.structured` again to get it: a second decode runs the
+`scrydantic::check` validators of `Answer` again, after the history has
+committed.
+
+For a response tool with another name, another description, or a hand-written
+schema and validator, pass a `ResponseFormat` to `send_structured()` or
+`send_and_wait_structured()`. These deliver the answer as canonical JSON in
+`Completion::structured`. [examples/typed_answer.cpp](../examples/typed_answer.cpp)
+uses `ask()` and a hand-written format. It printed:
 
 ```
 not supported: The moon is not made of cheese. It is a natural satellite of the Earth, composed primarily of rock and dust.
@@ -492,7 +535,8 @@ key from diagnostics.
 issues of a codec failure. You get a `scrydantic::Error` only from a
 Scrydantic function that you call yourself, such as `scrydantic::decode<T>()`.
 When Scry reports a failure that began in Scrydantic, it copies the texts and
-the issues into a `scry::Error` and sets the category.
+the issues into a `scry::Error` and sets the category. `scry::tool_error()`
+does the same for a `scrydantic::Error` that your own callable holds.
 
 | Category | Meaning |
 | --- | --- |

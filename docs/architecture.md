@@ -492,6 +492,11 @@ error. If `model_message` is empty, Scry keeps its fixed diagnostic,
 included, is too large for the cap, Scry replaces it with the generic
 `tool execution failed`.
 
+`scry::tool_error(scrydantic::Error)` reports a Scrydantic failure as a tool
+error with the same `message`, `model_message`, and `issues`. A dynamic handler
+that decodes its arguments with `scrydantic::decode<T>()` uses it to forward the
+failure.
+
 A reflected handler refuses a call with `scrydantic::tool_error()`, which takes
 the same two texts. Scry reports the error of a reflected handler, or of its
 argument decoding or result encoding, as `ErrorCategory::tool`.
@@ -552,11 +557,16 @@ validator of the turn already decoded. Thus the `scrydantic::check` validators
 of `Answer` run once for each candidate, and not again after the turn commits.
 
 `send<Answer>(conversation, text, callbacks)` is the form for a host that polls.
-Its `Completion::structured` holds the canonical JSON of the answer for
-`scrydantic::decode<Answer>()`. `Answer` must satisfy `ToolArguments`, because
-the tool input of a provider is always a JSON object. Any other type fails to
-compile, and the diagnostic gives the member path and the reason, as for
-`add<Args>()`.
+Its callbacks are an `AnswerCallbacks<Answer>`. They are the `TurnCallbacks`,
+except that `on_finished` receives a `Result<Answered<Answer>>`: the same value
+and `Completion` that `ask()` returns. The value is the one that the validator
+decoded. Thus a host does not decode `Completion::structured` for it, and the
+validators of `Answer` do not run again after the commit. To get the answer as
+JSON alone, pass `response_format<Answer>()` to `send_structured()`.
+
+`Answer` must satisfy `ToolArguments`, because the tool input of a provider is
+always a JSON object. Any other type fails to compile, and the diagnostic gives
+the member path and the reason, as for `add<Args>()`.
 
 A typed turn is the ordinary tool loop plus one response tool. A
 `ResponseFormat` describes the response tool with these fields:
@@ -675,9 +685,10 @@ any turn does:
 - A failed or cancelled turn commits nothing.
 - `on_finished` is the single terminal channel.
 
-`ask()` reports what `send_and_wait_structured()` reports. It can also report a
-decode failure of an accepted answer, but the validator makes this failure
-unreachable.
+`ask()` reports what `send_and_wait_structured()` reports, and the
+`on_finished` of `send<Answer>()` reports what the `on_finished` of
+`send_structured()` reports. Each can also report a decode failure of an
+accepted answer, but the validator makes this failure unreachable.
 
 ## Providers and transport
 
