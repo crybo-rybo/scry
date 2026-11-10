@@ -232,7 +232,7 @@ In your project, configure with GCC 16.2 or newer and
 Then add these lines:
 
 ```cmake
-find_package(scry 0.7.0 CONFIG REQUIRED)
+find_package(scry 0.8.0 CONFIG REQUIRED)
 target_link_libraries(app PRIVATE scry::scry)
 ```
 
@@ -249,7 +249,7 @@ include(FetchContent)
 FetchContent_Declare(
   scry
   GIT_REPOSITORY https://github.com/crybo-rybo/scry.git
-  GIT_TAG v0.7.0
+  GIT_TAG v0.8.0
 )
 FetchContent_MakeAvailable(scry)
 target_link_libraries(app PRIVATE scry::scry)
@@ -259,7 +259,7 @@ For the scripted test server, request the `testing` component and link
 `scry::testing` to your tests:
 
 ```cmake
-find_package(scry 0.7.0 CONFIG REQUIRED COMPONENTS testing)
+find_package(scry 0.8.0 CONFIG REQUIRED COMPONENTS testing)
 target_link_libraries(app_tests PRIVATE scry::scry scry::testing)
 ```
 
