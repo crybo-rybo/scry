@@ -17,6 +17,10 @@
 #include <utility>
 #include <vector>
 
+// What Scry does with a reflected tool or a typed answer: how a Scrydantic
+// handler lowers into the registry, how its results and failures reach the model
+// and the host, and which category Scry gives its errors. The codec itself, its
+// schemas, and its decode rules are tested in Scrydantic's repository.
 namespace {
 
 enum class TemperatureUnit {
@@ -24,24 +28,11 @@ enum class TemperatureUnit {
   fahrenheit,
 };
 
-enum class AliasedUnit {
-  first = 1,
-  alias = 1,
-};
-
-enum UnscopedUnit {
-  unscoped,
-};
-
 struct PresenceArguments {
   [[= scrydantic::description{"C++ default"}]] std::string defaulted{"fallback"};
   std::optional<std::int16_t> nullable;
   std::optional<std::int16_t> optional_nullable = std::nullopt;
   [[= scrydantic::description{"Annotation text"}]] std::string required;
-};
-
-struct EscapedDescriptionArguments {
-  [[= scrydantic::description{"quote\" slash\\\b\f\n\r\t\x01"}]] std::string value;
 };
 
 struct NestedResult {
@@ -65,38 +56,8 @@ struct AllTypesArguments {
   std::vector<std::int32_t> values{};
 };
 
-struct NumericArguments {
-  float floating;
-  std::int16_t signed_value;
-  std::uint16_t unsigned_value;
-};
-
-struct CharacterArguments {
-  char value{};
-};
-
-struct NestedOptionalArguments {
-  std::optional<std::optional<int>> value{};
-};
-
-struct PackedBooleanArguments {
-  std::vector<bool> value{};
-};
-
-struct AliasedEnumArguments {
-  AliasedUnit value{};
-};
-
-struct UnscopedEnumArguments {
-  UnscopedUnit value{};
-};
-
 struct DirectHandler {
   NestedResult operator()(PresenceArguments) const { return {}; }
-};
-
-struct ExpectedHandler {
-  scrydantic::Result<NestedResult> operator()(PresenceArguments) const { return {}; }
 };
 
 // A const-qualified value is supported, so a Result of one is too, just as a
@@ -105,32 +66,6 @@ struct ConstExpectedHandler {
   scrydantic::Result<const std::int32_t> operator()(PresenceArguments) const {
     return 7;
   }
-};
-
-struct ReferenceHandler {
-  NestedResult& operator()(PresenceArguments) const;
-};
-
-struct RawJsonHandler {
-  scrydantic::Json operator()(PresenceArguments) const { return {}; }
-};
-
-struct VoidHandler {
-  void operator()(PresenceArguments) const {}
-};
-
-// A text catalog: the shape description_of exists for. The views need static storage
-// because each one is bound as a reference template parameter.
-namespace catalog {
-inline constexpr std::string_view direction = "Direction of travel";
-} // namespace catalog
-
-struct CatalogArguments {
-  [[= scrydantic::description_of<catalog::direction>()]] std::string heading;
-};
-
-struct LiteralArguments {
-  [[= scrydantic::description{"Direction of travel"}]] std::string heading;
 };
 
 struct ContextHandler {
@@ -161,11 +96,6 @@ struct StatusHandler {
   }
 };
 
-template <scrydantic::SupportedValue Type>
-[[nodiscard]] scrydantic::Result<Type> decode_value(const std::string_view text) {
-  return scrydantic::decode<Type>(scrydantic::Json{.text = std::string{text}});
-}
-
 // A reflected handler in the registry's shape, as ToolRegistry::add<Args>() builds
 // it.
 template <typename Args, typename Handler>
@@ -192,18 +122,6 @@ snapshot_of(std::string name, scry::ContextualToolHandler handler) {
 
 } // namespace
 
-static_assert(scrydantic::SupportedValue<bool>);
-static_assert(scrydantic::SupportedValue<std::vector<std::int32_t>>);
-static_assert(scrydantic::SupportedValue<AllTypesArguments>);
-static_assert(scrydantic::ToolArguments<NumericArguments>);
-static_assert(scrydantic::ToolArguments<PresenceArguments>);
-static_assert(scrydantic::ToolHandlerFor<DirectHandler, PresenceArguments>);
-static_assert(scrydantic::ToolHandlerFor<ExpectedHandler, PresenceArguments>);
-static_assert(scrydantic::ToolHandlerFor<ConstExpectedHandler, PresenceArguments>);
-static_assert(!scrydantic::ToolHandlerFor<ReferenceHandler, PresenceArguments>);
-static_assert(!scrydantic::ToolHandlerFor<RawJsonHandler, PresenceArguments>);
-// void and Status acknowledge a call with {}; see the acknowledgment test below.
-static_assert(scrydantic::ToolHandlerFor<VoidHandler, PresenceArguments>);
 // Scry's registry binds handlers with its call context.
 static_assert(scrydantic::ToolHandlerFor<ContextHandler, PresenceArguments,
                                          scry::ToolCallContext>);
@@ -211,275 +129,27 @@ static_assert(!scrydantic::ToolHandlerFor<ReversedContextHandler, PresenceArgume
                                           scry::ToolCallContext>);
 static_assert(scrydantic::ToolHandlerFor<VoidContextHandler, PresenceArguments,
                                          scry::ToolCallContext>);
-static_assert(scrydantic::ToolHandlerFor<StatusHandler, PresenceArguments>);
-static_assert(!scrydantic::ToolArguments<CharacterArguments>);
-static_assert(!scrydantic::ToolArguments<NestedOptionalArguments>);
-static_assert(!scrydantic::ToolArguments<PackedBooleanArguments>);
-static_assert(!scrydantic::ToolArguments<AliasedEnumArguments>);
-static_assert(!scrydantic::ToolArguments<UnscopedEnumArguments>);
 
-static_assert(
-    scrydantic::input_schema_v<PresenceArguments> ==
-    R"({"additionalProperties":false,"properties":{"defaulted":{"description":"C++ default","type":"string"},"nullable":{"anyOf":[{"maximum":32767,"minimum":-32768,"type":"integer"},{"type":"null"}]},"optional_nullable":{"anyOf":[{"maximum":32767,"minimum":-32768,"type":"integer"},{"type":"null"}]},"required":{"description":"Annotation text","type":"string"}},"required":["nullable","required"],"type":"object"})");
-static_assert(
-    scrydantic::input_schema_v<EscapedDescriptionArguments> ==
-    R"({"additionalProperties":false,"properties":{"value":{"description":"quote\" slash\\\b\f\n\r\t\u0001","type":"string"}},"required":["value"],"type":"object"})");
-static_assert(
-    scrydantic::input_schema_v<AllTypesArguments> ==
-    R"({"additionalProperties":false,"properties":{"fixed":{"items":{"maximum":2147483647,"minimum":-2147483648,"type":"integer"},"maxItems":2,"minItems":2,"type":"array"},"flag":{"type":"boolean"},"nested":{"additionalProperties":false,"properties":{"label":{"type":"string"}},"required":[],"type":"object"},"ratio":{"type":"number"},"unit":{"enum":["celsius","fahrenheit"],"type":"string"},"values":{"items":{"maximum":2147483647,"minimum":-2147483648,"type":"integer"},"type":"array"}},"required":[],"type":"object"})");
-static_assert(
-    scrydantic::input_schema_v<NumericArguments> ==
-    R"({"additionalProperties":false,"properties":{"floating":{"type":"number"},"signed_value":{"maximum":32767,"minimum":-32768,"type":"integer"},"unsigned_value":{"maximum":65535,"minimum":0,"type":"integer"}},"required":["floating","signed_value","unsigned_value"],"type":"object"})");
-
-// A catalog-sourced description must be indistinguishable from the literal form.
-static_assert(scrydantic::input_schema_v<CatalogArguments> ==
-              scrydantic::input_schema_v<LiteralArguments>);
-static_assert(
-    scrydantic::input_schema_v<CatalogArguments> ==
-    R"({"additionalProperties":false,"properties":{"heading":{"description":"Direction of travel","type":"string"}},"required":["heading"],"type":"object"})");
-static_assert(scrydantic::description_of<catalog::direction>().view() ==
-              catalog::direction);
-
-// Result types and bare enums are schema roots too, even though Scry never sends
-// either to a model.
-static_assert(
-    std::same_as<decltype(scrydantic::schema_v<NestedResult>), const std::string_view>);
-static_assert(scrydantic::schema_v<NestedResult> ==
-              scrydantic::input_schema_v<NestedResult>);
-static_assert(
-    scrydantic::schema_v<NestedResult> ==
-    R"({"additionalProperties":false,"properties":{"label":{"type":"string"}},"required":[],"type":"object"})");
-static_assert(scrydantic::schema_v<TemperatureUnit> ==
-              R"({"enum":["celsius","fahrenheit"],"type":"string"})");
-static_assert(
-    scrydantic::schema_v<std::vector<TemperatureUnit>> ==
-    R"({"items":{"enum":["celsius","fahrenheit"],"type":"string"},"type":"array"})");
-
-TEST_CASE("reflected decoding preserves defaults and required nullability") {
-  auto decoded = scrydantic::decode<PresenceArguments>(
-      scrydantic::Json{.text = R"({"nullable":null,"required":"Detroit"})"});
-
-  REQUIRE(decoded);
-  CHECK(decoded->defaulted == "fallback");
-  CHECK_FALSE(decoded->nullable.has_value());
-  CHECK_FALSE(decoded->optional_nullable.has_value());
-  CHECK(decoded->required == "Detroit");
-}
-
-TEST_CASE("reflected decode failures carry a schema-derived model message") {
-  const auto model_message = [](const std::string_view text) {
-    auto decoded = scrydantic::decode<AllTypesArguments>(
-        scrydantic::Json{.text = std::string{text}});
-    REQUIRE_FALSE(decoded);
-    // With no validator text for the host alone, both copies are the same.
-    CHECK(decoded.error().message == decoded.error().model_message);
-    return decoded.error().model_message;
-  };
-
-  CHECK(model_message("[]") == "$ must be an object");
-  CHECK(model_message(R"({"surprise":1})") ==
-        R"($ contains unknown member "surprise")");
-  CHECK(model_message(R"({"fixed":[1,2],"flag":1,"nested":{},"ratio":1,)"
-                      R"("unit":"celsius","values":[]})") ==
-        "$.flag must be a boolean");
-  CHECK(model_message(R"({"fixed":[1],"flag":true,"nested":{},"ratio":1,)"
-                      R"("unit":"celsius","values":[]})") ==
-        "$.fixed must be an array of the declared fixed size");
-  CHECK(model_message(R"({"fixed":[1,2],"flag":true,"nested":{},"ratio":1,)"
-                      R"("unit":"celsius","values":[4294967296]})") ==
-        "$.values[0] is outside the integer range");
-  CHECK(model_message(R"({"fixed":[1,2],"flag":true,"nested":{},"ratio":1,)"
-                      R"("unit":"celsius","values":[1.0]})") ==
-        "$.values[0] must be an integer");
-  CHECK(model_message(R"({"fixed":[1,2],"flag":true,"nested":{"label":1},"ratio":1,)"
-                      R"("unit":"celsius","values":[]})") ==
-        "$.nested.label must be a string");
-  CHECK(model_message(R"({"fixed":[1,2],"flag":true,"nested":{},"ratio":1,)"
-                      R"("unit":"kelvin","values":[]})") ==
-        "$.unit is not a declared enumerator; must be one of: celsius, fahrenheit");
-
-  auto required = scrydantic::decode<PresenceArguments>(
-      scrydantic::Json{.text = R"({"required":"Detroit"})"});
-  REQUIRE_FALSE(required);
-  CHECK(required.error().message == "$.nullable is a required member");
-  CHECK(required.error().model_message == "$.nullable is a required member");
-
+TEST_CASE("a reflected tool answers arguments that are not JSON with a fixed text") {
   auto handler = make_tool_handler<PresenceArguments>([](PresenceArguments) {});
   auto malformed = handler({}, scrydantic::Json{.text = "{"});
   REQUIRE_FALSE(malformed);
+  CHECK(malformed.error().category == scry::ErrorCategory::tool);
   CHECK(malformed.error().message == "tool arguments are not valid JSON");
   CHECK(malformed.error().model_message == "tool arguments are not valid JSON");
 }
 
-TEST_CASE("reflected codec round trips every supported composite family") {
-  auto decoded = scrydantic::decode<AllTypesArguments>(scrydantic::Json{
-      .text =
-          R"({"fixed":[1,2],"flag":true,"nested":{"label":"indoors"},"ratio":0.1,"unit":"fahrenheit","values":[3,4]})"});
-
-  REQUIRE(decoded);
-  CHECK(decoded->fixed == std::array<std::int32_t, 2>{1, 2});
-  CHECK(decoded->flag);
-  CHECK(decoded->nested.label == "indoors");
-  CHECK(decoded->ratio == 0.1);
-  CHECK(decoded->unit == TemperatureUnit::fahrenheit);
-  CHECK(decoded->values == std::vector<std::int32_t>{3, 4});
-
-  const auto encoded = scrydantic::encode(*decoded);
-  REQUIRE(encoded);
-  CHECK(
-      encoded->text ==
-      R"({"fixed":[1,2],"flag":true,"nested":{"label":"indoors"},"ratio":0.1,"unit":"fahrenheit","values":[3,4]})");
-}
-
-TEST_CASE("reflected numeric decoding accepts exact boundaries and signs") {
-  auto decoded = scrydantic::decode<NumericArguments>(scrydantic::Json{
-      .text = R"({"floating":7,"signed_value":-32768,"unsigned_value":65535})"});
-  REQUIRE(decoded);
-  CHECK(decoded->floating == 7.0F);
-  CHECK(decoded->signed_value == std::int16_t{-32768});
-  CHECK(decoded->unsigned_value == std::uint16_t{65535});
-
-  decoded = scrydantic::decode<NumericArguments>(scrydantic::Json{
-      .text = R"({"floating":1e39,"signed_value":0,"unsigned_value":1})"});
-  REQUIRE_FALSE(decoded);
-  CHECK(decoded.error().message == "$.floating must be a finite in-range number");
-}
-
-TEST_CASE("reflected signed integer decoding covers every strict boundary") {
-  CHECK(decode_value<std::int16_t>("-32768") == std::int16_t{-32768});
-  CHECK(decode_value<std::int16_t>("32767") == std::int16_t{32767});
-  CHECK_FALSE(decode_value<std::int16_t>("-32769"));
-  CHECK_FALSE(decode_value<std::int16_t>("32768"));
-  CHECK_FALSE(decode_value<std::int16_t>("1.0"));
-  // An exponent makes a number a double even when its value is whole, and -0 is
-  // the double -0.0, so neither is an integer (docs/architecture.md).
-  CHECK_FALSE(decode_value<std::int16_t>("1e2"));
-  CHECK_FALSE(decode_value<std::int16_t>("-0"));
-
-  CHECK(decode_value<std::int32_t>("-2147483648") ==
-        std::numeric_limits<std::int32_t>::lowest());
-  CHECK(decode_value<std::int32_t>("2147483647") ==
-        std::numeric_limits<std::int32_t>::max());
-  CHECK_FALSE(decode_value<std::int32_t>("-2147483649"));
-  CHECK_FALSE(decode_value<std::int32_t>("2147483648"));
-  CHECK_FALSE(decode_value<std::int32_t>(R"("integer")"));
-}
-
-TEST_CASE("reflected unsigned integer decoding covers signs and boundaries") {
-  CHECK(decode_value<std::uint16_t>("0") == std::uint16_t{0});
-  CHECK_FALSE(decode_value<std::uint16_t>("-0"));
-  CHECK_FALSE(decode_value<std::uint16_t>("1E+2"));
-  CHECK(decode_value<std::uint16_t>("65535") == std::uint16_t{65535});
-  CHECK_FALSE(decode_value<std::uint16_t>("-1"));
-  CHECK_FALSE(decode_value<std::uint16_t>("65536"));
-  CHECK_FALSE(decode_value<std::uint16_t>("false"));
-}
-
-TEST_CASE("reflected floating decoding covers every JSON numeric kind") {
-  CHECK(decode_value<float>("-1") == -1.0F);
-  CHECK(decode_value<float>("1") == 1.0F);
-  CHECK(decode_value<float>("1.25") == 1.25F);
-  CHECK_FALSE(decode_value<float>(R"("number")"));
-  CHECK_FALSE(decode_value<float>("1e39"));
-  CHECK_FALSE(decode_value<float>("-1e39"));
-  CHECK_FALSE(decode_value<float>("1e-50"));
-
-  CHECK(decode_value<double>("-2") == -2.0);
-  CHECK(decode_value<double>("2") == 2.0);
-  CHECK(decode_value<double>("2.5") == 2.5);
-  CHECK_FALSE(decode_value<double>("null"));
-}
-
-TEST_CASE("reflected scalar and enum decoding is strict") {
-  CHECK(decode_value<bool>("true") == true);
-  CHECK_FALSE(decode_value<bool>("1"));
-  CHECK(decode_value<std::string>(R"("text")") == "text");
-  CHECK_FALSE(decode_value<std::string>("false"));
-
-  CHECK(decode_value<TemperatureUnit>(R"("celsius")") == TemperatureUnit::celsius);
-  CHECK(decode_value<TemperatureUnit>(R"("fahrenheit")") ==
-        TemperatureUnit::fahrenheit);
-  CHECK_FALSE(decode_value<TemperatureUnit>(R"("kelvin")"));
-  CHECK_FALSE(decode_value<TemperatureUnit>("1"));
-}
-
-TEST_CASE("reflected optional and sequence decoding propagates element errors") {
-  CHECK_FALSE(decode_value<std::optional<std::int16_t>>("null").value());
-  CHECK(decode_value<std::optional<std::int16_t>>("7").value() ==
-        std::optional<std::int16_t>{7});
-  CHECK_FALSE(decode_value<std::optional<std::int16_t>>(R"("bad")"));
-
-  CHECK(decode_value<std::vector<std::int32_t>>("[]").value().empty());
-  CHECK(decode_value<std::vector<std::int32_t>>("[1,-2]").value() ==
-        std::vector<std::int32_t>{1, -2});
-  CHECK_FALSE(decode_value<std::vector<std::int32_t>>("{}"));
-  CHECK_FALSE(decode_value<std::vector<std::int32_t>>(R"([1,"bad"])"));
-}
-
-TEST_CASE("reflected fixed-array decoding distinguishes kind size and element errors") {
-  using Fixed = std::array<std::int32_t, 2>;
-  CHECK(decode_value<Fixed>("[1,2]").value() == Fixed{1, 2});
-  CHECK_FALSE(decode_value<Fixed>("{}"));
-  CHECK_FALSE(decode_value<Fixed>("[1]"));
-  CHECK_FALSE(decode_value<Fixed>(R"([1,"bad"])"));
-}
-
-TEST_CASE("reflected encoding covers nullable enum and sequence results") {
-  CHECK(scrydantic::encode(std::optional<std::int16_t>{})->text == "null");
-  CHECK(scrydantic::encode(std::optional<std::int16_t>{std::int16_t{7}})->text == "7");
-  CHECK(scrydantic::encode(TemperatureUnit::celsius)->text == R"("celsius")");
-  CHECK(scrydantic::encode(TemperatureUnit::fahrenheit)->text == R"("fahrenheit")");
-  CHECK(scrydantic::encode(std::vector<std::int32_t>{})->text == "[]");
-  CHECK(scrydantic::encode(std::vector<std::int32_t>{1, 2})->text == "[1,2]");
-}
-
-TEST_CASE("reflected encoding uses Scrydantic canonical number spelling") {
-  const auto fraction = scrydantic::encode(0.1);
-  const auto exponent = scrydantic::encode(1e20);
-  const auto negative_zero = scrydantic::encode(-0.0);
-  // A float is spelled as the float it is, not as the double it widens to.
-  const auto single = scrydantic::encode(0.7F);
-
-  REQUIRE(fraction);
-  REQUIRE(exponent);
-  REQUIRE(negative_zero);
-  REQUIRE(single);
-  CHECK(fraction->text == "0.1");
-  CHECK(exponent->text == "1E20");
-  // Canonical text keeps negative zero's sign (docs/architecture.md).
-  CHECK(negative_zero->text == "-0");
-  CHECK(single->text == "0.7");
-}
-
-TEST_CASE("reflected sequence encoding propagates fallible element errors") {
-  const auto encoded = scrydantic::encode(
-      std::vector<double>{1.0, std::numeric_limits<double>::infinity()});
-  REQUIRE_FALSE(encoded);
-  CHECK(encoded.error().message == "$[1] must be finite");
-  CHECK(encoded.error().model_message.empty());
-}
-
-TEST_CASE("reflected encoding rejects non-finite and unnamed values") {
-  auto value = AllTypesArguments{
-      .fixed = {1, 2},
-      .flag = true,
-      .nested = {.label = "x"},
-      .ratio = std::numeric_limits<double>::infinity(),
-      .unit = TemperatureUnit::celsius,
-  };
-  auto encoded = scrydantic::encode(value);
-  REQUIRE_FALSE(encoded);
-  CHECK(encoded.error().message == "$.ratio must be finite");
-  // A result type's schema never reaches the model, so an encoding failure
-  // carries nothing for it to act on.
-  CHECK(encoded.error().model_message.empty());
-
-  value.ratio = 1.0;
-  value.unit = static_cast<TemperatureUnit>(99);
-  encoded = scrydantic::encode(value);
-  REQUIRE_FALSE(encoded);
-  CHECK(encoded.error().message == "$.unit is not a declared enumerator value");
-  CHECK(encoded.error().model_message.empty());
+TEST_CASE("a reflected tool's decode failure keeps Scrydantic's texts and issues") {
+  auto handler = make_tool_handler<PresenceArguments>([](PresenceArguments) {});
+  auto missing = handler({}, scrydantic::Json{.text = R"({"required":"Detroit"})"});
+  REQUIRE_FALSE(missing);
+  // Scrydantic words the failure; Scry files it under its tool category and
+  // carries the issues to the host.
+  CHECK(missing.error().category == scry::ErrorCategory::tool);
+  CHECK(missing.error().model_message == "$.nullable is a required member");
+  REQUIRE(missing.error().issues.size() == 1);
+  CHECK(missing.error().issues[0].kind == scrydantic::IssueKind::missing_member);
+  CHECK(scrydantic::json_path(missing.error().issues[0].path) == "$.nullable");
 }
 
 TEST_CASE("reflected result-encoding failures reach the model as the fixed text") {
