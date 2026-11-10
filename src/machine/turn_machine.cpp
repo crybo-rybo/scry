@@ -1,6 +1,6 @@
 #include "machine/turn_machine.hpp"
 
-#include "kernel/json/codec.hpp"
+#include "kernel/json_text.hpp"
 #include "kernel/retry.hpp"
 
 #include <algorithm>

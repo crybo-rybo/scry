@@ -1,5 +1,5 @@
 #include "core/scrydantic.hpp"
-#include "kernel/json/codec.hpp"
+#include "kernel/json_text.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 #include <cstdint>

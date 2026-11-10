@@ -1,10 +1,10 @@
-// The text-level entry points in kernel/json/codec.hpp are thin layers over
+// The text-level entry points in kernel/json_text.hpp are thin layers over
 // Scrydantic's public JSON core, whose own tests hold it to the golden fixtures. So
 // each entry point must give the core's verdict and canonical text, and report a
 // rejection as a Scry Error under the caller's category and message. The helpers
 // Scry spells itself are checked against literal text.
 
-#include "kernel/json/codec.hpp"
+#include "kernel/json_text.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 #include <limits>
@@ -27,7 +27,7 @@ void check_rejection(const scry::Error& error) {
 
 } // namespace
 
-TEST_CASE("the JSON codec wrappers give the core's verdict under the caller's "
+TEST_CASE("the JSON text helpers give the core's verdict under the caller's "
           "category") {
   for (const std::string_view input : {
            R"( { "b" : 1 , "a" : [ 2 , { "d" : 3 , "c" : 4 } ] } )",
@@ -79,7 +79,7 @@ TEST_CASE("the nesting depth counts only brackets outside strings") {
   CHECK(scry::detail::json_nesting_depth(R"(["\\",[[]]])") == 3);
 }
 
-TEST_CASE("the JSON codec wrappers spell canonical text") {
+TEST_CASE("the JSON text helpers spell canonical text") {
   const auto canonical = scry::detail::canonicalize_json_object(
       scrydantic::Json{.text =
                            R"( { "b" : 1 , "a" : [ 2 , { "d" : 3 , "c" : 4 } ] } )"},

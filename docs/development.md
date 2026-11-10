@@ -77,7 +77,7 @@ Two small files hold what Scry adds on top:
 - `src/core/scrydantic.hpp` words a codec failure as a Scry diagnostic, for
   example `Conversation document at $.messages[0].role is a required member`.
   A decode that found several issues has one line for each.
-- `src/kernel/json/codec.hpp` gives Scrydantic's text-level JSON operations a
+- `src/kernel/json_text.hpp` gives Scrydantic's text-level JSON operations a
   Scry error category.
 
 A change that needs new behavior from the codec, the schemas, the binding, or
@@ -130,7 +130,7 @@ that they follow. In short:
 
 - Test what Scry does. Scrydantic tests its codec, its schemas, its decoding
   rules, and its JSON core in its own repository. A test here that calls only
-  `scrydantic::` functions on plain types belongs there. `tests/reflection/`
+  `scrydantic::` functions on plain types belongs there. `tests/tools/`
   covers what Scry adds to a reflected tool or a typed answer: registration,
   dispatch, the error category, and what the model and the host receive.
 - The test build replays seed corpora for the SSE parser, the transport

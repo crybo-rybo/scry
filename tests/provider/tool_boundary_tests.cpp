@@ -1,7 +1,7 @@
 #include "core/model.hpp"
 #include "core/provider.hpp"
 #include "fixture_support.hpp"
-#include "kernel/json/codec.hpp"
+#include "kernel/json_text.hpp"
 #include "provider/anthropic.hpp"
 #include "provider/anthropic_content.hpp"
 

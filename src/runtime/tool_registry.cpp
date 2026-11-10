@@ -1,6 +1,6 @@
 #include "core/scrydantic.hpp"
 #include "kernel/error.hpp"
-#include "kernel/json/codec.hpp"
+#include "kernel/json_text.hpp"
 #include "runtime/tool_registry_impl.hpp"
 
 #include <algorithm>

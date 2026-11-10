@@ -1,8 +1,8 @@
 # Scry's test suites. ctest registers each Catch2 suite under a prefix: runtime.,
-# machine., protocol., provider., transport., integration., reflection., and
+# machine., protocol., provider., transport., integration., tools., and
 # testing. public-api-contract, readme-quickstart, package-smoke, the header
 # checks, the multi-TU links, the fuzz-corpus replays, and the
-# reflection.compile-fail.* diagnostics checks are plain tests. Run one suite
+# tools.compile-fail.* diagnostics checks are plain tests. Run one suite
 # with `ctest --test-dir build/dev -R 'runtime\.'` and one case with
 # `-R 'event queue coalesces'`.
 #
@@ -119,14 +119,14 @@ endif()
 add_executable(
   scry_runtime_tests
   runtime/answer_pump_tests.cpp
-  runtime/codec_internals_tests.cpp
   runtime/config_tests.cpp
   runtime/conversation_persistence_tests.cpp
-  runtime/json_codec_wrapper_tests.cpp
+  runtime/json_text_tests.cpp
   runtime/message_reflection_tests.cpp
   runtime/pump_regression_tests.cpp
   runtime/queue_tests.cpp
   runtime/runtime_tests.cpp
+  runtime/scrydantic_adapter_tests.cpp
   runtime/tool_dispatch_tests.cpp
   runtime/tool_pump_tests.cpp
   runtime/tool_registry_tests.cpp
@@ -199,26 +199,26 @@ scry_add_fuzz_replay(
 
 file(
   GLOB
-  SCRY_REFLECTION_TEST_SOURCES
+  SCRY_TOOL_TEST_SOURCES
   CONFIGURE_DEPENDS
-  "${CMAKE_CURRENT_SOURCE_DIR}/reflection/*.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tools/*.cpp"
 )
-if(SCRY_REFLECTION_TEST_SOURCES)
+if(SCRY_TOOL_TEST_SOURCES)
   add_executable(
-    scry_reflection_tests
-    ${SCRY_REFLECTION_TEST_SOURCES}
+    scry_tool_tests
+    ${SCRY_TOOL_TEST_SOURCES}
   )
   target_link_libraries(
-    scry_reflection_tests
+    scry_tool_tests
     PRIVATE
       Catch2::Catch2WithMain
       scry::scry
       scry_project_options
   )
   target_include_directories(
-    scry_reflection_tests PRIVATE "${PROJECT_SOURCE_DIR}/src" "${PROJECT_SOURCE_DIR}/tests"
+    scry_tool_tests PRIVATE "${PROJECT_SOURCE_DIR}/src" "${PROJECT_SOURCE_DIR}/tests"
   )
-  catch_discover_tests(scry_reflection_tests TEST_PREFIX "reflection.")
+  catch_discover_tests(scry_tool_tests TEST_PREFIX "tools.")
 endif()
 
 # A registration must generate code from the declarations its own translation
@@ -231,10 +231,10 @@ foreach(SCRY_LINK_ORDER IN ITEMS a_then_b b_then_a)
   else()
     set(SCRY_MULTI_TU_UNITS tools_b.cpp tools_a.cpp)
   endif()
-  list(TRANSFORM SCRY_MULTI_TU_UNITS PREPEND "reflection/multi_tu/")
+  list(TRANSFORM SCRY_MULTI_TU_UNITS PREPEND "tools/multi_tu/")
   add_executable(
     scry_multi_tu_${SCRY_LINK_ORDER}
-    reflection/multi_tu/main.cpp
+    tools/multi_tu/main.cpp
     ${SCRY_MULTI_TU_UNITS}
   )
   target_link_libraries(
@@ -242,23 +242,23 @@ foreach(SCRY_LINK_ORDER IN ITEMS a_then_b b_then_a)
     PRIVATE scry::scry scry_project_options
   )
   add_test(
-    NAME "reflection.multi-tu-${SCRY_LINK_ORDER}"
+    NAME "tools.multi-tu-${SCRY_LINK_ORDER}"
     COMMAND scry_multi_tu_${SCRY_LINK_ORDER}
   )
 endforeach()
 
 function(
-  scry_add_reflection_compile_fail_test
+  scry_add_compile_fail_test
   TEST_NAME
   SOURCE_NAME
   EXPECTED_SUBSTRING
 )
   add_test(
-    NAME "reflection.compile-fail.${TEST_NAME}"
+    NAME "tools.compile-fail.${TEST_NAME}"
     COMMAND
       "${CMAKE_COMMAND}"
       "-DCXX_COMPILER=${CMAKE_CXX_COMPILER}"
-      "-DSOURCE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/reflection/compile_fail/${SOURCE_NAME}"
+      "-DSOURCE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tools/compile_fail/${SOURCE_NAME}"
       "-DPROJECT_INCLUDE_DIR=${PROJECT_SOURCE_DIR}/include"
       "-DDEPENDENCY_INCLUDE_DIRS=$<REMOVE_DUPLICATES:$<TARGET_PROPERTY:scrydantic::scrydantic,INTERFACE_INCLUDE_DIRECTORIES>>"
       "-DEXPECTED_SUBSTRING=${EXPECTED_SUBSTRING}"
@@ -266,19 +266,19 @@ function(
   )
 endfunction()
 
-scry_add_reflection_compile_fail_test(
+scry_add_compile_fail_test(
   unsupported-arguments
   unsupported_arguments.cpp
   "does not satisfy scrydantic::ToolArguments: UnsupportedArguments::value: char is a character type"
 )
-scry_add_reflection_compile_fail_test(
+scry_add_compile_fail_test(
   wrong-context-order
   wrong_context_order.cpp
   "is not invocable as (Arguments) or as (const scry::ToolCallContext&, Arguments)"
 )
 # The type after the path is the dealiased std::chrono::seconds, whose spelling
 # varies with the platform's int64_t, so the assertion stops at the path.
-scry_add_reflection_compile_fail_test(
+scry_add_compile_fail_test(
   unsupported-nested-member
   unsupported_nested_member.cpp
   "does not satisfy scrydantic::ToolArguments: ForecastArgs::window.when: std::chrono::duration<"
@@ -286,53 +286,53 @@ scry_add_reflection_compile_fail_test(
 
 # Reflected tool declarations: each rejection names the function, member, or
 # namespace at fault and the reason.
-scry_add_reflection_compile_fail_test(
+scry_add_compile_fail_test(
   toolbox-without-tools
   toolbox_without_tools.cpp
   "Lamp does not satisfy scrydantic::Toolbox: Lamp declares no function annotated with scrydantic::tool"
 )
-scry_add_reflection_compile_fail_test(
+scry_add_compile_fail_test(
   tool-on-non-function
   tool_on_non_function.cpp
   "scry::ToolRegistry::add<^^lamp_tools>(): lamp_tools::brightness carries scrydantic::tool, which applies to functions"
 )
-scry_add_reflection_compile_fail_test(
+scry_add_compile_fail_test(
   unnamed-parameter
   unnamed_parameter.cpp
   "lamp_tools::dim has the unnamed parameter 2; an argument synthesized from a parameter is named after it"
 )
-scry_add_reflection_compile_fail_test(
+scry_add_compile_fail_test(
   mutable-reference-parameter
   mutable_reference_parameter.cpp
   "lamp_tools::rename has parameter `name` of type"
 )
-scry_add_reflection_compile_fail_test(
+scry_add_compile_fail_test(
   unsupported-tool-result
   unsupported_tool_result.cpp
   "Lamp::describe returns scrydantic::Json, which is not void, scrydantic::Status, a SupportedValue, or a Result of one"
 )
-scry_add_reflection_compile_fail_test(
+scry_add_compile_fail_test(
   duplicate-tool-name
   duplicate_tool_name.cpp
   "bool Lamp::toggle() and bool Lamp::switch_off() are both tools named \"toggle\""
 )
-scry_add_reflection_compile_fail_test(
+scry_add_compile_fail_test(
   borrowed-toolbox
   borrowed_toolbox.cpp
   "Lamp is passed as an lvalue: ToolRegistry::add(Toolbox&&) takes ownership of a toolbox"
 )
 # Typed answers are tool inputs, so an answer type is held to ToolArguments.
-scry_add_reflection_compile_fail_test(
+scry_add_compile_fail_test(
   scalar-answer
   scalar_answer.cpp
   "int does not satisfy scrydantic::ToolArguments: int is not a plain aggregate"
 )
-scry_add_reflection_compile_fail_test(
+scry_add_compile_fail_test(
   explicit-object-const-toolbox
   explicit_object_const_toolbox.cpp
   "Lamp::toggle takes its explicit object parameter by non-const reference, and the toolbox is const"
 )
-scry_add_reflection_compile_fail_test(
+scry_add_compile_fail_test(
   unbound-member-tool
   unbound_member_tool.cpp
   "Lamp::toggle is a non-static member function; bind an object of Lamp as a toolbox"

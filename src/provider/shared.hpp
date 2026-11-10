@@ -14,7 +14,7 @@
 #include "core/provider.hpp"
 #include "core/scrydantic.hpp"
 #include "kernel/error.hpp"
-#include "kernel/json/codec.hpp"
+#include "kernel/json_text.hpp"
 
 #include <algorithm>
 #include <cctype>

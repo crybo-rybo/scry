@@ -1,7 +1,7 @@
 #include "runtime/tool_dispatch.hpp"
 
 #include "kernel/error.hpp"
-#include "kernel/json/codec.hpp"
+#include "kernel/json_text.hpp"
 
 #include <algorithm>
 #include <string>
