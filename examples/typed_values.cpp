@@ -7,7 +7,7 @@
 
 // Scry's reflected codec on its own: no model, no Harness. One annotated type
 // yields its JSON Schema, a strict decoder with model-readable errors, and a
-// canonical encoder.
+// canonical encoder. Constraints bound a member in the schema and in decoding.
 namespace {
 
 enum class Priority {
@@ -17,7 +17,10 @@ enum class Priority {
 
 // A tagged variant: each alternative names its "type" value.
 struct[[= scrydantic::tag{"reminder"}]] Reminder {
-  [[= scrydantic::description{"What to remind the user of"}]] std::string text;
+  [[
+    = scrydantic::description{"What to remind the user of"},
+    = scrydantic::length{.min = 1}
+  ]] std::string text;
   Priority priority{Priority::low};
 };
 
@@ -29,7 +32,7 @@ using Action = std::variant<Reminder, Note>;
 
 // skip_null leaves a disengaged optional out of the output instead of writing null.
 struct[[= scrydantic::skip_null]] Plan {
-  std::vector<Action> actions;
+  [[= scrydantic::items{.max = 5}]] std::vector<Action> actions;
   std::optional<std::string> summary;
 };
 
@@ -52,13 +55,18 @@ int main() {
   }
   print("round trip", scrydantic::encode(*answer));
 
-  // A wrong answer fails with the JSON path and what the schema required there;
-  // model_message is written to be sent back to the model as-is.
-  const auto wrong = scrydantic::decode<Plan>(
-      scrydantic::Json{.text = R"({"actions":[{"type":"alarm","text":"now"}]})"});
+  // A wrong answer fails with one line for each issue: its JSON path and what the
+  // schema required there. model_message is written to be sent back to the model
+  // as-is, and issues holds the same problems as data.
+  const auto wrong = scrydantic::decode<Plan>(scrydantic::Json{
+      .text =
+          R"({"actions":[{"type":"alarm","text":"now"},{"type":"reminder","text":""}]})"});
   if (wrong) {
     return 1;
   }
-  std::cout << "rejected: " << wrong.error().model_message << '\n';
+  std::cout << "rejected:\n" << wrong.error().model_message << '\n';
+  for (const auto& issue : wrong.error().issues) {
+    std::cout << "issue at " << scrydantic::json_path(issue.path) << '\n';
+  }
   return 0;
 }

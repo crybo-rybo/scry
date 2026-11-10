@@ -41,6 +41,7 @@ reflected_handler(scrydantic::ToolFunction<ToolCallContext> handler) {
               .category = ErrorCategory::tool,
               .message = std::move(result.error().message),
               .model_message = std::move(result.error().model_message),
+              .issues = std::move(result.error().issues),
           });
         }
         return std::move(*result);

@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <ranges>
 #include <string>
 #include <string_view>
@@ -12,6 +13,12 @@
 
 namespace scry::detail {
 namespace {
+
+// The deepest tool-call arguments Scry accepts. An Anthropic request holds them
+// five levels down (body, messages, message, content, block), and so does a
+// conversation document, and the whole text of either may nest at most 256 deep,
+// the bound of Scrydantic's parser and of the check its encoder ends with.
+constexpr std::size_t max_tool_argument_depth = 256 - 5;
 
 template <typename Command> [[nodiscard]] TransitionResult applied(Command command) {
   TransitionResult result{};
@@ -75,6 +82,13 @@ saturating_deadline(const MachineTimePoint started,
                                "tool-call arguments must be a JSON object");
   if (!arguments) {
     return std::unexpected(std::move(arguments.error()));
+  }
+  // Arguments are spliced into later request bodies and into the conversation
+  // document, whose whole text must stay within the parser's nesting bound.
+  if (json_nesting_depth(arguments->text) > max_tool_argument_depth) {
+    return std::unexpected(response_error(
+        ErrorCategory::protocol,
+        "tool-call arguments nest arrays and objects too deeply to send back"));
   }
   call.arguments = std::move(*arguments);
   return {};

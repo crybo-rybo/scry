@@ -34,7 +34,7 @@ while IFS= read -r source; do kernel_sources+=("${source}"); done \
 if git grep -nE '#[[:space:]]*include[[:space:]]*[<"](scry|scrydantic|core|machine|provider|reflection|runtime)/' \
   -- 'src/kernel/' |
   grep -vE '<scry/(config|error|turn_id|unique_function)\.hpp>' |
-  grep -vE '<scrydantic/(error|json|detail/json_text)\.hpp>'; then
+  grep -vE '<scrydantic/(error|json)\.hpp>'; then
   echo "error: the kernel includes a header outside its boundary" >&2
   status=1
 fi

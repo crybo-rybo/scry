@@ -70,5 +70,25 @@ TEST_CASE("codec failures are worded as Scry diagnostics with their path") {
       BorrowedFrame{.body = scrydantic::Json{.text = "{"}, .items = {}, .label = ""});
   REQUIRE_FALSE(invalid);
   CHECK(scry::detail::describe_codec_failure("Frame", invalid.error()) ==
-        "Frame: reflected JSON at $.body is not valid JSON");
+        "Frame at $.body is not valid JSON");
+}
+
+TEST_CASE("a codec failure with several issues words each on its own line") {
+  const auto view = scrydantic::JsonView::parse(
+      scrydantic::Json{.text = R"({"count":-1,"items":[{"text":7}]})"});
+  REQUIRE(view);
+  const auto decoded = scrydantic::decode<OwnedFrame>(*view);
+  REQUIRE_FALSE(decoded);
+  CHECK(decoded.error().issues.size() == 2);
+  CHECK(scry::detail::describe_codec_failure("Frame", decoded.error()) ==
+        "Frame at $.items[0].text must be a string\n"
+        "$.count is outside the integer range");
+}
+
+TEST_CASE("an encode failure of the whole text is worded without a path") {
+  const auto invalid = scry::detail::encode_text(Payload{.text = "\xFF"});
+  REQUIRE_FALSE(invalid);
+  CHECK(scry::detail::describe_codec_failure("Frame", invalid.error()) ==
+        "Frame: the value holds a string that is not valid UTF-8, so it cannot be "
+        "JSON");
 }

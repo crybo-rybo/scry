@@ -2,10 +2,29 @@
 
 #include <algorithm>
 #include <cassert>
+#include <string>
 #include <type_traits>
 #include <utility>
+#include <variant>
 
 namespace scry::detail {
+namespace {
+
+// The text an error's issues carry: each reason and each member name in a path.
+[[nodiscard]] std::size_t issue_payload_bytes(const Error& error) noexcept {
+  std::size_t bytes = 0;
+  for (const auto& issue : error.issues) {
+    bytes = saturating_payload_add(bytes, issue.reason.size());
+    for (const auto& segment : issue.path) {
+      if (const auto* key = std::get_if<std::string>(&segment)) {
+        bytes = saturating_payload_add(bytes, key->size());
+      }
+    }
+  }
+  return bytes;
+}
+
+} // namespace
 
 std::size_t event_payload_bytes(const WorkerEvent& event) noexcept {
   return std::visit(
@@ -24,10 +43,12 @@ std::size_t event_payload_bytes(const WorkerEvent& event) noexcept {
         } else if constexpr (std::is_same_v<Event, ErrorEvent>) {
           return saturating_payload_add(
               saturating_payload_add(
-                  saturating_payload_add(value.error.message.size(),
-                                         value.error.provider_detail.size()),
-                  value.error.provider_request_id.size()),
-              value.error.model_message.size());
+                  saturating_payload_add(
+                      saturating_payload_add(value.error.message.size(),
+                                             value.error.provider_detail.size()),
+                      value.error.provider_request_id.size()),
+                  value.error.model_message.size()),
+              issue_payload_bytes(value.error));
         } else {
           return 0;
         }

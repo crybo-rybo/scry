@@ -21,12 +21,12 @@ endif()
 # on any other toolchain cannot compile against this package at all.
 if(
   NOT CMAKE_CXX_COMPILER_ID STREQUAL "GNU"
-  OR CMAKE_CXX_COMPILER_VERSION VERSION_LESS 16
+  OR CMAKE_CXX_COMPILER_VERSION VERSION_LESS 16.2
 )
   set(scry_FOUND FALSE)
   set(
     scry_NOT_FOUND_MESSAGE
-    "scry requires GCC 16 or newer (C++26 reflection)"
+    "scry requires GCC 16.2 or newer (C++26 reflection)"
   )
 endif()
 

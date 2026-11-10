@@ -94,9 +94,11 @@ public:
   /// is destroyed first; see ~Harness().
   /// @param conversation Conversation that receives the exchange on successful
   /// completion.
-  /// @param user_message User text appended transactionally if the turn succeeds.
+  /// @param user_message UTF-8 user text appended transactionally if the turn
+  /// succeeds.
   /// @param callbacks Optional per-turn observers delivered inside update().
-  /// @return A controllable Turn handle, or an immediate admission error.
+  /// @return A controllable Turn handle, or an immediate admission error, including
+  /// ErrorCategory::invalid_argument for text that is not UTF-8.
   [[nodiscard]] Result<Turn> send(Conversation& conversation, std::string user_message,
                                   TurnCallbacks callbacks = {});
 
@@ -256,15 +258,15 @@ Result<Turn> Harness::send(Conversation& conversation, std::string user_message,
 template <typename Answer>
 Result<Answered<Answer>> Harness::ask(Conversation& conversation,
                                       std::string user_message) {
-  // TODO(https://github.com/crybo-rybo/scrydantic/issues/4): public diagnostic.
-  constexpr std::string_view problem =
-      scrydantic::detail::tool_arguments_diagnostic<Answer>();
+  constexpr std::string_view problem = scrydantic::tool_arguments_diagnostic<Answer>();
   static_assert(problem.empty(), problem);
   if constexpr (!problem.empty()) {
     return std::unexpected(Error{});
   } else {
-    auto completion = send_and_wait_structured(conversation, std::move(user_message),
-                                               response_format<Answer>());
+    auto accepted = std::make_shared<std::optional<detail::AcceptedAnswer<Answer>>>();
+    auto completion =
+        send_and_wait_structured(conversation, std::move(user_message),
+                                 detail::keeping_response_format<Answer>(accepted));
     if (!completion) {
       return std::unexpected(std::move(completion.error()));
     }
@@ -273,6 +275,12 @@ Result<Answered<Answer>> Harness::ask(Conversation& conversation,
           .category = ErrorCategory::invalid_state,
           .message = "a typed turn completed without an answer",
       });
+    }
+    if (*accepted && (*accepted)->json.text == completion->structured->text) {
+      return Answered<Answer>{
+          .value = std::move((*accepted)->value),
+          .completion = std::move(*completion),
+      };
     }
     auto value = scrydantic::decode<Answer>(*completion->structured);
     if (!value) {

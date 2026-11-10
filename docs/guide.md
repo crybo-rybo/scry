@@ -114,17 +114,53 @@ is not required. Only `std::optional` accepts `null`.
 | `skip_null` | Class or data member | Omits an empty `std::optional` instead of writing `null`. |
 | `emit_null` | Data member | Writes `null` for one `std::optional` member of a `skip_null` class. |
 | `ignore_unknown` | Class | Decoding ignores JSON members that the class does not declare. |
+| `range`, `multiple_of` | Number member | Bounds the value, in the schema and in decoding. |
+| `length`, `pattern` | String member | Bounds the length in the schema and in decoding; `pattern` is in the schema only. |
+| `items` | `std::vector` member | Bounds the number of elements, in the schema and in decoding. |
+| `check<&fn>` | Data member or class | Runs a validator after decoding. |
 
 All annotations are in the `scrydantic` namespace, in
 `<scrydantic/annotations.hpp>`. Put a class annotation between `struct` and the
 class name: `struct [[= scrydantic::tag{"note"}]] Note { ... };`.
+
+### Constraints and validators
+
+A constraint bounds a member in the schema that the model sees and in the
+decode, so the handler never sees a value past it. A validator checks what a
+schema cannot express. It takes the member, or the whole object for a class,
+as `const T&` and returns `scrydantic::Status`:
+
+```cpp
+scrydantic::Status known_city(const std::string& city) {
+  if (city == "Oslo" || city == "Lima")
+    return {};
+  return std::unexpected(
+      scrydantic::tool_error("must be a known city", "has no row in cities"));
+}
+
+struct Booking {
+  [[= scrydantic::check<&known_city>]] std::string city;
+  [[= scrydantic::range{.min = 1, .max = 8}]] std::int32_t guests;
+};
+```
+
+For `{"city":"Rome","guests":9}`, the model gets both problems, one line each:
+`$.city must be a known city` and `$.guests must be at most 8`. The validator's
+second text, `has no row in cities`, is for the host only.
+
+The host gets the same problems as data. `scry::Error::issues` lists each one
+as a `scrydantic::Issue`, with its kind, its path, and its reason. For a tool
+call, `on_tool_call` receives the handler's error in `ToolCall::error`, with
+the host text in `message`. Typed answers use the same rules, and
+`ask<Answer>()` runs an answer's validators once for each candidate.
 
 ## Refuse a call, and let the model try again
 
 Return `std::unexpected(scrydantic::tool_error(model_text, host_text))` from
 a tool. The model reads the first text as the tool result and can correct
 itself. The second text stays in `Error::message` on the host, and Scry never
-forwards it. The turn continues.
+forwards it; an `on_tool_call` observer reads it in `ToolCall::error`. The turn
+continues.
 
 ```cpp
 [[= scrydantic::tool{"Step one room in a direction"}]]
@@ -225,8 +261,9 @@ handler.
 
 `ask<Answer>()` makes the model answer with a C++ value instead of text. The
 schema, the strict decoder, and the correction text all come from the type.
-If the model gives an incorrect shape, Scry sends the error text back and the
-model tries again. The decode rules are the same as for tool arguments, so
+If the model gives an incorrect shape, or a value that a constraint or a
+validator of `Answer` rejects, Scry sends the error text back and the model
+tries again. The decode rules are the same as for tool arguments, so
 `Answer` must be a plain aggregate.
 
 ```cpp
@@ -261,17 +298,22 @@ block, so a restored conversation works with both dialects.
 
 The schema generator, the encoder, and the decoder work without a model or a
 Harness. [examples/typed_values.cpp](../examples/typed_values.cpp) declares a
-tagged variant and a `skip_null` class, and prints:
+tagged variant, a `skip_null` class, and two constraints, and prints:
 
 ```
-schema: {"additionalProperties":false,"properties":{"actions":{"items":{"anyOf":[{"additionalProperties":false,"properties":{"priority":{"enum":["low","high"],"type":"string"},"text":{"description":"What to remind the user of","type":"string"},"type":{"enum":["reminder"],"type":"string"}},"required":["text","type"],"type":"object"},{"additionalProperties":false,"properties":{"body":{"type":"string"},"type":{"enum":["note"],"type":"string"}},"required":["body","type"],"type":"object"}]},"type":"array"},"summary":{"anyOf":[{"type":"string"},{"type":"null"}]}},"required":["actions"],"type":"object"}
+schema: {"additionalProperties":false,"properties":{"actions":{"items":{"anyOf":[{"additionalProperties":false,"properties":{"priority":{"enum":["low","high"],"type":"string"},"text":{"description":"What to remind the user of","minLength":1,"type":"string"},"type":{"enum":["reminder"],"type":"string"}},"required":["text","type"],"type":"object"},{"additionalProperties":false,"properties":{"body":{"type":"string"},"type":{"enum":["note"],"type":"string"}},"required":["body","type"],"type":"object"}]},"maxItems":5,"type":"array"},"summary":{"anyOf":[{"type":"string"},{"type":"null"}]}},"required":["actions"],"type":"object"}
 round trip: {"actions":[{"priority":"high","text":"stretch","type":"reminder"},{"body":"water the plants","type":"note"}]}
-rejected: $.actions[0].type must be one of: reminder, note
+rejected:
+$.actions[0].type must be one of: reminder, note
+$.actions[1].text must have at least 1 character
+issue at $.actions[0].type
+issue at $.actions[1].text
 ```
 
-The last line is `Error::model_message` for a decode of
-`{"actions":[{"type":"alarm","text":"now"}]}`. It is written to go back to the
-model as it is.
+The lines after `rejected:` are `Error::model_message` for a decode of
+`{"actions":[{"type":"alarm","text":"now"},{"type":"reminder","text":""}]}`,
+one line for each issue. It is written to go back to the model as it is. The
+last two lines print the path of each `Error::issues` entry.
 
 This layer is a separate library,
 [Scrydantic](https://github.com/crybo-rybo/scrydantic). Scry links it as a
@@ -279,7 +321,7 @@ public dependency. Scrydantic has the annotations, `scrydantic::Json` and
 `JsonView`, `encode()` and `decode<T>()`, `schema_v<T>`, and the tool binding
 `bind()`. It does not need Scry, libcurl, or a model, so you can use it alone,
 for example to serve tools over MCP. Refer to the
-[Scrydantic standalone example](https://github.com/crybo-rybo/scrydantic/blob/main/examples/standalone_tools.cpp).
+[Scrydantic MCP tools example](https://github.com/crybo-rybo/scrydantic/blob/main/examples/mcp_tools.cpp).
 
 ## Drive a turn from a main loop
 

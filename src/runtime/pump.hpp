@@ -60,8 +60,9 @@ private:
 
   [[nodiscard]] std::optional<Result<ToolResultBlock>>
   admit(const ToolCallEvent& event);
+  // `handler_error` receives the error a handler returned, for the observer.
   [[nodiscard]] std::optional<Result<ToolResultBlock>>
-  produce(const ToolCallEvent& event);
+  produce(const ToolCallEvent& event, std::optional<Error>& handler_error);
   void dispatch(ToolCallEvent& event);
   // Answers a call to a typed turn's response tool: accepts or rejects a lone
   // candidate answer, and refuses one made beside other calls.
@@ -73,7 +74,8 @@ private:
   void charge_result(Result<ToolResultBlock>& result);
   void post(WorkerCommand command);
   [[nodiscard]] std::optional<ToolCall>
-  observation(const ToolCallEvent& event, const Result<ToolResultBlock>& result) const;
+  observation(const ToolCallEvent& event, const Result<ToolResultBlock>& result,
+              std::optional<Error> handler_error) const;
   void notify_tool_observer(ToolCallEvent& event, ToolCall& observed);
 
   TurnId turn_id_{};

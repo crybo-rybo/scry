@@ -61,11 +61,13 @@ set_property(
 )
 
 # The public API uses C++26 reflection (P2996), which only GCC 16+ compiles.
+# Scrydantic requires GCC 16.2: 16.1 has reflection bugs that 16.2 fixes, and
+# 16.0.x versions are development snapshots.
 if(
   NOT CMAKE_CXX_COMPILER_ID STREQUAL "GNU"
-  OR CMAKE_CXX_COMPILER_VERSION VERSION_LESS 16
+  OR CMAKE_CXX_COMPILER_VERSION VERSION_LESS 16.2
 )
-  message(FATAL_ERROR "Scry requires GCC 16 or newer (C++26 reflection)")
+  message(FATAL_ERROR "Scry requires GCC 16.2 or newer (C++26 reflection)")
 endif()
 
 # CTest is enabled before any subdirectory registers tests.

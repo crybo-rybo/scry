@@ -4,6 +4,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <expected>
 #include <optional>
 #include <scry/scry.hpp>
@@ -29,6 +30,25 @@ struct Verdict {
 
 struct LookupArguments {
   std::string topic{};
+};
+
+// How many times known_reason() has run, so a test can count its decodes.
+std::size_t reason_checks = 0;
+
+[[nodiscard]] scrydantic::Status known_reason(const std::string& reason) {
+  ++reason_checks;
+  if (reason == "It is rock.") {
+    return {};
+  }
+  return std::unexpected(
+      scrydantic::tool_error("must cite the almanac", "no almanac entry matches"));
+}
+
+// A Verdict whose reason a validator checks and whose confidence is bounded.
+struct CheckedVerdict {
+  bool supported{};
+  [[= scrydantic::check<&known_reason>]] std::string reason{};
+  [[= scrydantic::range{.min = 1, .max = 5}]] std::int32_t confidence{3};
 };
 
 constexpr std::string_view valid_answer =
@@ -223,6 +243,48 @@ TEST_CASE("an invalid answer goes back to the model, which corrects it") {
   // History keeps the question and the accepted answer, not the attempt.
   REQUIRE(conversation.message_count() == 2);
   require_answer_only_as_text(conversation);
+}
+
+TEST_CASE("an answer's constraints and validators reach the model, and ask runs "
+          "them once per candidate") {
+  auto server = unwrap(ScriptedServer::create());
+  server.enqueue(scripted(scry::testing::anthropic_tool_stream(
+      {respond("toolu_1", R"({"supported":false,"reason":"cheese","confidence":9})")},
+      "msg_first")));
+  server.enqueue(scripted(scry::testing::anthropic_tool_stream(
+      {respond("toolu_2", valid_answer)}, "msg_second")));
+  auto harness = unwrap(scry::Harness::create(anthropic_config(server)));
+  auto conversation = unwrap(scry::Conversation::create());
+  reason_checks = 0;
+
+  const auto answered =
+      unwrap(harness.ask<CheckedVerdict>(conversation, "Is the moon made of cheese?"));
+
+  CHECK(answered.value.reason == "It is rock.");
+  CHECK(answered.value.confidence == 3);
+  CHECK(answered.completion.answer_attempt_count == 2);
+  // One check for each candidate: ask() returns the answer the validator kept.
+  CHECK(reason_checks == 2);
+  const auto requests = server.requests();
+  REQUIRE(requests.size() == 2);
+  CHECK(contains(requests[0].body, R"("maximum":5,"minimum":1)"));
+  // Both issues go back at once; the validator's host text does not.
+  CHECK(contains(requests[1].body, "$.confidence must be at most 5"));
+  CHECK(contains(requests[1].body, "$.reason must cite the almanac"));
+  CHECK_FALSE(contains(requests[1].body, "almanac entry"));
+}
+
+TEST_CASE("a typed answer's validator error lists its issues") {
+  auto format = scry::response_format<CheckedVerdict>();
+  const auto rejected = format.validate(
+      scrydantic::Json{.text = R"({"reason":"cheese","confidence":0})"});
+  REQUIRE_FALSE(rejected);
+  CHECK(rejected.error().category == scry::ErrorCategory::invalid_argument);
+  REQUIRE(rejected.error().issues.size() == 2);
+  CHECK(rejected.error().model_message ==
+        "$.reason must cite the almanac\n$.confidence must be at least 1");
+  CHECK(rejected.error().message ==
+        "$.reason no almanac entry matches\n$.confidence must be at least 1");
 }
 
 // The prose beside a rejected answer stays in history as an assistant message of

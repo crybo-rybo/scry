@@ -5,7 +5,9 @@
 #include <expected>
 #include <optional>
 #include <scry/turn_id.hpp>
+#include <scrydantic/error.hpp>
 #include <string>
+#include <vector>
 
 namespace scry {
 
@@ -74,6 +76,12 @@ struct Error {
   /// schema-derived decode failures; Scry never fills it from exception text or
   /// from `message`.
   std::string model_message{};
+  /// What a strict decode of model output found wrong, as data: one
+  /// scrydantic::Issue for each problem with a reflected tool's arguments or a
+  /// typed answer, each with its kind, JSON path, and reason, at most
+  /// scrydantic::max_issues. A rejection by a constraint or a
+  /// scrydantic::check validator is an issue too. Empty for every other failure.
+  std::vector<scrydantic::Issue> issues{};
 };
 
 /// Builds an ErrorCategory::tool error whose message reaches the model.
