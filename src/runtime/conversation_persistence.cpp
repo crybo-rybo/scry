@@ -1,6 +1,6 @@
+#include "core/scrydantic.hpp"
 #include "kernel/error.hpp"
 #include "kernel/json/codec.hpp"
-#include "reflection/codec.hpp"
 #include "runtime/state.hpp"
 
 #include <cstddef>

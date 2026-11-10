@@ -1,5 +1,5 @@
+#include "core/scrydantic.hpp"
 #include "kernel/json/codec.hpp"
-#include "reflection/codec.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 #include <filesystem>
@@ -359,7 +359,7 @@ TEST_CASE("private JSON codec escapes control characters without a short escape"
   // A control byte outside \b \f \n \r \t has only the \u00XX form; writing it
   // any other way would turn a tool argument or an ANSI-colored user string into
   // invalid JSON on the way out. Every write path here must emit the escape, and
-  // the reflected codec, which writes request bodies, must spell it the same way.
+  // Scrydantic's codec, which writes request bodies, must spell it the same way.
   const scrydantic::Json input{.text = R"({"a":"\u0001x\u001b"})"};
   auto canonical = scry::detail::canonicalize_json(
       input, scry::ErrorCategory::invalid_argument, "invalid JSON");

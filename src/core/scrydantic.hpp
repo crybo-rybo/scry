@@ -7,6 +7,9 @@
 #include <string_view>
 #include <utility>
 
+// What Scry adds to Scrydantic's codec for its own wire types: an encode that
+// returns text, and Scry's wording of a codec failure. Everything else in src/
+// calls Scrydantic's public API directly.
 namespace scry::detail {
 
 // Encodes with scrydantic::encode_verbatim(), which skips the re-spelling that

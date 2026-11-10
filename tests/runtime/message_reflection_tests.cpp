@@ -10,7 +10,7 @@ static_assert(scrydantic::Encodable<scry::Message>);
 static_assert(scrydantic::Decodable<scry::Message>);
 static_assert(scrydantic::Encodable<scry::ContentBlock>);
 
-TEST_CASE("the public message model round-trips through the reflected codec") {
+TEST_CASE("the public message model round-trips through Scrydantic") {
   const std::vector<scry::Message> messages{
       scry::Message{.role = scry::Role::user,
                     .content = {scry::TextBlock{.text = "Weather in \"Paris\"?"}}},

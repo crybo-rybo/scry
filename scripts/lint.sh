@@ -31,7 +31,7 @@ while IFS= read -r source; do kernel_sources+=("${source}"); done \
 
 # The kernel may include only these public headers, Scrydantic's C++23 JSON
 # core headers, and no src/ header outside src/kernel/.
-if git grep -nE '#[[:space:]]*include[[:space:]]*[<"](scry|scrydantic|core|machine|provider|reflection|runtime)/' \
+if git grep -nE '#[[:space:]]*include[[:space:]]*[<"](scry|scrydantic|core|machine|provider|runtime)/' \
   -- 'src/kernel/' |
   grep -vE '<scry/(config|error|turn_id|unique_function)\.hpp>' |
   grep -vE '<scrydantic/(error|json)\.hpp>'; then

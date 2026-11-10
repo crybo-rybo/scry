@@ -1,5 +1,9 @@
 #pragma once
 
+// Scry's public API, and Scrydantic's with it: a program that declares tools or
+// typed answers needs the scrydantic:: annotations, scrydantic::Json, and the
+// codec, so this one include supplies both libraries.
+
 #include <scry/config.hpp>
 #include <scry/conversation.hpp>
 #include <scry/error.hpp>

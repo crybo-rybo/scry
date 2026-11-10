@@ -13,8 +13,8 @@
 #include <variant>
 #include <vector>
 
-// Anthropic Messages stream payloads as reflected aggregates, decoded by the
-// reflected codec. Every class ignores members it does not declare, because the
+// Anthropic Messages stream payloads as reflected aggregates, decoded by
+// Scrydantic. Every class ignores members it does not declare, because the
 // API adds fields, and every skip_null class reads an absent or null optional
 // member as disengaged. What the codec cannot express - event order, block
 // indices, and the lifecycle - stays in anthropic_stream.cpp.

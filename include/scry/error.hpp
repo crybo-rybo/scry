@@ -72,9 +72,8 @@ struct Error {
   /// Text a tool handler wants the model to see. Empty means the model receives
   /// Scry's fixed diagnostic, "tool handler returned an error". Bounded by
   /// ResourceLimits::max_tool_result_bytes; a value too large for it is replaced by
-  /// the generic "tool execution failed". The reflected codec fills it for
-  /// schema-derived decode failures; Scry never fills it from exception text or
-  /// from `message`.
+  /// the generic "tool execution failed". Scrydantic fills it for schema-derived
+  /// decode failures; Scry never fills it from exception text or from `message`.
   std::string model_message{};
   /// What a strict decode of model output found wrong, as data: one
   /// scrydantic::Issue for each problem with a reflected tool's arguments or a
@@ -85,6 +84,12 @@ struct Error {
 };
 
 /// Builds an ErrorCategory::tool error whose message reaches the model.
+///
+/// This is for the callables that return a scry::Result: a dynamic tool's handler
+/// and a hand-written AnswerValidator. A reflected tool or a scrydantic::check
+/// validator returns a scrydantic::Result instead, and refuses with
+/// scrydantic::tool_error(), which takes the same two texts; Scry gives that
+/// error its category.
 ///
 /// An empty `host_message` copies `model_message` into `Error::message`, so a
 /// handler that wants one diagnostic writes it once.
