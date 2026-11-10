@@ -61,14 +61,14 @@ template <typename Passed> consteval std::string_view owned_toolbox_diagnostic()
 
 /// Additive registry of model-callable tools.
 ///
-/// Tools are declared in C++ and registered by reflection: the argument schema,
-/// the strict argument decoder, and the result encoder are generated from the
-/// declaration. add() takes a typed argument aggregate and a callable, a function
-/// annotated with scrydantic::tool, every such function of a namespace, or
-/// a toolbox object whose annotated member functions become tools bound to it.
-/// add_dynamic() is the escape hatch for tools known only at runtime, such as
-/// bridged or scripted ones: a hand-written JSON schema and a handler that takes
-/// and returns JSON.
+/// Tools are declared in C++ and registered by reflection: Scrydantic generates
+/// the argument schema, the strict argument decoder, and the result encoder from
+/// the declaration, and the registry holds the result. add() takes a typed argument
+/// aggregate and a callable, a function annotated with scrydantic::tool, every such
+/// function of a namespace, or a toolbox object whose annotated member functions become
+/// tools bound to it. add_dynamic() is the escape hatch for tools known only at
+/// runtime, such as bridged or scripted ones: a hand-written JSON schema and a handler
+/// that takes and returns JSON.
 ///
 /// A registry is a standalone value: build one and export its manifest without a
 /// Harness, provider configuration, or network stack. Harness::create() takes

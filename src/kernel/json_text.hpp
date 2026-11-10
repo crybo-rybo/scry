@@ -7,11 +7,11 @@
 #include <scrydantic/json.hpp>
 #include <string_view>
 
-// The JSON codec's text-level operations, which the rest of src/ uses. They are
-// thin layers over Scrydantic's public C++23 JSON core (<scrydantic/json.hpp>)
-// that report a failure as a Scry Error under the caller's category; outside
-// them, parsed JSON is read through scrydantic::JsonView and reflected types
-// through the reflected codec.
+// Scry's text-level JSON operations, which the rest of src/ uses. Scry has no
+// JSON implementation of its own: these are thin layers over Scrydantic's public
+// C++23 JSON core (<scrydantic/json.hpp>) that report a failure as a Scry Error
+// under the caller's category. Outside them, parsed JSON is read through
+// scrydantic::JsonView and typed values through Scrydantic's codec.
 namespace scry::detail {
 
 // Validates JSON text without materializing a document; see

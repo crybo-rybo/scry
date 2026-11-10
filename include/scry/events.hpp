@@ -129,7 +129,8 @@ struct Completion {
   std::uint32_t answer_attempt_count{};
 };
 
-/// A typed answer and the completion that carried it, returned by Harness::ask().
+/// A typed answer and the completion that carried it, returned by Harness::ask()
+/// and delivered to the on_finished of Harness::send<Answer>().
 ///
 /// @tparam Answer The reflected answer aggregate the turn was asked for.
 template <typename Answer> struct Answered {
@@ -285,6 +286,31 @@ struct TurnCallbacks {
   /// requests no terminal delivery; the turn still terminates and commits or rolls back
   /// its Conversation as usual.
   UniqueFunction<void(Result<Completion>)> on_finished{};
+};
+
+/// Callbacks for a turn sent with Harness::send<Answer>().
+///
+/// These are TurnCallbacks with one difference: on_finished receives the decoded
+/// answer beside its Completion, as Harness::ask<Answer>() returns it. The value
+/// is the one the turn's validator accepted, so the host does not decode
+/// Completion::structured itself, and the scrydantic::check validators of
+/// `Answer` do not run a second time after the turn has committed.
+///
+/// @tparam Answer The reflected answer aggregate the turn was asked for.
+template <typename Answer> struct AnswerCallbacks {
+  /// Observes coalesced fragments of streamed assistant text; see
+  /// TurnCallbacks::on_text_delta.
+  TextDeltaCallback on_text_delta{};
+  /// Admits or refuses each tool call; see TurnCallbacks::on_tool_request. Calls to
+  /// the response tool do not reach it.
+  ToolAdmissionCallback on_tool_request{};
+  /// Observes tool calls after their results are posted; see
+  /// TurnCallbacks::on_tool_call. Calls to the response tool do not reach it.
+  ToolCallCallback on_tool_call{};
+  /// When non-empty, invoked once under the rules of TurnCallbacks::on_finished,
+  /// with the answer and its Completion on success, and with the terminal Error on
+  /// failure or cancellation.
+  UniqueFunction<void(Result<Answered<Answer>>)> on_finished{};
 };
 
 } // namespace scry

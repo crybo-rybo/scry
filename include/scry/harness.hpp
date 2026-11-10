@@ -131,11 +131,18 @@ public:
 
   /// Accepts an asynchronous user turn that must end with an `Answer`.
   ///
-  /// This is send_structured() with scry::response_format<Answer>():
-  /// the response tool's schema is generated from `Answer` and each candidate
-  /// answer is decoded strictly on the host thread. `Answer` cannot be deduced, so
-  /// a call without it is always the plain send(). Decode Completion::structured with
-  /// scrydantic::decode<Answer>() to read the answer.
+  /// This is the main-loop form of ask<Answer>(). The turn runs as
+  /// send_structured() with scry::response_format<Answer>() runs it: the response
+  /// tool's schema is generated from `Answer`, and each candidate answer is
+  /// decoded strictly on the host thread. AnswerCallbacks::on_finished then
+  /// receives the accepted value beside its Completion, so the host does not
+  /// decode Completion::structured, and the scrydantic::check validators of
+  /// `Answer` run once for each candidate and never again after the turn has
+  /// committed.
+  ///
+  /// `Answer` cannot be deduced, so a call without it is always the plain send().
+  /// To receive the answer as JSON only, pass scry::response_format<Answer>() to
+  /// send_structured().
   /// @tparam Answer Reflected answer aggregate satisfying
   /// scrydantic::ToolArguments; any other type fails to compile with the
   /// offending member and the reason.
@@ -146,7 +153,7 @@ public:
   /// @return A controllable Turn handle, or an immediate admission error.
   template <typename Answer>
   [[nodiscard]] Result<Turn> send(Conversation& conversation, std::string user_message,
-                                  TurnCallbacks callbacks = {});
+                                  AnswerCallbacks<Answer> callbacks = {});
 
   /// Requests cooperative cancellation of one accepted turn by identifier.
   ///
@@ -250,9 +257,30 @@ private:
 
 template <typename Answer>
 Result<Turn> Harness::send(Conversation& conversation, std::string user_message,
-                           TurnCallbacks callbacks) {
-  return send_structured(conversation, std::move(user_message),
-                         response_format<Answer>(), std::move(callbacks));
+                           AnswerCallbacks<Answer> callbacks) {
+  constexpr std::string_view problem = scrydantic::tool_arguments_diagnostic<Answer>();
+  static_assert(problem.empty(), problem);
+  if constexpr (!problem.empty()) {
+    return std::unexpected(Error{});
+  } else {
+    // The validator and on_finished both run on the host thread, inside update(),
+    // so the slot they share needs no lock.
+    auto accepted = std::make_shared<std::optional<detail::AcceptedAnswer<Answer>>>();
+    TurnCallbacks plain{
+        .on_text_delta = std::move(callbacks.on_text_delta),
+        .on_tool_request = std::move(callbacks.on_tool_request),
+        .on_tool_call = std::move(callbacks.on_tool_call),
+    };
+    if (callbacks.on_finished) {
+      plain.on_finished = [accepted, finished = std::move(callbacks.on_finished)](
+                              Result<Completion> completion) mutable {
+        finished(detail::answered<Answer>(std::move(completion), *accepted));
+      };
+    }
+    return send_structured(conversation, std::move(user_message),
+                           detail::keeping_response_format<Answer>(accepted),
+                           std::move(plain));
+  }
 }
 
 template <typename Answer>
@@ -264,32 +292,10 @@ Result<Answered<Answer>> Harness::ask(Conversation& conversation,
     return std::unexpected(Error{});
   } else {
     auto accepted = std::make_shared<std::optional<detail::AcceptedAnswer<Answer>>>();
-    auto completion =
+    return detail::answered<Answer>(
         send_and_wait_structured(conversation, std::move(user_message),
-                                 detail::keeping_response_format<Answer>(accepted));
-    if (!completion) {
-      return std::unexpected(std::move(completion.error()));
-    }
-    if (!completion->structured) {
-      return std::unexpected(Error{
-          .category = ErrorCategory::invalid_state,
-          .message = "a typed turn completed without an answer",
-      });
-    }
-    if (*accepted && (*accepted)->json.text == completion->structured->text) {
-      return Answered<Answer>{
-          .value = std::move((*accepted)->value),
-          .completion = std::move(*completion),
-      };
-    }
-    auto value = scrydantic::decode<Answer>(*completion->structured);
-    if (!value) {
-      return std::unexpected(detail::answer_error(std::move(value.error())));
-    }
-    return Answered<Answer>{
-        .value = std::move(*value),
-        .completion = std::move(*completion),
-    };
+                                 detail::keeping_response_format<Answer>(accepted)),
+        *accepted);
   }
 }
 

@@ -72,9 +72,8 @@ struct Error {
   /// Text a tool handler wants the model to see. Empty means the model receives
   /// Scry's fixed diagnostic, "tool handler returned an error". Bounded by
   /// ResourceLimits::max_tool_result_bytes; a value too large for it is replaced by
-  /// the generic "tool execution failed". The reflected codec fills it for
-  /// schema-derived decode failures; Scry never fills it from exception text or
-  /// from `message`.
+  /// the generic "tool execution failed". Scrydantic fills it for schema-derived
+  /// decode failures; Scry never fills it from exception text or from `message`.
   std::string model_message{};
   /// What a strict decode of model output found wrong, as data: one
   /// scrydantic::Issue for each problem with a reflected tool's arguments or a
@@ -86,6 +85,12 @@ struct Error {
 
 /// Builds an ErrorCategory::tool error whose message reaches the model.
 ///
+/// This is for the callables that return a scry::Result: a dynamic tool's handler
+/// and a hand-written AnswerValidator. A reflected tool or a scrydantic::check
+/// validator returns a scrydantic::Result instead, and refuses with
+/// scrydantic::tool_error(), which takes the same two texts; Scry gives that
+/// error its category.
+///
 /// An empty `host_message` copies `model_message` into `Error::message`, so a
 /// handler that wants one diagnostic writes it once.
 /// @param model_message Text forwarded to the model inside the tool error result.
@@ -94,6 +99,19 @@ struct Error {
 /// @return An ErrorCategory::tool error carrying both texts.
 [[nodiscard]] Error tool_error(std::string model_message,
                                std::string host_message = {});
+
+/// Reports a Scrydantic failure as an ErrorCategory::tool error.
+///
+/// A scrydantic::Error has no category. This keeps its `message`, its
+/// `model_message`, and its `issues`, and files it as a tool error, which is what
+/// Scry does with the failure of a reflected tool. Use it in a callable that
+/// returns a scry::Result and calls Scrydantic itself: a dynamic tool's handler,
+/// or a hand-written AnswerValidator, that decodes its JSON with
+/// scrydantic::decode<T>() forwards a failure in one line, and the model reads
+/// the same path-and-reason lines that a reflected tool would have given it.
+/// @param error Failure of a Scrydantic operation, such as a strict decode.
+/// @return An ErrorCategory::tool error carrying the same texts and issues.
+[[nodiscard]] Error tool_error(scrydantic::Error error);
 
 /// Result of a fallible Scry operation.
 template <typename T> using Result = std::expected<T, Error>;

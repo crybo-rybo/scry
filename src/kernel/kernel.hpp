@@ -1,11 +1,11 @@
 #pragma once
 
 // The kernel is the part of Scry that parses untrusted bytes or does retry and
-// transport arithmetic: the JSON codec's Scry-facing layer over Scrydantic's
-// JSON core, the SSE parser, retry delays, and the transport seam with its
-// libcurl implementation. Its sources are compiled as
-// C++23 without reflection in every build, so clang-tidy can analyze them
-// while the rest of src/ is free to use C++26 reflection.
+// transport arithmetic: Scry's JSON text helpers over Scrydantic's JSON core, the
+// SSE parser, retry delays, and the transport seam with its libcurl
+// implementation. Its sources are compiled as C++23 without reflection in every
+// build, so clang-tidy can analyze them while the rest of src/ is free to use
+// C++26 reflection.
 //
 // Every kernel source file includes this header first. Kernel headers do not:
 // the rest of src/ includes them from C++26 translation units. Compiling the

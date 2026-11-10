@@ -157,7 +157,7 @@ TEST_CASE("request encoders write byte-identical bodies") {
 }
 
 TEST_CASE("sampling numbers keep the canonical spelling in request bodies") {
-  // The reflected codec writes a double in std::to_chars' shortest form (1e-07),
+  // Scrydantic's codec writes a double in std::to_chars' shortest form (1e-07),
   // and a request body is not canonicalized after encoding, so the sampling values
   // reach the body pre-spelled. The spellings themselves are pinned with the
   // canonical writer.

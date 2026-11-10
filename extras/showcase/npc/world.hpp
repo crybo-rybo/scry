@@ -27,7 +27,7 @@ struct Bounds {
   std::int32_t height{};
 };
 
-// What look reports. Scry encodes it from these members, so the model reads
+// What look reports. It is encoded from these members, so the model reads
 // {"available_moves":["east",...],"bounds":{...},"position":{...}}.
 struct Observation {
   std::vector<Direction> available_moves{};

@@ -1,9 +1,9 @@
 // Typed answers: the turn ends with a value of a C++ type instead of free text.
 //
-// ask<T>() blocks for the answer. send<T>() is the poll-friendly form: the
-// answer arrives in Completion::structured inside update(), for
-// scrydantic::decode<T>(). send_structured() and
-// send_and_wait_structured() take a hand-written ResponseFormat instead.
+// ask<T>() blocks for the answer. send<T>() is the form for a main loop: the
+// same decoded value arrives in on_finished, inside update(). send_structured()
+// and send_and_wait_structured() take a hand-written ResponseFormat instead, and
+// deliver the answer as JSON in Completion::structured.
 
 #include <expected>
 #include <iostream>

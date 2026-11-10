@@ -183,13 +183,13 @@ TEST_CASE("send<T> completes an OpenAI-compatible answer that persists and repla
   auto conversation = unwrap(scry::Conversation::create());
 
   std::string streamed;
-  std::optional<scry::Result<scry::Completion>> finished;
+  std::optional<scry::Result<scry::Answered<Verdict>>> finished;
   auto turn = unwrap(harness.send<Verdict>(
       conversation, "Is the moon made of cheese?",
       {
           .on_text_delta = [&streamed](std::string_view text) { streamed += text; },
           .on_finished =
-              [&finished](scry::Result<scry::Completion> result) {
+              [&finished](scry::Result<scry::Answered<Verdict>> result) {
                 finished = std::move(result);
               },
       }));
@@ -198,10 +198,13 @@ TEST_CASE("send<T> completes an OpenAI-compatible answer that persists and repla
   REQUIRE(finished);
   REQUIRE(*finished);
   CHECK(streamed == "Checked.");
-  CHECK((*finished)->text == "Checked.");
-  REQUIRE((*finished)->structured);
-  const auto verdict = unwrap(scrydantic::decode<Verdict>(*(*finished)->structured));
-  CHECK(verdict.reason == "It is rock.");
+  // The callback receives the decoded value, beside the completion that carries
+  // the same answer as canonical JSON.
+  CHECK((*finished)->value.reason == "It is rock.");
+  CHECK_FALSE((*finished)->value.supported);
+  CHECK((*finished)->completion.text == "Checked.");
+  REQUIRE((*finished)->completion.structured);
+  CHECK((*finished)->completion.structured->text == canonical_answer);
   CHECK(contains(server.requests().front().body, R"("tool_choice":"required")"));
   require_answer_only_as_text(conversation);
 
@@ -272,6 +275,62 @@ TEST_CASE("an answer's constraints and validators reach the model, and ask runs 
   CHECK(contains(requests[1].body, "$.confidence must be at most 5"));
   CHECK(contains(requests[1].body, "$.reason must cite the almanac"));
   CHECK_FALSE(contains(requests[1].body, "almanac entry"));
+}
+
+TEST_CASE("send<T> delivers the answer its validator kept, so validators run once "
+          "per candidate") {
+  auto server = unwrap(ScriptedServer::create());
+  server.enqueue(scripted(scry::testing::anthropic_tool_stream(
+      {respond("toolu_1", R"({"supported":false,"reason":"cheese","confidence":9})")},
+      "msg_first")));
+  server.enqueue(scripted(scry::testing::anthropic_tool_stream(
+      {respond("toolu_2", valid_answer)}, "msg_second")));
+  auto harness = unwrap(scry::Harness::create(anthropic_config(server)));
+  auto conversation = unwrap(scry::Conversation::create());
+  reason_checks = 0;
+
+  std::optional<scry::Result<scry::Answered<CheckedVerdict>>> finished;
+  std::size_t checks_at_delivery = 0;
+  auto turn = unwrap(harness.send<CheckedVerdict>(
+      conversation, "Is the moon made of cheese?",
+      {.on_finished = [&](scry::Result<scry::Answered<CheckedVerdict>> result) {
+        checks_at_delivery = reason_checks;
+        finished = std::move(result);
+      }}));
+  REQUIRE(pump_until(harness, [&turn] { return turn.finished(); }));
+
+  REQUIRE(finished);
+  REQUIRE(*finished);
+  CHECK((*finished)->value.reason == "It is rock.");
+  CHECK((*finished)->value.confidence == 3);
+  CHECK((*finished)->completion.answer_attempt_count == 2);
+  // One check for each candidate, and none to deliver the value: the history is
+  // committed by then, and a validator that reads host state must not get a
+  // second chance to refuse it.
+  CHECK(checks_at_delivery == 2);
+  CHECK(reason_checks == 2);
+  CHECK(conversation.message_count() == 2);
+}
+
+TEST_CASE("send<T> delivers a failed typed turn as its error") {
+  auto server = unwrap(ScriptedServer::create());
+  // A reply that calls no tool fails a typed turn.
+  server.enqueue(scripted(scry::testing::anthropic_text_stream("It is rock.")));
+  auto harness = unwrap(scry::Harness::create(anthropic_config(server)));
+  auto conversation = unwrap(scry::Conversation::create());
+
+  std::optional<scry::Result<scry::Answered<Verdict>>> finished;
+  auto turn = unwrap(harness.send<Verdict>(
+      conversation, "Is the moon made of cheese?",
+      {.on_finished = [&finished](scry::Result<scry::Answered<Verdict>> result) {
+        finished = std::move(result);
+      }}));
+  REQUIRE(pump_until(harness, [&turn] { return turn.finished(); }));
+
+  REQUIRE(finished);
+  REQUIRE_FALSE(*finished);
+  CHECK(finished->error().category == scry::ErrorCategory::protocol);
+  CHECK(conversation.empty());
 }
 
 TEST_CASE("a typed answer's validator error lists its issues") {

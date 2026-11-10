@@ -55,10 +55,10 @@ template <typename Answer> [[nodiscard]] ResponseFormat response_format();
 namespace detail {
 
 /// The answer a typed turn's validator accepted, beside the JSON it was decoded
-/// from. Harness::ask<Answer>() returns it rather than decoding the answer again:
-/// a second decode would run the Answer's scrydantic::check validators a second
-/// time, and one that reads host state could refuse an answer the turn has
-/// already committed.
+/// from. Harness::ask<Answer>() and Harness::send<Answer>() report it rather than
+/// decoding the answer again: a second decode would run the Answer's
+/// scrydantic::check validators a second time, and one that reads host state
+/// could refuse an answer the turn has already committed.
 template <typename Answer> struct AcceptedAnswer {
   scrydantic::Json json;
   Answer value;
@@ -85,6 +85,41 @@ template <typename Answer>
         }
         return {};
       },
+  };
+}
+
+/// What a typed turn reports to the host: the answer beside its completion.
+///
+/// `accepted` is the slot that keeping_response_format<Answer>() filled for this
+/// turn. Its value is used when it is the answer the completion carries, which it
+/// always is for a turn that completed; otherwise the answer is decoded from
+/// Completion::structured.
+template <typename Answer>
+[[nodiscard]] Result<Answered<Answer>>
+answered(Result<Completion> completion,
+         std::optional<AcceptedAnswer<Answer>>& accepted) {
+  if (!completion) {
+    return std::unexpected(std::move(completion.error()));
+  }
+  if (!completion->structured) {
+    return std::unexpected(Error{
+        .category = ErrorCategory::invalid_state,
+        .message = "a typed turn completed without an answer",
+    });
+  }
+  if (accepted && accepted->json.text == completion->structured->text) {
+    return Answered<Answer>{
+        .value = std::move(accepted->value),
+        .completion = std::move(*completion),
+    };
+  }
+  auto value = scrydantic::decode<Answer>(*completion->structured);
+  if (!value) {
+    return std::unexpected(answer_error(std::move(value.error())));
+  }
+  return Answered<Answer>{
+      .value = std::move(*value),
+      .completion = std::move(*completion),
   };
 }
 

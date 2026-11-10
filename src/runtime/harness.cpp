@@ -1,6 +1,6 @@
 #include "core/provider.hpp"
 #include "kernel/error.hpp"
-#include "kernel/json/codec.hpp"
+#include "kernel/json_text.hpp"
 #include "kernel/retry.hpp"
 #include "kernel/transport/curl_transport.hpp"
 #include "runtime/config.hpp"

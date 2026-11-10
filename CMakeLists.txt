@@ -114,10 +114,10 @@ if(SCRY_SANITIZER_FLAGS)
   target_link_options(scry_project_options INTERFACE ${SCRY_SANITIZER_FLAGS})
 endif()
 
-# The kernel is the reflection-free layer under the library: the Scry-facing
-# layer of the JSON codec, the SSE parser, retry delay arithmetic, and the
-# transport seam with its libcurl implementation, which is everything that
-# parses untrusted bytes apart from Scrydantic's JSON core. It is compiled as
+# The kernel is the reflection-free layer under the library: Scry's JSON text
+# helpers over Scrydantic's JSON core, the SSE parser, retry delay arithmetic,
+# and the transport seam with its libcurl implementation, which is everything
+# that parses untrusted bytes apart from Scrydantic's JSON core. It is compiled as
 # C++23 without -freflection, so plain clang-tidy can analyze it
 # (scripts/lint.sh). It never links scry or scrydantic::scrydantic, so their
 # PUBLIC C++26 and -freflection cannot reach it; it links only Scrydantic's C++23
@@ -126,7 +126,7 @@ add_library(
   scry_kernel
   OBJECT
     src/kernel/error.cpp
-    src/kernel/json/codec.cpp
+    src/kernel/json_text.cpp
     src/kernel/retry.cpp
     src/kernel/sse.cpp
     src/kernel/transport/curl_error.cpp

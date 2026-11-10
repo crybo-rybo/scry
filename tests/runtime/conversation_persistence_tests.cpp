@@ -1,5 +1,5 @@
-#include "kernel/json/codec.hpp"
-#include "reflection/codec.hpp"
+#include "core/scrydantic.hpp"
+#include "kernel/json_text.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 #include <filesystem>
@@ -284,7 +284,7 @@ TEST_CASE("moved-from Conversation observers report an empty history") {
   CHECK_FALSE(active.busy());
 }
 
-TEST_CASE("private JSON codec canonicalizes values and validates object roots") {
+TEST_CASE("the JSON text helpers canonicalize values and validate object roots") {
   const scrydantic::Json input{.text =
                                    R"( { "z": null, "a": [3, {"b": 2, "a": 1}] } )"};
   auto canonical = scry::detail::canonicalize_json(
@@ -304,7 +304,7 @@ TEST_CASE("private JSON codec canonicalizes values and validates object roots") 
   CHECK(array.error().message == "object required");
 }
 
-TEST_CASE("private JSON codec safely quotes model-visible error strings") {
+TEST_CASE("the JSON text helpers safely quote model-visible error strings") {
   const auto encoded = scry::detail::make_json_error_object("bad \"quote\"\nline\t\\");
   CHECK(encoded.text == R"({"error":"bad \"quote\"\nline\t\\"})");
   auto parsed = scrydantic::JsonView::parse(encoded);
@@ -355,11 +355,11 @@ TEST_CASE("a history ending in tool results round-trips through persistence") {
   CHECK(round_trip->messages().back().role == scry::Role::user);
 }
 
-TEST_CASE("private JSON codec escapes control characters without a short escape") {
+TEST_CASE("the JSON text helpers escape control characters without a short escape") {
   // A control byte outside \b \f \n \r \t has only the \u00XX form; writing it
   // any other way would turn a tool argument or an ANSI-colored user string into
   // invalid JSON on the way out. Every write path here must emit the escape, and
-  // the reflected codec, which writes request bodies, must spell it the same way.
+  // Scrydantic's codec, which writes request bodies, must spell it the same way.
   const scrydantic::Json input{.text = R"({"a":"\u0001x\u001b"})"};
   auto canonical = scry::detail::canonicalize_json(
       input, scry::ErrorCategory::invalid_argument, "invalid JSON");

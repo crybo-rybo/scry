@@ -1,5 +1,5 @@
 #include "kernel/error.hpp"
-#include "kernel/json/codec.hpp"
+#include "kernel/json_text.hpp"
 #include "provider/anthropic.hpp"
 #include "provider/shared.hpp"
 

@@ -4,7 +4,7 @@
 // independent; only the pieces that are byte-for-byte identical live here.
 //
 // Request wire structs. Each request encoder describes its body as reflected
-// aggregates and encodes them with the reflected codec, which writes keys in
+// aggregates and encodes them with Scrydantic, which writes keys in
 // canonical order whatever the declaration order and strings with the canonical
 // escapes. The structs borrow every byte they write: text through
 // std::string_view, and stored JSON payloads through `const Json&` members, which
@@ -12,9 +12,9 @@
 // borrowed Config, ModelRequest, and literals all outlive the encode.
 
 #include "core/provider.hpp"
+#include "core/scrydantic.hpp"
 #include "kernel/error.hpp"
-#include "kernel/json/codec.hpp"
-#include "reflection/codec.hpp"
+#include "kernel/json_text.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -191,7 +191,7 @@ parse_payload(const std::string_view data, const std::string_view dialect) {
   return std::move(*root);
 }
 
-// Decodes a provider payload with the reflected codec. A shape the codec rejects
+// Decodes a provider payload with Scrydantic. A shape its codec rejects
 // is a protocol error naming the path; the path holds only declared keys and
 // indices, never provider text.
 template <typename Payload>

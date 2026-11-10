@@ -31,6 +31,11 @@ static_assert(std::same_as<decltype(scry::Error::model_message), std::string>);
 static_assert(
     std::same_as<decltype(scry::Error::issues), std::vector<scrydantic::Issue>>);
 static_assert(std::same_as<decltype(scry::tool_error(std::string{})), scry::Error>);
+// A Scrydantic failure converts to a Scry tool error, and a string literal still
+// selects the two-text overload.
+static_assert(
+    std::same_as<decltype(scry::tool_error(scrydantic::Error{})), scry::Error>);
+static_assert(std::same_as<decltype(scry::tool_error("text")), scry::Error>);
 static_assert(std::is_aggregate_v<scrydantic::Json>);
 static_assert(std::is_enum_v<scrydantic::JsonKind>);
 static_assert(std::is_default_constructible_v<scrydantic::JsonView>);
@@ -360,6 +365,21 @@ static_assert(std::same_as<decltype(scry::Answered<contract::Verdict>::value),
                            contract::Verdict>);
 static_assert(std::same_as<decltype(scry::Answered<contract::Verdict>::completion),
                            scry::Completion>);
+// A typed send delivers the decoded answer; its other callbacks are TurnCallbacks'.
+static_assert(std::is_aggregate_v<scry::AnswerCallbacks<contract::Verdict>>);
+static_assert(
+    std::same_as<
+        decltype(scry::AnswerCallbacks<contract::Verdict>::on_finished),
+        scry::UniqueFunction<void(scry::Result<scry::Answered<contract::Verdict>>)>>);
+static_assert(
+    std::same_as<decltype(scry::AnswerCallbacks<contract::Verdict>::on_text_delta),
+                 decltype(scry::TurnCallbacks::on_text_delta)>);
+static_assert(
+    std::same_as<decltype(scry::AnswerCallbacks<contract::Verdict>::on_tool_request),
+                 decltype(scry::TurnCallbacks::on_tool_request)>);
+static_assert(
+    std::same_as<decltype(scry::AnswerCallbacks<contract::Verdict>::on_tool_call),
+                 decltype(scry::TurnCallbacks::on_tool_call)>);
 // An answer is a tool input, so it is an object: ToolArguments is the check.
 static_assert(scrydantic::ToolArguments<contract::Verdict>);
 static_assert(!scrydantic::ToolArguments<contract::Opaque>);
@@ -378,7 +398,8 @@ static_assert(requires(scry::Harness& harness, scry::Conversation& conversation)
     harness.send<contract::Verdict>(conversation, std::string{})
   } -> std::same_as<scry::Result<scry::Turn>>;
   {
-    harness.send<contract::Verdict>(conversation, std::string{}, scry::TurnCallbacks{})
+    harness.send<contract::Verdict>(conversation, std::string{},
+                                    scry::AnswerCallbacks<contract::Verdict>{})
   } -> std::same_as<scry::Result<scry::Turn>>;
   {
     harness.send_and_wait_structured(conversation, std::string{},
@@ -608,6 +629,19 @@ int main() {
   const auto split = scry::tool_error("north or south only", "rejected move west");
   if (split.model_message != "north or south only" ||
       split.message != "rejected move west") {
+    return 1;
+  }
+  const auto forwarded = scry::tool_error(scrydantic::Error{
+      .message = "$.bed has no row in beds",
+      .model_message = "$.bed must be a known bed",
+      .issues = {{.kind = scrydantic::IssueKind::failed_check,
+                  .path = {std::string{"bed"}},
+                  .reason = "must be a known bed"}},
+  });
+  if (forwarded.category != scry::ErrorCategory::tool ||
+      forwarded.message != "$.bed has no row in beds" ||
+      forwarded.model_message != "$.bed must be a known bed" ||
+      forwarded.issues.size() != 1) {
     return 1;
   }
 
