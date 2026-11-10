@@ -55,10 +55,10 @@ template <typename Answer> [[nodiscard]] ResponseFormat response_format();
 namespace detail {
 
 /// The answer a typed turn's validator accepted, beside the JSON it was decoded
-/// from. Harness::ask<Answer>() returns it rather than decoding the answer again:
-/// a second decode would run the Answer's scrydantic::check validators a second
-/// time, and one that reads host state could refuse an answer the turn has
-/// already committed.
+/// from. Harness::ask<Answer>() and Harness::send<Answer>() report it rather than
+/// decoding the answer again: a second decode would run the Answer's
+/// scrydantic::check validators a second time, and one that reads host state
+/// could refuse an answer the turn has already committed.
 template <typename Answer> struct AcceptedAnswer {
   scrydantic::Json json;
   Answer value;

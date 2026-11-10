@@ -129,7 +129,8 @@ struct Completion {
   std::uint32_t answer_attempt_count{};
 };
 
-/// A typed answer and the completion that carried it, returned by Harness::ask().
+/// A typed answer and the completion that carried it, returned by Harness::ask()
+/// and delivered to the on_finished of Harness::send<Answer>().
 ///
 /// @tparam Answer The reflected answer aggregate the turn was asked for.
 template <typename Answer> struct Answered {
