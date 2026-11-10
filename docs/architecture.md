@@ -951,8 +951,10 @@ input-size limit before it loads a document.
 The consumer target is `scry::scry`. It is a static library, and it requires GCC
 16.2 or newer with C++26 reflection and annotation support. The supported
 platforms are Linux and macOS. Before 1.0, Scry does not promise API, ABI, or
-persistence-format stability. The package version check accepts only the same
-minor version: `find_package(scry 0.7)` does not accept a 0.8 install.
+persistence-format stability. A minor release can break the API, and the
+package version check accepts only the same minor version. Thus a
+`find_package()` request for one minor release does not accept an install of
+another.
 
 Scry depends on the external Scrydantic package, version 0.2.x. Scrydantic has
 two targets. `scrydantic::json` is a static C++23 library without reflection:
