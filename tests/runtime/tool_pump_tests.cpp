@@ -154,7 +154,7 @@ TEST_CASE("an unknown tool reaches the observer as an error result") {
   CHECK(observer_calls == 1);
   CHECK(observed_is_error);
   CHECK(observed_result.text ==
-        R"({"error":"unknown tool \"absent_tool\"; no tools are registered"})");
+        R"({"error":"unknown tool \"absent_tool\"; there are no tools"})");
   const auto result = pop_tool_result(fixture);
   REQUIRE(result);
   CHECK(result->is_error);
@@ -460,7 +460,7 @@ TEST_CASE("an unknown tool spends the call limit without consulting the hook") {
   CHECK(admissions == 0);
   REQUIRE(observed_results.size() == 2);
   CHECK(observed_results[0] ==
-        R"({"error":"unknown tool \"absent_tool\"; registered tools: forecast"})");
+        R"({"error":"unknown tool \"absent_tool\"; known tools: forecast"})");
   CHECK(
       observed_results[1] ==
       R"({"error":"tool call limit for this turn reached; respond without calling tools"})");

@@ -4,6 +4,7 @@
 #include "kernel/json_text.hpp"
 
 #include <algorithm>
+#include <scrydantic/error.hpp>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -42,37 +43,17 @@ successful_result(const ToolCallBlock& call, const scrydantic::Json& value,
 }
 
 // The model already received every registered name in the request's tool list, so
-// naming them back is a reminder rather than a disclosure.
-[[nodiscard]] std::string registered_tool_names(const ToolSnapshot& snapshot) {
+// naming them back is a reminder rather than a disclosure. They are sorted, so the
+// text does not depend on the order of registration.
+[[nodiscard]] std::string unknown_tool_message(const ToolSnapshot& snapshot,
+                                               const std::string_view requested) {
   std::vector<std::string_view> names;
   names.reserve(snapshot.size());
   for (const auto& registration : snapshot) {
     names.emplace_back(registration->definition.name);
   }
   std::ranges::sort(names);
-  std::string joined;
-  for (const auto& name : names) {
-    if (!joined.empty()) {
-      joined.append(", ");
-    }
-    joined.append(name);
-  }
-  return joined;
-}
-
-[[nodiscard]] std::string unknown_tool_message(const ToolSnapshot& snapshot,
-                                               const std::string_view requested) {
-  std::string text{"unknown tool \""};
-  text.append(requested);
-  text.append("\"; ");
-  const auto names = registered_tool_names(snapshot);
-  if (names.empty()) {
-    text.append("no tools are registered");
-  } else {
-    text.append("registered tools: ");
-    text.append(names);
-  }
-  return text;
+  return scrydantic::unknown_tool_error(requested, names).model_message;
 }
 
 [[nodiscard]] Result<ToolResultBlock>
