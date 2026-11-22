@@ -51,6 +51,8 @@ TEST_CASE("the JSON text helpers give the core's verdict under the caller's "
     const auto validated_object =
         scry::detail::validate_json_object(input, category, failure);
     REQUIRE(validated_object.has_value() == object);
+    const auto parsed = scry::detail::parse_json_object(input, category, failure);
+    REQUIRE(parsed.has_value() == object);
     const auto canonical = scry::detail::canonicalize_json(text, category, failure);
     REQUIRE(canonical.has_value() == valid);
     const auto canonical_object =
@@ -69,7 +71,9 @@ TEST_CASE("the JSON text helpers give the core's verdict under the caller's "
     }
     if (object) {
       CHECK(canonical_object->text == canonical->text);
+      CHECK(parsed->to_json().text == canonical->text);
     } else {
+      check_rejection(parsed.error(), message);
       check_rejection(validated_object.error(), message);
       check_rejection(canonical_object.error(), message);
     }
@@ -82,14 +86,6 @@ TEST_CASE("a JSON text rejection locates the fault and repeats none of the text"
   REQUIRE_FALSE(rejected);
   check_rejection(rejected.error(), "test JSON is not valid: JSON text is not valid: "
                                     "expected ':' at line 2, column 6");
-}
-
-TEST_CASE("the nesting depth counts only brackets outside strings") {
-  CHECK(scry::detail::json_nesting_depth("1") == 0);
-  CHECK(scry::detail::json_nesting_depth("{}") == 1);
-  CHECK(scry::detail::json_nesting_depth(R"({"a":[1,{"b":[]}],"c":{}})") == 4);
-  CHECK(scry::detail::json_nesting_depth(R"({"[{\"[":"]]]{{"})") == 1);
-  CHECK(scry::detail::json_nesting_depth(R"(["\\",[[]]])") == 3);
 }
 
 TEST_CASE("the JSON text helpers spell canonical text") {
