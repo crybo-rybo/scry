@@ -17,7 +17,7 @@ namespace {
 // The deepest tool-call arguments Scry accepts. An Anthropic request holds them
 // five levels down (body, messages, message, content, block), and so does a
 // conversation document, and the whole text of either may nest at most 256 deep,
-// the bound of Scrydantic's parser and of the check its encoder ends with.
+// the bound of Scrydantic's parser and encoder.
 constexpr std::size_t max_tool_argument_depth = 256 - 5;
 
 template <typename Command> [[nodiscard]] TransitionResult applied(Command command) {

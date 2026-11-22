@@ -87,9 +87,10 @@ struct Error {
 ///
 /// This is for the callables that return a scry::Result: a dynamic tool's handler
 /// and a hand-written AnswerValidator. A reflected tool or a scrydantic::check
-/// validator returns a scrydantic::Result instead, and refuses with
-/// scrydantic::tool_error(), which takes the same two texts; Scry gives that
-/// error its category.
+/// validator returns a scrydantic::Result instead. A tool refuses with
+/// scrydantic::tool_error(), and a validator with scrydantic::rejection(), which is
+/// the same function. It takes the same two texts as this one, and Scry gives its
+/// error a category.
 ///
 /// An empty `host_message` copies `model_message` into `Error::message`, so a
 /// handler that wants one diagnostic writes it once.

@@ -392,6 +392,11 @@ Scry adds these rules to a reflected tool:
   an explicit object parameter, the context comes immediately after it. The
   context is not part of the schema. A context in any other position is a
   compile error.
+- **Const handlers.** An `add<Args>()` handler is called as `const`. A `mutable`
+  lambda, or a functor whose `operator()` is not `const`, is a compile error.
+  Keep state that calls change behind a reference or a pointer that the handler
+  captures, or in a toolbox. A toolbox member function need not be `const`, and
+  a dynamic handler can be `mutable`.
 - **Names.** A tool has the name of its function, or the name that a
   `scrydantic::name` annotation gives it. The description is the text of the
   `tool` annotation. Tool names in one toolbox or namespace must be different
@@ -430,7 +435,10 @@ category. Scry reports it as `ErrorCategory::tool`, with the same `message`,
   model gets `model_message` alone. Each word of it comes from the schema that
   the model already has, from the input, or from the model text of a validator.
   Thus the model can correct itself, and it learns nothing new. If the argument
-  text is not JSON at all, the text is `tool arguments are not valid JSON`.
+  text is not JSON at all, the text says why and where reading stopped, as in
+  `tool arguments are not valid JSON: expected ':' at line 1, column 7`. During
+  a turn, argument text that is not JSON never gets to a handler: it fails the
+  turn with `protocol`.
 - **The function refuses the call.** It returns
   `std::unexpected(scrydantic::tool_error(model_message, host_message))`.
   [Tool errors](#tool-errors) describes what the model gets.
@@ -956,7 +964,7 @@ package version check accepts only the same minor version. Thus a
 `find_package()` request for one minor release does not accept an install of
 another.
 
-Scry depends on the external Scrydantic package, version 0.2.x. Scrydantic has
+Scry depends on the external Scrydantic package, version 0.3.x. Scrydantic has
 two targets. `scrydantic::json` is a static C++23 library without reflection:
 the JSON core, `Json`, `JsonView`, and `scrydantic::Error`.
 `scrydantic::scrydantic` is header-only C++26 on top of it: the annotations,

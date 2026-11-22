@@ -211,7 +211,7 @@ The model can still call your tools before it answers.
 - **CMake 3.30 or newer.** 3.30 is the first CMake version that knows the
   C++26 mode of GCC.
 - **libcurl 7.84 or newer**, with development headers.
-- **Scrydantic 0.2.x.** CMake uses an installed package when one is
+- **Scrydantic 0.3.x.** CMake uses an installed package when one is
   available. Otherwise it fetches a pinned revision.
 - **Linux or macOS.**
 

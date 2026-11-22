@@ -130,13 +130,15 @@ static_assert(!scrydantic::ToolHandlerFor<ReversedContextHandler, PresenceArgume
 static_assert(scrydantic::ToolHandlerFor<VoidContextHandler, PresenceArguments,
                                          scry::ToolCallContext>);
 
-TEST_CASE("a reflected tool answers arguments that are not JSON with a fixed text") {
+TEST_CASE("a reflected tool says why and where arguments are not JSON") {
   auto handler = make_tool_handler<PresenceArguments>([](PresenceArguments) {});
   auto malformed = handler({}, scrydantic::Json{.text = "{"});
   REQUIRE_FALSE(malformed);
   CHECK(malformed.error().category == scry::ErrorCategory::tool);
-  CHECK(malformed.error().message == "tool arguments are not valid JSON");
-  CHECK(malformed.error().model_message == "tool arguments are not valid JSON");
+  constexpr std::string_view text =
+      "tool arguments are not valid JSON: unexpected end of input at line 1, column 2";
+  CHECK(malformed.error().message == text);
+  CHECK(malformed.error().model_message == text);
 }
 
 TEST_CASE("a reflected tool's decode failure keeps Scrydantic's texts and issues") {
@@ -484,6 +486,8 @@ TEST_CASE("response_format validators report a rejected answer as invalid_argume
   const auto malformed = format.validate(scrydantic::Json{.text = "{"});
   REQUIRE_FALSE(malformed);
   CHECK(malformed.error().category == scry::ErrorCategory::invalid_argument);
-  CHECK(malformed.error().message == "JSON text is not valid JSON");
-  CHECK(malformed.error().model_message == "JSON text is not valid JSON");
+  constexpr std::string_view text =
+      "JSON text is not valid JSON: unexpected end of input at line 1, column 2";
+  CHECK(malformed.error().message == text);
+  CHECK(malformed.error().model_message == text);
 }

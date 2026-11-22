@@ -115,6 +115,11 @@ public:
   /// `void`, or scrydantic::Status; the last two send `{}` on success. A failure
   /// reaches the model and the host as an ErrorCategory::tool error.
   ///
+  /// The handler is called as const, so a mutable lambda, or a functor whose call
+  /// operator is not const, fails to compile. State that calls change lives outside
+  /// it: behind a reference or pointer it captures, or in a toolbox. An
+  /// add_dynamic() handler has no such rule.
+  ///
   /// The template is unconstrained so that a rejected type fails with a diagnostic
   /// naming the offending member and the reason; scrydantic::ToolArguments
   /// and scrydantic::ToolHandlerFor are the SFINAE-friendly form of the same
@@ -122,7 +127,7 @@ public:
   /// name the host chooses.
   /// @tparam Args Complete reflected argument aggregate satisfying
   /// scrydantic::ToolArguments.
-  /// @tparam Handler Move-constructible callable satisfying
+  /// @tparam Handler Move-constructible callable, invocable when const, satisfying
   /// scrydantic::ToolHandlerFor<Handler, Args, ToolCallContext>.
   /// @param metadata Provider-visible tool name and description.
   /// @param handler Callable invoked with Args moved by value, optionally preceded
