@@ -49,9 +49,9 @@ int main() {
   // The schema a host would hand a model as the expected answer shape.
   std::cout << "schema: " << scrydantic::schema_v<Plan> << '\n';
 
-  const auto answer = scrydantic::decode<Plan>(scrydantic::Json{
-      .text = R"({"actions":[{"type":"reminder","text":"stretch","priority":"high"},)"
-              R"({"type":"note","body":"water the plants"}]})"});
+  const auto answer = scrydantic::decode<Plan>(
+      R"({"actions":[{"type":"reminder","text":"stretch","priority":"high"},)"
+      R"({"type":"note","body":"water the plants"}]})");
   if (!answer) {
     std::cerr << answer.error().message << '\n';
     return 1;
@@ -61,9 +61,8 @@ int main() {
   // A wrong answer fails with one line for each issue: its JSON path and what the
   // schema required there. model_message is written to be sent back to the model
   // as-is, and issues holds the same problems as data.
-  const auto wrong = scrydantic::decode<Plan>(scrydantic::Json{
-      .text =
-          R"({"actions":[{"type":"alarm","text":"now"},{"type":"reminder","text":""}]})"});
+  const auto wrong = scrydantic::decode<Plan>(
+      R"({"actions":[{"type":"alarm","text":"now"},{"type":"reminder","text":""}]})");
   if (wrong) {
     return 1;
   }

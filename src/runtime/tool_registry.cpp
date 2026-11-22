@@ -32,9 +32,8 @@ reflected_handler(scrydantic::ToolFunction<ToolCallContext> handler) {
     return {};
   }
   return ContextualToolHandler{
-      [inner = std::move(handler)](
-          const ToolCallContext& context,
-          scrydantic::Json input) mutable -> Result<scrydantic::Json> {
+      [inner = std::move(handler)](const ToolCallContext& context,
+                                   scrydantic::Json input) -> Result<scrydantic::Json> {
         auto result = inner(context, std::move(input));
         if (!result) {
           return std::unexpected(tool_error(std::move(result.error())));

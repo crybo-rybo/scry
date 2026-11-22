@@ -107,6 +107,9 @@ TEST_CASE("Anthropic stream decoder rejects malformed required events") {
   auto event = decode(*adapter, "content_block_delta", "{broken", state);
   REQUIRE_FALSE(event.has_value());
   CHECK(event.error().category == ErrorCategory::protocol);
+  // Where the data broke, and none of the data itself.
+  CHECK(event.error().message == "Anthropic SSE data: JSON text is not valid: expected "
+                                 "a string key at line 1, column 2");
 
   start_anthropic_message(*adapter, state);
   event = decode(

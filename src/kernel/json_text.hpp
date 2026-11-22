@@ -12,6 +12,11 @@
 // C++23 JSON core (<scrydantic/json.hpp>) that report a failure as a Scry Error
 // under the caller's category. Outside them, parsed JSON is read through
 // scrydantic::JsonView and typed values through Scrydantic's codec.
+//
+// Text that is not JSON fails with `<failure_message>: <why and where>`, where the
+// second part is scrydantic::JsonView::parse()'s sentence. That sentence holds only
+// fixed words and a position, so it repeats none of the text. A root of the wrong
+// kind fails with `failure_message` alone.
 namespace scry::detail {
 
 // Validates JSON text without materializing a document; see

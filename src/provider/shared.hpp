@@ -180,13 +180,15 @@ sanitize_error_token(const std::string_view value) {
   return safe ? std::optional<std::string>{value} : std::nullopt;
 }
 
-// Parses one SSE `data` payload.
+// Parses one SSE `data` payload. A rejection says why and where reading stopped, in
+// the parser's fixed words and a position, so it holds no provider text.
 [[nodiscard]] inline Result<scrydantic::JsonView>
 parse_payload(const std::string_view data, const std::string_view dialect) {
-  auto root = scrydantic::JsonView::parse(scrydantic::Json{.text = std::string{data}});
+  auto root = scrydantic::JsonView::parse(data);
   if (!root) {
     return std::unexpected(make_error(
-        ErrorCategory::protocol, std::string{dialect} + " SSE data is not valid JSON"));
+        ErrorCategory::protocol,
+        describe_codec_failure(std::string{dialect} + " SSE data", root.error())));
   }
   return std::move(*root);
 }

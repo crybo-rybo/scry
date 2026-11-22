@@ -19,12 +19,9 @@ namespace detail {
 /// ErrorCategory::invalid_argument, with Scrydantic's host and model texts and
 /// its structured issues.
 [[nodiscard]] inline Error answer_error(scrydantic::Error error) {
-  return Error{
-      .category = ErrorCategory::invalid_argument,
-      .message = std::move(error.message),
-      .model_message = std::move(error.model_message),
-      .issues = std::move(error.issues),
-  };
+  auto reported = tool_error(std::move(error));
+  reported.category = ErrorCategory::invalid_argument;
+  return reported;
 }
 
 } // namespace detail

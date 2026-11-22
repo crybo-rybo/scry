@@ -196,7 +196,7 @@ Result<scrydantic::Json> Conversation::to_json() const {
 Result<Conversation> Conversation::from_json(const scrydantic::Json& json) {
   auto root = scrydantic::JsonView::parse(json);
   if (!root) {
-    return std::unexpected(invalid_document("Conversation document is not valid JSON"));
+    return std::unexpected(invalid_document(root.error()));
   }
   auto header = scrydantic::decode<ConversationDocumentHeader>(*root);
   if (!header) {

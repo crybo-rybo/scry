@@ -144,6 +144,9 @@ TEST_CASE("tool registration accepts only JSON object schemas and canonicalizes 
       registry.add_dynamic(definition("malformed", "{"), contextual_handler());
   REQUIRE_FALSE(status);
   CHECK(status.error().category == scry::ErrorCategory::invalid_argument);
+  CHECK(status.error().message ==
+        "tool input schema must be a valid JSON object: JSON text is not valid: "
+        "unexpected end of input at line 1, column 2");
 
   status = registry.add_dynamic(definition("array", R"(["not","an","object"])"),
                                 contextual_handler());

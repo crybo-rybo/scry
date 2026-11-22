@@ -276,8 +276,7 @@ std::string http_error_detail(const std::string_view body,
   if (provider_namespace.empty() || body.empty()) {
     return {};
   }
-  const auto document =
-      scrydantic::JsonView::parse(scrydantic::Json{.text = std::string{body}});
+  const auto document = scrydantic::JsonView::parse(body);
   if (!document) {
     return {};
   }

@@ -57,7 +57,7 @@ struct BoundedOrdinal {
     return {};
   }
   return std::unexpected(
-      scrydantic::tool_error("must be odd", "even ordinals are reserved"));
+      scrydantic::rejection("must be odd", "even ordinals are reserved"));
 }
 
 struct CheckedOrdinal {

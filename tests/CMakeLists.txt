@@ -276,6 +276,11 @@ scry_add_compile_fail_test(
   wrong_context_order.cpp
   "is not invocable as (Arguments) or as (const scry::ToolCallContext&, Arguments)"
 )
+scry_add_compile_fail_test(
+  mutable-handler
+  mutable_handler.cpp
+  "a handler is called as const, so its call operator must be const"
+)
 # The type after the path is the dealiased std::chrono::seconds, whose spelling
 # varies with the platform's int64_t, so the assertion stops at the path.
 scry_add_compile_fail_test(

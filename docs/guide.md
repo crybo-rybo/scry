@@ -71,17 +71,18 @@ Which one a function of yours returns depends on who calls it:
 | You write | It returns | It refuses with |
 | --- | --- | --- |
 | A reflected tool: an annotated function or member function, or an `add<Args>()` handler | A value, `void`, `scrydantic::Result<T>`, or `scrydantic::Status` | `scrydantic::tool_error()` |
-| A validator for `scrydantic::check` | `scrydantic::Status` | `scrydantic::tool_error()` |
+| A validator for `scrydantic::check` | `scrydantic::Status` | `scrydantic::rejection()` |
 | A dynamic tool, for `add_dynamic()` | `scry::Result<scrydantic::Json>` | `scry::tool_error()` |
 | A hand-written `ResponseFormat::validate` | `scry::Status` | `scry::tool_error()` |
 
 The rule: code that Scrydantic calls from a declaration returns Scrydantic's
 types, and code that you give to Scry as a JSON callable returns Scry's. Both
 `tool_error()` functions take the same two texts, one for the model and one
-for the host. A `scrydantic::Error` has no category. Scry gives it one when it
-reports it to you: `tool` for a tool call, and `invalid_argument` for a typed
-answer. Everything that Scry returns to you is a `scry::Result` or a
-`scry::Status`.
+for the host. `scrydantic::rejection()` is `scrydantic::tool_error()` under the
+name that fits a validator. A `scrydantic::Error` has no category. Scry gives
+it one when it reports it to you: `tool` for a tool call, and
+`invalid_argument` for a typed answer. Everything that Scry returns to you is a
+`scry::Result` or a `scry::Status`.
 
 To cross from one to the other yourself, pass the `scrydantic::Error` to
 `scry::tool_error()`. It keeps the texts and the issues and sets the category
@@ -106,7 +107,7 @@ schema from reflection.
 | Namespace | `tools.add<^^almanac>()` | A group of tools that have no state. Each annotated function declared in the namespace before the call becomes a tool. |
 | Toolbox object | `tools.add(Greenhouse{})` | Tools that share state. Each annotated member function becomes a tool bound to the object. The registry owns the object. |
 | Shared toolbox | `tools.add(std::make_shared<Greenhouse>())` | Tools that share state, and your application also reads that state. |
-| Lambda | `tools.add<WaterArguments>({.name = "water", .description = "Water one bed"}, handler)` | The name or description is known only at runtime, or the handler captures local data. Reflection still makes the schema from the struct. |
+| Lambda | `tools.add<WaterArguments>({.name = "water", .description = "Water one bed"}, handler)` | The name or description is known only at runtime, or the handler captures local data. Reflection still makes the schema from the struct. The handler is called as `const`, so the lambda cannot be `mutable`. |
 | Dynamic | `tools.add_dynamic(definition, handler)` | The tool exists only at runtime, for example a tool from a script. You write the JSON schema and read the JSON arguments. |
 
 The first four forms in one program:
@@ -207,7 +208,7 @@ scrydantic::Status known_city(const std::string& city) {
   if (city == "Oslo" || city == "Lima")
     return {};
   return std::unexpected(
-      scrydantic::tool_error("must be a known city", "has no row in cities"));
+      scrydantic::rejection("must be a known city", "has no row in cities"));
 }
 
 struct Booking {

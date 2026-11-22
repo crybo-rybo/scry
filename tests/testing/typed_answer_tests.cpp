@@ -41,7 +41,7 @@ std::size_t reason_checks = 0;
     return {};
   }
   return std::unexpected(
-      scrydantic::tool_error("must cite the almanac", "no almanac entry matches"));
+      scrydantic::rejection("must cite the almanac", "no almanac entry matches"));
 }
 
 // A Verdict whose reason a validator checks and whose confidence is bounded.

@@ -9,6 +9,7 @@
 #include <scrydantic/json.hpp>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace scry::detail {
 namespace {
@@ -16,9 +17,16 @@ namespace {
 // Whitespace per RFC 8259, the only kind the parser skips.
 constexpr std::string_view json_whitespace = " \t\n\r";
 
-[[nodiscard]] Error json_text_error(const ErrorCategory category,
+// The caller's failure, followed by why and where `input` stopped being JSON. This
+// reads the text again, which only a rejection pays for.
+[[nodiscard]] Error json_text_error(const std::string_view input,
+                                    const ErrorCategory category,
                                     const std::string_view failure_message) {
-  return make_error(category, std::string{failure_message});
+  std::string message{failure_message};
+  if (const auto view = scrydantic::JsonView::parse(input); !view) {
+    message.append(": ").append(view.error().message);
+  }
+  return make_error(category, std::move(message));
 }
 
 // The canonical text of `json`, or the caller's failure when the text is not one
@@ -29,7 +37,7 @@ constexpr std::string_view json_whitespace = " \t\n\r";
                                                       const std::string_view failure) {
   const auto view = scrydantic::JsonView::parse(json);
   if (!view || (object_only && view->kind() != scrydantic::JsonKind::object)) {
-    return std::unexpected(json_text_error(category, failure));
+    return std::unexpected(json_text_error(json.text, category, failure));
   }
   return view->to_json();
 }
@@ -39,7 +47,7 @@ constexpr std::string_view json_whitespace = " \t\n\r";
 Status validate_json(const std::string_view input, const ErrorCategory category,
                      const std::string_view failure_message) {
   if (!scrydantic::is_valid_json(input)) {
-    return std::unexpected(json_text_error(category, failure_message));
+    return std::unexpected(json_text_error(input, category, failure_message));
   }
   return {};
 }
@@ -48,7 +56,7 @@ Status validate_json_object(const std::string_view input, const ErrorCategory ca
                             const std::string_view failure_message) {
   // A valid document starts, after whitespace, with its root's first byte.
   if (!scrydantic::is_valid_json(input) || !json_root_is_object(input)) {
-    return std::unexpected(json_text_error(category, failure_message));
+    return std::unexpected(json_text_error(input, category, failure_message));
   }
   return {};
 }
