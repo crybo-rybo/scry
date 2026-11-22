@@ -25,10 +25,12 @@ successful_result(const ToolCallBlock& call, const scrydantic::Json& value,
   if (value.text.size() > max_result_bytes) {
     return std::unexpected(oversized_result());
   }
-  auto canonical = canonicalize_json(value, ErrorCategory::tool,
-                                     "tool handler returned invalid JSON");
+  // The model cannot repair the host's JSON, so it gets a fixed text without the
+  // position that the error's own message carries.
+  constexpr std::string_view invalid_result = "tool handler returned invalid JSON";
+  auto canonical = canonicalize_json(value, ErrorCategory::tool, invalid_result);
   if (!canonical) {
-    return error_result(call, canonical.error().message, max_result_bytes);
+    return error_result(call, invalid_result, max_result_bytes);
   }
   if (canonical->text.size() > max_result_bytes) {
     return std::unexpected(oversized_result());

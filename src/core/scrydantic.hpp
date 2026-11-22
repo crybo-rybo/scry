@@ -27,8 +27,9 @@ template <typename Type>
 // located in the value carries `<path> <reason>` text, so it reads
 // `Conversation document at $.messages[0].role is a required member`; a decode
 // that found several issues has one such line for each, and the subject leads the
-// first. A failure of the whole text, such as an encoded string that is not
-// UTF-8, has no path and reads `<subject>: <reason>`.
+// first. A failure of the whole text, such as an encoded string that is not UTF-8
+// or text that JsonView::parse() rejects, has no path and reads `<subject>:
+// <reason>`.
 [[nodiscard]] inline std::string
 describe_codec_failure(const std::string_view subject, const scrydantic::Error& error) {
   std::string text{subject};

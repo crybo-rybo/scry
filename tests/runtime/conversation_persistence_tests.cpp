@@ -218,6 +218,9 @@ TEST_CASE("Conversation persistence enforces tool block roles and shapes") {
 
 TEST_CASE("Conversation::from_json reports which part of the document it rejected") {
   const std::vector<std::pair<std::string, std::string_view>> cases{
+      {R"({"messages":[],"system_prompt" "","version":1})",
+       "Conversation document: JSON text is not valid: expected ':' at line 1, column "
+       "32"},
       {R"({"messages":[],"system_prompt":"","version":-1})",
        "Conversation document at $.version is outside the integer range"},
       {R"({"messages":[],"system_prompt":"","version":2})",

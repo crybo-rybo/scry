@@ -1,7 +1,8 @@
 // The text-level entry points in kernel/json_text.hpp are thin layers over
 // Scrydantic's public JSON core, whose own tests hold it to the golden fixtures. So
 // each entry point must give the core's verdict and canonical text, and report a
-// rejection as a Scry Error under the caller's category and message. The helpers
+// rejection as a Scry Error under the caller's category and message, followed by the
+// core's reason when the text is not JSON. The helpers
 // Scry spells itself are checked against literal text.
 
 #include "kernel/json_text.hpp"
@@ -18,9 +19,9 @@ namespace {
 constexpr auto category = scry::ErrorCategory::protocol;
 constexpr std::string_view failure = "test JSON is not valid";
 
-void check_rejection(const scry::Error& error) {
+void check_rejection(const scry::Error& error, const std::string_view message) {
   CHECK(error.category == category);
-  CHECK(error.message == failure);
+  CHECK(error.message == message);
   CHECK_FALSE(error.retryable);
   CHECK(error.model_message.empty());
 }
@@ -56,19 +57,31 @@ TEST_CASE("the JSON text helpers give the core's verdict under the caller's "
         scry::detail::canonicalize_json_object(text, category, failure);
     REQUIRE(canonical_object.has_value() == object);
 
+    std::string message{failure};
+    if (!valid) {
+      message.append(": ").append(view.error().message);
+    }
     if (valid) {
       CHECK(canonical->text == view->to_json().text);
     } else {
-      check_rejection(validated.error());
-      check_rejection(canonical.error());
+      check_rejection(validated.error(), message);
+      check_rejection(canonical.error(), message);
     }
     if (object) {
       CHECK(canonical_object->text == canonical->text);
     } else {
-      check_rejection(validated_object.error());
-      check_rejection(canonical_object.error());
+      check_rejection(validated_object.error(), message);
+      check_rejection(canonical_object.error(), message);
     }
   }
+}
+
+TEST_CASE("a JSON text rejection locates the fault and repeats none of the text") {
+  const auto rejected =
+      scry::detail::validate_json("{\"secret\":1,\n \"b\" 2}", category, failure);
+  REQUIRE_FALSE(rejected);
+  check_rejection(rejected.error(), "test JSON is not valid: JSON text is not valid: "
+                                    "expected ':' at line 2, column 6");
 }
 
 TEST_CASE("the nesting depth counts only brackets outside strings") {
