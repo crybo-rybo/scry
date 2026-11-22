@@ -2,6 +2,7 @@
 
 #include "kernel/error.hpp"
 
+#include <scrydantic/error.hpp>
 #include <utility>
 
 namespace scry::detail {
@@ -20,16 +21,8 @@ Error make_error(const ErrorCategory category, std::string message,
 namespace scry {
 
 Error tool_error(std::string model_message, std::string host_message) {
-  // A handler that supplies no host text still wants the refusal in its own logs,
-  // and repeating text it already chose to show the model discloses nothing new.
-  if (host_message.empty()) {
-    host_message = model_message;
-  }
-  return Error{
-      .category = ErrorCategory::tool,
-      .message = std::move(host_message),
-      .model_message = std::move(model_message),
-  };
+  return tool_error(
+      scrydantic::rejection(std::move(model_message), std::move(host_message)));
 }
 
 Error tool_error(scrydantic::Error error) {
