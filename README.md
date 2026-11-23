@@ -65,7 +65,7 @@ include(FetchContent)
 FetchContent_Declare(
   scry
   GIT_REPOSITORY https://github.com/crybo-rybo/scry.git
-  GIT_TAG v0.8.0
+  GIT_TAG v0.9.0
 )
 FetchContent_MakeAvailable(scry)
 target_link_libraries(app PRIVATE scry::scry)
@@ -87,7 +87,7 @@ cmake --install build/release --prefix /your/prefix
 Then configure your project with `-DCMAKE_PREFIX_PATH=/your/prefix`:
 
 ```cmake
-find_package(scry 0.8.0 CONFIG REQUIRED)
+find_package(scry 0.9.0 CONFIG REQUIRED)
 target_link_libraries(app PRIVATE scry::scry)
 ```
 
