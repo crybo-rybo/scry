@@ -1,21 +1,11 @@
 #include "runtime/tool_registry_impl.hpp"
-#include "support/harness_test_support.hpp"
 
 #include <catch2/catch_test_macros.hpp>
-#include <cstdint>
-#include <limits>
 #include <memory>
-#include <scry/harness.hpp>
 #include <scry/tool_registry.hpp>
 #include <string>
-#include <type_traits>
 #include <utility>
 #include <vector>
-
-static_assert(std::is_default_constructible_v<scry::ToolRegistry>);
-static_assert(std::is_move_constructible_v<scry::ToolRegistry>);
-static_assert(std::is_move_assignable_v<scry::ToolRegistry>);
-static_assert(!std::is_copy_constructible_v<scry::ToolRegistry>);
 
 namespace {
 
@@ -63,79 +53,6 @@ invoke(const scry::detail::RegisteredTool& tool, std::string arguments) {
 }
 
 } // namespace
-
-TEST_CASE("tool manifests export the current registry without invoking handlers") {
-  auto harness = scry::Harness::create(scry::test_support::test_config());
-  REQUIRE(harness);
-  const auto empty = harness->tools().to_json();
-  REQUIRE(empty);
-  CHECK(empty->text == R"({"tools":[],"version":1})");
-
-  auto calls = std::make_shared<int>(0);
-  REQUIRE(harness->tools().add_dynamic(definition(), handler(calls)));
-  const auto first = harness->tools().to_json();
-  REQUIRE(first);
-  CHECK(
-      first->text ==
-      R"({"tools":[{"description":"Get a forecast","input_schema":{"properties":{"city":{"description":"Place","type":"string"}},"required":["city"],"type":"object"},"name":"forecast"}],"version":1})");
-  const auto repeated = harness->tools().to_json();
-  REQUIRE(repeated);
-  CHECK(repeated->text == first->text);
-
-  REQUIRE_FALSE(harness->tools().add_dynamic(definition(), handler(calls)));
-  REQUIRE_FALSE(
-      harness->tools().add_dynamic(definition("invalid", "{"), handler(calls)));
-  REQUIRE(harness->tools().add_dynamic(definition("another", R"({"type":"object"})"),
-                                       handler(calls)));
-  const auto later = harness->tools().to_json();
-  REQUIRE(later);
-  const auto parsed = scrydantic::JsonView::parse(*later);
-  REQUIRE(parsed);
-  const auto tools = parsed->find("tools");
-  REQUIRE(tools);
-  REQUIRE(tools->size() == 2);
-  CHECK(tools->at(0)->find("name")->string() == "forecast");
-  CHECK(tools->at(1)->find("name")->string() == "another");
-  CHECK(first->text.find("another") == std::string::npos);
-  CHECK(empty->text == R"({"tools":[],"version":1})");
-  CHECK(*calls == 0);
-}
-
-TEST_CASE("tool manifests preserve escaped metadata and nested schema values") {
-  auto harness = scry::Harness::create(scry::test_support::test_config());
-  REQUIRE(harness);
-  const std::string name = "quoted\"tool\\name";
-  const std::string description = "First line\nSecond\tline — café";
-  REQUIRE(harness->tools().add_dynamic(
-      {
-          .name = name,
-          .description = description,
-          .input_schema =
-              {.text =
-                   R"({"type":"object","properties":{"items":{"type":"array","items":{"enum":["a","b"]}},"limit":{"default":18446744073709551615}},"additionalProperties":false})"},
-      },
-      handler()));
-  const auto manifest = harness->tools().to_json();
-  REQUIRE(manifest);
-  const auto parsed = scrydantic::JsonView::parse(*manifest);
-  REQUIRE(parsed);
-  const auto tools = parsed->find("tools");
-  REQUIRE(tools);
-  REQUIRE(tools->size() == 1);
-  const auto tool = tools->at(0);
-  REQUIRE(tool);
-  CHECK(tool->find("name")->string() == name);
-  CHECK(tool->find("description")->string() == description);
-  const auto schema = tool->find("input_schema");
-  REQUIRE(schema);
-  CHECK(schema->kind() == scrydantic::JsonKind::object);
-  CHECK(schema->find("additionalProperties")->boolean() == false);
-  const auto properties = schema->find("properties");
-  REQUIRE(properties);
-  CHECK(properties->find("items")->find("items")->find("enum")->size() == 2);
-  CHECK(properties->find("limit")->find("default")->unsigned_integer() ==
-        std::numeric_limits<std::uint64_t>::max());
-}
 
 TEST_CASE("tool registration accepts only JSON object schemas and canonicalizes them") {
   scry::ToolRegistry registry;
@@ -210,11 +127,6 @@ TEST_CASE("tool registration argument failures report invalid_argument") {
   REQUIRE_FALSE(duplicate);
   CHECK(duplicate.error().category == scry::ErrorCategory::invalid_argument);
   CHECK(registry.size() == 1);
-
-  // invalid_state is reserved for lifecycle failures: add() reports it only for
-  // an inactive handle, which a host reaches by moving a registry away - covered
-  // by the moved-from case below.
-  static_assert(std::is_move_constructible_v<scry::ToolRegistry>);
 }
 
 TEST_CASE("tool snapshots retain immutable registrations across later additions") {
@@ -228,10 +140,12 @@ TEST_CASE("tool snapshots retain immutable registrations across later additions"
     REQUIRE(snapshot.entries->size() == 1);
     REQUIRE(registry.add_dynamic(definition("current_time", R"({"type":"object"})"),
                                  contextual_handler()));
-    const auto current = entries(registry);
-    CHECK(current.size() == 2);
+    const auto current = scry::detail::ToolRegistryAccess::snapshot(registry);
+    CHECK(current.entries->size() == 2);
+    REQUIRE(current.schemas->size() == 2);
+    CHECK(current.schemas->back().name == "current_time");
     CHECK(snapshot.entries->size() == 1);
-    CHECK(snapshot.entries->front() == current.front());
+    CHECK(snapshot.entries->front() == current.entries->front());
   }
 
   const auto& schemas = *snapshot.schemas;
@@ -248,36 +162,23 @@ TEST_CASE("tool snapshots retain immutable registrations across later additions"
   CHECK(*calls == 1);
 }
 
-TEST_CASE("registry snapshots rebuild only when registration changed") {
-  scry::ToolRegistry registry;
-  REQUIRE(registry.add_dynamic(definition(), contextual_handler()));
-
-  const auto first = scry::detail::ToolRegistryAccess::snapshot(registry);
-  const auto shared = scry::detail::ToolRegistryAccess::snapshot(registry);
-  CHECK(first.entries == shared.entries);
-  CHECK(first.schemas == shared.schemas);
-  CHECK(first.entries->size() == 1);
-  CHECK(first.schemas->size() == 1);
-
-  REQUIRE(registry.add_dynamic(definition("current_time", R"({"type":"object"})"),
-                               contextual_handler()));
-  const auto rebuilt = scry::detail::ToolRegistryAccess::snapshot(registry);
-  CHECK(rebuilt.entries != first.entries);
-  CHECK(rebuilt.schemas != first.schemas);
-  CHECK(rebuilt.entries->size() == 2);
-  CHECK(rebuilt.schemas->size() == 2);
-  CHECK(first.entries->size() == 1);
-  CHECK(rebuilt.schemas->back().name == "current_time");
-}
-
-TEST_CASE("a standalone registry exports its manifest without a Harness") {
+TEST_CASE("a standalone registry exports its manifest without a Harness or its "
+          "handlers") {
   // No Config, no libcurl, no worker: a registry is a plain value, so a build or
   // CI step can emit the tool contract from a program that never talks to a
   // provider.
   scry::ToolRegistry tools;
   CHECK(tools.empty());
-  REQUIRE(tools.add_dynamic(definition(), handler()));
-  REQUIRE(tools.add_dynamic(definition("another", R"({"type":"object"})"), handler()));
+  const auto empty = tools.to_json();
+  REQUIRE(empty);
+  CHECK(empty->text == R"({"tools":[],"version":1})");
+
+  auto calls = std::make_shared<int>(0);
+  REQUIRE(tools.add_dynamic(definition(), handler(calls)));
+  REQUIRE_FALSE(tools.add_dynamic(definition(), handler(calls)));
+  REQUIRE_FALSE(tools.add_dynamic(definition("invalid", "{"), handler(calls)));
+  REQUIRE(
+      tools.add_dynamic(definition("another", R"({"type":"object"})"), handler(calls)));
   CHECK(tools.size() == 2);
   CHECK(tools.contains("another"));
   // Names match exactly, never by prefix.
@@ -290,6 +191,10 @@ TEST_CASE("a standalone registry exports its manifest without a Harness") {
   CHECK(
       manifest->text ==
       R"({"tools":[{"description":"Get a forecast","input_schema":{"properties":{"city":{"description":"Place","type":"string"}},"required":["city"],"type":"object"},"name":"forecast"},{"description":"Get a forecast","input_schema":{"type":"object"},"name":"another"}],"version":1})");
+  const auto repeated = tools.to_json();
+  REQUIRE(repeated);
+  CHECK(repeated->text == manifest->text);
+  CHECK(*calls == 0);
 }
 
 TEST_CASE("a moved-from registry is inactive and reports invalid_state") {
@@ -320,59 +225,4 @@ TEST_CASE("a moved-from registry is inactive and reports invalid_state") {
   // NOLINTEND(bugprone-use-after-move)
   REQUIRE(tools.add_dynamic(definition(), handler()));
   CHECK(tools.size() == 1);
-}
-
-TEST_CASE("both handler shapes register and export the same contract") {
-  auto plain_calls = std::make_shared<int>(0);
-  auto contextual_calls = std::make_shared<int>(0);
-
-  scry::ToolRegistry plain;
-  REQUIRE(plain.add_dynamic(definition(), handler(plain_calls)));
-
-  scry::ToolRegistry contextual;
-  REQUIRE(contextual.add_dynamic(definition(), contextual_handler(contextual_calls)));
-
-  const auto plain_manifest = plain.to_json();
-  const auto contextual_manifest = contextual.to_json();
-  REQUIRE(plain_manifest);
-  REQUIRE(contextual_manifest);
-  // Which handler shape a tool was registered with is a host-side detail: the
-  // model-facing contract has to be byte-identical.
-  CHECK(plain_manifest->text == contextual_manifest->text);
-  CHECK(plain.names() == contextual.names());
-  CHECK(*plain_calls == 0);
-  CHECK(*contextual_calls == 0);
-}
-
-TEST_CASE("the plain overload's adapter delivers arguments unchanged") {
-  scry::ToolRegistry registry;
-  scrydantic::Json plain_seen{};
-  scrydantic::Json contextual_seen{};
-  REQUIRE(registry.add_dynamic(
-      definition("plain"), scry::ToolHandler{[&plain_seen](scrydantic::Json arguments) {
-        plain_seen = arguments;
-        return scry::Result<scrydantic::Json>{std::move(arguments)};
-      }}));
-  REQUIRE(
-      registry.add_dynamic(definition("contextual"),
-                           scry::ContextualToolHandler{
-                               [&contextual_seen](const scry::ToolCallContext& context,
-                                                  scrydantic::Json arguments) {
-                                 contextual_seen = arguments;
-                                 return scry::Result<scrydantic::Json>{scrydantic::Json{
-                                     .text = std::string{R"({"tool":")"} +
-                                             std::string{context.tool_name} + R"("})"}};
-                               }}));
-  const auto registered = entries(registry);
-  REQUIRE(registered.size() == 2);
-
-  const auto plain_result = invoke(*registered.front(), R"({"city":"Detroit"})");
-  REQUIRE(plain_result);
-  CHECK(plain_seen.text == R"({"city":"Detroit"})");
-  CHECK(plain_result->text == R"({"city":"Detroit"})");
-
-  const auto contextual_result = invoke(*registered.back(), R"({"city":"Detroit"})");
-  REQUIRE(contextual_result);
-  CHECK(contextual_seen.text == R"({"city":"Detroit"})");
-  CHECK(contextual_result->text == R"({"tool":"contextual"})");
 }

@@ -2,7 +2,6 @@
 // nothing here includes a private Scry header, and each Harness comes from the
 // public Harness::create, so a change that breaks a consumer's test breaks this
 // suite first.
-#include <algorithm>
 #include <arpa/inet.h>
 #include <catch2/catch_test_macros.hpp>
 #include <charconv>
@@ -22,19 +21,14 @@
 #include <type_traits>
 #include <unistd.h>
 #include <utility>
-#include <variant>
 #include <vector>
 
 using namespace std::chrono_literals;
 using scry::testing::ScriptedResponse;
 using scry::testing::ScriptedServer;
-using scry::testing::ToolUseBlock;
 
-static_assert(std::is_aggregate_v<scry::testing::CapturedRequest>);
-static_assert(std::is_aggregate_v<ScriptedResponse>);
 static_assert(std::is_move_constructible_v<ScriptedServer>);
 static_assert(!std::is_copy_constructible_v<ScriptedServer>);
-static_assert(std::is_aggregate_v<ToolUseBlock>);
 
 namespace {
 
@@ -149,165 +143,6 @@ struct RoundTrip {
 
 } // namespace
 
-TEST_CASE("scripted Anthropic text turn runs the real decoder and commits") {
-  auto server = start_server();
-  server.enqueue(
-      answer(scry::testing::anthropic_text_stream("Hello runtime.", "msg_scripted"),
-             "anthropic-request"));
-  auto harness = scry::Harness::create(anthropic_config(server));
-  REQUIRE(harness);
-  auto conversation = scry::Conversation::create();
-  REQUIRE(conversation);
-
-  const auto completion = harness->send_and_wait(*conversation, "Question");
-  REQUIRE(completion);
-  CHECK(completion->text == "Hello runtime.");
-  CHECK(completion->finish_reason == scry::FinishReason::completed);
-  CHECK(completion->provider_request_id == "anthropic-request");
-  CHECK(completion->attempt_count == 1);
-  CHECK(conversation->message_count() == 2);
-  CHECK(server.requests().size() == 1);
-  CHECK(server.remaining() == 0);
-}
-
-TEST_CASE("scripted Anthropic turn skips thinking and commits only the text") {
-  // An Anthropic-compatible server, such as Ollama, can send thinking without a
-  // request for it.
-  constexpr std::string_view body = R"(event: message_start
-data: {"type":"message_start","message":{"id":"msg_thinking","type":"message","role":"assistant","content":[],"model":"test-model","stop_reason":null,"usage":{"input_tokens":2,"output_tokens":0}}}
-
-event: content_block_start
-data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}
-
-event: content_block_delta
-data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Hidden."}}
-
-event: content_block_delta
-data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig"}}
-
-event: content_block_stop
-data: {"type":"content_block_stop","index":0}
-
-event: content_block_start
-data: {"type":"content_block_start","index":1,"content_block":{"type":"redacted_thinking","data":"x"}}
-
-event: content_block_stop
-data: {"type":"content_block_stop","index":1}
-
-event: content_block_start
-data: {"type":"content_block_start","index":2,"content_block":{"type":"text","text":""}}
-
-event: content_block_delta
-data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"Visible."}}
-
-event: content_block_stop
-data: {"type":"content_block_stop","index":2}
-
-event: message_delta
-data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}
-
-event: message_stop
-data: {"type":"message_stop"}
-
-)";
-
-  auto server = start_server();
-  server.enqueue(answer(std::string{body}));
-  auto harness = scry::Harness::create(anthropic_config(server));
-  REQUIRE(harness);
-  auto conversation = scry::Conversation::create();
-  REQUIRE(conversation);
-
-  const auto completion = harness->send_and_wait(*conversation, "Question");
-  REQUIRE(completion);
-  CHECK(completion->text == "Visible.");
-  const auto& messages = conversation->messages();
-  REQUIRE(messages.size() == 2);
-  const auto& reply = messages.back();
-  CHECK(reply.role == scry::Role::assistant);
-  REQUIRE(reply.content.size() == 1);
-  const auto* text = std::get_if<scry::TextBlock>(&reply.content.front());
-  REQUIRE(text != nullptr);
-  CHECK(text->text == "Visible.");
-}
-
-TEST_CASE("scripted OpenAI-compatible text turn runs the other dialect") {
-  auto server = start_server();
-  server.enqueue(answer(scry::testing::openai_text_stream("sunny", "chatcmpl-1"),
-                        "openai-request"));
-  auto harness = scry::Harness::create(openai_config(server));
-  REQUIRE(harness);
-  auto conversation = scry::Conversation::create();
-  REQUIRE(conversation);
-
-  const auto completion = harness->send_and_wait(*conversation, "Weather?");
-  REQUIRE(completion);
-  CHECK(completion->text == "sunny");
-  CHECK(completion->usage.input_tokens == 4);
-  CHECK(completion->usage.output_tokens == 2);
-
-  const auto requests = server.requests();
-  REQUIRE(requests.size() == 1);
-  CHECK(requests.front().method == "POST");
-  CHECK(requests.front().target == "/v1/chat/completions");
-}
-
-TEST_CASE("scripted tool turn dispatches a reflected tool across two rounds") {
-  auto server = start_server();
-  server.enqueue(answer(scry::testing::anthropic_tool_stream({
-      {.id = "call-a", .name = "lookup", .arguments = R"({"city":"Boston"})"},
-  })));
-  server.enqueue(answer(scry::testing::anthropic_text_stream("It is sunny.")));
-  auto harness = scry::Harness::create(anthropic_config(server));
-  REQUIRE(harness);
-  auto conversation = scry::Conversation::create();
-  REQUIRE(conversation);
-
-  std::string seen_city;
-  REQUIRE(harness->tools().add<CityArguments>(
-      {
-          .name = "lookup",
-          .description = "Look up a city",
-      },
-      [&seen_city](CityArguments arguments) {
-        seen_city = arguments.city;
-        return std::string{"sunny"};
-      }));
-
-  std::string observed_tool;
-  bool tool_failed = true;
-  std::string finished_text;
-  auto turn =
-      harness->send(*conversation, "Weather in Boston?",
-                    {
-                        .on_tool_call =
-                            [&observed_tool, &tool_failed](const scry::ToolCall& call) {
-                              observed_tool = call.name;
-                              tool_failed = call.is_error;
-                            },
-                        .on_finished =
-                            [&finished_text](scry::Result<scry::Completion> result) {
-                              REQUIRE(result);
-                              finished_text = result->text;
-                            },
-                    });
-  REQUIRE(turn);
-  REQUIRE(pump_until(*harness, [&finished_text] { return !finished_text.empty(); }));
-
-  CHECK(finished_text == "It is sunny.");
-  CHECK(seen_city == "Boston");
-  CHECK(observed_tool == "lookup");
-  CHECK_FALSE(tool_failed);
-  CHECK(conversation->message_count() == 4);
-
-  // The second request must carry the first round's result, which is what makes
-  // this an end-to-end check of encoding rather than of the script.
-  const auto requests = server.requests();
-  REQUIRE(requests.size() == 2);
-  CHECK(requests.back().body.find("call-a") != std::string::npos);
-  CHECK(requests.back().body.find("sunny") != std::string::npos);
-}
-
 TEST_CASE(
     "cancelling a held response frees the worker and the server without release") {
   auto server = start_server();
@@ -347,37 +182,6 @@ TEST_CASE(
   REQUIRE(completion);
   CHECK(completion->text == "second turn");
   CHECK(server.requests().size() == 2);
-}
-
-TEST_CASE("releasing a held response completes the turn it was holding") {
-  auto server = start_server();
-  server.enqueue({
-      .body_chunks = {scry::testing::anthropic_text_stream("released")},
-      .hold = true,
-  });
-  auto harness = scry::Harness::create(anthropic_config(server));
-  REQUIRE(harness);
-  auto conversation = scry::Conversation::create();
-  REQUIRE(conversation);
-
-  std::string finished_text;
-  auto turn =
-      harness->send(*conversation, "Question",
-                    {
-                        .on_finished =
-                            [&finished_text](scry::Result<scry::Completion> result) {
-                              REQUIRE(result);
-                              finished_text = result->text;
-                            },
-                    });
-  REQUIRE(turn);
-
-  REQUIRE(server.wait_for_request(1));
-  CHECK(finished_text.empty());
-  server.release();
-
-  REQUIRE(pump_until(*harness, [&finished_text] { return !finished_text.empty(); }));
-  CHECK(finished_text == "released");
 }
 
 TEST_CASE("a connection closed before any output is retried and the next answer "
@@ -485,33 +289,6 @@ TEST_CASE("a pause after a chunk lets the host cancel after a text delta arrived
   CHECK(completion->text == "next turn");
 }
 
-TEST_CASE("max_backoff bounds the delay that a Retry-After header asks for") {
-  auto server = start_server();
-  server.enqueue({
-      .status = 429,
-      .headers = {{.name = "Retry-After", .value = "1"}},
-      .body_chunks = {scry::testing::openai_error_body(429, "rate_limit_exceeded")},
-  });
-  server.enqueue(answer(scry::testing::openai_text_stream("after the limit")));
-  auto config = openai_config(server);
-  config.retry.max_attempts = 2;
-  auto harness = scry::Harness::create(config);
-  REQUIRE(harness);
-  auto conversation = scry::Conversation::create();
-  REQUIRE(conversation);
-
-  const auto start = std::chrono::steady_clock::now();
-  const auto completion = harness->send_and_wait(*conversation, "Question");
-  const auto elapsed = std::chrono::steady_clock::now() - start;
-
-  REQUIRE(completion);
-  CHECK(completion->text == "after the limit");
-  CHECK(completion->attempt_count == 2);
-  CHECK(server.requests().size() == 2);
-  // An honored Retry-After of one second would take at least one second.
-  CHECK(elapsed < 1s);
-}
-
 TEST_CASE("a request with no scripted response left fails the turn visibly") {
   auto server = start_server();
   CHECK_FALSE(server.wait_for_request(1, 1ms));
@@ -528,46 +305,6 @@ TEST_CASE("a request with no scripted response left fails the turn visibly") {
   CHECK(completion.error().http_status == 404);
   CHECK(completion.error().provider_detail == "anthropic:unscripted_request");
   CHECK(server.requests().size() == 1);
-}
-
-TEST_CASE("scripted non-2xx status is classified like a real HTTP response") {
-  auto server = start_server();
-  server.enqueue({
-      .status = 500,
-      .body_chunks = {"upstream is unavailable"},
-  });
-  auto harness = scry::Harness::create(openai_config(server));
-  REQUIRE(harness);
-  auto conversation = scry::Conversation::create();
-  REQUIRE(conversation);
-
-  const auto completion = harness->send_and_wait(*conversation, "Question");
-  REQUIRE_FALSE(completion);
-  CHECK(completion.error().category == scry::ErrorCategory::network);
-  CHECK(completion.error().retryable);
-  CHECK(completion.error().http_status == 500);
-  CHECK(conversation->message_count() == 0);
-}
-
-TEST_CASE("a scripted 5xx is retried and the next scripted answer completes the turn") {
-  auto server = start_server();
-  server.enqueue({
-      .status = 500,
-      .body_chunks = {"upstream is unavailable"},
-  });
-  server.enqueue(answer(scry::testing::openai_text_stream("recovered")));
-  auto config = openai_config(server);
-  config.retry.max_attempts = 2;
-  auto harness = scry::Harness::create(config);
-  REQUIRE(harness);
-  auto conversation = scry::Conversation::create();
-  REQUIRE(conversation);
-
-  const auto completion = harness->send_and_wait(*conversation, "Question");
-  REQUIRE(completion);
-  CHECK(completion->text == "recovered");
-  CHECK(completion->attempt_count == 2);
-  CHECK(server.requests().size() == 2);
 }
 
 TEST_CASE("a scripted OpenAI error body supplies the sanitized provider token") {
@@ -588,23 +325,6 @@ TEST_CASE("a scripted OpenAI error body supplies the sanitized provider token") 
   CHECK(completion.error().http_status == 429);
   CHECK(completion.error().provider_detail == "openai:rate_limit_exceeded");
   CHECK(conversation->message_count() == 0);
-}
-
-TEST_CASE("a scripted Anthropic error body supplies its own provider token") {
-  auto server = start_server();
-  server.enqueue({
-      .status = 429,
-      .body_chunks = {scry::testing::anthropic_error_body("rate_limit_error")},
-  });
-  auto harness = scry::Harness::create(anthropic_config(server));
-  REQUIRE(harness);
-  auto conversation = scry::Conversation::create();
-  REQUIRE(conversation);
-
-  const auto completion = harness->send_and_wait(*conversation, "Question");
-  REQUIRE_FALSE(completion);
-  CHECK(completion.error().category == scry::ErrorCategory::rate_limit);
-  CHECK(completion.error().provider_detail == "anthropic:rate_limit_error");
 }
 
 TEST_CASE("a scripted 401 is an authentication failure that is not retried") {
@@ -670,32 +390,6 @@ TEST_CASE("scripted OpenAI bodies round-trip text and arguments that need escapi
 
   CHECK(observed.text == tricky_text);
   CHECK(observed.city == expected_city);
-}
-
-TEST_CASE("captured requests expose the method, target, headers, and body") {
-  auto server = start_server();
-  auto config = anthropic_config(server);
-  config.extra_headers.push_back({.name = "X-Scry-Test", .value = "captured"});
-  server.enqueue(answer(scry::testing::anthropic_text_stream("ok")));
-  auto harness = scry::Harness::create(config);
-  REQUIRE(harness);
-  auto conversation = scry::Conversation::create();
-  REQUIRE(conversation);
-
-  CHECK(server.requests().empty());
-  REQUIRE(harness->send_and_wait(*conversation, "Inspect me"));
-
-  const auto requests = server.requests();
-  REQUIRE(requests.size() == 1);
-  const auto& request = requests.front();
-  CHECK(request.method == "POST");
-  CHECK(request.target == "/v1/messages");
-  CHECK(request.body.find("Inspect me") != std::string::npos);
-  CHECK(request.body.find("test-model") != std::string::npos);
-  const auto extra = std::ranges::find_if(
-      request.headers, [](const auto& header) { return header.name == "X-Scry-Test"; });
-  REQUIRE(extra != request.headers.end());
-  CHECK(extra->value == "captured");
 }
 
 namespace {

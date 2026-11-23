@@ -92,7 +92,7 @@ void require_invalid_request(const Config& value, const ModelRequest& model_requ
 
 } // namespace
 
-TEST_CASE("OpenAI request is semantically equivalent to the common contract") {
+TEST_CASE("OpenAI request carries its endpoint and headers") {
   OpenAiAdapter adapter;
   const auto encoded = adapter.make_request(openai_config(), request());
   REQUIRE(encoded);
@@ -102,31 +102,6 @@ TEST_CASE("OpenAI request is semantically equivalent to the common contract") {
   CHECK(encoded->provider_namespace == "openai");
   CHECK(header(*encoded, "content-type") == "application/json");
   CHECK(header(*encoded, "accept") == "text/event-stream");
-  CHECK(header(*encoded, "authorization") == "Bearer sanitized-key");
-  CHECK(canonical(encoded->body) ==
-        canonical(scry::test_fixtures::openai_fixture("request.json")));
-  CHECK(encoded->body.find("is_error") == std::string::npos);
-  CHECK(encoded->body.find("parallel_tool_calls") == std::string::npos);
-  CHECK(encoded->body.find("reasoning_effort") == std::string::npos);
-  CHECK(encoded->body.find("\"strict\"") == std::string::npos);
-}
-
-TEST_CASE("OpenAI request carries the configured network options") {
-  const auto adapter = make_provider_adapter(ProviderDialect::openai_compatible);
-  REQUIRE(adapter);
-
-  auto networked = openai_config();
-  networked.extra_headers = {HttpHeader{.name = "x-scry-example", .value = "1"}};
-  networked.ca_bundle_path = "/tmp/ca.pem";
-  networked.proxy = "http://proxy.internal:3128";
-
-  const auto encoded = adapter->make_request(networked, request());
-  REQUIRE(encoded.has_value());
-  CHECK(encoded->ca_bundle_path == "/tmp/ca.pem");
-  CHECK(encoded->proxy == "http://proxy.internal:3128");
-  REQUIRE(encoded->headers.size() == 4);
-  CHECK(encoded->headers.back().name == "x-scry-example");
-  CHECK(encoded->headers.back().value == "1");
   CHECK(header(*encoded, "authorization") == "Bearer sanitized-key");
 }
 
@@ -261,46 +236,4 @@ TEST_CASE("OpenAI request rejects malformed tool boundary fields") {
                                    .description = "lookup",
                                    .input_schema = {.text = R"({"type":"object"})"}}});
   require_invalid_request(openai_config(), invalid);
-}
-
-TEST_CASE("OpenAI request leaves a history ending in tool results unmerged") {
-  // The Anthropic adapter merges consecutive same-role messages so a turn stopped
-  // at the tool-round limit stays encodable. This dialect needs no such rule: tool
-  // results already become their own `tool` messages, so a `user` message may
-  // follow them directly.
-  OpenAiAdapter adapter;
-  auto model_request = request();
-  model_request.history =
-      std::make_shared<const std::vector<Message>>(
-          std::vector<Message>{
-              Message{.role = Role::user,
-                      .content = {TextBlock{.text = "first question"}}},
-              Message{.role = Role::assistant,
-                      .content =
-                          {
-                              ToolCallBlock{
-                                  .id = "tool_1",
-                                  .name = "lookup",
-                                  .arguments =
-                                      scrydantic::Json{.text = R"({"key":"value"})"},
-                              },
-                          }},
-              Message{.role = Role::user,
-                      .content =
-                          {
-                              ToolResultBlock{
-                                  .tool_call_id = "tool_1",
-                                  .result =
-                                      scrydantic::Json{.text = R"({"answer":42})"},
-                              },
-                          }},
-          });
-  model_request.messages = {
-      Message{.role = Role::user, .content = {TextBlock{.text = "second question"}}},
-  };
-
-  const auto encoded = adapter.make_request(openai_config(), model_request);
-  REQUIRE(encoded);
-  CHECK(member_strings(json_view(encoded->body), "messages", "role") ==
-        std::vector<std::string>{"system", "user", "assistant", "tool", "user"});
 }

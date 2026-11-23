@@ -242,43 +242,6 @@ TEST_CASE("a rejected reentrant pump update reports an exhausted budget") {
   CHECK(fixture.pump.update({}).callbacks_delivered == 1);
 }
 
-TEST_CASE("a nonpositive pump budget still ingests and delivers one unit of work") {
-  auto now = std::chrono::steady_clock::time_point{};
-  PumpFixture fixture{[&now] { return now; }};
-  // Deltas for the same turn coalesce, so two turns are needed to observe two
-  // separate ingests.
-  const auto first =
-      fixture.add(105, {
-                           .callbacks =
-                               {
-                                   .on_text_delta = [](std::string_view) {},
-                               },
-                       });
-  const auto second =
-      fixture.add(106, {
-                           .callbacks =
-                               {
-                                   .on_text_delta = [](std::string_view) {},
-                               },
-                       });
-  REQUIRE(fixture.events->push(
-      scry::detail::TextDeltaEvent{.turn_id = first->id(), .text = "first"}, 1024));
-  REQUIRE(fixture.events->push(
-      scry::detail::TextDeltaEvent{.turn_id = second->id(), .text = "second"}, 1024));
-
-  // An expired budget buys one ingest and one delivery, never zero progress.
-  const auto bounded =
-      fixture.pump.update({.time_budget = std::chrono::microseconds{0}});
-  CHECK(bounded.callbacks_delivered == 1);
-  CHECK(bounded.events_remaining == 1);
-  CHECK(bounded.budget_exhausted);
-
-  const auto drained =
-      fixture.pump.update({.time_budget = std::chrono::microseconds{0}});
-  CHECK(drained.callbacks_delivered == 1);
-  CHECK(drained.events_remaining == 0);
-}
-
 TEST_CASE("completion callback text concatenates only the final message text blocks") {
   PumpFixture fixture;
 
@@ -365,6 +328,28 @@ TEST_CASE("a delivered terminal carries its whole payload to on_finished") {
   CHECK(failed->turn_id == failing->id());
   CHECK(failed->provider_request_id == "req-9");
   CHECK(failed->model_message == "try again later");
+
+  std::optional<scry::Error> cancelled;
+  const auto cancelling = fixture.add(
+      408, {
+               .callbacks =
+                   {
+                       .on_finished =
+                           [&cancelled](scry::Result<scry::Completion> outcome) {
+                             REQUIRE_FALSE(outcome);
+                             cancelled = std::move(outcome.error());
+                           },
+                   },
+           });
+  REQUIRE(fixture.events->push(
+      scry::detail::CancelledEvent{.turn_id = cancelling->id()}, 1024));
+
+  CHECK(fixture.pump.update({}).callbacks_delivered == 1);
+
+  // Cancellation surfaces as a terminal error carrying the cancelled turn.
+  REQUIRE(cancelled);
+  CHECK(cancelled->category == scry::ErrorCategory::cancelled);
+  CHECK(cancelled->turn_id == cancelling->id());
 }
 
 TEST_CASE("a callback limit reports an exhausted budget only when work remains") {
@@ -442,28 +427,6 @@ TEST_CASE("a callback limit ignores an entry no route can consume any more") {
   CHECK(stats.callbacks_delivered == 1);
   CHECK(stats.events_remaining == 0);
   CHECK_FALSE(stats.budget_exhausted);
-}
-
-TEST_CASE("committing a completion moves its transcript into the Conversation") {
-  PumpFixture fixture;
-  const auto route =
-      fixture.add(405, {
-                           .callbacks =
-                               {
-                                   .on_finished = [](scry::Result<scry::Completion>) {},
-                               },
-                       });
-  REQUIRE(fixture.events->push(completion_event(route->id()), 1024));
-
-  static_cast<void>(fixture.pump.update({}));
-
-  // The user message plus the committed assistant message, with content
-  // intact after the move.
-  REQUIRE(fixture.conversation->messages->size() == 2);
-  const auto& assistant = fixture.conversation->messages->back();
-  CHECK(assistant.role == scry::detail::Role::assistant);
-  REQUIRE(assistant.content.size() == 1);
-  CHECK(std::get<scry::detail::TextBlock>(assistant.content.front()).text == "done");
 }
 
 TEST_CASE("commit reseats history while a retained snapshot stays immutable") {

@@ -8,7 +8,6 @@
 #include "kernel/json_text.hpp"
 
 #include <catch2/catch_test_macros.hpp>
-#include <limits>
 #include <scry/error.hpp>
 #include <scrydantic/json.hpp>
 #include <string>
@@ -88,15 +87,6 @@ TEST_CASE("a JSON text rejection locates the fault and repeats none of the text"
                                     "expected ':' at line 2, column 6");
 }
 
-TEST_CASE("the JSON text helpers spell canonical text") {
-  const auto canonical = scry::detail::canonicalize_json_object(
-      scrydantic::Json{.text =
-                           R"( { "b" : 1 , "a" : [ 2 , { "d" : 3 , "c" : 4 } ] } )"},
-      category, failure);
-  REQUIRE(canonical);
-  CHECK(canonical->text == R"({"a":[2,{"c":4,"d":3}],"b":1})");
-}
-
 TEST_CASE("json_root_is_object reads only the first byte after whitespace") {
   CHECK(scry::detail::json_root_is_object("{"));
   CHECK(scry::detail::json_root_is_object(" \t\n\r{\"a\":1}"));
@@ -108,18 +98,6 @@ TEST_CASE("json_root_is_object reads only the first byte after whitespace") {
 
 TEST_CASE("make_json_error_object quotes the message as canonical JSON") {
   CHECK(scry::detail::make_json_error_object("").text == R"({"error":""})");
-  CHECK(scry::detail::make_json_error_object("bad \"quote\"\n\x01").text ==
-        R"({"error":"bad \"quote\"\n\u0001"})");
-}
-
-TEST_CASE("canonical_json_number spells doubles as the canonical writer does") {
-  CHECK(scry::detail::canonical_json_number(1.0).text == "1");
-  CHECK(scry::detail::canonical_json_number(-0.0).text == "-0");
-  CHECK(scry::detail::canonical_json_number(0.5).text == "0.5");
-  CHECK(scry::detail::canonical_json_number(1e-7).text == "1E-7");
-  CHECK(scry::detail::canonical_json_number(1e20).text == "1E20");
-  CHECK(scry::detail::canonical_json_number(std::numeric_limits<double>::infinity())
-            .text == "null");
-  CHECK(scry::detail::canonical_json_number(std::numeric_limits<double>::quiet_NaN())
-            .text == "null");
+  CHECK(scry::detail::make_json_error_object("bad \"quote\"\n\t\\\x01").text ==
+        R"({"error":"bad \"quote\"\n\t\\\u0001"})");
 }

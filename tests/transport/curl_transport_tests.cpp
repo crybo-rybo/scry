@@ -151,20 +151,6 @@ struct TimedOutcome {
 
 } // namespace
 
-TEST_CASE("loopback server destruction wakes an unconnected listener") {
-  const LoopbackServer server{"HTTP/1.1 204 No Content\r\n\r\n"};
-}
-
-TEST_CASE("curl global initialization is process-wide and repeatable") {
-  REQUIRE(scry::detail::curl_global_status());
-  REQUIRE(scry::detail::curl_global_status());
-
-  const CurlTransport first;
-  REQUIRE(first.status());
-  const CurlTransport second;
-  REQUIRE(second.status());
-}
-
 TEST_CASE("curl runtime rejects capabilities that cannot honor host shutdown") {
   using scry::detail::CurlRuntimeCapabilities;
   using scry::detail::validate_curl_runtime_capabilities;

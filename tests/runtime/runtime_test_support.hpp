@@ -142,10 +142,10 @@ struct PumpFixture {
       std::make_shared<scry::detail::ConversationState>()};
   scry::detail::PumpState pump{events};
 
-  // A route the pump does not know about, for driving it directly.
+  // A route registered with the fixture's pump, as Harness::send registers one.
   [[nodiscard]] std::shared_ptr<scry::detail::TurnRoute>
-  route(const std::uint64_t id, RouteOptions options = {}) const {
-    return std::make_shared<scry::detail::TurnRoute>(
+  add(const std::uint64_t id, RouteOptions options = {}) {
+    auto added = std::make_shared<scry::detail::TurnRoute>(
         scry::TurnId{.value = id}, std::make_shared<std::atomic<bool>>(false), commands,
         conversation,
         scry::detail::TurnRouteOptions{
@@ -156,12 +156,6 @@ struct PumpFixture {
             .callbacks = std::move(options.callbacks),
             .validate_answer = std::move(options.validate_answer),
         });
-  }
-
-  // A route registered with the fixture's pump, as Harness::send registers one.
-  [[nodiscard]] std::shared_ptr<scry::detail::TurnRoute>
-  add(const std::uint64_t id, RouteOptions options = {}) {
-    auto added = route(id, std::move(options));
     pump.add_route(added);
     return added;
   }

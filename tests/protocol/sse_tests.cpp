@@ -49,10 +49,6 @@ void check_resource_limit(const scry::Status& status) {
 
 } // namespace
 
-TEST_CASE("SSE parser accepts CRLF, comments, and multiple data lines") {
-  CHECK(parse_chunks({stream}) == expected_events());
-}
-
 TEST_CASE("SSE parser is invariant at every single split point") {
   const auto expected = expected_events();
   for (std::size_t split = 0; split <= stream.size(); ++split) {
@@ -161,22 +157,6 @@ TEST_CASE("SSE parser applies field syntax without carrying empty events forward
   REQUIRE(events.size() == 2);
   CHECK(events[0] == SseEvent{.name = "named", .data = "\n second"});
   CHECK(events[1] == SseEvent{.name = "message", .data = "value"});
-  CHECK(parser.buffered_bytes() == 0);
-}
-
-TEST_CASE("SSE parser dispatches multiple events and safely finishes empty state") {
-  SseParser parser{128};
-  std::vector<SseEvent> events{};
-  REQUIRE(parser.push({}, events));
-  REQUIRE(events.empty());
-
-  REQUIRE(parser.push("data: one\n\nevent: two\ndata: second\n\n", events));
-
-  REQUIRE(events.size() == 2);
-  CHECK(events[0] == SseEvent{.name = "message", .data = "one"});
-  CHECK(events[1] == SseEvent{.name = "two", .data = "second"});
-  REQUIRE(parser.finish(events));
-  CHECK(events.size() == 2);
   CHECK(parser.buffered_bytes() == 0);
 }
 

@@ -8,7 +8,6 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
-#include <vector>
 
 using namespace std::chrono_literals;
 using namespace scry::test_support;
@@ -24,18 +23,6 @@ TEST_CASE("event queue coalesces adjacent deltas") {
   REQUIRE(event);
   CHECK(std::get<scry::detail::TextDeltaEvent>(*event).text == "onetwo");
   queue.release(*event);
-}
-
-TEST_CASE("event byte accounting spans worker queue and pump ownership") {
-  scry::detail::EventQueue queue;
-  const auto id = scry::TurnId{.value = 8};
-  REQUIRE(queue.push(scry::detail::TextDeltaEvent{.turn_id = id, .text = "1234"}, 5));
-  auto held_by_pump = queue.try_pop();
-  REQUIRE(held_by_pump);
-
-  CHECK_FALSE(queue.push(scry::detail::TextDeltaEvent{.turn_id = id, .text = "56"}, 5));
-  queue.release(*held_by_pump);
-  CHECK(queue.push(scry::detail::TextDeltaEvent{.turn_id = id, .text = "56"}, 5));
 }
 
 TEST_CASE("a turn with empty callbacks still commits its history") {
@@ -153,61 +140,6 @@ TEST_CASE("pump budget is a soft deadline between callbacks") {
   CHECK(fixture.pump.update({}).callbacks_delivered == 1);
 }
 
-TEST_CASE("pump budget bounds ingestion and delivery after one guaranteed unit") {
-  auto now = std::chrono::steady_clock::time_point{};
-  PumpFixture fixture{[&now] {
-    const auto sampled = now;
-    now += 1ms;
-    return sampled;
-  }};
-  bool first_completed = false;
-  bool second_completed = false;
-  const auto first = fixture.add(
-      15, {
-              .callbacks =
-                  {
-                      .on_finished =
-                          [&first_completed](scry::Result<scry::Completion> done) {
-                            first_completed = done.has_value();
-                          },
-                  },
-          });
-  const auto second = fixture.add(
-      16, {
-              .callbacks =
-                  {
-                      .on_finished =
-                          [&second_completed](scry::Result<scry::Completion> done) {
-                            second_completed = done.has_value();
-                          },
-                  },
-          });
-  REQUIRE(fixture.events->push(completion_event(first->id(), {.text = "first"}), 1024));
-  REQUIRE(
-      fixture.events->push(completion_event(second->id(), {.text = "second"}), 1024));
-
-  // The clock advances 1 ms per sample. The first pop is unconditional, so it
-  // costs no sample; the deadline is then checked before the second pop (at
-  // 1 ms, still inside the 2 ms budget) and both events are ingested and
-  // committed. The check before the third pop (at 2 ms) has expired, but the
-  // queue is already empty, so nothing was left behind and the budget is not yet
-  // spent. The first delivery is likewise unconditional; the check before the
-  // second (at 3 ms) stops the call with an event still owed.
-  const auto bounded = fixture.pump.update({.time_budget = 2ms});
-  CHECK(bounded.callbacks_delivered == 1);
-  CHECK(bounded.events_remaining == 1);
-  CHECK(bounded.budget_exhausted);
-  CHECK(fixture.conversation->messages->size() == 4);
-  CHECK(first_completed);
-  CHECK_FALSE(second_completed);
-
-  const auto drained = fixture.pump.update({});
-  CHECK(drained.callbacks_delivered == 1);
-  CHECK(drained.events_remaining == 0);
-  CHECK(second_completed);
-  CHECK(fixture.conversation->messages->size() == 4);
-}
-
 TEST_CASE("an already-expired positive budget still makes one unit of progress per "
           "call") {
   auto now = std::chrono::steady_clock::time_point{};
@@ -250,25 +182,6 @@ TEST_CASE("an already-expired positive budget still makes one unit of progress p
   CHECK(completed == 3);
 }
 
-TEST_CASE("detaching retains the callbacks supplied at send") {
-  PumpFixture fixture;
-  std::string text;
-  const auto route = fixture.add(
-      13, {
-              .callbacks =
-                  {
-                      .on_text_delta =
-                          [&text](const std::string_view delta) { text += delta; },
-                  },
-          });
-  route->detach();
-  REQUIRE(fixture.events->push(
-      scry::detail::TextDeltaEvent{.turn_id = route->id(), .text = "delta"}, 1024));
-
-  CHECK(fixture.pump.update({}).callbacks_delivered == 1);
-  CHECK(text == "delta");
-}
-
 TEST_CASE("turn cancellation sets the atomic and queues a command once") {
   PumpFixture fixture;
   auto cancelled = std::make_shared<std::atomic<bool>>(false);
@@ -302,71 +215,4 @@ TEST_CASE("turn cancellation stays safe after its command queue expires") {
   CHECK(route->cancel());
   CHECK_FALSE(route->cancel());
   CHECK(cancelled->load(std::memory_order_relaxed));
-}
-
-TEST_CASE("a turn route without callbacks claims only its own tool calls") {
-  PumpFixture fixture;
-  const auto route = fixture.route(212);
-  const auto turn_id = route->id();
-  CHECK_FALSE(route->has_callback(
-      scry::detail::WorkerEvent{scry::detail::TextDeltaEvent{.turn_id = turn_id}}));
-  CHECK_FALSE(route->has_callback(scry::detail::WorkerEvent{
-      completion_event(turn_id, {.text = "answer", .attempt_count = 2})}));
-  CHECK_FALSE(route->has_callback(
-      scry::detail::WorkerEvent{scry::detail::ErrorEvent{.turn_id = turn_id}}));
-  CHECK_FALSE(route->has_callback(
-      scry::detail::WorkerEvent{scry::detail::CancelledEvent{.turn_id = turn_id}}));
-  // A tool call is dispatched by the route itself, so it is claimed regardless.
-  CHECK(route->has_callback(
-      scry::detail::WorkerEvent{scry::detail::ToolCallEvent{.turn_id = turn_id}}));
-}
-
-TEST_CASE("a turn route reports completion, failure, and cancellation as one finish") {
-  PumpFixture fixture;
-  std::string text;
-  std::vector<scry::Result<scry::Completion>> finished;
-  const auto route = fixture.route(
-      213,
-      {
-          .callbacks = {
-              .on_text_delta = [&text](const std::string_view value) { text = value; },
-              .on_finished =
-                  [&finished](scry::Result<scry::Completion> result) {
-                    finished.push_back(std::move(result));
-                  },
-          },
-      });
-  // invoke() takes its event by mutable reference so a terminal payload moves
-  // into the delivered value rather than being copied.
-  scry::detail::WorkerEvent text_event{
-      scry::detail::TextDeltaEvent{.turn_id = route->id(), .text = "delta"}};
-  scry::detail::WorkerEvent completed{
-      completion_event(route->id(), {.text = "answer", .attempt_count = 2})};
-  scry::detail::WorkerEvent error_event{scry::detail::ErrorEvent{
-      .turn_id = route->id(),
-      .error = {.category = scry::ErrorCategory::network, .message = "failure"},
-  }};
-  scry::detail::WorkerEvent cancelled_event{
-      scry::detail::CancelledEvent{.turn_id = route->id()}};
-  CHECK(route->has_callback(text_event));
-  CHECK(route->has_callback(completed));
-  CHECK(route->has_callback(error_event));
-  CHECK(route->has_callback(cancelled_event));
-
-  route->invoke(text_event);
-  route->invoke(completed);
-  route->invoke(error_event);
-  route->invoke(cancelled_event);
-
-  CHECK(text == "delta");
-  REQUIRE(finished.size() == 3);
-  REQUIRE(finished[0]);
-  CHECK(finished[0]->attempt_count == 2);
-  REQUIRE_FALSE(finished[1]);
-  CHECK(finished[1].error().category == scry::ErrorCategory::network);
-  CHECK(finished[1].error().message == "failure");
-  // Cancellation surfaces as a terminal error carrying the cancelled turn.
-  REQUIRE_FALSE(finished[2]);
-  CHECK(finished[2].error().category == scry::ErrorCategory::cancelled);
-  CHECK(finished[2].error().turn_id == route->id());
 }

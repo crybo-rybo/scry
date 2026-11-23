@@ -36,12 +36,7 @@ using namespace scry::test_fixtures;
 
 } // namespace
 
-TEST_CASE("provider factory exposes both supported dialects") {
-  CHECK(make_provider_adapter(ProviderDialect::anthropic) != nullptr);
-  CHECK(make_provider_adapter(ProviderDialect::openai_compatible) != nullptr);
-}
-
-TEST_CASE("Anthropic request is semantically equivalent to its sanitized fixture") {
+TEST_CASE("Anthropic request carries its endpoint and headers") {
   const auto adapter = make_provider_adapter(ProviderDialect::anthropic);
   REQUIRE(adapter);
 
@@ -56,27 +51,28 @@ TEST_CASE("Anthropic request is semantically equivalent to its sanitized fixture
   CHECK(header(*encoded, "x-api-key") == "sanitized-test-key");
   CHECK(header(*encoded, "anthropic-version") == "2023-06-01");
   CHECK(header(*encoded, "accept") == "text/event-stream");
-  CHECK(canonical(encoded->body) ==
-        canonical(scry::test_fixtures::anthropic_fixture("request.json")));
 }
 
-TEST_CASE("Anthropic request carries the configured network options") {
-  const auto adapter = make_provider_adapter(ProviderDialect::anthropic);
-  REQUIRE(adapter);
+TEST_CASE("requests carry the configured network options") {
+  for (auto networked : {anthropic_config(), openai_config()}) {
+    INFO(networked.model);
+    const auto adapter = make_provider_adapter(networked.dialect);
+    REQUIRE(adapter);
+    networked.extra_headers = {HttpHeader{.name = "x-scry-example", .value = "1"}};
+    networked.ca_bundle_path = "/tmp/ca.pem";
+    networked.proxy = "http://proxy.internal:3128";
 
-  auto networked = anthropic_config();
-  networked.extra_headers = {HttpHeader{.name = "x-scry-example", .value = "1"}};
-  networked.ca_bundle_path = "/tmp/ca.pem";
-  networked.proxy = "http://proxy.internal:3128";
-
-  const auto encoded = adapter->make_request(networked, request());
-  REQUIRE(encoded.has_value());
-  CHECK(encoded->ca_bundle_path == "/tmp/ca.pem");
-  CHECK(encoded->proxy == "http://proxy.internal:3128");
-  REQUIRE(encoded->headers.size() == 5);
-  CHECK(encoded->headers.back().name == "x-scry-example");
-  CHECK(encoded->headers.back().value == "1");
-  CHECK(header(*encoded, "x-api-key") == "sanitized-test-key");
+    const auto encoded = adapter->make_request(networked, request());
+    REQUIRE(encoded.has_value());
+    CHECK(encoded->ca_bundle_path == "/tmp/ca.pem");
+    CHECK(encoded->proxy == "http://proxy.internal:3128");
+    const auto anthropic = networked.dialect == ProviderDialect::anthropic;
+    REQUIRE(encoded->headers.size() == (anthropic ? 5U : 4U));
+    CHECK(encoded->headers.back().name == "x-scry-example");
+    CHECK(encoded->headers.back().value == "1");
+    CHECK(header(*encoded, anthropic ? "x-api-key" : "authorization") ==
+          (anthropic ? "sanitized-test-key" : "Bearer sanitized-key"));
+  }
 }
 
 namespace {

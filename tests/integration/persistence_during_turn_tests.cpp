@@ -61,12 +61,6 @@ idle_harness(const std::size_t conversation_bytes = 1024) {
   return stream;
 }
 
-[[nodiscard]] scry::Config openai_test_config() {
-  auto config = test_config();
-  config.dialect = scry::ProviderDialect::openai_compatible;
-  return config;
-}
-
 void check_same_text_messages(const std::vector<scry::Message>& restored,
                               const std::vector<scry::Message>& original) {
   REQUIRE(restored.size() == original.size());
@@ -146,9 +140,17 @@ TEST_CASE("an empty text block never reaches the committed Anthropic history") {
   check_round_trip(fixture.conversation);
 }
 
-TEST_CASE("an Anthropic response with only an empty text block fails the turn") {
-  auto fixture = make_harness_fixture(test_config(),
-                                      {scripted_response(anthropic_text_stream(""))});
+TEST_CASE("a response that carries no content fails the turn") {
+  auto config = test_config();
+  std::string stream;
+  SECTION("an Anthropic response with only an empty text block") {
+    stream = anthropic_text_stream("");
+  }
+  SECTION("an OpenAI response that streams no content") {
+    config.dialect = scry::ProviderDialect::openai_compatible;
+    stream = openai_text_stream("");
+  }
+  auto fixture = make_harness_fixture(config, {scripted_response(stream)});
 
   const auto completion =
       fixture.harness.send_and_wait(fixture.conversation, "nothing at all");
@@ -157,30 +159,4 @@ TEST_CASE("an Anthropic response with only an empty text block fails the turn") 
   CHECK(completion.error().category == scry::ErrorCategory::protocol);
   CHECK(completion.error().message == "model response contained no content");
   CHECK(fixture.conversation.empty());
-}
-
-TEST_CASE("an OpenAI response that streams no content fails the turn") {
-  auto fixture = make_harness_fixture(openai_test_config(),
-                                      {scripted_response(openai_text_stream(""))});
-
-  const auto completion =
-      fixture.harness.send_and_wait(fixture.conversation, "nothing at all");
-
-  REQUIRE_FALSE(completion);
-  CHECK(completion.error().category == scry::ErrorCategory::protocol);
-  CHECK(completion.error().message == "model response contained no content");
-  CHECK(fixture.conversation.empty());
-}
-
-TEST_CASE("an OpenAI text completion still round-trips through persistence") {
-  auto fixture = make_harness_fixture(openai_test_config(),
-                                      {scripted_response(openai_text_stream("sunny"))});
-
-  const auto completion =
-      fixture.harness.send_and_wait(fixture.conversation, "weather?");
-
-  REQUIRE(completion);
-  CHECK(completion->text == "sunny");
-  REQUIRE(fixture.conversation.message_count() == 2);
-  check_round_trip(fixture.conversation);
 }

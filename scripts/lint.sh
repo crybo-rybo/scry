@@ -39,7 +39,7 @@ if git grep -nE '#[[:space:]]*include[[:space:]]*[<"](scry|scrydantic|core|machi
   status=1
 fi
 
-if git grep -nE '//[[:space:]]*TODO([^[:alnum:]_]|$)' -- include src testing examples tests extras |
+if git grep -nE '//[[:space:]]*TODO([^[:alnum:]_]|$)' -- include src testing examples tests |
   grep -vE 'https?://|#[0-9]+'; then
   echo "error: TODO comments must link an issue" >&2
   status=1

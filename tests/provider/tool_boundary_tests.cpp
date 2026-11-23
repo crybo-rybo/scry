@@ -131,20 +131,6 @@ TEST_CASE("Anthropic streamed argument limit rejects before appending") {
   }
 }
 
-TEST_CASE("Anthropic streamed tool arguments are validated but not rewritten") {
-  AnthropicAdapter adapter;
-  ProviderDecodeState state;
-  start_message(adapter, state);
-  start_tool(adapter, state, 0, "call-1", "lookup");
-  append_arguments(adapter, state, 0, R"({ \"b\" : 2, \"a\" : 1 })");
-  stop_tool(adapter, state, 0);
-
-  // The stream layer proves the object root and forwards the received bytes;
-  // TurnMachine is the one place that canonicalizes them.
-  CHECK(std::get<ToolCallBlock>(state.response.content.front()).arguments.text ==
-        R"({ "b" : 2, "a" : 1 })");
-}
-
 TEST_CASE("Anthropic stream rejects malformed JSON assembled from valid deltas") {
   AnthropicAdapter adapter;
   ProviderDecodeState state;

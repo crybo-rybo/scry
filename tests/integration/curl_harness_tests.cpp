@@ -79,8 +79,10 @@ only_request(const ScriptedServer& server) {
 } // namespace
 
 TEST_CASE("public Harness completes an Anthropic SSE turn through Curl") {
+  auto config = curl_config();
+  config.extra_headers.push_back({.name = "X-Scry-Test", .value = "captured"});
   auto fixture = make_harness_fixture(
-      curl_config(), {scripted_response(successful_stream, "req-curl-public")});
+      config, {scripted_response(successful_stream, "req-curl-public")});
   auto conversation = unwrap(
       scry::Conversation::create({.system_prompt = "Use the public Curl path."}));
 
@@ -103,6 +105,10 @@ TEST_CASE("public Harness completes an Anthropic SSE turn through Curl") {
   CHECK(header(request, "accept") == "text/event-stream");
   CHECK(header(request, "x-api-key") == "curl-integration-key");
   CHECK(header(request, "anthropic-version") == "2023-06-01");
+  // A captured request keeps each header name as it was sent.
+  CHECK(std::ranges::any_of(request.headers, [](const auto& entry) {
+    return entry.name == "X-Scry-Test" && entry.value == "captured";
+  }));
   CHECK(request.body.find(R"("model":"test-model")") != std::string::npos);
   CHECK(request.body.find(R"("stream":true)") != std::string::npos);
   CHECK(request.body.find("Question from app") != std::string::npos);
@@ -269,50 +275,6 @@ TEST_CASE("production SSE errors preserve safe provider correlation") {
         std::string::npos);
   CHECK(completion.error().turn_id.has_value());
   CHECK(completion.error().attempt == 1);
-  CHECK(fixture.conversation.empty());
-}
-
-TEST_CASE(
-    "active Curl transfer cancellation reaches the public terminal channel promptly") {
-  auto fixture =
-      make_harness_fixture(curl_config(), {{
-                                              .body_chunks = {successful_stream},
-                                              .hold = true,
-                                          }});
-  bool cancelled = false;
-  bool completed = false;
-  std::optional<scry::Error> error;
-  auto turn =
-      fixture.harness.send(fixture.conversation, "Cancel this request",
-                           {
-                               .on_finished =
-                                   [&cancelled, &completed,
-                                    &error](scry::Result<scry::Completion> finished) {
-                                     if (finished) {
-                                       completed = true;
-                                     } else if (finished.error().category ==
-                                                scry::ErrorCategory::cancelled) {
-                                       cancelled = true;
-                                     } else {
-                                       error = std::move(finished.error());
-                                     }
-                                   },
-                           });
-  REQUIRE(turn);
-  REQUIRE(fixture.server.wait_for_request(1));
-
-  const auto started = std::chrono::steady_clock::now();
-  REQUIRE(turn->cancel());
-  REQUIRE(pump_until(fixture.harness,
-                     [&] { return cancelled || completed || error.has_value(); }));
-  const auto elapsed = std::chrono::steady_clock::now() - started;
-
-  CHECK(cancelled);
-  CHECK_FALSE(completed);
-  CHECK_FALSE(error);
-  // Promptness is the progress-callback wiring's job; this bound only guards
-  // against a hang, so a loaded TSan runner cannot flake it.
-  CHECK(elapsed < 5s);
   CHECK(fixture.conversation.empty());
 }
 

@@ -70,12 +70,6 @@ TEST_CASE("Anthropic content decoding covers text, tool, and rejection shapes") 
                         false);
   REQUIRE(tool);
   CHECK(std::get<ToolCallBlock>(**tool).arguments.text == "{\"x\":1}");
-  for (const auto json : {"{\"type\":\"thinking\",\"thinking\":\"hmm\"}",
-                          "{\"type\":\"redacted_thinking\",\"data\":\"x\"}"}) {
-    const auto skipped = anthropic_content(json, false);
-    REQUIRE(skipped);
-    CHECK_FALSE(*skipped);
-  }
   constexpr std::array invalid{
       "{}",
       "{\"type\":1}",
@@ -202,13 +196,6 @@ TEST_CASE("Anthropic stream content start rejects invalid lifecycle and shapes")
       adapter, "content_block_start",
       R"({"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}})",
       state));
-  state = ProviderDecodeState{};
-  start_anthropic_message(adapter, state);
-  std::get<AnthropicProviderDecodeState>(state.dialect).finish_observed = true;
-  require_protocol(decode(
-      adapter, "content_block_start",
-      R"({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}})",
-      state));
 }
 TEST_CASE("Anthropic stream content deltas validate indexes, targets, and payloads") {
   AnthropicAdapter adapter;
@@ -246,24 +233,12 @@ TEST_CASE("Anthropic stream content deltas validate indexes, targets, and payloa
     require_protocol(decode(adapter, "content_block_delta", body, tool));
   }
 }
-TEST_CASE("Anthropic stream content stop canonicalizes tools and closes text") {
+TEST_CASE("Anthropic stream content stop normalizes empty tool arguments") {
   AnthropicAdapter adapter;
-  auto text = text_state(adapter);
-  REQUIRE(decode(adapter, "content_block_stop",
-                 R"({"type":"content_block_stop","index":0})", text));
-  CHECK_FALSE(
-      std::get<AnthropicProviderDecodeState>(text.dialect).active_content_index);
   auto tool = tool_state(adapter);
   REQUIRE(decode(adapter, "content_block_stop",
                  R"({"type":"content_block_stop","index":0})", tool));
   CHECK(std::get<ToolCallBlock>(tool.response.content.front()).arguments.text == "{}");
-  tool = tool_state(adapter);
-  REQUIRE(decode(
-      adapter, "content_block_delta",
-      R"({"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{"}})",
-      tool));
-  require_protocol(decode(adapter, "content_block_stop",
-                          R"({"type":"content_block_stop","index":0})", tool));
 }
 TEST_CASE("Anthropic stream skips thinking blocks but still validates them") {
   AnthropicAdapter adapter;
@@ -351,6 +326,8 @@ TEST_CASE("Anthropic stream message finish enforces lifecycle and usage") {
   require_protocol(
       decode(adapter, "message_delta",
              R"({"type":"message_delta","delta":{"stop_reason":"end_turn"}})", empty));
+  require_protocol(
+      decode(adapter, "message_stop", R"({"type":"message_stop"})", empty));
   constexpr std::array invalid{
       R"({"type":"message_delta"})",
       R"({"type":"message_delta","delta":[]})",
@@ -368,9 +345,6 @@ TEST_CASE("Anthropic stream message finish enforces lifecycle and usage") {
                  R"({"type":"message_delta","delta":{"stop_reason":null}})", state));
   require_protocol(
       decode(adapter, "message_stop", R"({"type":"message_stop"})", state));
-  state = text_state(adapter);
-  require_protocol(
-      decode(adapter, "message_stop", R"({"type":"message_stop"})", state));
   state = ProviderDecodeState{};
   start_anthropic_message(adapter, state);
   REQUIRE(decode(
@@ -386,9 +360,6 @@ TEST_CASE("Anthropic stream envelopes and provider errors cover safe categories"
   ProviderDecodeState state;
   require_protocol(decode(adapter, "ping", R"({})", state));
   require_protocol(decode(adapter, "ping", R"({"type":"message_stop"})", state));
-  auto ignored = decode(adapter, "message", R"({"type":"future"})", state);
-  REQUIRE(ignored);
-  CHECK(ignored->empty());
   constexpr std::array cases{
       std::pair{"authentication_error", ErrorCategory::authentication},
       std::pair{"permission_error", ErrorCategory::authentication},

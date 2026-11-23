@@ -6,6 +6,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -17,8 +18,7 @@ using namespace scry::test_fixtures;
 // Every embedded payload below is spelled exactly as Scry's own codec would
 // have written it, because that is what reaches an adapter in production: the
 // turn machine canonicalizes tool-call arguments, dispatch canonicalizes
-// results, and registration canonicalizes schemas. tests/fixtures/README.md
-// records where the request_tool_history.json goldens came from.
+// results, and registration canonicalizes schemas.
 constexpr auto weather_arguments =
     std::string_view{R"({"city":"Paris","options":{"units":"metric","verbose":true}})"};
 constexpr auto almanac_arguments =
@@ -31,15 +31,19 @@ constexpr auto weather_schema = std::string_view{
 constexpr auto almanac_schema = std::string_view{
     R"({"properties":{"query":{"properties":{"days":{"items":{"type":"integer"},"type":"array"}},"type":"object"}},"required":["query"],"type":"object"})"};
 
-// Text, an assistant turn with two nested-object tool calls, one plain and one
-// error tool result, a following user message, and two tools with nested
-// schemas: every shape the request encoders have to splice.
+// Text in two blocks with bytes that need escaping, an assistant turn with two
+// nested-object tool calls, one plain and one error tool result, a following user
+// message, and two tools with nested schemas.
 [[nodiscard]] ModelRequest tool_history_request() {
   return ModelRequest{
       .system_prompt = "Be concise",
       .history = std::make_shared<const std::vector<Message>>(std::vector<Message>{
           Message{.role = Role::user,
-                  .content = {TextBlock{.text = "Weather in Paris?"}}},
+                  .content =
+                      {
+                          TextBlock{.text = "Weather in "},
+                          TextBlock{.text = "\"Paris\" caf\xC3\xA9?\x1b[0m\n"},
+                      }},
           Message{
               .role = Role::assistant,
               .content =
@@ -88,52 +92,16 @@ constexpr auto almanac_schema = std::string_view{
               },
               ToolDefinition{
                   .name = "almanac",
-                  .description = "Get almanac",
+                  .description = "",
                   .input_schema = scrydantic::Json{.text = std::string{almanac_schema}},
               },
           }),
       .sampling =
           SamplingConfig{
               .temperature = 0.25,
-              .top_p = 0.9,
+              .top_p = 0.0,
               .max_tokens = 64,
           },
-  };
-}
-
-// Deliberately not the codec's key order, so a body that still carries these
-// bytes proves the encoder spliced the stored text instead of rebuilding it.
-constexpr auto unsorted_arguments =
-    std::string_view{R"({"zebra":1,"alpha":{"nested":true}})"};
-constexpr auto unsorted_schema =
-    std::string_view{R"({"type":"object","properties":{"zebra":{"type":"string"}}})"};
-
-[[nodiscard]] ModelRequest unsorted_payload_request() {
-  return ModelRequest{
-      .messages =
-          {
-              Message{.role = Role::assistant,
-                      .content =
-                          {
-                              ToolCallBlock{
-                                  .id = "call-a",
-                                  .name = "lookup",
-                                  .arguments =
-                                      scrydantic::Json{
-                                          .text = std::string{unsorted_arguments}},
-                              },
-                          }},
-          },
-      .tools = std::make_shared<const std::vector<ToolDefinition>>(
-          std::vector<ToolDefinition>{
-              ToolDefinition{
-                  .name = "lookup",
-                  .description = "Look a value up",
-                  .input_schema =
-                      scrydantic::Json{.text = std::string{unsorted_schema}},
-              },
-          }),
-      .sampling = SamplingConfig{.max_tokens = 64},
   };
 }
 
@@ -144,19 +112,6 @@ constexpr auto unsorted_schema =
   const auto encoded = adapter->make_request(config, request);
   REQUIRE(encoded);
   return encoded->body;
-}
-
-// The tool-result document and the OpenAI tool arguments travel as JSON
-// strings, so their canonical bytes appear escaped rather than spliced.
-[[nodiscard]] std::string as_json_string(const std::string_view text) {
-  std::string quoted{};
-  for (const char character : text) {
-    if (character == '"') {
-      quoted.push_back('\\');
-    }
-    quoted.push_back(character);
-  }
-  return quoted;
 }
 
 } // namespace
@@ -173,32 +128,44 @@ TEST_CASE("OpenAI request over a tool history matches the encoder golden") {
         canonical(scry::test_fixtures::openai_fixture("request_tool_history.json")));
 }
 
-TEST_CASE("Anthropic request splices stored JSON text byte for byte") {
-  const auto body = encoded_body(anthropic_config(), unsorted_payload_request());
-  // Still one JSON document, and still carrying the caller's own spelling.
-  REQUIRE(scrydantic::JsonView::parse(scrydantic::Json{.text = body}));
-  CHECK(body.find(std::string{R"("input":)"} + std::string{unsorted_arguments}) !=
-        std::string::npos);
-  CHECK(body.find(std::string{R"("input_schema":)"} + std::string{unsorted_schema}) !=
-        std::string::npos);
+TEST_CASE("request encoders omit the options a request leaves unset") {
+  const ModelRequest request{
+      .messages = {Message{.role = Role::user, .content = {TextBlock{}}}},
+      .tools = std::make_shared<const std::vector<ToolDefinition>>(),
+      .sampling = SamplingConfig{.max_tokens = 16},
+  };
+  CHECK(
+      canonical(encoded_body(anthropic_config(), request)) ==
+      canonical(
+          R"({"max_tokens":16,"messages":[{"content":[{"text":"","type":"text"}],"role":"user"}],"model":"claude-test","stream":true,"temperature":1})"));
+  CHECK(
+      canonical(encoded_body(openai_config(), request)) ==
+      canonical(
+          R"({"max_tokens":16,"messages":[{"content":"","role":"user"}],"model":"chat-model","stream":true,"stream_options":{"include_usage":true},"temperature":1})"));
 }
 
-TEST_CASE("OpenAI request splices stored JSON text byte for byte") {
-  const auto body = encoded_body(openai_config(), unsorted_payload_request());
-  REQUIRE(scrydantic::JsonView::parse(scrydantic::Json{.text = body}));
-  CHECK(body.find(std::string{R"("parameters":)"} + std::string{unsorted_schema}) !=
-        std::string::npos);
-  // `arguments` is a JSON string, so the same bytes appear quoted and escaped.
-  CHECK(body.find(std::string{R"("arguments":")"} + as_json_string(unsorted_arguments) +
-                  '"') != std::string::npos);
-}
+// A typed turn's request, which the goldens above do not carry.
+TEST_CASE("request encoders offer a response tool last and require a tool call") {
+  auto request = tool_history_request();
+  request.response_tool = std::make_shared<const ToolDefinition>(ToolDefinition{
+      .name = "respond",
+      .description = "Give the \"final\" answer",
+      .input_schema = scrydantic::Json{.text = R"({"type":"object"})"},
+  });
 
-TEST_CASE("Tool results keep their stored text as the wire string") {
-  const auto anthropic = encoded_body(anthropic_config(), tool_history_request());
-  const auto openai = encoded_body(openai_config(), tool_history_request());
-  const auto quoted = '"' + as_json_string(weather_result) + '"';
-  CHECK(anthropic.find(std::string{R"("content":)"} + quoted) != std::string::npos);
-  CHECK(openai.find(std::string{R"("content":)"} + quoted) != std::string::npos);
+  const auto anthropic = json_view(encoded_body(anthropic_config(), request));
+  CHECK(anthropic.find("tool_choice")->to_json().text == R"({"type":"any"})");
+  REQUIRE(anthropic.find("tools")->size() == 3);
+  CHECK(
+      anthropic.find("tools")->at(2)->to_json().text ==
+      R"({"description":"Give the \"final\" answer","input_schema":{"type":"object"},"name":"respond"})");
+
+  const auto openai = json_view(encoded_body(openai_config(), request));
+  CHECK(openai.find("tool_choice")->to_json().text == R"("required")");
+  REQUIRE(openai.find("tools")->size() == 3);
+  CHECK(
+      openai.find("tools")->at(2)->to_json().text ==
+      R"({"function":{"description":"Give the \"final\" answer","name":"respond","parameters":{"type":"object"}},"type":"function"})");
 }
 
 namespace {
@@ -289,4 +256,47 @@ TEST_CASE("request encoders validate embedded JSON before splicing it") {
             item.value_accepted);
     }
   }
+}
+
+namespace {
+
+[[nodiscard]] ModelRequest text_request(std::string text) {
+  return ModelRequest{
+      .messages = {Message{.role = Role::user,
+                           .content = {TextBlock{.text = std::move(text)}}}},
+      .sampling = SamplingConfig{.max_tokens = 16},
+  };
+}
+
+} // namespace
+
+TEST_CASE("request encoders reject text that is not UTF-8 instead of sending it") {
+  // A body holding such a string would not be JSON, so it fails before transport.
+  for (const auto& config : {anthropic_config(), openai_config()}) {
+    INFO(config.model);
+    const auto adapter = make_provider_adapter(config.dialect);
+    const auto encoded = adapter->make_request(config, text_request("caf\xFF"));
+    REQUIRE_FALSE(encoded);
+    CHECK(encoded.error().category == ErrorCategory::invalid_config);
+    CHECK(encoded.error().message.ends_with(
+        "request: the value holds a string that is not valid UTF-8, so it cannot be "
+        "JSON"));
+  }
+}
+
+TEST_CASE("the deepest tool arguments the turn accepts fit an Anthropic body") {
+  // TurnMachine accepts arguments 251 deep; the body holds them five levels down.
+  auto request = text_request("t");
+  request.messages.push_back(Message{
+      .role = Role::assistant,
+      .content = {ToolCallBlock{
+          .id = "call-1",
+          .name = "tool",
+          .arguments = scrydantic::Json{.text = "{\"a\":" + std::string(250, '[') +
+                                                std::string(250, ']') + "}"},
+      }},
+  });
+  const auto config = anthropic_config();
+  const auto adapter = make_provider_adapter(config.dialect);
+  CHECK(adapter->make_request(config, request));
 }

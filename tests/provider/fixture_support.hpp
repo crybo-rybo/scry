@@ -18,8 +18,10 @@
 
 // Provider golden fixtures and the helpers the provider suites share.
 // SCRY_ANTHROPIC_FIXTURE_DIR and SCRY_OPENAI_FIXTURE_DIR are set by
-// tests/provider/CMakeLists.txt; see tests/fixtures/README.md for where these
-// payloads come from and how to re-capture them.
+// tests/provider/CMakeLists.txt. The payloads are hand-made from the public API
+// references, not captures from a live service, and hold no credential. Before
+// replacing one with a capture, redact its keys, cookies, and request, account,
+// and message ids.
 namespace scry::test_fixtures {
 
 [[nodiscard]] inline std::string fixture(const std::string_view directory,
@@ -63,7 +65,7 @@ openai_config(std::string base_url = "https://api.openai.test/v1") {
 }
 
 // Request fixtures assert JSON meaning. They deliberately do not promise
-// byte-for-byte wire spelling or member order; request_bytes_tests.cpp does.
+// byte-for-byte wire spelling or member order.
 [[nodiscard]] inline std::string canonical(const std::string_view json) {
   return json_view(json).to_json().text;
 }

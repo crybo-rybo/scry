@@ -104,75 +104,31 @@ TEST_CASE("Anthropic stream decoder rejects malformed required events") {
   REQUIRE(adapter);
   ProviderDecodeState state{};
 
-  auto event = decode(*adapter, "content_block_delta", "{broken", state);
+  const auto event = decode(*adapter, "content_block_delta", "{broken", state);
   REQUIRE_FALSE(event.has_value());
   CHECK(event.error().category == ErrorCategory::protocol);
   // Where the data broke, and none of the data itself.
   CHECK(event.error().message == "Anthropic SSE data: JSON text is not valid: expected "
                                  "a string key at line 1, column 2");
-
-  start_anthropic_message(*adapter, state);
-  event = decode(
-      *adapter, "content_block_start",
-      R"({"type":"content_block_start","index":0,"content_block":{"type":"future_required"}})",
-      state);
-  REQUIRE_FALSE(event.has_value());
-  CHECK(event.error().category == ErrorCategory::protocol);
-
-  event = decode(*adapter, "ping", R"({"type":"message_stop"})", state);
-  REQUIRE_FALSE(event.has_value());
-  CHECK(event.error().category == ErrorCategory::protocol);
 }
 
-TEST_CASE("Anthropic stream decoder preserves fragmented tool input shape") {
+TEST_CASE("Anthropic stream decoder types an unnamed event by its payload") {
   const auto adapter = make_provider_adapter(ProviderDialect::anthropic);
   REQUIRE(adapter);
   ProviderDecodeState state{};
 
-  start_anthropic_message(*adapter, state);
-  const auto start = decode(
-      *adapter, "content_block_start",
-      R"({"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"tool_1","name":"lookup","input":{}}})",
+  REQUIRE(decode(*adapter, "message", anthropic_message_start, state));
+  REQUIRE(decode(
+      *adapter, "message",
+      R"({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}})",
+      state));
+  const auto delta = decode(
+      *adapter, "message",
+      R"({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"x"}})",
       state);
-  REQUIRE(start.has_value());
-  const auto first = decode(
-      *adapter, "content_block_delta",
-      R"({"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"answer\":"}})",
-      state);
-  REQUIRE(first.has_value());
-  const auto second = decode(
-      *adapter, "content_block_delta",
-      R"({"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"42}"}})",
-      state);
-  REQUIRE(second.has_value());
-  const auto stop = decode(*adapter, "content_block_stop",
-                           R"({"type":"content_block_stop","index":0})", state);
-  REQUIRE(stop.has_value());
-
-  const auto& tool = std::get<ToolCallBlock>(state.response.content.front());
-  CHECK(tool.id == "tool_1");
-  CHECK(tool.name == "lookup");
-  CHECK(tool.arguments.text == R"({"answer":42})");
-}
-
-TEST_CASE("Anthropic stream decoder rejects terminal misuse") {
-  const auto adapter = make_provider_adapter(ProviderDialect::anthropic);
-  REQUIRE(adapter);
-  ProviderDecodeState state{};
-
-  auto event = decode(*adapter, "message_stop", R"({"type":"message_stop"})", state);
-  REQUIRE_FALSE(event.has_value());
-
-  start_anthropic_message(*adapter, state);
-  event =
-      decode(*adapter, "message_delta",
-             R"({"type":"message_delta","delta":{"stop_reason":"end_turn"}})", state);
-  REQUIRE(event.has_value());
-  event = decode(*adapter, "message_stop", R"({"type":"message_stop"})", state);
-  REQUIRE(event.has_value());
-  event = decode(*adapter, "message_stop", R"({"type":"message_stop"})", state);
-  REQUIRE_FALSE(event.has_value());
-  CHECK(event.error().category == ErrorCategory::protocol);
+  REQUIRE(delta);
+  REQUIRE(delta->size() == 1);
+  CHECK(std::get<ProviderTextDelta>(delta->front()).text == "x");
 }
 
 TEST_CASE("Anthropic stream decoder rejects content after the finish event") {

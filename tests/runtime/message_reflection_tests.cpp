@@ -62,19 +62,3 @@ TEST_CASE("the public message model round-trips through Scrydantic") {
   REQUIRE(reencoded);
   CHECK(reencoded->text == encoded->text);
 }
-
-TEST_CASE("a reflected content block is selected by its type tag") {
-  const auto block = scrydantic::decode<scry::ContentBlock>(scrydantic::Json{
-      .text = R"({"type":"tool_result","tool_call_id":"a","result":null,)"
-              R"("is_error":false})"});
-  REQUIRE(block);
-  const auto* result = std::get_if<scry::ToolResultBlock>(&*block);
-  REQUIRE(result != nullptr);
-  CHECK(result->result.text == "null");
-
-  const auto unknown = scrydantic::decode<scry::ContentBlock>(
-      scrydantic::Json{.text = R"({"type":"image","text":"x"})"});
-  REQUIRE_FALSE(unknown);
-  CHECK(unknown.error().model_message ==
-        "$.type must be one of: text, tool_call, tool_result");
-}

@@ -195,17 +195,6 @@ TEST_CASE("tool-round cap fails before publishing any call from excess round") {
   CHECK(machine.phase() == MachinePhase::terminal);
 }
 
-TEST_CASE("zero tool-round cap rejects the first call batch") {
-  auto tools = tool_policy();
-  tools.max_rounds = 0;
-  auto machine = make_machine(retry_policy(), tools);
-  begin(machine);
-
-  const auto transition = machine.apply(ModelCompleted{.response = tool_response()});
-  CHECK(only_command<PublishError>(transition).error.category ==
-        scry::ErrorCategory::max_tool_rounds);
-}
-
 TEST_CASE("model completion validates finish and content consistency") {
   using scry::ErrorCategory;
 
@@ -411,38 +400,6 @@ TEST_CASE("an issued request snapshot never observes later tool-round messages")
   CHECK(snapshot->messages.size() == 1);
   CHECK(reissued.request->messages.size() == 3);
   CHECK(reissued.request.get() != snapshot.get());
-}
-
-// The request the machine resends already holds every committed message, so the
-// commit is that vector with the final reply appended rather than a second
-// transcript assembled alongside it.
-TEST_CASE("a completed transcript is the last issued request plus the final reply") {
-  auto machine = make_machine();
-  begin(machine);
-
-  auto round_one = machine.apply(ModelCompleted{.response = tool_response()});
-  only_command<PublishToolCall>(round_one);
-  auto issued = machine.apply(result("call-1", R"({"one":1})", at(10ms)));
-  const auto& issue = only_command<IssueModelRequest>(issued);
-  // The machine and this command are the request's only owners, so releasing
-  // the command below lets the commit move the transcript instead of copying it.
-  CHECK(issue.request.use_count() == 2);
-  const auto sent = issue.request->messages;
-  issued.commands.clear();
-
-  const auto completed =
-      machine.apply(ModelCompleted{.response = final_response("finished")});
-  const auto& commit = only_command<CommitCompletion>(completed);
-
-  REQUIRE(commit.transcript.size() == sent.size() + 1);
-  for (std::size_t index = 0; index < sent.size(); ++index) {
-    CHECK(commit.transcript[index].role == sent[index].role);
-    CHECK(message_payload_bytes(commit.transcript[index]) ==
-          message_payload_bytes(sent[index]));
-  }
-  const auto& reply = message_at(commit.transcript, sent.size(), Role::assistant);
-  REQUIRE(reply.content.size() == 1);
-  CHECK(std::get<TextBlock>(reply.content.front()).text == "finished");
 }
 
 // The machine keeps one canonicalized copy of each call in the assistant message

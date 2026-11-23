@@ -39,12 +39,10 @@ namespace scry::test_support {
 using scry::testing::anthropic_error_body;
 using scry::testing::anthropic_text_stream;
 using scry::testing::anthropic_tool_stream;
-using scry::testing::openai_error_body;
 using scry::testing::openai_text_stream;
 using scry::testing::openai_tool_stream;
 using scry::testing::ScriptedResponse;
 using scry::testing::ScriptedServer;
-using scry::testing::ToolUseBlock;
 
 // A 200 response with `body` in one chunk. A non-empty `request_id` goes out as
 // the `request-id` header, which both dialects read as the correlation id.

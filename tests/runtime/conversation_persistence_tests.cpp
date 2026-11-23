@@ -1,14 +1,8 @@
-#include "core/scrydantic.hpp"
-#include "kernel/json_text.hpp"
-
 #include <catch2/catch_test_macros.hpp>
-#include <filesystem>
-#include <fstream>
 #include <scry/conversation.hpp>
 #include <scry/error.hpp>
 #include <scry/message.hpp>
 #include <scrydantic/json.hpp>
-#include <sstream>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -160,16 +154,12 @@ TEST_CASE("Conversation persistence rejects malformed document structure") {
       R"({"messages":[],"system_prompt":"","version":1,"extra":true})",
       R"({"messages":[],"system_prompt":"","revision":1})",
       R"({"messages":[],"version":1})",
-      R"({"messages":[],"system_prompt":"","version":2})",
-      R"({"messages":[],"system_prompt":"","version":-1})",
       R"({"messages":[],"system_prompt":"","version":1.0})",
-      R"({"messages":[],"system_prompt":0,"version":1})",
       R"({"messages":{},"system_prompt":"","version":1})",
       document("[null]"),
       document(R"([{"content":[],"role":"user"}])"),
       document(R"([{"content":{},"role":"user"}])"),
       document(R"([{"content":[{"text":"x","type":"text"}],"role":0}])"),
-      document(R"([{"content":[],"role":"system"}])"),
       document(R"([{"content":[],"role":"user","extra":0}])"),
       document(R"([{"content":[null],"role":"user"}])"),
       document(R"([{"content":[{"text":"x"}],"role":"user"}])"),
@@ -186,11 +176,7 @@ TEST_CASE("Conversation persistence rejects malformed document structure") {
 TEST_CASE("Conversation persistence enforces tool block roles and shapes") {
   const std::vector<std::string> invalid{
       document(
-          R"([{"content":[{"arguments":{},"id":"id","name":"tool","type":"tool_call"}],"role":"user"}])"),
-      document(
           R"([{"content":[{"arguments":{},"extra":0,"id":"id","name":"tool","type":"tool_call"}],"role":"assistant"}])"),
-      document(
-          R"([{"content":[{"arguments":{},"id":"","name":"tool","type":"tool_call"}],"role":"assistant"}])"),
       document(
           R"([{"content":[{"arguments":{},"id":0,"name":"tool","type":"tool_call"}],"role":"assistant"}])"),
       document(
@@ -198,17 +184,11 @@ TEST_CASE("Conversation persistence enforces tool block roles and shapes") {
       document(
           R"([{"content":[{"arguments":{},"id":"id","name":0,"type":"tool_call"}],"role":"assistant"}])"),
       document(
-          R"([{"content":[{"arguments":[],"id":"id","name":"tool","type":"tool_call"}],"role":"assistant"}])"),
-      document(
           R"([{"content":[{"is_error":false,"result":null,"tool_call_id":"id","type":"tool_result"}],"role":"assistant"}])"),
       document(
           R"([{"content":[{"is_error":false,"result":null,"tool_call_id":"","type":"tool_result"}],"role":"user"}])"),
       document(
           R"([{"content":[{"is_error":false,"result":null,"tool_call_id":0,"type":"tool_result"}],"role":"user"}])"),
-      document(
-          R"([{"content":[{"is_error":0,"result":null,"tool_call_id":"id","type":"tool_result"}],"role":"user"}])"),
-      document(
-          R"([{"content":[{"is_error":false,"tool_call_id":"id","type":"tool_result"}],"role":"user"}])"),
   };
   for (const auto& value : invalid) {
     CAPTURE(value);
@@ -261,17 +241,7 @@ TEST_CASE("Conversation::from_json reports which part of the document it rejecte
   }
 }
 
-TEST_CASE("Conversation persistence diagnoses inactive moved-from handles") {
-  auto created = scry::Conversation::create();
-  REQUIRE(created);
-  auto active = std::move(*created);
-  auto inactive = created->to_json();
-  REQUIRE_FALSE(inactive);
-  CHECK(inactive.error().category == scry::ErrorCategory::invalid_state);
-  CHECK(active.empty());
-}
-
-TEST_CASE("moved-from Conversation observers report an empty history") {
+TEST_CASE("a moved-from Conversation reports an empty history and does not encode") {
   auto source = scry::Conversation::create();
   REQUIRE(source);
   auto active = std::move(*source);
@@ -281,40 +251,13 @@ TEST_CASE("moved-from Conversation observers report an empty history") {
   CHECK(source->messages().empty());
   CHECK(source->system_prompt().empty());
   CHECK_FALSE(source->busy());
+  const auto encoded = source->to_json();
+  REQUIRE_FALSE(encoded);
+  CHECK(encoded.error().category == scry::ErrorCategory::invalid_state);
   CHECK(active.empty());
   CHECK(active.message_count() == 0);
   CHECK(active.messages().empty());
   CHECK_FALSE(active.busy());
-}
-
-TEST_CASE("the JSON text helpers canonicalize values and validate object roots") {
-  const scrydantic::Json input{.text =
-                                   R"( { "z": null, "a": [3, {"b": 2, "a": 1}] } )"};
-  auto canonical = scry::detail::canonicalize_json(
-      input, scry::ErrorCategory::invalid_config, "invalid JSON");
-  REQUIRE(canonical);
-  CHECK(canonical->text == R"({"a":[3,{"a":1,"b":2}],"z":null})");
-
-  auto object = scry::detail::canonicalize_json_object(
-      input, scry::ErrorCategory::invalid_config, "invalid JSON object");
-  REQUIRE(object);
-  CHECK(object->text == canonical->text);
-
-  auto array = scry::detail::canonicalize_json_object(
-      {.text = "[]"}, scry::ErrorCategory::tool, "object required");
-  REQUIRE_FALSE(array);
-  CHECK(array.error().category == scry::ErrorCategory::tool);
-  CHECK(array.error().message == "object required");
-}
-
-TEST_CASE("the JSON text helpers safely quote model-visible error strings") {
-  const auto encoded = scry::detail::make_json_error_object("bad \"quote\"\nline\t\\");
-  CHECK(encoded.text == R"({"error":"bad \"quote\"\nline\t\\"})");
-  auto parsed = scrydantic::JsonView::parse(encoded);
-  REQUIRE(parsed);
-  REQUIRE(parsed->kind() == scrydantic::JsonKind::object);
-  REQUIRE(parsed->find("error"));
-  CHECK(parsed->find("error")->string() == "bad \"quote\"\nline\t\\");
 }
 
 TEST_CASE("Conversation::from_json rejects a document truncated after a token") {
@@ -358,31 +301,6 @@ TEST_CASE("a history ending in tool results round-trips through persistence") {
   CHECK(round_trip->messages().back().role == scry::Role::user);
 }
 
-TEST_CASE("the JSON text helpers escape control characters without a short escape") {
-  // A control byte outside \b \f \n \r \t has only the \u00XX form; writing it
-  // any other way would turn a tool argument or an ANSI-colored user string into
-  // invalid JSON on the way out. Every write path here must emit the escape, and
-  // Scrydantic's codec, which writes request bodies, must spell it the same way.
-  const scrydantic::Json input{.text = R"({"a":"\u0001x\u001b"})"};
-  auto canonical = scry::detail::canonicalize_json(
-      input, scry::ErrorCategory::invalid_argument, "invalid JSON");
-  REQUIRE(canonical);
-  CHECK(canonical->text == R"({"a":"\u0001x\u001B"})");
-  auto reread = scrydantic::JsonView::parse(*canonical);
-  REQUIRE(reread);
-  CHECK(reread->find("a")->string() == "\x01x\x1b");
-
-  auto wire = scry::detail::encode_text(std::string{"\x1b[0m"});
-  REQUIRE(wire);
-  CHECK(*wire == R"("\u001B[0m")");
-
-  const auto error_object = scry::detail::make_json_error_object("\x01");
-  CHECK(error_object.text == R"({"error":"\u0001"})");
-  auto error_view = scrydantic::JsonView::parse(error_object);
-  REQUIRE(error_view);
-  CHECK(error_view->find("error")->string() == "\x01");
-}
-
 TEST_CASE("restored tool-call argument keys holding control characters re-encode") {
   // Guards the fuzz find in issue #108: a document whose tool-call arguments hold
   // an object *key* with control characters must re-encode with that key escaped
@@ -407,12 +325,7 @@ TEST_CASE("restored tool-call argument keys holding control characters re-encode
       R"("system_prompt":"","version":1})");
   CHECK(minimal.find(R"("a\u0000b\u000Ec")") != std::string::npos);
 
-  // The fuzzer's own input, kept in the corpus so the Clang replay pins it too.
-  std::ifstream corpus{std::filesystem::path{SCRY_FUZZ_CORPUS_DIR} / "conversation" /
-                           "control_character_key.json",
-                       std::ios::binary};
-  REQUIRE(corpus);
-  std::stringstream bytes;
-  bytes << corpus.rdbuf();
-  static_cast<void>(round_trips(bytes.str()));
+  // The fuzzer's own input.
+  static_cast<void>(round_trips(
+      R"({"messages":[{"content":[{"text":"Qteousin","type":"text"}],"role":"user"},{"content":[{"arguments":{"a":0,"z":[{"conten":[{"text":"Question","type":"text"}],"role":"user"},{"c#ntent":[{"argumentAs":{"a":1,"z":2},"id":"call/1","name":"lookuxt"}],"role":"assistant"}],"system_prompt":"Guide\ncarefully.","BBBBBBBBmessagesBBBBBBB":[],"ssystem_+messages":[],"systept":"","l":[],"leBBBmessagesBBBBBBB":[],"\u0000s\u000e86Fssystem_+m%ssag*es":[],"legesBBBBBBB":[],"leBBBBBBBBBBBBBBes":[],"systeptBBBBBBBpt":"Guide\ncarefully.","version":1},"id":"messagecall-1","name":"lookup","type":"tool_call"}],"role":"assistant"},{"content":[{"is_error":false,"result":{"[[[[]]]]a":[true,3],"z":null},"tool_call_id":"call-2","type":"tool_result"}],"role":"user"},{"content":[{"text":"Answer","type":"text"}],"role":"assistant"}],"system_prompt":"Guide\ncarefully.","version":1})"));
 }

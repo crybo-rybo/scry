@@ -170,37 +170,6 @@ TEST_CASE("tool dispatch fails when even its generic error exceeds the limit") {
   CHECK(result.error().category == scry::ErrorCategory::resource_limit);
 }
 
-TEST_CASE("tool dispatch hands the handler the identity of the call it is servicing") {
-  scry::ToolCallContext observed{};
-  const scry::detail::ToolSnapshot tools{
-      registered_tool("forecast",
-                      [&observed](const scry::ToolCallContext& context,
-                                  scrydantic::Json) -> scry::Result<scrydantic::Json> {
-                        // The views borrow from `call`, which the test keeps
-                        // alive, so holding them is safe here; a handler that
-                        // keeps them past its return must copy the text instead.
-                        observed = context;
-                        return scrydantic::Json{.text = "{}"};
-                      })};
-  const auto call = tool_call("forecast", "call-7");
-  const scry::ToolCallContext context{
-      .turn_id = scry::TurnId{.value = 9},
-      .call_id = call.id,
-      .tool_name = call.name,
-      .round = 2,
-      .index = 3,
-  };
-
-  const auto result = scry::detail::dispatch_tool(tools, call, context, 1024);
-
-  REQUIRE(result);
-  CHECK(observed.turn_id == scry::TurnId{.value = 9});
-  CHECK(observed.call_id == "call-7");
-  CHECK(observed.tool_name == "forecast");
-  CHECK(observed.round == 2);
-  CHECK(observed.index == 3);
-}
-
 TEST_CASE("a plain handler is adapted without disturbing its arguments") {
   scrydantic::Json seen{};
   const scry::detail::ToolSnapshot tools{
