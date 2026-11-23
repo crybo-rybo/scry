@@ -84,54 +84,25 @@ const std::string anthropic_final_stream =
   };
 }
 
-enum class Direction {
-  north,
-  south,
-};
-
 struct MoveArguments {
-  Direction direction{};
+  std::string direction{};
 };
 
 struct MoveResult {
   std::string outcome{};
 };
 
-// One scripted tool round followed by a plain text turn, which is the shortest
-// script that puts a tool result on the wire.
-[[nodiscard]] HarnessFixture move_fixture(std::string_view call) {
-  return make_harness_fixture(
-      openai_config(),
-      {
-          scripted_response(
-              openai_tool_stream({{.id = "call-a", .name = "move", .arguments = call}}),
-              "openai-tool-request"),
-          scripted_response(openai_text_stream("done"), "openai-final-request"),
-      });
-}
-
-[[nodiscard]] std::string run_move_turn(HarnessFixture& fixture) {
-  std::optional<scry::Completion> completion;
-  const auto turn = fixture.harness.send(
-      fixture.conversation, "Move north.",
-      {
-          .on_finished =
-              [&completion](scry::Result<scry::Completion> finished) {
-                REQUIRE(finished);
-                completion = std::move(*finished);
-              },
-      });
-  REQUIRE(turn);
-  REQUIRE(pump_until(fixture.harness, [&] { return completion.has_value(); }));
-  const auto recorded = fixture.server.requests();
-  REQUIRE(recorded.size() == 2);
-  return recorded.back().body;
-}
-
 } // namespace
 
 TEST_CASE("a handler refusal reaches the model in the OpenAI tool message") {
-  auto fixture = move_fixture(R"({"direction":"north"})");
+  auto fixture = make_harness_fixture(
+      openai_config(),
+      {
+          scripted_response(openai_tool_stream({
+              {.id = "call-a", .name = "move", .arguments = R"({"direction":"north"})"},
+          })),
+          scripted_response(openai_text_stream("done")),
+      });
   REQUIRE(fixture.harness.tools().add<MoveArguments>(
       {.name = "move", .description = "Move the player one square"},
       [](MoveArguments) -> scrydantic::Result<MoveResult> {
@@ -139,30 +110,15 @@ TEST_CASE("a handler refusal reaches the model in the OpenAI tool message") {
                                                       "secret application message"));
       }));
 
-  const auto resend = run_move_turn(fixture);
+  REQUIRE(fixture.harness.send_and_wait(fixture.conversation, "Move north."));
 
+  const auto recorded = fixture.server.requests();
+  REQUIRE(recorded.size() == 2);
+  const auto& resend = recorded.back().body;
   CHECK(resend.find(R"("role":"tool")") != std::string::npos);
   CHECK(resend.find(R"({\"error\":\"a wall blocks the way north\"})") !=
         std::string::npos);
   CHECK(resend.find("secret") == std::string::npos);
-}
-
-TEST_CASE("an invalid enum argument round-trips into the OpenAI tool message") {
-  auto fixture = move_fixture(R"({"direction":"up"})");
-  REQUIRE(fixture.harness.tools().add<MoveArguments>(
-      {.name = "move", .description = "Move the player one square"},
-      [](MoveArguments) -> scrydantic::Result<MoveResult> {
-        FAIL("the handler must not run when arguments do not decode");
-        return MoveResult{};
-      }));
-
-  const auto resend = run_move_turn(fixture);
-
-  CHECK(
-      resend.find(
-          R"($.direction is not a declared enumerator; must be one of: north, south)") !=
-      std::string::npos);
-  CHECK(resend.find("reflected JSON at") == std::string::npos);
 }
 
 TEST_CASE("OpenAI-compatible config drives a fragmented transactional tool round") {

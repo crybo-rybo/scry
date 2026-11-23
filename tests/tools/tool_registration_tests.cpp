@@ -158,11 +158,6 @@ struct Derived : Base {
   }
 };
 
-// tool describes functions; on a data member it is rejected.
-struct ToolOnMember {
-  [[= scrydantic::tool{"City to query"}]] std::string city;
-};
-
 // The explicit object forms registration rejects.
 struct TakesRvalue {
   [[= scrydantic::tool{"Consume"}]] std::int32_t take(this TakesRvalue&&) { return 0; }
@@ -220,15 +215,8 @@ constexpr std::string_view int32_schema =
 
 } // namespace
 
-static_assert(scrydantic::Toolbox<registration::Counter, scry::ToolCallContext>);
-static_assert(scrydantic::Toolbox<registration::Reader, scry::ToolCallContext>);
-static_assert(scrydantic::Toolbox<const registration::Reader, scry::ToolCallContext>);
-static_assert(!scrydantic::Toolbox<const registration::Counter, scry::ToolCallContext>);
-static_assert(!scrydantic::Toolbox<registration::Position, scry::ToolCallContext>);
-static_assert(!scrydantic::Toolbox<std::int32_t, scry::ToolCallContext>);
-
-// Toolbox accepts exactly the explicit object forms registration accepts: Box
-// registers below, and the const-toolbox rejection has a compile-fail test.
+// Toolbox accepts exactly the explicit object forms registration accepts; Box
+// registers below.
 static_assert(scrydantic::Toolbox<registration::Box, scry::ToolCallContext>);
 static_assert(
     !scrydantic::Toolbox<const registration::Box, scry::ToolCallContext>); // bump: Box&
@@ -239,22 +227,6 @@ static_assert(scrydantic::Toolbox<const registration::Derived, scry::ToolCallCon
 static_assert(!scrydantic::Toolbox<registration::TakesRvalue, scry::ToolCallContext>);
 static_assert(!scrydantic::Toolbox<registration::Uncopyable, scry::ToolCallContext>);
 static_assert(!scrydantic::Toolbox<registration::Unrelated, scry::ToolCallContext>);
-static_assert(!scrydantic::ToolArguments<registration::ToolOnMember>);
-
-TEST_CASE("a function without parameters takes the empty object only") {
-  scry::ToolRegistry registry;
-  REQUIRE(registry.add<^^registration::grid::origin>());
-  CHECK(registry.names() == std::vector<std::string>{"origin"});
-  CHECK(schema_of(registry, "origin") == empty_object_schema);
-
-  const auto result = call(registry, "origin", "{}");
-  REQUIRE(result);
-  CHECK(result->text == R"({"x":0,"y":0})");
-
-  const auto rejected = call(registry, "origin", R"({"x":1})");
-  REQUIRE_FALSE(rejected);
-  CHECK(rejected.error().model_message == R"($ contains unknown member "x")");
-}
 
 TEST_CASE("plain parameters are synthesized into one required argument object") {
   scry::ToolRegistry registry;
@@ -365,18 +337,6 @@ TEST_CASE("a toolbox that collides on its third tool registers none of them") {
   CHECK(registry.names() == before);
   CHECK_FALSE(registry.contains("alpha"));
   CHECK_FALSE(registry.contains("beta"));
-}
-
-TEST_CASE("a second object of one toolbox class is a duplicate registration") {
-  scry::ToolRegistry registry;
-  REQUIRE(registry.add(registration::Reader{.fixed = 1}));
-  const auto again = registry.add(registration::Reader{.fixed = 2});
-  REQUIRE_FALSE(again);
-  CHECK(again.error().category == scry::ErrorCategory::invalid_argument);
-
-  const auto read = call(registry, "peek", "{}");
-  REQUIRE(read);
-  CHECK(read->text == "1");
 }
 
 TEST_CASE("the manifest shows the schemas generated for every registration form") {

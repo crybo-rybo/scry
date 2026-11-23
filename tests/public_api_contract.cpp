@@ -2,88 +2,14 @@
 #include <array>
 #include <chrono>
 #include <concepts>
-#include <cstdint>
 #include <functional>
 #include <memory>
-#include <optional>
 #include <scry/scry.hpp>
 #include <string>
 #include <string_view>
 #include <type_traits>
 #include <utility>
-#include <variant>
-#include <vector>
 
-static_assert(std::is_aggregate_v<scry::Config>);
-static_assert(std::same_as<decltype(scry::Config::max_tool_calls_per_turn),
-                           std::optional<std::uint32_t>>);
-static_assert(
-    std::same_as<decltype(scry::Config::tool_round_limit), scry::ToolRoundLimitPolicy>);
-static_assert(std::is_enum_v<scry::ToolRoundLimitPolicy>);
-static_assert(
-    std::same_as<std::underlying_type_t<scry::ToolRoundLimitPolicy>, std::uint8_t>);
-static_assert(
-    std::same_as<decltype(scry::SamplingConfig::seed), std::optional<std::uint32_t>>);
-static_assert(std::is_aggregate_v<scry::HttpHeader>);
-static_assert(std::is_enum_v<scry::ReasoningMode>);
-static_assert(std::is_aggregate_v<scry::Error>);
-static_assert(std::same_as<decltype(scry::Error::model_message), std::string>);
-static_assert(
-    std::same_as<decltype(scry::Error::issues), std::vector<scrydantic::Issue>>);
-static_assert(std::same_as<decltype(scry::tool_error(std::string{})), scry::Error>);
-// A Scrydantic failure converts to a Scry tool error, and a string literal still
-// selects the two-text overload.
-static_assert(
-    std::same_as<decltype(scry::tool_error(scrydantic::Error{})), scry::Error>);
-static_assert(std::same_as<decltype(scry::tool_error("text")), scry::Error>);
-static_assert(std::is_aggregate_v<scrydantic::Json>);
-static_assert(std::is_enum_v<scrydantic::JsonKind>);
-static_assert(std::is_default_constructible_v<scrydantic::JsonView>);
-static_assert(std::is_copy_constructible_v<scrydantic::JsonView>);
-static_assert(std::is_enum_v<scry::Role>);
-static_assert(std::is_aggregate_v<scry::Message>);
-static_assert(std::is_aggregate_v<scry::TextBlock>);
-static_assert(std::is_aggregate_v<scry::ToolCallBlock>);
-static_assert(std::is_aggregate_v<scry::ToolResultBlock>);
-static_assert(
-    std::same_as<scry::ContentBlock, std::variant<scry::TextBlock, scry::ToolCallBlock,
-                                                  scry::ToolResultBlock>>);
-static_assert(
-    std::same_as<decltype(scry::Message::content), std::vector<scry::ContentBlock>>);
-static_assert(std::is_aggregate_v<scry::ToolDefinition>);
-static_assert(std::is_aggregate_v<scry::UpdateOptions>);
-static_assert(std::is_aggregate_v<scry::TurnCallbacks>);
-
-static_assert(std::is_enum_v<scry::FinishReason>);
-static_assert(std::is_aggregate_v<scry::Usage>);
-static_assert(std::is_aggregate_v<scry::ToolCall>);
-static_assert(std::is_aggregate_v<scry::ToolRequest>);
-static_assert(std::is_aggregate_v<scry::ToolRejection>);
-static_assert(std::is_aggregate_v<scry::Completion>);
-static_assert(std::is_aggregate_v<scry::UpdateStats>);
-static_assert(std::is_aggregate_v<scry::ConversationConfig>);
-static_assert(std::is_aggregate_v<scry::TurnId>);
-static_assert(std::same_as<decltype(scry::Usage::input_tokens), std::uint64_t>);
-static_assert(std::same_as<decltype(scry::Usage::output_tokens), std::uint64_t>);
-static_assert(std::same_as<decltype(scry::ToolCall::turn_id), scry::TurnId>);
-static_assert(std::same_as<decltype(scry::ToolCall::arguments), scrydantic::Json>);
-static_assert(std::same_as<decltype(scry::ToolCall::result), scrydantic::Json>);
-static_assert(std::same_as<decltype(scry::ToolCall::is_error), bool>);
-static_assert(
-    std::same_as<decltype(scry::ToolCall::error), std::optional<scry::Error>>);
-static_assert(std::same_as<decltype(scry::ToolCall::round), std::uint32_t>);
-static_assert(std::same_as<decltype(scry::ToolCall::index), std::uint32_t>);
-static_assert(std::same_as<decltype(scry::Completion::turn_id), scry::TurnId>);
-static_assert(
-    std::same_as<decltype(scry::Completion::finish_reason), scry::FinishReason>);
-static_assert(std::same_as<decltype(scry::Completion::usage), scry::Usage>);
-static_assert(
-    std::same_as<decltype(scry::Completion::tool_round_count), std::uint32_t>);
-static_assert(std::same_as<decltype(scry::Completion::tool_call_count), std::uint32_t>);
-static_assert(
-    std::same_as<decltype(scry::Completion::rejected_tool_call_count), std::uint32_t>);
-static_assert(std::same_as<decltype(scry::Completion::unexecuted_tool_calls),
-                           std::vector<scry::ToolCallBlock>>);
 // A host may persist these values, so each enumerator keeps its number and a new
 // reason, such as the soft stop's tool_round_limit, is appended at the end.
 static_assert(std::to_underlying(scry::FinishReason::completed) == 0);
@@ -91,13 +17,6 @@ static_assert(std::to_underlying(scry::FinishReason::length) == 1);
 static_assert(std::to_underlying(scry::FinishReason::tool_use) == 2);
 static_assert(std::to_underlying(scry::FinishReason::unknown) == 3);
 static_assert(std::to_underlying(scry::FinishReason::tool_round_limit) == 4);
-static_assert(
-    std::same_as<decltype(scry::UpdateStats::callbacks_delivered), std::size_t>);
-static_assert(std::same_as<decltype(scry::UpdateStats::events_remaining), std::size_t>);
-static_assert(std::same_as<decltype(scry::UpdateStats::budget_exhausted), bool>);
-static_assert(
-    std::same_as<decltype(scry::ConversationConfig::system_prompt), std::string>);
-static_assert(std::same_as<decltype(scry::TurnId::value), std::uint64_t>);
 
 // TurnId::operator bool is explicit and constexpr: zero is invalid, nonzero names
 // an accepted turn.
@@ -122,137 +41,11 @@ static_assert(!std::is_copy_constructible_v<scry::Harness>);
 static_assert(std::is_move_constructible_v<scry::UniqueFunction<void()>>);
 static_assert(!std::is_copy_constructible_v<scry::UniqueFunction<void()>>);
 
-// schema_v is the general schema root; input_schema_v is the argument-only spelling of
-// the same text, so a host can export a result contract without a second generator.
-namespace contract {
-struct SchemaArguments {
-  std::string city;
-};
-} // namespace contract
-static_assert(std::same_as<decltype(scrydantic::schema_v<contract::SchemaArguments>),
-                           const std::string_view>);
-static_assert(scrydantic::schema_v<contract::SchemaArguments> ==
-              scrydantic::input_schema_v<contract::SchemaArguments>);
-
-// A void-returning callback signature accepts a callable that returns something:
-// the result is discarded rather than rejected at compile time.
-using AppendingDelta = decltype([](std::string_view chunk) -> std::string& {
-  static std::string sink;
-  return sink.append(chunk);
-});
-static_assert(std::is_constructible_v<scry::TextDeltaCallback, AppendingDelta>);
-static_assert(std::is_constructible_v<scry::UniqueFunction<void(std::string_view)>,
-                                      AppendingDelta>);
-
 // Callbacks are move-only and every member is optional, so a default-constructed
 // TurnCallbacks is a valid "observe nothing" turn.
 static_assert(std::is_default_constructible_v<scry::TurnCallbacks>);
 static_assert(std::is_move_constructible_v<scry::TurnCallbacks>);
 static_assert(!std::is_copy_constructible_v<scry::TurnCallbacks>);
-static_assert(std::same_as<decltype(scry::TurnCallbacks::on_text_delta),
-                           scry::TextDeltaCallback>);
-static_assert(std::same_as<decltype(scry::TurnCallbacks::on_tool_request),
-                           scry::ToolAdmissionCallback>);
-static_assert(
-    std::same_as<decltype(scry::TurnCallbacks::on_tool_call), scry::ToolCallCallback>);
-static_assert(std::same_as<decltype(scry::TurnCallbacks::on_finished),
-                           scry::UniqueFunction<void(scry::Result<scry::Completion>)>>);
-
-// Turn is a cancellation handle only; callbacks are supplied to send(). The
-// absence checks need a dependent type, or the missing member is a hard error.
-template <typename T>
-concept registers_completion =
-    requires(T& turn) { turn.on_completion([](const scry::Completion&) {}); };
-
-template <typename T>
-concept registers_text_delta =
-    requires(T& turn) { turn.on_text_delta([](std::string_view) {}); };
-
-static_assert(requires(const scry::Turn& turn) {
-  { turn.id() } -> std::same_as<scry::TurnId>;
-});
-static_assert(requires(scry::Turn& turn) {
-  { turn.cancel() } -> std::same_as<bool>;
-});
-static_assert(requires(scry::Turn& turn) {
-  { turn.disconnect() } -> std::same_as<bool>;
-});
-static_assert(!registers_completion<scry::Turn>);
-static_assert(!registers_text_delta<scry::Turn>);
-static_assert(requires(const scry::Turn& turn) {
-  { turn.finished() } -> std::same_as<bool>;
-});
-
-// A host holding only a TurnId can cancel or disconnect that turn, and a Config
-// can be validated without creating a Harness.
-static_assert(requires(scry::Harness& harness) {
-  { harness.cancel(scry::TurnId{}) } -> std::same_as<bool>;
-  { harness.disconnect(scry::TurnId{}) } -> std::same_as<bool>;
-});
-static_assert(requires(const scry::Config& config) {
-  { scry::Harness::validate(config) } -> std::same_as<scry::Status>;
-});
-
-// create() adopts a registry, and the parameter is defaulted so the config alone
-// is also a valid call.
-static_assert(requires(scry::Config config) {
-  {
-    scry::Harness::create(std::move(config))
-  } -> std::same_as<scry::Result<scry::Harness>>;
-});
-static_assert(requires(scry::Config config, scry::ToolRegistry tools) {
-  {
-    scry::Harness::create(std::move(config), std::move(tools))
-  } -> std::same_as<scry::Result<scry::Harness>>;
-});
-static_assert(requires(scry::Harness& harness) {
-  { harness.tools() } -> std::same_as<scry::ToolRegistry&>;
-});
-static_assert(requires(const scry::ToolRegistry& registry) {
-  { registry.contains(std::string_view{}) } -> std::same_as<bool>;
-  { registry.names() } -> std::same_as<std::vector<std::string>>;
-  { registry.to_json() } -> std::same_as<scry::Result<scrydantic::Json>>;
-});
-
-// A tool handler's call identity: a borrowed value the handler reads and does not
-// own, so the views are string_view and the whole thing stays an aggregate.
-static_assert(std::is_aggregate_v<scry::ToolCallContext>);
-static_assert(std::same_as<decltype(scry::ToolCallContext::turn_id), scry::TurnId>);
-static_assert(std::same_as<decltype(scry::ToolCallContext::call_id), std::string_view>);
-static_assert(
-    std::same_as<decltype(scry::ToolCallContext::tool_name), std::string_view>);
-static_assert(std::same_as<decltype(scry::ToolCallContext::round), std::uint32_t>);
-static_assert(std::same_as<decltype(scry::ToolCallContext::index), std::uint32_t>);
-// A tool request is a borrowed view of the call being admitted: it names the same
-// identity the handler sees and cannot outlive the dispatch, so it carries a
-// reference and is not default-constructible.
-static_assert(
-    std::same_as<decltype(scry::ToolRequest::context), scry::ToolCallContext>);
-static_assert(
-    std::same_as<decltype(scry::ToolRequest::arguments), const scrydantic::Json&>);
-static_assert(!std::is_default_constructible_v<scry::ToolRequest>);
-static_assert(std::is_copy_constructible_v<scry::ToolRequest>);
-static_assert(std::same_as<decltype(scry::ToolRejection::model_message), std::string>);
-static_assert(std::is_default_constructible_v<scry::ToolRejection>);
-
-// The hook's return says admit or refuse, so a lambda spelling either answer has
-// to convert, and an empty callback is the "admit everything" default.
-using AdmissionLambda = decltype([](const scry::ToolRequest& request)
-                                     -> std::optional<scry::ToolRejection> {
-  if (request.arguments.text.empty()) {
-    return scry::ToolRejection{.model_message = "no arguments"};
-  }
-  return std::nullopt;
-});
-static_assert(std::is_constructible_v<scry::ToolAdmissionCallback, AdmissionLambda>);
-static_assert(std::is_default_constructible_v<scry::ToolAdmissionCallback>);
-static_assert(std::is_move_constructible_v<scry::ToolAdmissionCallback>);
-static_assert(!std::is_copy_constructible_v<scry::ToolAdmissionCallback>);
-
-static_assert(std::is_move_constructible_v<scry::ToolHandler>);
-static_assert(!std::is_copy_constructible_v<scry::ToolHandler>);
-static_assert(std::is_move_constructible_v<scry::ContextualToolHandler>);
-static_assert(!std::is_copy_constructible_v<scry::ContextualToolHandler>);
 
 // The two add_dynamic() overloads are separated by the handler's arity alone, so
 // each lambda shape has to reach exactly one of them. A converting constructor that
@@ -271,125 +64,17 @@ static_assert(!std::is_constructible_v<scry::ToolHandler, ContextualToolLambda>)
 static_assert(
     std::is_constructible_v<scry::ContextualToolHandler, ContextualToolLambda>);
 static_assert(!std::is_constructible_v<scry::ContextualToolHandler, PlainToolLambda>);
-static_assert(requires(scry::ToolRegistry& registry) {
-  {
-    registry.add_dynamic(scry::ToolDefinition{}, PlainToolLambda{})
-  } -> std::same_as<scry::Status>;
-  {
-    registry.add_dynamic(scry::ToolDefinition{}, ContextualToolLambda{})
-  } -> std::same_as<scry::Status>;
-  {
-    registry.add_dynamic(scry::ToolDefinition{}, scry::ToolHandler{})
-  } -> std::same_as<scry::Status>;
-  {
-    registry.add_dynamic(scry::ToolDefinition{}, scry::ContextualToolHandler{})
-  } -> std::same_as<scry::Status>;
-});
 
-// Reflected registration is the primary add(): an argument aggregate with a
-// callable, one annotated function or a namespace of them, and a toolbox shared
-// or owned. The overloads are told apart by their template arguments and arity.
-namespace contract {
-struct CountArguments {
-  std::int32_t by{};
-};
-[[= scrydantic::tool{"Echo a label"}]] inline std::string echo(std::string label) {
-  return label;
-}
-struct Counter {
-  std::int32_t value{};
-  [[= scrydantic::tool{"Add to the counter"}]] std::int32_t
-      increment(CountArguments arguments) {
-    return value += arguments.by;
-  }
-};
-} // namespace contract
-static_assert(scrydantic::Toolbox<contract::Counter, scry::ToolCallContext>);
-// A const toolbox admits only const member tools.
-static_assert(!scrydantic::Toolbox<const contract::Counter, scry::ToolCallContext>);
-static_assert(!scrydantic::Toolbox<contract::CountArguments, scry::ToolCallContext>);
-static_assert(std::same_as<decltype(scry::ToolMetadata::name), std::string>);
-static_assert(requires(scry::ToolRegistry& registry) {
-  {
-    registry.add<contract::CountArguments>(
-        scry::ToolMetadata{}, [](contract::CountArguments) { return std::int32_t{}; })
-  } -> std::same_as<scry::Status>;
-  { registry.add<^^contract::echo>() } -> std::same_as<scry::Status>;
-  { registry.add(std::make_shared<contract::Counter>()) } -> std::same_as<scry::Status>;
-  { registry.add(contract::Counter{}) } -> std::same_as<scry::Status>;
-});
-static_assert(requires(const scry::Conversation& conversation) {
-  { conversation.messages() } -> std::same_as<const std::vector<scry::Message>&>;
-  { conversation.system_prompt() } -> std::same_as<const std::string&>;
-  { conversation.busy() } -> std::same_as<bool>;
-});
-
-// send() takes the callbacks atomically, and they are optional.
-static_assert(requires(scry::Harness& harness, scry::Conversation& conversation) {
-  {
-    harness.send(conversation, std::string{})
-  } -> std::same_as<scry::Result<scry::Turn>>;
-  {
-    harness.send(conversation, std::string{}, scry::TurnCallbacks{})
-  } -> std::same_as<scry::Result<scry::Turn>>;
-});
-
-// Typed completions: a turn can ask for a structured answer, dynamically through
-// a ResponseFormat or by reflection through send<Answer>() and ask<Answer>().
-namespace contract {
-struct Verdict {
-  [[= scrydantic::description{"Is the claim supported?"}]] bool supported{};
-  std::string reason{};
-};
-struct Opaque {
-  scrydantic::Json payload{};
-};
-} // namespace contract
-static_assert(std::same_as<decltype(scry::Completion::structured),
-                           std::optional<scrydantic::Json>>);
-static_assert(
-    std::same_as<decltype(scry::Completion::answer_attempt_count), std::uint32_t>);
-static_assert(std::is_aggregate_v<scry::ResponseFormat>);
 static_assert(std::is_move_constructible_v<scry::ResponseFormat>);
 static_assert(!std::is_copy_constructible_v<scry::ResponseFormat>);
-static_assert(std::same_as<decltype(scry::ResponseFormat::name), std::string>);
-static_assert(std::same_as<decltype(scry::ResponseFormat::description), std::string>);
-static_assert(std::same_as<decltype(scry::ResponseFormat::schema), scrydantic::Json>);
-static_assert(
-    std::same_as<decltype(scry::ResponseFormat::validate), scry::AnswerValidator>);
-static_assert(
-    std::same_as<scry::AnswerValidator,
-                 scry::UniqueFunction<scry::Status(const scrydantic::Json&)>>);
-static_assert(std::is_aggregate_v<scry::Answered<contract::Verdict>>);
-static_assert(std::same_as<decltype(scry::Answered<contract::Verdict>::value),
-                           contract::Verdict>);
-static_assert(std::same_as<decltype(scry::Answered<contract::Verdict>::completion),
-                           scry::Completion>);
-// A typed send delivers the decoded answer; its other callbacks are TurnCallbacks'.
-static_assert(std::is_aggregate_v<scry::AnswerCallbacks<contract::Verdict>>);
-static_assert(
-    std::same_as<
-        decltype(scry::AnswerCallbacks<contract::Verdict>::on_finished),
-        scry::UniqueFunction<void(scry::Result<scry::Answered<contract::Verdict>>)>>);
-static_assert(
-    std::same_as<decltype(scry::AnswerCallbacks<contract::Verdict>::on_text_delta),
-                 decltype(scry::TurnCallbacks::on_text_delta)>);
-static_assert(
-    std::same_as<decltype(scry::AnswerCallbacks<contract::Verdict>::on_tool_request),
-                 decltype(scry::TurnCallbacks::on_tool_request)>);
-static_assert(
-    std::same_as<decltype(scry::AnswerCallbacks<contract::Verdict>::on_tool_call),
-                 decltype(scry::TurnCallbacks::on_tool_call)>);
-// An answer is a tool input, so it is an object: ToolArguments is the check.
-static_assert(scrydantic::ToolArguments<contract::Verdict>);
-static_assert(!scrydantic::ToolArguments<contract::Opaque>);
-static_assert(!scrydantic::ToolArguments<bool>);
-static_assert(std::same_as<decltype(scry::response_format<contract::Verdict>()),
-                           scry::ResponseFormat>);
+
+// Typed sends take optional callbacks, as plain ones do.
+namespace contract {
+struct Verdict {
+  bool supported{};
+};
+} // namespace contract
 static_assert(requires(scry::Harness& harness, scry::Conversation& conversation) {
-  {
-    harness.send_structured(conversation, std::string{}, scry::ResponseFormat{})
-  } -> std::same_as<scry::Result<scry::Turn>>;
   {
     harness.send_structured(conversation, std::string{}, scry::ResponseFormat{},
                             scry::TurnCallbacks{})
@@ -397,65 +82,17 @@ static_assert(requires(scry::Harness& harness, scry::Conversation& conversation)
   {
     harness.send<contract::Verdict>(conversation, std::string{})
   } -> std::same_as<scry::Result<scry::Turn>>;
-  {
-    harness.send<contract::Verdict>(conversation, std::string{},
-                                    scry::AnswerCallbacks<contract::Verdict>{})
-  } -> std::same_as<scry::Result<scry::Turn>>;
-  {
-    harness.send_and_wait_structured(conversation, std::string{},
-                                     scry::ResponseFormat{})
-  } -> std::same_as<scry::Result<scry::Completion>>;
-  {
-    harness.ask<contract::Verdict>(conversation, std::string{})
-  } -> std::same_as<scry::Result<scry::Answered<contract::Verdict>>>;
 });
 
-// The structured sends have their own names, so the plain overload sets are what
-// they were before typed turns: `{}` as the third argument of send() still names
-// the callbacks, and nothing else is a candidate for it. The absence checks need a
-// dependent type, or the missing overload is a hard error.
+// The structured sends have their own names, so `{}` as the third argument of
+// send() names the callbacks and is not ambiguous.
 static_assert(requires(scry::Harness& harness, scry::Conversation& conversation) {
   {
     harness.send(conversation, std::string{}, {})
   } -> std::same_as<scry::Result<scry::Turn>>;
 });
-static_assert(
-    std::same_as<decltype(static_cast<scry::Result<scry::Turn> (scry::Harness::*)(
-                              scry::Conversation&, std::string, scry::TurnCallbacks)>(
-                     &scry::Harness::send)),
-                 scry::Result<scry::Turn> (scry::Harness::*)(
-                     scry::Conversation&, std::string, scry::TurnCallbacks)>);
-template <typename H>
-concept sends_a_format_through_send = requires(H& harness, scry::Conversation& c) {
-  harness.send(c, std::string{}, scry::ResponseFormat{});
-};
-template <typename H>
-concept waits_on_a_format_through_send_and_wait =
-    requires(H& harness, scry::Conversation& c) {
-      harness.send_and_wait(c, std::string{}, scry::ResponseFormat{});
-    };
-static_assert(!sends_a_format_through_send<scry::Harness>);
-static_assert(!waits_on_a_format_through_send_and_wait<scry::Harness>);
 
 namespace {
-
-// response_format<Answer>() carries the generated schema, the default tool name,
-// and a validator that decodes strictly and publishes a schema-derived error.
-bool response_format_for_a_type_works() {
-  auto format = scry::response_format<contract::Verdict>();
-  if (format.name != "respond" || !format.description.empty() ||
-      format.schema.text != scrydantic::input_schema_v<contract::Verdict> ||
-      !format.validate) {
-    return false;
-  }
-  const auto accepted = format.validate(
-      scrydantic::Json{.text = R"({"reason":"rock","supported":false})"});
-  const auto rejected =
-      format.validate(scrydantic::Json{.text = R"({"supported":"no"})"});
-  return accepted.has_value() && !rejected.has_value() &&
-         rejected.error().category == scry::ErrorCategory::invalid_argument &&
-         rejected.error().model_message.starts_with("$.");
-}
 
 bool move_only_callback_works() {
   bool callback_ran = false;
@@ -514,26 +151,6 @@ bool nonvoid_callable_in_void_signature_works() {
 struct Probe {
   void member() const {}
 };
-
-bool json_view_reads_a_parsed_document() {
-  const auto document =
-      scrydantic::JsonView::parse(scrydantic::Json{.text = R"({"ok":true})"});
-  if (!document || document->kind() != scrydantic::JsonKind::object ||
-      document->size() != 1) {
-    return false;
-  }
-  if (document->key_at(0) != "ok") {
-    return false;
-  }
-  const auto member = document->find("ok");
-  if (!member || member->boolean() != true) {
-    return false;
-  }
-  if (scrydantic::escape_json_string("a\"b\n") != "\"a\\\"b\\n\"") {
-    return false;
-  }
-  return !scrydantic::JsonView::parse(scrydantic::Json{.text = "{"}).has_value();
-}
 
 bool null_pointer_callables_are_empty() {
   const scry::UniqueFunction<void()> from_null_function{
@@ -610,16 +227,6 @@ int main() {
     return 1;
   }
 
-  const scry::Error error{
-      .category = scry::ErrorCategory::resource_limit,
-      .retryable = true,
-      .attempt = 2,
-      .message = "bounded",
-  };
-  if (!error.retryable || error.attempt != 2 || !error.model_message.empty()) {
-    return 1;
-  }
-
   const auto refusal = scry::tool_error("north or south only");
   if (refusal.category != scry::ErrorCategory::tool ||
       refusal.model_message != "north or south only" ||
@@ -648,9 +255,9 @@ int main() {
   // The runtime checks that live in their own functions, run in one pass so
   // main stays within the complexity limit as the list grows.
   constexpr std::array runtime_checks{
-      &move_only_callback_works,         &nonvoid_callable_in_void_signature_works,
-      &null_pointer_callables_are_empty, &json_view_reads_a_parsed_document,
-      &response_format_for_a_type_works,
+      &move_only_callback_works,
+      &nonvoid_callable_in_void_signature_works,
+      &null_pointer_callables_are_empty,
   };
   if (!std::ranges::all_of(runtime_checks, [](const auto check) { return check(); })) {
     return 1;

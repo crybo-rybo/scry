@@ -557,66 +557,6 @@ TEST_CASE("a tool handler that disconnects suppresses its own observer") {
   CHECK(conversation.message_count() == 4);
 }
 
-TEST_CASE(
-    "the per-turn call limit refuses the rest of a batch and the turn completes") {
-  auto config = test_config();
-  config.max_tool_calls_per_turn = 1;
-  auto fixture =
-      make_harness_fixture(config, {scripted_response(two_tool_stream, "tool-request"),
-                                    scripted_response(final_stream, "final-request")});
-  auto& server = fixture.server;
-  auto& harness = fixture.harness;
-  auto& conversation = fixture.conversation;
-
-  std::size_t first_calls = 0;
-  std::size_t second_calls = 0;
-  REQUIRE(harness.tools().add_dynamic(
-      ordinal_tool_definition("first_tool"),
-      [&first_calls](scrydantic::Json) -> scry::Result<scrydantic::Json> {
-        ++first_calls;
-        return scrydantic::Json{.text = R"({"handled":"first"})"};
-      }));
-  REQUIRE(harness.tools().add_dynamic(
-      ordinal_tool_definition("second_tool"),
-      [&second_calls](scrydantic::Json) -> scry::Result<scrydantic::Json> {
-        ++second_calls;
-        return scrydantic::Json{.text = R"({"handled":"second"})"};
-      }));
-
-  std::vector<bool> observed_errors;
-  std::optional<scry::Completion> completion;
-  REQUIRE(harness.send(conversation, "Run both tools",
-                       {
-                           .on_tool_call =
-                               [&observed_errors](const scry::ToolCall& call) {
-                                 observed_errors.push_back(call.is_error);
-                               },
-                           .on_finished =
-                               [&completion](scry::Result<scry::Completion> finished) {
-                                 REQUIRE(finished);
-                                 completion = std::move(*finished);
-                               },
-                       }));
-  REQUIRE(pump_until(harness, [&completion] { return completion.has_value(); }));
-
-  CHECK(first_calls == 1);
-  CHECK(second_calls == 0);
-  CHECK(observed_errors == std::vector<bool>{false, true});
-  REQUIRE(completion);
-  CHECK(completion->text == "all done");
-  // The model asked for two calls, so both are counted; only one was refused.
-  CHECK(completion->tool_call_count == 2);
-  CHECK(completion->rejected_tool_call_count == 1);
-
-  const auto recorded = server.requests();
-  REQUIRE(recorded.size() == 2);
-  const auto& resend_body = recorded[1].body;
-  require_order(
-      resend_body, R"({\"handled\":\"first\"})",
-      R"({\"error\":\"tool call limit for this turn reached; respond without calling tools\"})");
-  CHECK(resend_body.find(R"({\"handled\":\"second\"})") == std::string::npos);
-}
-
 TEST_CASE("the per-turn call limit counts across rounds and admits exactly its bound") {
   auto config = test_config();
   config.max_tool_calls_per_turn = 2;

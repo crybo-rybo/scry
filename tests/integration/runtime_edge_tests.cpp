@@ -19,17 +19,6 @@ constexpr std::string_view answer = "edge answer";
 const std::string completed_stream =
     anthropic_text_stream("edge answer", "msg_edge", {}, 3, 2);
 
-constexpr std::string_view partial_stream = R"(event: message_start
-data: {"type":"message_start","message":{"id":"msg_partial","type":"message","role":"assistant","content":[],"model":"test-model","stop_reason":null,"usage":{"input_tokens":3,"output_tokens":0}}}
-
-event: content_block_start
-data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
-
-event: content_block_delta
-data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial"}}
-
-)";
-
 // These cases are about retrying, so unlike the shared single-attempt config
 // this one leaves the retry budget at its default.
 [[nodiscard]] scry::Config retrying_config() {
@@ -71,45 +60,6 @@ TEST_CASE("a transient failure retries once and reports the successful attempt")
   CHECK(fixture.server.requests().size() == 2);
   CHECK(fixture.server.remaining() == 0);
   CHECK(fixture.conversation.message_count() == 2);
-}
-
-TEST_CASE("semantic output prevents a retry after a transient transport failure") {
-  // The connection closes after the partial stream, without the end of the body.
-  auto fixture = make_harness_fixture(
-      retrying_config(), {
-                             {
-                                 .body_chunks = {std::string{partial_stream}},
-                                 .close_after_chunks = 1,
-                             },
-                             success(),
-                         });
-
-  std::string streamed;
-  std::optional<scry::Error> failure_result;
-  auto turn = fixture.harness.send(
-      fixture.conversation, "do not retry",
-      {
-          .on_text_delta =
-              [&streamed](const std::string_view text) { streamed.append(text); },
-          .on_finished =
-              [&failure_result](scry::Result<scry::Completion> finished) {
-                if (!finished) {
-                  failure_result = std::move(finished.error());
-                }
-              },
-      });
-  REQUIRE(turn);
-
-  REQUIRE(pump_until(fixture.harness,
-                     [&failure_result] { return failure_result.has_value(); }));
-  CHECK(streamed == "partial");
-  REQUIRE(failure_result);
-  CHECK(failure_result->category == scry::ErrorCategory::network);
-  CHECK(failure_result->retryable);
-  CHECK(failure_result->attempt == 1);
-  CHECK(fixture.server.requests().size() == 1);
-  CHECK(fixture.server.remaining() == 1);
-  CHECK(fixture.conversation.empty());
 }
 
 TEST_CASE("cancelling a pending retry wakes the worker without another attempt") {

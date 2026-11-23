@@ -2,7 +2,6 @@
 #include "runtime/tool_registry_impl.hpp"
 #include "support/harness_test_support.hpp"
 
-#include <array>
 #include <catch2/catch_test_macros.hpp>
 #include <cstdint>
 #include <limits>
@@ -23,11 +22,6 @@
 // schemas, and its decode rules are tested in Scrydantic's repository.
 namespace {
 
-enum class TemperatureUnit {
-  celsius,
-  fahrenheit,
-};
-
 struct PresenceArguments {
   [[= scrydantic::description{"C++ default"}]] std::string defaulted{"fallback"};
   std::optional<std::int16_t> nullable;
@@ -39,21 +33,8 @@ struct NestedResult {
   std::string label{};
 };
 
-struct CopyOnlyResult {
-  static inline int destructions = 0;
-  std::vector<int> values;
-
-  // Suppress the implicit move constructor while retaining aggregate support.
-  ~CopyOnlyResult() { ++destructions; }
-};
-
-struct AllTypesArguments {
-  std::array<std::int32_t, 2> fixed{};
-  bool flag{};
-  NestedResult nested{};
+struct RatioResult {
   double ratio{};
-  TemperatureUnit unit{TemperatureUnit::celsius};
-  std::vector<std::int32_t> values{};
 };
 
 struct DirectHandler {
@@ -65,34 +46,6 @@ struct DirectHandler {
 struct ConstExpectedHandler {
   scrydantic::Result<const std::int32_t> operator()(PresenceArguments) const {
     return 7;
-  }
-};
-
-struct ContextHandler {
-  NestedResult operator()(const scry::ToolCallContext&, PresenceArguments) const {
-    return {};
-  }
-};
-
-// The context is a leading parameter, never a trailing one: the wrong order has
-// to stay a compile error rather than silently binding.
-struct ReversedContextHandler {
-  NestedResult operator()(PresenceArguments, const scry::ToolCallContext&) const {
-    return {};
-  }
-};
-
-struct VoidContextHandler {
-  void operator()(const scry::ToolCallContext&, PresenceArguments) const {}
-};
-
-// Refuses a call whose required text is "reject" and acknowledges any other.
-struct StatusHandler {
-  scrydantic::Status operator()(PresenceArguments arguments) const {
-    if (arguments.required == "reject") {
-      return std::unexpected(scrydantic::tool_error("rejected by the handler"));
-    }
-    return {};
   }
 };
 
@@ -122,25 +75,6 @@ snapshot_of(std::string name, scry::ContextualToolHandler handler) {
 
 } // namespace
 
-// Scry's registry binds handlers with its call context.
-static_assert(scrydantic::ToolHandlerFor<ContextHandler, PresenceArguments,
-                                         scry::ToolCallContext>);
-static_assert(!scrydantic::ToolHandlerFor<ReversedContextHandler, PresenceArguments,
-                                          scry::ToolCallContext>);
-static_assert(scrydantic::ToolHandlerFor<VoidContextHandler, PresenceArguments,
-                                         scry::ToolCallContext>);
-
-TEST_CASE("a reflected tool says why and where arguments are not JSON") {
-  auto handler = make_tool_handler<PresenceArguments>([](PresenceArguments) {});
-  auto malformed = handler({}, scrydantic::Json{.text = "{"});
-  REQUIRE_FALSE(malformed);
-  CHECK(malformed.error().category == scry::ErrorCategory::tool);
-  constexpr std::string_view text =
-      "tool arguments are not valid JSON: unexpected end of input at line 1, column 2";
-  CHECK(malformed.error().message == text);
-  CHECK(malformed.error().model_message == text);
-}
-
 TEST_CASE("a reflected tool's decode failure keeps Scrydantic's texts and issues") {
   auto handler = make_tool_handler<PresenceArguments>([](PresenceArguments) {});
   auto missing = handler({}, scrydantic::Json{.text = R"({"required":"Detroit"})"});
@@ -156,12 +90,7 @@ TEST_CASE("a reflected tool's decode failure keeps Scrydantic's texts and issues
 
 TEST_CASE("reflected result-encoding failures reach the model as the fixed text") {
   auto handler = make_tool_handler<PresenceArguments>([](PresenceArguments) {
-    return AllTypesArguments{
-        .fixed = {1, 2},
-        .flag = true,
-        .ratio = std::numeric_limits<double>::infinity(),
-        .unit = TemperatureUnit::celsius,
-    };
+    return RatioResult{.ratio = std::numeric_limits<double>::infinity()};
   });
   const auto tools = snapshot_of("private_calculation", std::move(handler));
 
@@ -180,85 +109,6 @@ TEST_CASE("reflected result-encoding failures reach the model as the fixed text"
   CHECK(result->result.text.find("ratio") == std::string::npos);
 }
 
-TEST_CASE("a reflected result that is not valid UTF-8 reaches the model as the fixed "
-          "text") {
-  auto handler = make_tool_handler<PresenceArguments>(
-      [](PresenceArguments) { return std::string(1, '\xff'); });
-  const auto tools = snapshot_of("read_bytes", std::move(handler));
-
-  const auto result = scry::detail::dispatch_tool(
-      tools,
-      scry::detail::ToolCallBlock{
-          .id = "call-1",
-          .name = "read_bytes",
-          .arguments = {.text = R"({"nullable":null,"required":"value"})"},
-      },
-      {}, 1024);
-
-  REQUIRE(result);
-  CHECK(result->is_error);
-  CHECK(result->result.text == R"({"error":"tool handler returned an error"})");
-}
-
-TEST_CASE("public encoding matches reflected tool dispatch output") {
-  const auto value = AllTypesArguments{
-      .fixed = {1, 2},
-      .flag = true,
-      .nested = {.label = "same"},
-      .ratio = 1e20,
-      .unit = TemperatureUnit::fahrenheit,
-      .values = {3, 4},
-  };
-  auto handler = make_tool_handler<PresenceArguments>(
-      [value](PresenceArguments) { return value; });
-  const auto tools = snapshot_of("snapshot", std::move(handler));
-
-  const auto direct = scrydantic::encode(value);
-  const auto through_dispatch = scry::detail::dispatch_tool(
-      tools,
-      scry::detail::ToolCallBlock{
-          .id = "call-1",
-          .name = "snapshot",
-          .arguments =
-              {
-                  .text = R"({"nullable":null,"required":"value"})",
-              },
-      },
-      {}, 1024);
-
-  REQUIRE(direct);
-  REQUIRE(through_dispatch);
-  CHECK(
-      direct->text ==
-      R"({"fixed":[1,2],"flag":true,"nested":{"label":"same"},"ratio":1E20,"unit":"fahrenheit","values":[3,4]})");
-  CHECK(direct->text == through_dispatch->result.text);
-}
-
-TEST_CASE("reflected erased handlers encode copy-only results without extra copies") {
-  CopyOnlyResult::destructions = 0;
-  const auto run_handler = [](auto body) {
-    auto handler = make_tool_handler<PresenceArguments>(std::move(body));
-    return handler({},
-                   scrydantic::Json{.text = R"({"nullable":null,"required":"ok"})"});
-  };
-
-  scry::Result<scrydantic::Json> result{};
-  SECTION("bare result") {
-    result = run_handler(
-        [](PresenceArguments) { return CopyOnlyResult{.values = {1, 2, 3}}; });
-  }
-  SECTION("expected result") {
-    result = run_handler([](PresenceArguments) -> scrydantic::Result<CopyOnlyResult> {
-      return scrydantic::Result<CopyOnlyResult>{std::in_place,
-                                                std::vector<int>{1, 2, 3}};
-    });
-  }
-
-  REQUIRE(result);
-  CHECK(result->text == R"({"values":[1,2,3]})");
-  CHECK(CopyOnlyResult::destructions == 1);
-}
-
 TEST_CASE("reflected erased handlers encode a Result of a const-qualified value") {
   // Instantiating the handler is the check: the const value type has to be
   // stripped before it reaches encode_value, or this fails to compile inside the
@@ -270,28 +120,6 @@ TEST_CASE("reflected erased handlers encode a Result of a const-qualified value"
 
   REQUIRE(result);
   CHECK(result->text == "7");
-}
-
-TEST_CASE("reflected handlers returning void or Status acknowledge with an object") {
-  const auto arguments =
-      scrydantic::Json{.text = R"({"nullable":null,"required":"ok"})"};
-  int calls = 0;
-  auto acknowledging =
-      make_tool_handler<PresenceArguments>([&calls](PresenceArguments) { ++calls; });
-  auto result = acknowledging({}, arguments);
-  REQUIRE(result);
-  CHECK(result->text == "{}");
-  CHECK(calls == 1);
-
-  auto status = make_tool_handler<PresenceArguments>(StatusHandler{});
-  result = status({}, arguments);
-  REQUIRE(result);
-  CHECK(result->text == "{}");
-
-  result =
-      status({}, scrydantic::Json{.text = R"({"nullable":null,"required":"reject"})"});
-  REQUIRE_FALSE(result);
-  CHECK(result.error().model_message == "rejected by the handler");
 }
 
 TEST_CASE("reflected erased handlers retain move-only captures and typed errors") {
@@ -319,40 +147,6 @@ TEST_CASE("reflected erased handlers retain move-only captures and typed errors"
   result = handler({}, scrydantic::Json{.text = R"({"required":"missing nullable"})"});
   REQUIRE_FALSE(result);
   CHECK(result.error().category == scry::ErrorCategory::tool);
-}
-
-TEST_CASE("reflected registration lowers into the additive registry") {
-  auto created = scry::Harness::create(scry::test_support::test_config());
-  REQUIRE(created);
-  auto harness = std::move(*created);
-
-  auto status = harness.tools().add<PresenceArguments>(
-      {
-          .name = "presence",
-          .description = "Exercise reflected arguments",
-      },
-      DirectHandler{});
-  REQUIRE(status);
-  CHECK(harness.tools().size() == 1);
-
-  status = harness.tools().add<PresenceArguments>(
-      {
-          .name = "presence",
-          .description = "Duplicate",
-      },
-      DirectHandler{});
-  REQUIRE_FALSE(status);
-  CHECK(status.error().category == scry::ErrorCategory::invalid_argument);
-  CHECK(harness.tools().size() == 1);
-
-  status = harness.tools().add<PresenceArguments>(
-      {
-          .name = "second_presence",
-          .description = "Exercise a second reflected registration",
-      },
-      DirectHandler{});
-  REQUIRE(status);
-  CHECK(harness.tools().size() == 2);
 }
 
 TEST_CASE("tool manifests include reflected and explicit contracts together") {

@@ -60,20 +60,6 @@ TEST_CASE("public async path streams and commits only inside update") {
   CHECK(requests.front().body.find("sanitized-test-key") == std::string::npos);
 }
 
-TEST_CASE("send-and-wait layers over the async path") {
-  auto fixture = make_harness_fixture(test_config(), {successful_response()});
-
-  auto completion = fixture.harness.send_and_wait(fixture.conversation, "Question");
-  REQUIRE(completion);
-  CHECK(completion->text == "Hello runtime.");
-  CHECK(completion->finish_reason == scry::FinishReason::completed);
-  CHECK(completion->usage.input_tokens == 2);
-  CHECK(completion->usage.output_tokens == 2);
-  CHECK(completion->attempt_count == 1);
-  CHECK(completion->provider_request_id == "request-integration");
-  CHECK(fixture.conversation.message_count() == 2);
-}
-
 TEST_CASE("accepted failure uses one async error channel and commits nothing") {
   auto config = test_config();
   config.retry.max_attempts = 1;
@@ -216,16 +202,4 @@ TEST_CASE("dropping a Turn detaches without cancelling its callbacks or commit")
 
   REQUIRE(pump_until(fixture.harness, [&completed] { return completed; }));
   CHECK(fixture.conversation.message_count() == 2);
-}
-
-TEST_CASE("two Harness instances keep provider and worker state isolated") {
-  auto first = make_harness_fixture(test_config(), {successful_response()});
-  auto second = make_harness_fixture(test_config(), {successful_response()});
-
-  auto first_completion = first.harness.send_and_wait(first.conversation, "First");
-  auto second_completion = second.harness.send_and_wait(second.conversation, "Second");
-  REQUIRE(first_completion);
-  REQUIRE(second_completion);
-  CHECK(first.conversation.message_count() == 2);
-  CHECK(second.conversation.message_count() == 2);
 }

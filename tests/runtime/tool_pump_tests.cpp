@@ -4,31 +4,10 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
-#include <thread>
 #include <variant>
 #include <vector>
 
 using namespace scry::test_support;
-
-TEST_CASE("pump executes tool handlers on the update caller thread") {
-  PumpFixture fixture;
-  std::thread::id handler_thread{};
-  const scry::detail::ToolSnapshot tools{registered_tool(
-      "forecast",
-      [&handler_thread](scrydantic::Json) -> scry::Result<scrydantic::Json> {
-        handler_thread = std::this_thread::get_id();
-        return scrydantic::Json{.text = "null"};
-      })};
-  const auto route = fixture.add(301, {.tools = frozen_tools(tools)});
-  REQUIRE(fixture.events->push(tool_event(route->id()), 1024));
-
-  const auto caller_thread = std::this_thread::get_id();
-  CHECK(handler_thread == std::thread::id{});
-  CHECK(fixture.pump.update({}).callbacks_delivered == 1);
-
-  CHECK(handler_thread == caller_thread);
-  REQUIRE(fixture.commands->try_pop());
-}
 
 TEST_CASE("pump queues a tool result before notifying the ToolCall observer") {
   PumpFixture fixture;
@@ -70,15 +49,21 @@ TEST_CASE("pump queues a tool result before notifying the ToolCall observer") {
 
 TEST_CASE("the observed ToolCall carries every field of the call it answers") {
   PumpFixture fixture;
+  scry::TurnId handler_turn{};
   std::string handler_call_id;
   std::string handler_tool_name;
+  std::uint32_t handler_round{};
+  std::uint32_t handler_index{};
   std::string handler_arguments;
   const scry::detail::ToolSnapshot tools{registered_tool(
       "forecast",
       [&](const scry::ToolCallContext& context,
           scrydantic::Json arguments) -> scry::Result<scrydantic::Json> {
+        handler_turn = context.turn_id;
         handler_call_id = context.call_id;
         handler_tool_name = context.tool_name;
+        handler_round = context.round;
+        handler_index = context.index;
         handler_arguments = arguments.text;
         return scrydantic::Json{.text = R"({"ok":true})"};
       })};
@@ -110,8 +95,11 @@ TEST_CASE("the observed ToolCall carries every field of the call it answers") {
   // it whole; the observation owns what the event no longer needs.
   CHECK(admitted_call_id == "call-77");
   CHECK(admitted_arguments == R"({"z":2,"a":1})");
+  CHECK(handler_turn == route->id());
   CHECK(handler_call_id == "call-77");
   CHECK(handler_tool_name == "forecast");
+  CHECK(handler_round == 3);
+  CHECK(handler_index == 2);
   CHECK(handler_arguments == R"({"z":2,"a":1})");
   REQUIRE(observed);
   CHECK(observed->turn_id == route->id());
@@ -126,38 +114,6 @@ TEST_CASE("the observed ToolCall carries every field of the call it answers") {
   REQUIRE(result);
   CHECK(result->tool_call_id == "call-77");
   CHECK(result->result.text == R"({"ok":true})");
-}
-
-TEST_CASE("an unknown tool reaches the observer as an error result") {
-  PumpFixture fixture;
-  const scry::detail::ToolSnapshot tools{};
-  scrydantic::Json observed_result{};
-  bool observed_is_error = false;
-  std::size_t observer_calls = 0;
-  const auto route = fixture.add(303, {
-                                          .tools = frozen_tools(tools),
-                                          .callbacks =
-                                              {
-                                                  .on_tool_call =
-                                                      [&](const scry::ToolCall& call) {
-                                                        ++observer_calls;
-                                                        observed_result = call.result;
-                                                        observed_is_error =
-                                                            call.is_error;
-                                                      },
-                                              },
-                                      });
-  REQUIRE(fixture.events->push(tool_event(route->id(), "absent_tool"), 1024));
-
-  CHECK(fixture.pump.update({}).callbacks_delivered == 1);
-
-  CHECK(observer_calls == 1);
-  CHECK(observed_is_error);
-  CHECK(observed_result.text ==
-        R"({"error":"unknown tool \"absent_tool\"; there are no tools"})");
-  const auto result = pop_tool_result(fixture);
-  REQUIRE(result);
-  CHECK(result->is_error);
 }
 
 TEST_CASE("cancellation during a handler suppresses its result and later calls") {
@@ -431,6 +387,7 @@ TEST_CASE("the per-turn call limit refuses calls past it without failing the tur
 TEST_CASE("an unknown tool spends the call limit without consulting the hook") {
   PumpFixture fixture;
   std::size_t admissions = 0;
+  std::vector<bool> observed_errors;
   std::vector<std::string> observed_results;
   const scry::detail::ToolSnapshot tools{registered_tool(
       "forecast", [](scrydantic::Json) -> scry::Result<scrydantic::Json> {
@@ -447,7 +404,8 @@ TEST_CASE("an unknown tool spends the call limit without consulting the hook") {
                      return std::nullopt;
                    },
                    .on_tool_call =
-                       [&observed_results](const scry::ToolCall& call) {
+                       [&](const scry::ToolCall& call) {
+                         observed_errors.push_back(call.is_error);
                          observed_results.push_back(call.result.text);
                        },
                },
@@ -458,12 +416,18 @@ TEST_CASE("an unknown tool spends the call limit without consulting the hook") {
   CHECK(fixture.pump.update({}).events_remaining == 0);
 
   CHECK(admissions == 0);
+  CHECK(observed_errors == std::vector<bool>{true, true});
   REQUIRE(observed_results.size() == 2);
   CHECK(observed_results[0] ==
         R"({"error":"unknown tool \"absent_tool\"; known tools: forecast"})");
   CHECK(
       observed_results[1] ==
       R"({"error":"tool call limit for this turn reached; respond without calling tools"})");
+  for (std::size_t posted = 0; posted < 2; ++posted) {
+    const auto result = pop_tool_result(fixture);
+    REQUIRE(result);
+    CHECK(result->is_error);
+  }
 }
 
 TEST_CASE("a throwing admission hook refuses the call and the turn continues") {

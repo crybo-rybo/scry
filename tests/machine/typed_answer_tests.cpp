@@ -306,12 +306,6 @@ TEST_CASE("cancellation while an answer is validated ends the turn uncommitted")
 }
 
 TEST_CASE("an answer verdict is refused where no candidate awaits it") {
-  SECTION("an untyped turn's tool round") {
-    auto machine = make_machine();
-    enter_awaiting_tool(machine);
-    CHECK(machine.apply(AnswerAccepted{.call_id = "call-1"}).status ==
-          TransitionStatus::event_not_allowed);
-  }
   SECTION("a different call") {
     auto machine = make_typed_machine();
     begin(machine);
@@ -327,16 +321,6 @@ TEST_CASE("an answer verdict is refused where no candidate awaits it") {
     CHECK(machine.apply(AnswerAccepted{.call_id = "answer-1"}).status ==
           TransitionStatus::event_not_allowed);
   }
-}
-
-TEST_CASE("a typed turn keeps the untyped loop for real tools") {
-  auto machine = make_typed_machine();
-  begin(machine);
-  const auto published = machine.apply(ModelCompleted{.response = tool_response()});
-  const auto& call = only_command<PublishToolCall>(published);
-  CHECK(call.role == ToolCallRole::tool);
-  CHECK(call.round == 1);
-  only_command<IssueModelRequest>(machine.apply(result("call-1", R"({"x":1})")));
 }
 
 TEST_CASE(

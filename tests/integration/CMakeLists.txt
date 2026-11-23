@@ -31,6 +31,7 @@ target_link_libraries(
   scry_tls_probe
   PRIVATE scry::scry scry_project_options
 )
+# The self-signed key is a disposable test key that protects nothing.
 add_test(
   NAME "integration.self-signed TLS is rejected unless explicitly disabled"
   COMMAND

@@ -6,7 +6,7 @@
       "role": "system"
     },
     {
-      "content": "Weather in Paris?",
+      "content": "Weather in \"Paris\" café?\u001b[0m\n",
       "role": "user"
     },
     {
@@ -81,7 +81,7 @@
     },
     {
       "function": {
-        "description": "Get almanac",
+        "description": "",
         "name": "almanac",
         "parameters": {
           "properties": {
@@ -106,5 +106,5 @@
       "type": "function"
     }
   ],
-  "top_p": 0.9
+  "top_p": 0.0
 }

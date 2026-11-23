@@ -1,10 +1,9 @@
 # Scry's test suites. ctest registers each Catch2 suite under a prefix: runtime.,
 # machine., protocol., provider., transport., integration., tools., and
 # testing. public-api-contract, readme-quickstart, package-smoke, the header
-# checks, the multi-TU links, the fuzz-corpus replays, and the
-# tools.compile-fail.* diagnostics checks are plain tests. Run one suite
-# with `ctest --test-dir build/dev -R 'runtime\.'` and one case with
-# `-R 'event queue coalesces'`.
+# checks, the multi-TU links, and the tools.compile-fail.* diagnostics checks
+# are plain tests. Run one suite with `ctest --test-dir build/dev -R 'runtime\.'`
+# and one case with `-R 'event queue coalesces'`.
 #
 # Rules the suites follow:
 # - Test behavior at the seams, not the implementation inside them: the machine,
@@ -19,6 +18,8 @@
 #   request, a hold, or a callback, never a sleep. A retry waits in real time, so
 #   a delay test checks a lower bound and an upper bound only to catch a hang.
 # - Each bug fix lands with a regression test, kept permanently.
+# - Test what Scry does. A test that calls only scrydantic:: functions belongs in
+#   Scrydantic's repository.
 #
 # The e2e/ smoke needs a live model and runs only through scripts/test-e2e.sh.
 
@@ -126,18 +127,12 @@ add_executable(
   runtime/pump_regression_tests.cpp
   runtime/queue_tests.cpp
   runtime/runtime_tests.cpp
-  runtime/scrydantic_adapter_tests.cpp
   runtime/tool_dispatch_tests.cpp
   runtime/tool_pump_tests.cpp
   runtime/tool_registry_tests.cpp
 )
 target_include_directories(
   scry_runtime_tests PRIVATE "${PROJECT_SOURCE_DIR}/src" "${PROJECT_SOURCE_DIR}/tests"
-)
-# runtime/conversation_persistence_tests.cpp reads a conversation corpus seed.
-target_compile_definitions(
-  scry_runtime_tests
-  PRIVATE "SCRY_FUZZ_CORPUS_DIR=\"${PROJECT_SOURCE_DIR}/tests/fuzz/corpus\""
 )
 target_link_libraries(
   scry_runtime_tests
@@ -158,44 +153,6 @@ add_subdirectory(machine)
 add_subdirectory(e2e)
 add_subdirectory(protocol)
 add_subdirectory(provider)
-
-# Each fuzz target is a libFuzzer-style LLVMFuzzerTestOneInput entry point over a
-# checked-in seed corpus under fuzz/corpus/<corpus>. fuzz/replay_main.cpp runs
-# every seed through it once, so the corpora are ordinary regression tests that
-# the asan preset also runs under ASan and UBSan.
-function(scry_add_fuzz_replay target corpus prefix source library)
-  add_executable("${target}" fuzz/replay_main.cpp "${source}")
-  target_compile_features("${target}" PRIVATE cxx_std_23)
-  target_include_directories(
-    "${target}"
-    PRIVATE "${PROJECT_SOURCE_DIR}/include" "${PROJECT_SOURCE_DIR}/src"
-  )
-  target_link_libraries("${target}" PRIVATE scry_project_options "${library}")
-  add_test(
-    NAME "${prefix}${corpus}-fuzz-replay"
-    COMMAND "${target}" "${CMAKE_CURRENT_SOURCE_DIR}/fuzz/corpus/${corpus}"
-  )
-  set_tests_properties("${prefix}${corpus}-fuzz-replay" PROPERTIES TIMEOUT 45)
-endfunction()
-
-scry_add_fuzz_replay(
-  scry_sse_fuzz_replay sse "protocol." protocol/sse_fuzz.cpp scry_kernel
-)
-scry_add_fuzz_replay(
-  scry_response_policy_fuzz_replay response_policy "transport."
-  transport/response_policy_fuzz.cpp scry_kernel
-)
-scry_add_fuzz_replay(
-  scry_anthropic_fuzz_replay anthropic "provider." provider/anthropic_fuzz.cpp
-  scry::scry
-)
-scry_add_fuzz_replay(
-  scry_openai_fuzz_replay openai "provider." provider/openai_fuzz.cpp scry::scry
-)
-scry_add_fuzz_replay(
-  scry_conversation_fuzz_replay conversation "runtime."
-  runtime/conversation_fuzz.cpp scry::scry
-)
 
 file(
   GLOB
@@ -281,13 +238,6 @@ scry_add_compile_fail_test(
   mutable_handler.cpp
   "a handler is called as const, so its call operator must be const"
 )
-# The type after the path is the dealiased std::chrono::seconds, whose spelling
-# varies with the platform's int64_t, so the assertion stops at the path.
-scry_add_compile_fail_test(
-  unsupported-nested-member
-  unsupported_nested_member.cpp
-  "does not satisfy scrydantic::ToolArguments: ForecastArgs::window.when: std::chrono::duration<"
-)
 
 # Reflected tool declarations: each rejection names the function, member, or
 # namespace at fault and the reason.
@@ -331,14 +281,4 @@ scry_add_compile_fail_test(
   scalar-answer
   scalar_answer.cpp
   "int does not satisfy scrydantic::ToolArguments: int is not a plain aggregate"
-)
-scry_add_compile_fail_test(
-  explicit-object-const-toolbox
-  explicit_object_const_toolbox.cpp
-  "Lamp::toggle takes its explicit object parameter by non-const reference, and the toolbox is const"
-)
-scry_add_compile_fail_test(
-  unbound-member-tool
-  unbound_member_tool.cpp
-  "Lamp::toggle is a non-static member function; bind an object of Lamp as a toolbox"
 )

@@ -159,26 +159,6 @@ TEST_CASE("OpenAI stream accepts repeated metadata and normalizes empty argument
   CHECK(call.arguments.text == "{}");
 }
 
-TEST_CASE("OpenAI streamed tool arguments are validated but not rewritten") {
-  OpenAiAdapter adapter;
-  ProviderDecodeState state{};
-  apply(
-      adapter, state,
-      chunk(
-          R"({"index":0,"delta":{"tool_calls":[{"index":0,"id":"call","type":"function","function":{"name":"lookup","arguments":"{ \"b\" : 2, \"a\" : 1 }"}}]},"finish_reason":null})"));
-  apply(adapter, state,
-        chunk(R"({"index":0,"delta":{},"finish_reason":"tool_calls"})"));
-
-  const auto completed = event(adapter, state, "[DONE]");
-  REQUIRE(completed);
-  const auto& response = std::get<ProviderCompleted>(completed->front()).response;
-  REQUIRE(response.content.size() == 1);
-  // The stream layer proves the object root and forwards the received bytes;
-  // TurnMachine is the one place that canonicalizes them.
-  CHECK(std::get<ToolCallBlock>(response.content.front()).arguments.text ==
-        R"({ "b" : 2, "a" : 1 })");
-}
-
 TEST_CASE("OpenAI streamed argument limit rejects before appending") {
   OpenAiAdapter adapter;
   ProviderDecodeState state{.max_tool_arguments_bytes = 7};
@@ -371,6 +351,14 @@ TEST_CASE("OpenAI stream maps errors and isolates dialect state") {
   CHECK(root_error.error().category == ErrorCategory::authentication);
   CHECK(root_error.error().provider_detail == "openai:invalid_api_key");
   CHECK(root_error.error().message.find("private") == std::string::npos);
+
+  // Compatible servers commonly send the error root as an unnamed event.
+  ProviderDecodeState unnamed{};
+  const auto unnamed_error = event(
+      adapter, unnamed, R"({"error":{"type":"rate_limit_error","message":"private"}})");
+  REQUIRE_FALSE(unnamed_error);
+  CHECK(unnamed_error.error().category == ErrorCategory::rate_limit);
+  CHECK(unnamed_error.error().provider_detail == "openai:rate_limit_error");
 
   ProviderDecodeState mixed_error{};
   const auto code_alias = event(

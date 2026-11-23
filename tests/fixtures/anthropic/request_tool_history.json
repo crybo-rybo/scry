@@ -4,7 +4,11 @@
     {
       "content": [
         {
-          "text": "Weather in Paris?",
+          "text": "Weather in ",
+          "type": "text"
+        },
+        {
+          "text": "\"Paris\" café?\u001b[0m\n",
           "type": "text"
         }
       ],
@@ -97,7 +101,7 @@
       "name": "weather"
     },
     {
-      "description": "Get almanac",
+      "description": "",
       "input_schema": {
         "properties": {
           "query": {
@@ -120,5 +124,5 @@
       "name": "almanac"
     }
   ],
-  "top_p": 0.9
+  "top_p": 0.0
 }
