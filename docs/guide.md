@@ -207,7 +207,7 @@ The document holds the system prompt and the committed messages.
 your test runs all of Scry with canned replies:
 
 ```cmake
-find_package(scry 0.8.0 CONFIG REQUIRED COMPONENTS testing) # not needed with FetchContent
+find_package(scry CONFIG REQUIRED COMPONENTS testing) # not needed with FetchContent
 target_link_libraries(app_tests PRIVATE scry::scry scry::testing)
 ```
 
