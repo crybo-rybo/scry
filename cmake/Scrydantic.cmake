@@ -1,5 +1,8 @@
 # Prefer a compatible installed package or targets supplied by a parent project.
 # The fallback is pinned so a fresh checkout builds reproducibly.
+# To work on both libraries at once, set FETCHCONTENT_SOURCE_DIR_SCRYDANTIC to your
+# Scrydantic checkout. New codec, schema, or binding behavior belongs there, not
+# worked around here.
 set(SCRY_SCRYDANTIC_MIN_VERSION 0.3.1)
 option(SCRY_FETCH_SCRYDANTIC "Fetch Scrydantic when no package is available" ON)
 

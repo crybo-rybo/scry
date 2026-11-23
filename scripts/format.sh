@@ -19,7 +19,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 # Include new, untracked sources as well as tracked files. NUL delimiters keep
 # paths containing spaces intact, and --exclude-standard skips build outputs.
 git ls-files --cached --others --exclude-standard -z -- \
-  'examples/*.cpp' 'extras/*.cpp' 'extras/*.hpp' 'include/*.hpp' \
+  'examples/*.cpp' 'include/*.hpp' \
   'src/*.cpp' 'src/*.hpp' 'testing/*.cpp' \
   'tests/*.cpp' 'tests/*.hpp' |
   while IFS= read -r -d '' source; do

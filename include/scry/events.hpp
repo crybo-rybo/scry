@@ -123,9 +123,9 @@ struct Completion {
   std::optional<scrydantic::Json> structured{};
   /// Calls the model made to the response tool across the turn, the accepted one
   /// included. Rejected attempts, whether their answer failed validation or the
-  /// call was not made on its own, are part of the committed tool rounds. Response
-  /// tool calls are never host tool calls, so none of them is counted by
-  /// tool_call_count. Zero for a turn sent without a ResponseFormat.
+  /// call was not made on its own, use tool rounds but are absent from committed
+  /// history. Response tool calls are never host tool calls, so none of them is
+  /// counted by tool_call_count. Zero for a turn sent without a ResponseFormat.
   std::uint32_t answer_attempt_count{};
 };
 

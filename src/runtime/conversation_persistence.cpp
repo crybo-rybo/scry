@@ -111,7 +111,9 @@ template <typename Type>
 
 // What the codec cannot express: which role may carry which block, nonempty
 // text and identifiers, and object arguments. Both directions apply them, so a
-// document to_json() writes is one from_json() accepts.
+// document to_json() writes is one from_json() accepts. They are not constraints
+// on the public message types, because they bind a stored document and not every
+// Message a host builds.
 [[nodiscard]] Status validate_block(const TextBlock& block, Role) {
   if (block.text.empty()) {
     return std::unexpected(
