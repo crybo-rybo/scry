@@ -27,7 +27,7 @@ TEST_CASE("tool dispatch turns an unknown tool into a model-visible error") {
   CHECK(result->tool_call_id == "call-1");
   CHECK(result->is_error);
   CHECK(result->result.text ==
-        R"({"error":"unknown tool \"missing\"; no tools are registered"})");
+        R"({"error":"unknown tool \"missing\"; there are no tools"})");
 }
 
 TEST_CASE(
@@ -46,7 +46,20 @@ TEST_CASE(
   REQUIRE(result);
   CHECK(result->is_error);
   CHECK(result->result.text ==
-        R"({"error":"unknown tool \"jump\"; registered tools: eat, look, move"})");
+        R"({"error":"unknown tool \"jump\"; known tools: eat, look, move"})");
+}
+
+TEST_CASE("tool dispatch lists a registered name that is not one word as one name") {
+  const scry::detail::ToolSnapshot tools{registered_tool(
+      "list, delete", [](scrydantic::Json) -> scry::Result<scrydantic::Json> {
+        return scrydantic::Json{.text = "{}"};
+      })};
+
+  const auto result = scry::detail::dispatch_tool(tools, tool_call("jump"), {}, 1024);
+
+  REQUIRE(result);
+  CHECK(result->result.text ==
+        R"({"error":"unknown tool \"jump\"; known tools: \"list, delete\""})");
 }
 
 TEST_CASE("tool dispatch does not disclose handler-returned Error details") {

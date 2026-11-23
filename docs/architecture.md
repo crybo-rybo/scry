@@ -964,9 +964,9 @@ package version check accepts only the same minor version. Thus a
 `find_package()` request for one minor release does not accept an install of
 another.
 
-Scry depends on the external Scrydantic package, version 0.3.x. Scrydantic has
-two targets. `scrydantic::json` is a static C++23 library without reflection:
-the JSON core, `Json`, `JsonView`, and `scrydantic::Error`.
+Scry depends on the external Scrydantic package, version 0.3.x, 0.3.1 or newer.
+Scrydantic has two targets. `scrydantic::json` is a static C++23 library without
+reflection: the JSON core, `Json`, `JsonView`, and `scrydantic::Error`.
 `scrydantic::scrydantic` is header-only C++26 on top of it: the annotations,
 the codec, the schemas, and the tool binding. `scry::scry` links
 `scrydantic::scrydantic` PUBLIC, and the installed `scry` package finds

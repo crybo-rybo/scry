@@ -4,8 +4,6 @@
 
 #include "kernel/error.hpp"
 
-#include <algorithm>
-#include <cstddef>
 #include <scrydantic/json.hpp>
 #include <string>
 #include <string_view>
@@ -27,19 +25,6 @@ constexpr std::string_view json_whitespace = " \t\n\r";
     message.append(": ").append(view.error().message);
   }
   return make_error(category, std::move(message));
-}
-
-// The canonical text of `json`, or the caller's failure when the text is not one
-// JSON document or, with `object_only`, when its root is not an object.
-[[nodiscard]] Result<scrydantic::Json> canonical_text(const scrydantic::Json& json,
-                                                      const bool object_only,
-                                                      const ErrorCategory category,
-                                                      const std::string_view failure) {
-  const auto view = scrydantic::JsonView::parse(json);
-  if (!view || (object_only && view->kind() != scrydantic::JsonKind::object)) {
-    return std::unexpected(json_text_error(json.text, category, failure));
-  }
-  return view->to_json();
 }
 
 } // namespace
@@ -66,41 +51,31 @@ bool json_root_is_object(const std::string_view text) noexcept {
   return first != std::string_view::npos && text[first] == '{';
 }
 
-std::size_t json_nesting_depth(const std::string_view text) noexcept {
-  std::size_t depth = 0;
-  std::size_t deepest = 0;
-  bool in_string = false;
-  bool escaped = false;
-  for (const char character : text) {
-    if (in_string) {
-      if (escaped) {
-        escaped = false;
-      } else if (character == '\\') {
-        escaped = true;
-      } else if (character == '"') {
-        in_string = false;
-      }
-    } else if (character == '"') {
-      in_string = true;
-    } else if (character == '[' || character == '{') {
-      deepest = std::max(deepest, ++depth);
-    } else if (character == ']' || character == '}') {
-      --depth;
-    }
+Result<scrydantic::JsonView> parse_json_object(const std::string_view text,
+                                               const ErrorCategory category,
+                                               const std::string_view failure_message) {
+  auto view = scrydantic::JsonView::parse(text);
+  if (!view || view->kind() != scrydantic::JsonKind::object) {
+    return std::unexpected(json_text_error(text, category, failure_message));
   }
-  return deepest;
+  return std::move(*view);
 }
 
 Result<scrydantic::Json> canonicalize_json(const scrydantic::Json& json,
                                            const ErrorCategory category,
                                            const std::string_view failure_message) {
-  return canonical_text(json, false, category, failure_message);
+  const auto view = scrydantic::JsonView::parse(json);
+  if (!view) {
+    return std::unexpected(json_text_error(json.text, category, failure_message));
+  }
+  return view->to_json();
 }
 
 Result<scrydantic::Json>
 canonicalize_json_object(const scrydantic::Json& json, const ErrorCategory category,
                          const std::string_view failure_message) {
-  return canonical_text(json, true, category, failure_message);
+  return parse_json_object(json.text, category, failure_message)
+      .transform([](const scrydantic::JsonView& view) { return view.to_json(); });
 }
 
 scrydantic::Json make_json_error_object(const std::string_view message) {

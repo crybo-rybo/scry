@@ -68,6 +68,8 @@ the codec, the schema generator, or the binding:
 | Provider request bodies, which keep stored payload bytes and pre-spelled sampling numbers | `encode_verbatim()` |
 | JSON validation, canonical text, string escapes, and number spelling in the C++23 kernel | `is_valid_json()`, `JsonView::to_json()`, `escape_json_string()`, `format_json_number()` |
 | Why and where text stopped being JSON | The error of `JsonView::parse()` |
+| Whether tool arguments will fit in a later request body | `JsonView::depth()`, `max_json_depth` |
+| The answer to a call of an unknown tool | `unknown_tool_error()` |
 | Compile-time diagnostics, worded for Scry's call sites | `<scrydantic/diagnostics.hpp>` |
 | The wire keys of a message type, so that persistence requires every member | `keys_v` |
 | The tags of a tagged variant, so that unknown Anthropic events are ignored | `tags_v` |

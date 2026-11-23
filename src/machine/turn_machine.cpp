@@ -7,6 +7,7 @@
 #include <array>
 #include <cstddef>
 #include <ranges>
+#include <scrydantic/json.hpp>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -16,9 +17,9 @@ namespace {
 
 // The deepest tool-call arguments Scry accepts. An Anthropic request holds them
 // five levels down (body, messages, message, content, block), and so does a
-// conversation document, and the whole text of either may nest at most 256 deep,
-// the bound of Scrydantic's parser and encoder.
-constexpr std::size_t max_tool_argument_depth = 256 - 5;
+// conversation document, and Scrydantic bounds the nesting of the whole text of
+// either.
+constexpr std::size_t max_tool_argument_depth = scrydantic::max_json_depth - 5;
 
 template <typename Command> [[nodiscard]] TransitionResult applied(Command command) {
   TransitionResult result{};
@@ -77,20 +78,19 @@ saturating_deadline(const MachineTimePoint started,
     return std::unexpected(response_error(
         ErrorCategory::protocol, "tool-call IDs must be unique within a turn"));
   }
-  auto arguments =
-      canonicalize_json_object(call.arguments, ErrorCategory::protocol,
-                               "tool-call arguments must be a JSON object");
+  auto arguments = parse_json_object(call.arguments.text, ErrorCategory::protocol,
+                                     "tool-call arguments must be a JSON object");
   if (!arguments) {
     return std::unexpected(std::move(arguments.error()));
   }
   // Arguments are spliced into later request bodies and into the conversation
   // document, whose whole text must stay within the parser's nesting bound.
-  if (json_nesting_depth(arguments->text) > max_tool_argument_depth) {
+  if (arguments->depth() > max_tool_argument_depth) {
     return std::unexpected(response_error(
         ErrorCategory::protocol,
         "tool-call arguments nest arrays and objects too deeply to send back"));
   }
-  call.arguments = std::move(*arguments);
+  call.arguments = arguments->to_json();
   return {};
 }
 

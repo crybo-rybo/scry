@@ -1,6 +1,6 @@
 # Prefer a compatible installed package or targets supplied by a parent project.
 # The fallback is pinned so a fresh checkout builds reproducibly.
-set(SCRY_SCRYDANTIC_MIN_VERSION 0.3.0)
+set(SCRY_SCRYDANTIC_MIN_VERSION 0.3.1)
 option(SCRY_FETCH_SCRYDANTIC "Fetch Scrydantic when no package is available" ON)
 
 if(NOT TARGET scrydantic::scrydantic)
@@ -23,7 +23,7 @@ if(NOT TARGET scrydantic::scrydantic)
     FetchContent_Declare(
       scrydantic
       GIT_REPOSITORY https://github.com/crybo-rybo/scrydantic.git
-      GIT_TAG a5b1f0d6c6ab8bce0d78726731ecc68d27a4d883 # v0.3.0
+      GIT_TAG dd74b1a59b2156959e8432add0744f45ba5582fd # v0.3.1
       SYSTEM
     )
     FetchContent_MakeAvailable(scrydantic)
