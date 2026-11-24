@@ -148,8 +148,11 @@ public:
   /// optional leading const ToolCallContext&, are either nothing (the tool takes
   /// `{}`), one plain aggregate (the argument object, as for add<Args>()), or any
   /// other list of named parameters of supported types, which is synthesized into
-  /// an argument object with one required member per parameter. It returns what
-  /// an add<Args>() handler may return. A function that breaks these rules fails
+  /// an argument object with one member per parameter. Such a parameter takes the
+  /// annotations a member takes, such as scrydantic::description and
+  /// scrydantic::range, and one with a default argument is optional: a call that
+  /// leaves it out uses the default. It returns what an add<Args>() handler may
+  /// return. A function that breaks these rules fails
   /// to compile with its name and the reason.
   /// Registration reads the declarations that precede the call in the calling
   /// translation unit: a namespace is open, so the tools registered are the ones

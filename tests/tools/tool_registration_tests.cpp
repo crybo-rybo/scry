@@ -49,6 +49,20 @@ inline Position unannotated() { return {}; }
 
 } // namespace grid
 
+// Plain parameters carry the annotations a member carries, and a default
+// argument makes one optional.
+namespace garden {
+
+[[= scrydantic::tool{"Water one bed"}]] inline double water(
+    [[
+      = scrydantic::description{"Bed number"}, = scrydantic::range{.min = 1, .max = 3}
+    ]] std::int32_t bed,
+    double liters = 1.5) {
+  return bed * 10 + liters;
+}
+
+} // namespace garden
+
 class Counter {
 public:
   [[= scrydantic::tool{"Add to the counter"}]] std::int32_t increment(std::int32_t by) {
@@ -243,6 +257,26 @@ TEST_CASE("plain parameters are synthesized into one required argument object") 
   const auto missing = call(registry, "offset", R"({"dx":3})");
   REQUIRE_FALSE(missing);
   CHECK(missing.error().model_message == "$.dy is a required member");
+}
+
+TEST_CASE("a plain parameter takes annotations, and a default makes it optional") {
+  scry::ToolRegistry registry;
+  REQUIRE(registry.add<^^registration::garden>());
+  CHECK(
+      schema_of(registry, "water") ==
+      R"({"additionalProperties":false,"properties":{"bed":{"description":"Bed number","maximum":3,"minimum":1,"type":"integer"},"liters":{"type":"number"}},"required":["bed"],"type":"object"})");
+
+  const auto defaulted = call(registry, "water", R"({"bed":2})");
+  REQUIRE(defaulted);
+  CHECK(defaulted->text == "21.5");
+
+  const auto given = call(registry, "water", R"({"bed":2,"liters":3})");
+  REQUIRE(given);
+  CHECK(given->text == "23");
+
+  const auto out_of_range = call(registry, "water", R"({"bed":4})");
+  REQUIRE_FALSE(out_of_range);
+  CHECK(out_of_range.error().model_message == "$.bed must be at most 3");
 }
 
 TEST_CASE("a namespace registers every annotated function in declaration order") {
