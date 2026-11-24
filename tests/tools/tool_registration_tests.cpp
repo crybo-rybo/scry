@@ -354,7 +354,7 @@ TEST_CASE("the manifest shows the schemas generated for every registration form"
           R"({"description":"Offset the origin","input_schema":{"additionalProperties":false,"properties":{"dx":)" +
           std::string{int32_schema} + R"(,"dy":)" + std::string{int32_schema} +
           R"(},"required":["dx","dy"],"type":"object"},"name":"offset"},)" +
-          R"({"description":"Stride east","input_schema":{"additionalProperties":false,"properties":{"tiles":{"description":"Tiles to move east",)" +
+          R"({"description":"Stride east","input_schema":{"additionalProperties":false,"properties":{"tiles":{"default":0,"description":"Tiles to move east",)" +
           std::string{int32_schema}.substr(1) +
           R"(},"required":[],"type":"object"},"name":"stride_east"},)" +
           R"({"description":"Read the fixed value","input_schema":)" +

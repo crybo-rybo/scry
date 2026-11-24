@@ -264,7 +264,7 @@ scry_add_compile_fail_test(
 scry_add_compile_fail_test(
   unsupported-tool-result
   unsupported_tool_result.cpp
-  "Lamp::describe returns scrydantic::Json, which is not void, scrydantic::Status, a SupportedValue, or a Result of one"
+  "Lamp::describe returns const char*, which is not void, scrydantic::Status, a SupportedValue, or a Result of one"
 )
 scry_add_compile_fail_test(
   duplicate-tool-name
