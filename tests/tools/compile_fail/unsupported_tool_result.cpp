@@ -1,11 +1,11 @@
 #include <memory>
 #include <scry/tool_registry.hpp>
 
-// Raw JSON has no schema, so a reflected tool cannot return it; the diagnostic
-// names the member function inside the toolbox.
+// A raw pointer has no JSON form, so a reflected tool cannot return it; the
+// diagnostic names the member function inside the toolbox.
 struct Lamp {
-  [[= scrydantic::tool{"Describe the lamp"}]] scrydantic::Json describe() const {
-    return {.text = "{}"};
+  [[= scrydantic::tool{"Describe the lamp"}]] const char* describe() const {
+    return "lit";
   }
 };
 

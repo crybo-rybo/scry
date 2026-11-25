@@ -71,14 +71,28 @@ tools.add(shared_greenhouse);    // the same, through a std::shared_ptr you also
 Each `add()` returns a `scry::Status`, and registers all of its tools or none.
 Tool names must be unique.
 
-Take one struct instead of plain parameters to describe the arguments, constrain
-them, or give them defaults:
+A parameter takes the same annotations as a struct member, to describe or
+constrain it, and a default argument makes it optional:
+
+```cpp
+[[= scrydantic::tool{"Water one bed"}]]
+scrydantic::Status water(
+    [[= scrydantic::description{"Bed number"}, = scrydantic::range{.min = 1, .max = 3}]]
+    std::int32_t bed,
+    double liters = 1.0); // optional, because it has a default
+```
+
+Take one struct instead when the model should see the defaults, which the schema
+shows for a member's initializer but not for a default argument, or when a tool
+has several optional arguments: a C++ call can leave out only its last
+arguments, so a tool with two optional parameters rejects a call that gives the
+second without the first.
 
 ```cpp
 struct WaterArguments {
   [[= scrydantic::description{"Bed number"}, = scrydantic::range{.min = 1, .max = 3}]]
   std::int32_t bed;
-  double liters{1.0}; // optional, because it has a default
+  double liters{1.0}; // optional, and its default is in the schema
 };
 
 [[= scrydantic::tool{"Water one bed"}]]

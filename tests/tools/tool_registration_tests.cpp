@@ -49,6 +49,20 @@ inline Position unannotated() { return {}; }
 
 } // namespace grid
 
+// Plain parameters carry the annotations a member carries, and a default
+// argument makes one optional.
+namespace garden {
+
+[[= scrydantic::tool{"Water one bed"}]] inline double water(
+    [[
+      = scrydantic::description{"Bed number"}, = scrydantic::range{.min = 1, .max = 3}
+    ]] std::int32_t bed,
+    double liters = 1.5) {
+  return bed * 10 + liters;
+}
+
+} // namespace garden
+
 class Counter {
 public:
   [[= scrydantic::tool{"Add to the counter"}]] std::int32_t increment(std::int32_t by) {
@@ -245,6 +259,26 @@ TEST_CASE("plain parameters are synthesized into one required argument object") 
   CHECK(missing.error().model_message == "$.dy is a required member");
 }
 
+TEST_CASE("a plain parameter takes annotations, and a default makes it optional") {
+  scry::ToolRegistry registry;
+  REQUIRE(registry.add<^^registration::garden>());
+  CHECK(
+      schema_of(registry, "water") ==
+      R"({"additionalProperties":false,"properties":{"bed":{"description":"Bed number","maximum":3,"minimum":1,"type":"integer"},"liters":{"type":"number"}},"required":["bed"],"type":"object"})");
+
+  const auto defaulted = call(registry, "water", R"({"bed":2})");
+  REQUIRE(defaulted);
+  CHECK(defaulted->text == "21.5");
+
+  const auto given = call(registry, "water", R"({"bed":2,"liters":3})");
+  REQUIRE(given);
+  CHECK(given->text == "23");
+
+  const auto out_of_range = call(registry, "water", R"({"bed":4})");
+  REQUIRE_FALSE(out_of_range);
+  CHECK(out_of_range.error().model_message == "$.bed must be at most 3");
+}
+
 TEST_CASE("a namespace registers every annotated function in declaration order") {
   scry::ToolRegistry registry;
   REQUIRE(registry.add<^^registration::grid>());
@@ -354,7 +388,7 @@ TEST_CASE("the manifest shows the schemas generated for every registration form"
           R"({"description":"Offset the origin","input_schema":{"additionalProperties":false,"properties":{"dx":)" +
           std::string{int32_schema} + R"(,"dy":)" + std::string{int32_schema} +
           R"(},"required":["dx","dy"],"type":"object"},"name":"offset"},)" +
-          R"({"description":"Stride east","input_schema":{"additionalProperties":false,"properties":{"tiles":{"description":"Tiles to move east",)" +
+          R"({"description":"Stride east","input_schema":{"additionalProperties":false,"properties":{"tiles":{"default":0,"description":"Tiles to move east",)" +
           std::string{int32_schema}.substr(1) +
           R"(},"required":[],"type":"object"},"name":"stride_east"},)" +
           R"({"description":"Read the fixed value","input_schema":)" +
